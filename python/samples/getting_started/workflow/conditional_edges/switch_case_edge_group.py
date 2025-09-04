@@ -23,7 +23,7 @@ from azure.identity import AzureCliCredential  # Uses your az CLI login for cred
 from pydantic import BaseModel  # Structured outputs with validation
 
 """
-Sample: Switch-Case Edge Group with an explicit Uncertain branch. 
+Sample: Switch-Case Edge Group with an explicit Uncertain branch.
 
 The workflow stores a single email in shared state, asks a spam detection agent for a three way decision,
 then routes with a switch-case group: NotSpam to the drafting assistant, Spam to a spam handler, and

@@ -46,7 +46,8 @@ Prerequisites:
 
 
 # Request type sent to the RequestInfoExecutor for human feedback.
-# Including the agent's last guess allows the UI or CLI to display context and helps the turn manager avoid extra state reads.
+# Including the agent's last guess allows the UI or CLI to display context and helps
+# the turn manager avoid extra state reads.
 @dataclass
 class HumanFeedbackRequest(RequestInfoMessage):
     prompt: str = ""

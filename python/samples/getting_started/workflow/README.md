@@ -2,7 +2,7 @@
 
 ## Installation
 
-To install the base `workflow` package, please run:
+To install the base `agent_framework.workflow` package, please run:
 
 ```bash
 pip install agent-framework-workflow

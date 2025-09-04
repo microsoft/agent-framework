@@ -22,7 +22,7 @@ from pydantic import BaseModel  # Structured outputs for safer parsing
 Sample: Conditional routing with structured outputs
 
 What this sample is:
-- A minimal decision workflow that classifies an inbound email as spam or not spam, then routes to the 
+- A minimal decision workflow that classifies an inbound email as spam or not spam, then routes to the
 appropriate handler.
 
 Purpose:
@@ -33,13 +33,13 @@ Purpose:
 Prerequisites:
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
-- Azure OpenAI access is configured for AzureChatClient. You should be logged in with Azure CLI (AzureCliCredential) 
+- Azure OpenAI access is configured for AzureChatClient. You should be logged in with Azure CLI (AzureCliCredential)
 and have the Azure OpenAI environment variables set as documented in the getting started chat client README.
 - The sample email resource file exists at workflow/resources/email.txt.
 
 High level flow:
 1) spam_detection_agent reads an email and returns DetectionResult.
-2) If not spam, we transform the detection output into a user message for email_assistant_agent, then finish by 
+2) If not spam, we transform the detection output into a user message for email_assistant_agent, then finish by
 sending the drafted reply.
 3) If spam, we short circuit to a spam handler that emits a completion event.
 
@@ -160,7 +160,8 @@ async def main() -> None:
 
     # Build the workflow graph.
     # Start at the spam detector.
-    # If not spam, hop to a transformer that creates a new AgentExecutorRequest, then call the email assistant, then finalize.
+    # If not spam, hop to a transformer that creates a new AgentExecutorRequest,
+    # then call the email assistant, then finalize.
     # If spam, go directly to the spam handler and finalize.
     workflow = (
         WorkflowBuilder()

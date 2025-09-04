@@ -24,7 +24,7 @@ from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
 """
-Sample: Multi-Selection Edge Group for email triage and response. 
+Sample: Multi-Selection Edge Group for email triage and response.
 
 The workflow stores an email,
 classifies it as NotSpam, Spam, or Uncertain, and then routes to one or more branches.
