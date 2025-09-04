@@ -1,18 +1,41 @@
 # Workflow Getting Started Samples
 
-The getting started with workflow samples demonstrate the fundamental concepts and functionalities
-of workflows in Agent Framework.
+The getting started with workflow samples demonstrate the fundamental concepts and functionalities of workflows in Agent Framework.
 
 ## Samples Overview
 
-| Sample | File | Concepts |
-|---|---|---|
-| Sequential | [Step01a_Sequential.cs](./Step01a_Sequential.cs) | Minimal sequential workflow with two executors |
-| Sequential (Streaming) | [Step01b_Sequential_Streaming.cs](./Step01b_Sequential_Streaming.cs) | Stream events from a simple sequential run |
-| **Note** | | **All following samples use streaming and include agents** |
-| Agents In A Workflow | [Step02_Agents_In_Workflow.cs](./Step02_Agents_In_Workflow.cs) | Introduce `AgentExecutor`; call agents inside a workflow |
-| Concurrent (Fan‑out/Fan‑in) | [Step03_Concurrent.cs](./Step03_Concurrent.cs) | Dispatch to multiple agent executors and aggregate results |
-| Edge Condition | [Step04_Edge_Condition.cs](./Step04_Edge_Condition.cs) | Conditional routing based on an agent’s classification |
-| Shared States | [Step05_Shared_States.cs](./Step05_Shared_States.cs) | Store once in shared state; later read by downstream executors |
-| Switch‑Case Edge Group | [Step06a_Switch_Case_Edge_Group.cs](./Step06a_Switch_Case_Edge_Group.cs) | Switch‑case branching and `Case/Default` |
-| Multi‑Selection Edge Group | [Step06b_Multi_Selection_Edge_Group.cs](./Step06b_Multi_Selection_Edge_Group.cs) | Select one or many targets dynamically (subset fan‑out) |
+### Foundational Concepts - Start Here
+
+Please begin with the [Foundational](./Foundational) samples in order. These three samples introduce the core concepts of executors, edges, agents in workflows, streaming, and workflow construction.
+
+| Sample | Concepts |
+|--------|----------|
+| [Executors and Edges](./Foundational/01_ExecutorsAndEdges.cs) | Minimal workflow with basic executors and edges |
+| [Streaming](./Foundational/02_Streaming.cs) | Extends workflows with event streaming |
+| [Agents](./Foundational/03_AgentsInWorkflows.cs) | Use agents in workflows |
+
+Once completed, please proceed to other samples listed below.
+
+> Note that you don't need to follow a strict order after the foundational samples. However, some samples build upon concepts from previous ones, so it's beneficial to be aware of the dependencies.
+
+### Concurrent Execution
+
+| Sample | Concepts |
+|--------|----------|
+| [Fan-Out and Fan-In](./Concurrent/ConcurrentExecution.cs) | Introduces parallel processing with fan-out and fan-in patterns |
+
+### Workflow Shared States
+
+| Sample | Concepts |
+|--------|----------|
+| [Shared States](./SharedStates/WorkflowSharedStates.cs) | Demonstrates shared states between executors for data sharing and coordination |
+
+### Conditional Edges
+
+| Sample | Concepts |
+|--------|----------|
+| [Edge Conditions](./ConditionalEdges/01_EdgeConditions.cs) | Introduces conditional edges for dynamic routing based on executor outputs |
+| [Switch-Case Routing](./ConditionalEdges/02_SwitchCaseRouting.cs) | Extends conditional edges with switch-case routing for multiple paths |
+| [Multi-Selection Routing](./ConditionalEdges/03_MultiSelection.cs) | Demonstrates multi-selection routing where one executor can trigger multiple downstream executors |
+
+> These 3 samples build upon each other. It's recommended to explore them in sequence to fully grasp the concepts.

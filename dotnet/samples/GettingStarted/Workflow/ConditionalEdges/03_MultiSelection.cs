@@ -13,8 +13,7 @@ namespace Workflow;
 /// <summary>
 /// This sample introduces multi-selection routing where one executor can trigger multiple downstream executors.
 ///
-/// Building on the switch-case pattern from Step06a, this workflow adds intelligent multi-path routing
-/// based on email analysis results. Instead of routing to just one executor, the workflow can now
+/// Extending the switch-case pattern from the previous sample, the workflow can now
 /// trigger multiple executors simultaneously when certain conditions are met.
 ///
 /// Key features:
