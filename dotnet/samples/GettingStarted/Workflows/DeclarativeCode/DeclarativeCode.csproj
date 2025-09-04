@@ -26,8 +26,8 @@
   </ItemGroup>
   
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents.Workflows\Microsoft.Agents.Workflows.csproj" />
-    <ProjectReference Include="..\..\src\Microsoft.Agents.Workflows.Declarative\Microsoft.Agents.Workflows.Declarative.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.Workflows\Microsoft.Agents.Workflows.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.Workflows.Declarative\Microsoft.Agents.Workflows.Declarative.csproj" />
   </ItemGroup>
 
 </Project>

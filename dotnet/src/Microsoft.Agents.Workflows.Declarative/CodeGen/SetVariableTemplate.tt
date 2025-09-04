@@ -1,0 +1,29 @@
+﻿<#@ template language="C#" visibility="internal" #>
+<#@ assembly name="System.Core" #>
+internal sealed class <#= this.Name #>Executor() : ActionExecutor(id: "<#= this.Id #>")
+{
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {<# 
+if (this.Model.Value is null)
+{ 
+    throw new InvalidOperationException("Undefined value type."); // %%% EXCEPTION TYPE
+}
+else if (this.Model.Value.IsLiteral)
+{ #>
+        object? value = <#= this.Model.Value.LiteralValue #>; // %%% FORMAT
+<# }
+else if (this.Model.Value.IsVariableReference)
+{ #>
+        object? value = await context.ReadStateAsync<object>("<#= this.Model.Value.VariableReference.VariableName #>", "<#= this.Model.Value.VariableReference.VariableScopeName #>").ConfigureAwait(false);
+<# }
+else if (this.Model.Value.IsExpression)
+{ #>
+        object? value = await context.EvaluateExpression("<#= this.Model.Value.ExpressionText #>").ConfigureAwait(false);
+<# }
+else
+{
+    throw new InvalidOperationException("Unsupported value type."); // %%% EXCEPTION TYPE
+} #>
+        await context.QueueStateUpdateAsync("<#= this.VariableName #>", value, "<#= this.TopicName #>").ConfigureAwait(false);
+    }
+}

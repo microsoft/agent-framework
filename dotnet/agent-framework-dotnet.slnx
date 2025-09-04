@@ -48,7 +48,9 @@
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/">
-    <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/DeclarativeEject/DeclarativeEject.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/DeclarativeCode/DeclarativeCode.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Example/">
     <File Path="../workflows/DeepResearch.yaml" />

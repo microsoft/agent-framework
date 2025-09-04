@@ -11,7 +11,11 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 /// <summary>
 /// The root executor for a declarative workflow.
 /// </summary>
-internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId, DeclarativeWorkflowState state, Func<TInput, ChatMessage> inputTransform) :
+internal sealed class DeclarativeWorkflowExecutor<TInput>(
+    string workflowId,
+    DeclarativeWorkflowState state,
+    Func<TInput, ChatMessage> inputTransform,
+    bool isEjected = false) : // %%% HAXX
     ReflectingExecutor<DeclarativeWorkflowExecutor<TInput>>(workflowId),
     IMessageHandler<TInput>
     where TInput : notnull
@@ -21,6 +25,13 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId, Dec
         ChatMessage input = inputTransform.Invoke(message);
         await state.SetLastMessageAsync(context, input).ConfigureAwait(false);
 
-        await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+        if (isEjected) // %%% HAXX
+        {
+            await context.SendMessageAsync(this.Id).ConfigureAwait(false);
+        }
+        else
+        {
+            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+        }
     }
 }

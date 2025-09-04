@@ -1,0 +1,104 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative;
+
+namespace Demo.DeclarativeEject;
+
+/// <summary>
+/// HOW TO: Convert a workflow from a declartive (yaml based) definition to code.
+/// </summary>
+/// <remarks>
+/// <b>Usage</b>
+/// Provide the path to the workflow definition file as the first argument.
+/// All other arguments are intepreted as a queue of inputs.
+/// When no input is queued, interactive input is requested from the console.
+/// </remarks>
+internal sealed class Program
+{
+    public static async Task Main(string[] args)
+    {
+        Program program = new(args);
+        await program.ExecuteAsync();
+    }
+
+    private async Task ExecuteAsync()
+    {
+        // Read and parse the declarative workflow.
+        Notify($"WORKFLOW: Parsing {Path.GetFullPath(this.WorkflowFile)}");
+
+        Stopwatch timer = Stopwatch.StartNew();
+
+        // Use DeclarativeWorkflowBuilder to generate code based on a YAML file.
+        string code = DeclarativeWorkflowBuilder.Eject(this.WorkflowFile, "Demo.DeclarativeCode");
+
+        Notify($"\nWORKFLOW: Defined {timer.Elapsed}\n");
+
+        Console.WriteLine(code);
+    }
+
+    private const string DefaultWorkflow = "HelloWorld.yaml";
+
+    private string WorkflowFile { get; }
+
+    private Program(string[] args)
+    {
+        this.WorkflowFile = ParseWorkflowFile(args);
+    }
+
+    private static string ParseWorkflowFile(string[] args)
+    {
+        string workflowFile = args.FirstOrDefault() ?? DefaultWorkflow;
+
+        if (!File.Exists(workflowFile) && !Path.IsPathFullyQualified(workflowFile))
+        {
+            string? repoFolder = GetRepoFolder();
+            if (repoFolder is not null)
+            {
+                workflowFile = Path.Combine(repoFolder, "Workflows", workflowFile);
+                workflowFile = Path.ChangeExtension(workflowFile, ".yaml");
+            }
+        }
+
+        if (!File.Exists(workflowFile))
+        {
+            throw new InvalidOperationException($"Unable to locate workflow: {Path.GetFullPath(workflowFile)}.");
+        }
+
+        return workflowFile;
+
+        static string? GetRepoFolder()
+        {
+            DirectoryInfo? current = new(Directory.GetCurrentDirectory());
+
+            while (current is not null)
+            {
+                if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+                {
+                    return current.FullName;
+                }
+
+                current = current.Parent;
+            }
+
+            return null;
+        }
+    }
+
+    private static void Notify(string message)
+    {
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        try
+        {
+            Console.WriteLine(message);
+        }
+        finally
+        {
+            Console.ResetColor();
+        }
+    }
+}

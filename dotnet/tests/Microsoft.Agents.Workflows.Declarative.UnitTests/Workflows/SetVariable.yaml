@@ -4,7 +4,7 @@ beginDialog:
   id: my_workflow
   type: Message
   actions:
-    - kind: SetTextVariable
-      id: set_text
+    - kind: SetVariable
+      id: set_var
       variable: Topic.TestVar
-      value: Test content
+      value: =3

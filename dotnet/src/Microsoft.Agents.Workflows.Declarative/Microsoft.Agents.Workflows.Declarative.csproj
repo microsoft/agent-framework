@@ -4,6 +4,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>alpha</VersionSuffix>
+    <NoWarn>$(NoWarn);IL2075</NoWarn><!-- // %%% PRAGMA -->
   </PropertyGroup>
 
   <PropertyGroup>
@@ -27,6 +28,7 @@
     <PackageReference Include="Microsoft.Bot.ObjectModel.Json" />
     <PackageReference Include="Microsoft.Bot.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
+    <PackageReference Include="System.CodeDom" />
   </ItemGroup>
 
   <ItemGroup>
@@ -35,7 +37,47 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="CodeGen\*Template.tt">
+      <Generator>TextTemplatingFilePreprocessor</Generator>
+      <LastGenOutput>%(Filename).cs</LastGenOutput>
+    </None>
+    <Compile Update="CodeGen\*Template.cs">
+      <DependentUpon>%(Filename).tt</DependentUpon>
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="CodeGen\EdgeTemplate.tt">
+      <LastGenOutput>EdgeTemplate.cs</LastGenOutput>
+    </None>
+    <None Update="CodeGen\EmptyTemplate.tt">
+      <LastGenOutput>EmptyTemplate.cs</LastGenOutput>
+    </None>
+    <None Update="CodeGen\InstanceTemplate.tt">
+      <LastGenOutput>InstanceTemplate.cs</LastGenOutput>
+    </None>
+    <None Update="CodeGen\ResetVariableTemplate.tt">
+      <LastGenOutput>ResetVariableTemplate.cs</LastGenOutput>
+    </None>
+    <None Update="CodeGen\SendActivityTemplate.tt">
+      <LastGenOutput>SendActivityTemplate.cs</LastGenOutput>
+    </None>
+    <None Update="CodeGen\SetVariableTemplate.tt">
+      <LastGenOutput>SetVariableTemplate.cs</LastGenOutput>
+    </None>
+    <None Update="CodeGen\WorkflowTemplate.tt">
+      <LastGenOutput>WorkflowTemplate.cs</LastGenOutput>
+    </None>
   </ItemGroup>
 
 </Project>

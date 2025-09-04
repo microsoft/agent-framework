@@ -98,6 +98,8 @@ internal sealed class DeclarativeWorkflowState
                 object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
                 this._scopes.Set(key, value.ToFormulaValue(), scopeName);
             }
+
+            this._scopes.Bind(this._engine, scopeName);
         }
     }
 }

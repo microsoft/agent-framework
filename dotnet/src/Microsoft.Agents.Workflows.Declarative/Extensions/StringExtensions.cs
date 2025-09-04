@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.PowerFx.Types;
 
@@ -22,4 +24,40 @@ internal static class StringExtensions
 
     public static FormulaValue ToFormulaValue(this string? value) =>
         string.IsNullOrWhiteSpace(value) ? FormulaValue.NewBlank() : FormulaValue.New(value);
+
+    public static string FormatType(this string identifier) => FormatIdentifier(identifier);
+
+    public static string FormatName(this string identifier) => FormatIdentifier(identifier, skipFirst: true);
+
+    public static string? FormatOptional(this string? identifier)
+    {
+        if (identifier is null)
+        {
+            return null;
+        }
+
+        return FormatIdentifier(identifier, skipFirst: true);
+    }
+
+    private static string FormatIdentifier(string identifier, bool skipFirst = false)
+    {
+        string[] words = identifier.Split('_');
+
+        // Capitalize each word
+        for (int index = skipFirst ? 1 : 0; index < words.Length; ++index)
+        {
+            words[index] = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(words[index]);
+        }
+
+        // Combine the words and return
+        return string.Concat(words);
+    }
+
+    public static IEnumerable<string> ByLine(this string template)
+    {
+        foreach (string line in template.Trim().Split('\n'))
+        {
+            yield return line.Trim();
+        }
+    }
 }
