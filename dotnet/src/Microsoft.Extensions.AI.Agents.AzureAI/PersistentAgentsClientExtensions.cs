@@ -176,8 +176,8 @@ public static class PersistentAgentsClientExtensions
     /// <param name="client">The <see cref="PersistentAgentsClient"/> instance used to initialize the chat client. Cannot be <see langword="null"/>.</param>
     /// <param name="assistantId">The unique identifier of the assistant. Cannot be <see langword="null"/> or whitespace.</param>
     /// <param name="defaultThreadId">The optional default thread identifier for the chat client. Can be <see langword="null"/>.</param>
-    /// <param name="awaitRun">Specifies whether the client should await the run result or not.</param>
+    /// <param name="awaitRunCompletion">Specifies whether the client should await a long-running operation completion or not.</param>
     /// <returns>A new <see cref="IChatClient"/> instance configured with the specified assistant and optional default thread.</returns>
-    public static IChatClient AsNewIChatClient(this PersistentAgentsClient client, string assistantId, string? defaultThreadId = null, bool? awaitRun = null)
-        => new NewPersistentAgentsChatClient(Argument.CheckNotNull(client, nameof(client)), Argument.CheckNotNullOrEmpty(assistantId, nameof(assistantId)), defaultThreadId, awaitRun: awaitRun);
+    public static IChatClient AsNewIChatClient(this PersistentAgentsClient client, string assistantId, string? defaultThreadId = null, bool? awaitRunCompletion = null)
+        => new NewPersistentAgentsChatClient(Argument.CheckNotNull(client, nameof(client)), Argument.CheckNotNullOrEmpty(assistantId, nameof(assistantId)), defaultThreadId, awaitRunCompletion: awaitRunCompletion);
 }

@@ -69,9 +69,9 @@ public static class OpenAIResponseClientExtensions
 
     /// <summary>Gets an <see cref="IChatClient"/> for use with this <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The client.</param>
-    /// <param name="awaitRun">Specifies whether the client should await the run result or not.</param>
+    /// <param name="awaitRunCompletion">Specifies whether the client should await a long-running operation completion or not.</param>
     /// <returns>An <see cref="IChatClient"/> that can be used to converse via the <see cref="OpenAIResponseClient"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public static IChatClient AsNewIChatClient(this OpenAIResponseClient responseClient, bool? awaitRun = null) =>
-        new NewOpenAIResponsesChatClient(responseClient, awaitRun);
+    public static IChatClient AsNewIChatClient(this OpenAIResponseClient responseClient, bool? awaitRunCompletion = null) =>
+        new NewOpenAIResponsesChatClient(responseClient, awaitRunCompletion);
 }

@@ -38,19 +38,19 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
     /// <summary>The underlying <see cref="OpenAIResponseClient" />.</summary>
     private readonly OpenAIResponseClient _responseClient;
 
-    /// <summary>Specifies whether the client should await the run result or not.</summary>
-    private readonly bool? _awaitRun;
+    /// <summary>Specifies whether the client should await a long-running operation completion or not.</summary>
+    private readonly bool? _awaitRunCompletion;
 
     /// <summary>Initializes a new instance of the <see cref="NewOpenAIResponsesChatClient"/> class for the specified <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The underlying client.</param>
-    /// <param name="awaitRun">Specifies whether the client should await the run result or not.</param>
+    /// <param name="awaitRunCompletion">Specifies whether the client should await a long-running operation completion or not.</param>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? awaitRun = null)
+    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? awaitRunCompletion = null)
     {
         _ = Throw.IfNull(responseClient);
 
         _responseClient = responseClient;
-        _awaitRun = awaitRun;
+        _awaitRunCompletion = awaitRunCompletion;
 
         // https://github.com/openai/openai-dotnet/issues/215
         // The endpoint and model aren't currently exposed, so use reflection to get at them, temporarily. Once packages
@@ -89,15 +89,15 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
 
         OpenAIResponse openAIResponse;
 
-        // Previous response id, provided by a caller, indicates that the caller is interested in the status/result of a previously
-        // created response rather than creating a new one. However, for scenarios where functions are involved, we can't just
-        // fetch the status/result because the method for doing so does not accept messages and therefore can't accept function
+        // The response id, provided by a caller, indicates that the caller is interested in the status/result of this response
+        // rather than in creating a new one. However, for scenarios where functions are involved, we can't just fetch the response
+        // status/result because the method for doing so does not accept messages and therefore can't accept function
         // call results to send to the model. As such, if a function result content is found in the messages, we always create
-        // a new response instead of fetching the previous one.
-        if (options is NewChatOptions { PreviousResponseId: { } previousResponseId } && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
+        // a new response instead of fetching the one specified by the id.
+        if (options is NewChatOptions { ResponseId: { } responseId } && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
         {
-            // If previous response id is provided, and no functions are involved, get the response by id.
-            openAIResponse = (await _responseClient.GetResponseAsync(previousResponseId, cancellationToken).ConfigureAwait(false)).Value;
+            // If response id is provided, and no functions are involved, get the response by id.
+            openAIResponse = (await _responseClient.GetResponseAsync(responseId, cancellationToken).ConfigureAwait(false)).Value;
         }
         else
         {
@@ -105,10 +105,9 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
             openAIResponse = (await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false)).Value;
         }
 
-        // Await the run result if requested. This enables scenarios where a caller requests a response  
-        // in background mode, obtains its id, and then requests the chat client to wait for the result  
-        // rather than polling themselves.
-        if (ShouldAwaitRunResult(options))
+        // Await the run's completion if requested. This enables scenarios where a caller requests a long-running operation or entity id,
+        // obtains it, and then asks the chat client to wait for its completion rather than waiting themselves (via polling).
+        if (ShouldAwaitRunCompletion(options))
         {
             // Do polling
             while (openAIResponse.Status is ResponseStatus.Queued or ResponseStatus.InProgress)
@@ -262,27 +261,26 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
 
         IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates;
 
-        // Previous response id, provided by a caller, indicates that the caller is interested in the status/result of a previously
-        // created response rather than creating a new one. However, for scenarios where functions are involved, we can't just
-        // fetch the status/result because the method for doing so does not accept messages and therefore can't accept function
+        // The response id, provided by a caller, indicates that the caller is interested in the status/result of this response
+        // rather than in creating a new one. However, for scenarios where functions are involved, we can't just fetch the response
+        // status/result because the method for doing so does not accept messages and therefore can't accept function
         // call results to send to the model. As such, if a function result content is found in the messages, we always create
-        // a new response instead of fetching the previous one.
-        if (options is NewChatOptions { PreviousResponseId: { } previousResponseId } && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
+        // a new response instead of fetching the one specified by the id.
+        if (options is NewChatOptions { ResponseId: { } responseId } && !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
         {
             var startingAfter = options is NewChatOptions { StartAfter: { } startAfter } ? int.Parse(startAfter) : (int?)null;
 
-            // If previous response id is provided, and no functions are involved, get the response by id.
-            streamingUpdates = _responseClient.GetResponseStreamingAsync(previousResponseId, startingAfter, cancellationToken);
+            // If response id is provided, and no functions are involved, get the response by id.
+            streamingUpdates = _responseClient.GetResponseStreamingAsync(responseId, startingAfter, cancellationToken);
         }
         else
         {
             // Otherwise, create a new response.
             streamingUpdates = _responseClient.CreateResponseStreamingAsync(openAIResponseItems, openAIOptions, cancellationToken);
 
-            // If not awaiting the run result, and not returning status/result for requested response,
-            // return sequence containing the first update from the original response so the caller
-            // will get run id and status.
-            if (!ShouldAwaitRunResult(options) && (options as NewChatOptions)?.PreviousResponseId is null)
+            // If run's completion awaiting is not requested, return sequence containing the first update
+            // from the original response so the caller will get run id and status.
+            if (!ShouldAwaitRunCompletion(options) && (options as NewChatOptions)?.ResponseId is null)
             {
                 streamingUpdates = GetEnumerableWithFirstItemAsync(streamingUpdates, cancellationToken);
             }
@@ -510,7 +508,7 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
         {
             return new ResponseCreationOptions()
             {
-                Background = !_awaitRun
+                Background = !_awaitRunCompletion
             };
         }
 
@@ -533,7 +531,7 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
                 $"{result.Instructions}{Environment.NewLine}{instructions}";
         }
 
-        result.Background = !ShouldAwaitRunResult(options);
+        result.Background = !ShouldAwaitRunCompletion(options);
 
         // Populate tools if there are any.
         if (options.Tools is { Count: > 0 } tools)
@@ -876,17 +874,17 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
         return parts;
     }
 
-    /// <summary>Determines whether to await run result or run in background.</summary>
-    private bool ShouldAwaitRunResult(ChatOptions? options)
+    /// <summary>Determines whether to await a long-running operation completion or not.</summary>
+    private bool ShouldAwaitRunCompletion(ChatOptions? options)
     {
         // If specified in options, use that.
-        if (options is NewChatOptions { AwaitRunResult: { } awaitRun })
+        if (options is NewChatOptions { AwaitLongRunCompletion: { } awaitRunCompletion })
         {
-            return awaitRun;
+            return awaitRunCompletion;
         }
 
         // Otherwise, use the value specified at initialization
-        return _awaitRun ?? true;
+        return _awaitRunCompletion ?? true;
     }
 
     /// <summary>Converts a <see cref="ResponseStatus"/> to a <see cref="NewResponseStatus"/>.</summary>

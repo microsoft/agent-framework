@@ -19,14 +19,14 @@ public sealed class NewPersistentAgentsChatClientTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithBackgroundModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRun)
+    public async Task GetResponseAsync_WithAwaitModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = awaitRun
+            AwaitLongRunCompletion = awaitRunCompletion
         };
 
         // Act
@@ -35,7 +35,7 @@ public sealed class NewPersistentAgentsChatClientTests
         // Assert
         Assert.NotNull(response);
 
-        if (awaitRun)
+        if (awaitRunCompletion)
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
@@ -50,10 +50,10 @@ public sealed class NewPersistentAgentsChatClientTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithBackgroundModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRun)
+    public async Task GetResponseAsync_WithAwaitModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
     {
         // Arrange
-        using var client = await CreateChatClientAsync(awaitRun: awaitRun);
+        using var client = await CreateChatClientAsync(awaitRun: awaitRunCompletion);
 
         // Act
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?");
@@ -61,7 +61,7 @@ public sealed class NewPersistentAgentsChatClientTests
         // Assert
         Assert.NotNull(response);
 
-        if (awaitRun)
+        if (awaitRunCompletion)
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
@@ -81,7 +81,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false
+            AwaitLongRunCompletion = false
         };
 
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?", options);
@@ -98,7 +98,7 @@ public sealed class NewPersistentAgentsChatClientTests
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
-            options.PreviousResponseId = response.ResponseId!;
+            options.ResponseId = response.ResponseId!;
 
             response = (NewChatResponse)await client.GetResponseAsync([], options);
 
@@ -121,7 +121,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false
+            AwaitLongRunCompletion = false
         };
 
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?", options);
@@ -132,8 +132,8 @@ public sealed class NewPersistentAgentsChatClientTests
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
-        options.PreviousResponseId = response.ResponseId;
-        options.AwaitRunResult = true;
+        options.ResponseId = response.ResponseId;
+        options.AwaitLongRunCompletion = true;
 
         response = (NewChatResponse)await client.GetResponseAsync([], options);
 
@@ -145,14 +145,14 @@ public sealed class NewPersistentAgentsChatClientTests
     }
 
     [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_AndBackgroundModeDisabled_CallsFunctionAsync()
+    public async Task GetResponseAsync_WithFunctionCalling_AndAwaitModeEnabled_CallsFunctionAsync()
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = true,
+            AwaitLongRunCompletion = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -171,7 +171,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false,
+            AwaitLongRunCompletion = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -189,7 +189,7 @@ public sealed class NewPersistentAgentsChatClientTests
             ++attempts < 5)
         {
             options.ConversationId = response.ConversationId;
-            options.PreviousResponseId = response.ResponseId!;
+            options.ResponseId = response.ResponseId!;
 
             response = (NewChatResponse)await client.GetResponseAsync([], options);
 
@@ -201,14 +201,14 @@ public sealed class NewPersistentAgentsChatClientTests
     }
 
     [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
+    public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_CanPollItselfAsync()
     {
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false,
+            AwaitLongRunCompletion = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -220,8 +220,8 @@ public sealed class NewPersistentAgentsChatClientTests
 
         // Part 2: Wait for completion.
         options.ConversationId = response.ConversationId;
-        options.PreviousResponseId = response.ResponseId;
-        options.AwaitRunResult = true;
+        options.ResponseId = response.ResponseId;
+        options.AwaitLongRunCompletion = true;
 
         response = (NewChatResponse)await client.GetResponseAsync([], options);
 
@@ -240,7 +240,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false,
+            AwaitLongRunCompletion = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -265,7 +265,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false
+            AwaitLongRunCompletion = false
         };
 
         ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
@@ -286,7 +286,7 @@ public sealed class NewPersistentAgentsChatClientTests
             name: "LongRunningExecutionAgent",
             instructions: "You are a helpful assistant.");
 
-        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun);
+        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRunCompletion: awaitRun);
 
         var functionInvokingChatClient = new NewFunctionInvokingChatClient(persistentChatClient);
 

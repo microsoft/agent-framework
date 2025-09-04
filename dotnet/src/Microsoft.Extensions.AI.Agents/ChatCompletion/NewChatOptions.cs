@@ -17,9 +17,9 @@ namespace Microsoft.Extensions.AI;
 public class NewChatOptions : ChatOptions
 {
     /// <summary>
-    /// Specifies whether the chat client should await the long-running execution result.
+    /// Specifies whether the chat client should await the long-running operation completion.
     /// </summary>
-    public bool? AwaitRunResult { get; set; }
+    public bool? AwaitLongRunCompletion { get; set; }
 
     /// <summary>
     /// Specifies the identifier of an update within a conversation to start generating chat responses after.
@@ -27,9 +27,10 @@ public class NewChatOptions : ChatOptions
     public string? StartAfter { get; set; }
 
     /// <summary>
-    /// Specifies identifier of the previous response in a conversation.
+    /// Specifies identifier of either a long-running operation or an identifier
+    /// of an entity representing a long-running operation.
     /// </summary>
-    public string? PreviousResponseId { get; set; }
+    public string? ResponseId { get; set; }
 
     /// <inheritdoc/>
     public override ChatOptions Clone()
@@ -64,9 +65,9 @@ public class NewChatOptions : ChatOptions
         }
 
         // The following properties are specific to NewChatOptions
-        options.AwaitRunResult = this.AwaitRunResult;
+        options.AwaitLongRunCompletion = this.AwaitLongRunCompletion;
         options.StartAfter = this.StartAfter;
-        options.PreviousResponseId = this.PreviousResponseId;
+        options.ResponseId = this.ResponseId;
 
         return options;
     }

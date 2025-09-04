@@ -38,12 +38,12 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRun)
+    public async Task GetStreamingResponseAsync_WithAwaitModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AwaitRunResult = awaitRun
+            AwaitLongRunCompletion = awaitRunCompletion
         };
 
         List<NewResponseStatus> statuses = [];
@@ -61,7 +61,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
 
         // Assert
-        if (awaitRun)
+        if (awaitRunCompletion)
         {
             Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
@@ -78,11 +78,11 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRun)
+    public async Task GetStreamingResponseAsync_WithAwaitModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
     {
         // Arrange
         using IChatClient client = this._openAIResponseClient
-            .AsNewIChatClient(awaitRun: awaitRun)
+            .AsNewIChatClient(awaitRunCompletion: awaitRunCompletion)
             .AsBuilder()
             .UseFunctionInvocation()
             .Build();
@@ -102,7 +102,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
 
         // Assert
-        if (awaitRun)
+        if (awaitRunCompletion)
         {
             Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
@@ -119,12 +119,12 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
+    public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueWithAwaiting)
     {
         // Part 1: Start the background run and get the first part of the response.
         NewChatOptions options = new()
         {
-            AwaitRunResult = false
+            AwaitLongRunCompletion = false
         };
 
         List<NewResponseStatus> statuses = [];
@@ -156,9 +156,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.AwaitRunResult = !continueInBackground;
+        options.AwaitLongRunCompletion = continueWithAwaiting;
         options.ConversationId = conversationId;
-        options.PreviousResponseId = responseId;
+        options.ResponseId = responseId;
         options.StartAfter = sequenceNumber;
         statuses.Clear();
 
@@ -180,12 +180,12 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     }
 
     [Fact]
-    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndBackgroundModeDisabled_CallsFunctionAsync()
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndAwaitModeEnabled_CallsFunctionAsync()
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AwaitRunResult = true,
+            AwaitLongRunCompletion = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -212,12 +212,12 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueWithAwaiting)
     {
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AwaitRunResult = false,
+            AwaitLongRunCompletion = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -250,9 +250,9 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.AwaitRunResult = !continueInBackground;
+        options.AwaitLongRunCompletion = continueWithAwaiting;
         options.ConversationId = conversationId;
-        options.PreviousResponseId = responseId;
+        options.ResponseId = responseId;
         options.StartAfter = sequenceNumber;
         statuses.Clear();
 
@@ -329,7 +329,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Arrange
         NewChatOptions options = new()
         {
-            AwaitRunResult = false
+            AwaitLongRunCompletion = false
         };
 
         ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
@@ -354,7 +354,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Arrange
         NewChatOptions options = new()
         {
-            AwaitRunResult = false
+            AwaitLongRunCompletion = false
         };
 
         ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;

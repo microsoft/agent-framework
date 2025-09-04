@@ -20,13 +20,15 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRun)
+    public async Task GetStreamingResponseAsync_WithAwaitModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
-        NewChatOptions options = new();
-        options.AwaitRunResult = awaitRun;
+        NewChatOptions options = new()
+        {
+            AwaitLongRunCompletion = awaitRunCompletion
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -43,7 +45,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         }
 
         // Assert
-        if (awaitRun)
+        if (awaitRunCompletion)
         {
             Assert.Contains(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
@@ -60,10 +62,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRun)
+    public async Task GetStreamingResponseAsync_WithAwaitModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
     {
         // Arrange
-        using var client = await CreateChatClientAsync(awaitRun);
+        using var client = await CreateChatClientAsync(awaitRunCompletion);
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -80,7 +82,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         }
 
         // Assert
-        if (awaitRun)
+        if (awaitRunCompletion)
         {
             Assert.Contains(NewResponseStatus.Queued, statuses);
             Assert.Contains(NewResponseStatus.InProgress, statuses);
@@ -97,14 +99,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
+    public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueWithAwaiting)
     {
         // Part 1: Start the background run and get the first part of the response.
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false
+            AwaitLongRunCompletion = false
         };
 
         List<NewResponseStatus> statuses = [];
@@ -133,9 +135,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.AwaitRunResult = !continueInBackground;
+        options.AwaitLongRunCompletion = continueWithAwaiting;
         options.ConversationId = conversationId;
-        options.PreviousResponseId = responseId;
+        options.ResponseId = responseId;
         statuses.Clear();
 
         await foreach (var update in client.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
@@ -154,14 +156,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     }
 
     [Fact]
-    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndBackgroundModeDisabled_CallsFunctionAsync()
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndAwaitModeEnabled_CallsFunctionAsync()
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = true,
+            AwaitLongRunCompletion = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -189,13 +191,13 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueInBackground)
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueWithAwaiting)
     {
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new();
-        options.AwaitRunResult = false;
+        options.AwaitLongRunCompletion = false;
         options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
         List<NewResponseStatus> statuses = [];
@@ -224,9 +226,9 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.AwaitRunResult = !continueInBackground;
+        options.AwaitLongRunCompletion = continueWithAwaiting;
         options.ConversationId = conversationId;
-        options.PreviousResponseId = responseId;
+        options.ResponseId = responseId;
         statuses.Clear();
 
         await foreach (var update in client.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
@@ -307,7 +309,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AwaitRunResult = false,
+            AwaitLongRunCompletion = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -350,7 +352,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             name: "LongRunningExecutionAgent",
             instructions: "You are a helpful assistant.");
 
-        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRun: awaitRun);
+        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRunCompletion: awaitRun);
 
         var functionInvokingChatClient = new NewFunctionInvokingChatClient(persistentChatClient);
 
