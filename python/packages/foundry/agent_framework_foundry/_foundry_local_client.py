@@ -30,7 +30,7 @@ class FoundryLocalSettings(AFBaseSettings):
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """
 
-    env_prefix: ClassVar[str] = "FOUNDRY_"
+    env_prefix: ClassVar[str] = "FOUNDRY_LOCAL_"
 
     model_id: str | None = None
 
@@ -57,10 +57,10 @@ class FoundryLocalChatClient(OpenAIChatClientBase):
                 )
             ai_model_id = settings.model_id
         foundry_local = FoundryLocalManager(alias_or_model_id=ai_model_id, bootstrap=bootstrap, timeout=timeout)
-        async_client = AsyncOpenAI(base_url=foundry_local.endpoint, api_key=foundry_local.api_key)
         model_info = foundry_local.get_model_info(ai_model_id)
         if not model_info:
             raise ServiceInitializationError(f"Model with ID or alias '{ai_model_id}' not found in Foundry Local.")
+        async_client = AsyncOpenAI(base_url=foundry_local.endpoint, api_key=foundry_local.api_key)
         args: dict[str, Any] = {
             "ai_model_id": model_info.id,
             "foundry_local_manager": foundry_local,
