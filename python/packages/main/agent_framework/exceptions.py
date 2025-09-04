@@ -100,7 +100,7 @@ class ToolExecutionException(ToolException):
 class AdditionItemMismatch(AgentFrameworkException):
     """An error occurred while adding two types."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Create an AdditionItemMismatch.
 
         Unlike the AgentFrameworkException, this does not log the message automatically,
