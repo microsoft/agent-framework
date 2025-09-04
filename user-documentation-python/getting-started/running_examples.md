@@ -49,6 +49,11 @@ If you clone the repository and run samples with `python sample.py` terminal com
 
 If you copy and paste code samples into your own local project setup:
 
-1. Set up environment variables based on your local project configuration (e.g., `.env` file in your project root, system environment variables, or your preferred configuration method).
+1. Install the required dependencies in your local environment:
+   ```bash
+   pip install agent-framework
+   ```
 
-2. Make sure the environment variables are accessible from where your Python script runs.
+2. Set up environment variables based on your local project configuration (e.g., `.env` file in your project root, system environment variables, or your preferred configuration method).
+
+3. Make sure the environment variables are accessible from where your Python script runs.
