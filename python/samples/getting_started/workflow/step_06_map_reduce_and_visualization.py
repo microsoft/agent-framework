@@ -314,7 +314,7 @@ async def main():
 
     # Step 4: Run the workflow with the raw text as input.
     completion_event = None
-    async for event in workflow.run_streaming(raw_text):
+    async for event in workflow.run_stream(raw_text):
         print(f"Event: {event}")
         if isinstance(event, WorkflowCompletedEvent):
             completion_event = event
