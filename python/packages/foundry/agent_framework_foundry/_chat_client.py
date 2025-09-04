@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import os
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
@@ -19,6 +20,9 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    HostedFileSearchTool,
+    HostedVectorStoreContent,
+    HostedWebSearchTool,
     Role,
     TextContent,
     UriContent,
@@ -36,7 +40,12 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     AsyncAgentEventHandler,
     AsyncAgentRunStream,
+    AzureAISearchQueryType,
+    AzureAISearchTool,
+    BingCustomSearchTool,
+    BingGroundingTool,
     CodeInterpreterToolDefinition,
+    FileSearchTool,
     FunctionName,
     FunctionToolOutput,
     ListSortOrder,
@@ -55,10 +64,13 @@ from azure.ai.agents.models import (
     SubmitToolOutputsAction,
     ThreadMessageOptions,
     ThreadRun,
+    ToolDefinition,
     ToolOutput,
 )
 from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
+from azure.core.exceptions import HttpResponseError
 from pydantic import Field, PrivateAttr, ValidationError
 
 if sys.version_info >= (3, 11):
@@ -255,7 +267,7 @@ class FoundryChatClient(BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # Extract necessary state from messages and options
-        run_options, tool_results = self._create_run_options(messages, chat_options, **kwargs)
+        run_options, tool_results = await self._create_run_options(messages, chat_options, **kwargs)
 
         # Get the thread ID
         thread_id: str | None = (
@@ -507,7 +519,7 @@ class FoundryChatClient(BaseChatClient):
             self.agent_id = None
             self._should_delete_agent = False
 
-    def _create_run_options(
+    async def _create_run_options(
         self,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions | None,
@@ -523,18 +535,10 @@ class FoundryChatClient(BaseChatClient):
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
             if chat_options.tool_choice is not None:
-                tool_definitions: list[MutableMapping[str, Any]] = []
-                if chat_options.tool_choice != "none" and chat_options.tools is not None:
-                    for tool in chat_options.tools:
-                        if isinstance(tool, AIFunction):
-                            tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                        elif isinstance(tool, HostedCodeInterpreterTool):
-                            tool_definitions.append(CodeInterpreterToolDefinition())
-                        elif isinstance(tool, MutableMapping):
-                            tool_definitions.append(tool)
-
-                if len(tool_definitions) > 0:
-                    run_options["tools"] = tool_definitions
+                if chat_options.tool_choice != "none" and chat_options.tools:
+                    tool_definitions = await self._prep_tools(chat_options.tools)
+                    if tool_definitions:
+                        run_options["tools"] = tool_definitions
 
                 if chat_options.tool_choice == "none":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
@@ -604,6 +608,108 @@ class FoundryChatClient(BaseChatClient):
             run_options["instructions"] = "".join(instructions)
 
         return run_options, tool_results
+
+    async def _prep_tools(
+        self, tools: list[AITool | MutableMapping[str, Any]]
+    ) -> list[ToolDefinition | dict[str, Any]]:
+        """Prepare tool definitions for the run options."""
+        tool_definitions: list[ToolDefinition | dict[str, Any]] = []
+        for tool in tools:
+            match tool:
+                case AIFunction():
+                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+                case HostedWebSearchTool():
+                    additional_props = tool.additional_properties or {}
+                    # Bing Grounding
+                    connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
+                    # Custom Bing Search
+                    custom_connection_name = additional_props.get("custom_connection_name") or os.getenv(
+                        "BING_CUSTOM_CONNECTION_NAME"
+                    )
+                    custom_configuration_name = additional_props.get("custom_instance_name") or os.getenv(
+                        "BING_CUSTOM_INSTANCE_NAME"
+                    )
+                    bing_search: BingGroundingTool | BingCustomSearchTool | None = None
+                    if connection_id and not custom_connection_name and not custom_configuration_name:
+                        bing_search = BingGroundingTool(connection_id=connection_id)
+                    if custom_connection_name and custom_configuration_name:
+                        try:
+                            bing_custom_connection = await self.client.connections.get(name=custom_connection_name)
+                        except HttpResponseError as err:
+                            raise ServiceInitializationError(
+                                f"Bing custom connection '{custom_connection_name}' not found in Foundry.", err
+                            ) from err
+                        else:
+                            bing_search = BingCustomSearchTool(
+                                connection_id=bing_custom_connection.id,
+                                instance_name=custom_configuration_name,
+                            )
+                    if not bing_search:
+                        raise ServiceInitializationError(
+                            "Bing search tool requires either a 'connection_id' for Bing Grounding "
+                            "or both 'custom_connection_name' and 'custom_instance_name' for Custom Bing Search. "
+                            "These can be provided via the tool's additional_properties or environment variables: "
+                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_NAME', 'BING_CUSTOM_INSTANCE_NAME'"
+                        )
+
+                    config_args: dict[str, Any] = {}
+                    if count := additional_props.get("count"):
+                        config_args["count"] = count
+                    if freshness := additional_props.get("freshness"):
+                        config_args["freshness"] = freshness
+                    if market := additional_props.get("market"):
+                        config_args["market"] = market
+                    if set_lang := additional_props.get("set_lang"):
+                        config_args["set_lang"] = set_lang
+                    bing_search._search_configurations.update(config_args)  # type: ignore[reportPrivateUsage]
+                    tool_definitions.extend(bing_search.definitions)
+                case HostedCodeInterpreterTool():
+                    tool_definitions.append(CodeInterpreterToolDefinition())
+                case HostedFileSearchTool():
+                    vector_stores = [inp for inp in tool.inputs or [] if isinstance(inp, HostedVectorStoreContent)]
+                    if vector_stores:
+                        file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
+                        tool_definitions.extend(file_search.definitions)
+                    else:
+                        additional_props = tool.additional_properties or {}
+                        index_name = additional_props.get("index_name") or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
+                        if not index_name:
+                            raise ServiceInitializationError(
+                                "File search tool requires at least one vector store input, for file search in Foundry "
+                                "or an 'index_name' to use Azure AI Search, "
+                                "in additional_properties or environment variable 'AZURE_AI_SEARCH_INDEX_NAME'."
+                            )
+                        try:
+                            azs_conn_id = await self.client.connections.get_default(ConnectionType.AZURE_AI_SEARCH)
+                        except HttpResponseError as err:
+                            raise ServiceInitializationError(
+                                "No default Azure AI Search connection found in Foundry. "
+                                "Please create one or provide vector store inputs for the file search tool.",
+                                err,
+                            ) from err
+                        else:
+                            if query_type := additional_props.get("query_type"):
+                                if query_type not in AzureAISearchQueryType._value2member_map_:
+                                    raise ServiceInitializationError(
+                                        f"Invalid query_type '{query_type}' for Azure AI Search. "
+                                        f"Valid values are: {[qt.value for qt in AzureAISearchQueryType]}"
+                                    )
+                                query_type_enum = AzureAISearchQueryType(query_type)
+                            else:
+                                query_type_enum = AzureAISearchQueryType.SIMPLE
+                            ai_search = AzureAISearchTool(
+                                index_connection_id=azs_conn_id.id,
+                                index_name=index_name,
+                                query_type=query_type_enum,
+                                top_k=additional_props.get("top_k", 3),
+                                filter=additional_props.get("filter", ""),
+                            )
+                            tool_definitions.extend(ai_search.definitions)
+                case dict():
+                    tool_definitions.append(tool)
+                case _:
+                    raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
+        return tool_definitions
 
     def _convert_function_results_to_tool_output(
         self,
