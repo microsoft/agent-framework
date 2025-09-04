@@ -5,7 +5,7 @@ import asyncio
 from agent_framework.foundry import FoundryLocalChatClient
 
 
-async def non_streaming_example() -> None:
+async def non_streaming_example(client: FoundryLocalChatClient) -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
@@ -14,7 +14,7 @@ async def non_streaming_example() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
 
-    agent = FoundryLocalChatClient(ai_model_id="phi-4-mini-reasoning").create_agent(
+    agent = client.create_agent(
         name="LocalAgent",
         instructions="You are a helpful agent.",
     )
@@ -24,7 +24,7 @@ async def non_streaming_example() -> None:
     print(f"Agent: {result}\n")
 
 
-async def streaming_example() -> None:
+async def streaming_example(client: FoundryLocalChatClient) -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
@@ -32,7 +32,7 @@ async def streaming_example() -> None:
     # and deleted after getting a response
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = FoundryLocalChatClient(ai_model_id="phi-4-mini-reasoning").create_agent(
+    agent = client.create_agent(
         name="LocalAgent",
         instructions="You are a helpful agent.",
     )
@@ -48,8 +48,16 @@ async def streaming_example() -> None:
 async def main() -> None:
     print("=== Basic Foundry Chat Client Agent Example ===")
 
-    await non_streaming_example()
-    await streaming_example()
+    client = FoundryLocalChatClient(ai_model_id="phi-4-mini-reasoning")
+    print(f"Client Model ID: {client.ai_model_id}\n")
+    print("Other available models:")
+    for model in client.manager.list_catalog_models():
+        print(
+            f"- {model.alias} for {model.task} - id={model.id} - {(model.file_size_mb / 1000):.2f} GB - {model.license}"
+        )
+
+    await non_streaming_example(client)
+    await streaming_example(client)
 
 
 if __name__ == "__main__":

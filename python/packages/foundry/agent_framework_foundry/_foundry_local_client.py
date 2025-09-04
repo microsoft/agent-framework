@@ -39,7 +39,7 @@ class FoundryLocalSettings(AFBaseSettings):
 class FoundryLocalChatClient(OpenAIChatClientBase):
     """Foundry Local Chat completion class."""
 
-    foundry_local_manager: FoundryLocalManager
+    _foundry_local_manager: FoundryLocalManager | None = None  # type: ignore[no-any-unimported]
 
     def __init__(
         self,
@@ -63,7 +63,17 @@ class FoundryLocalChatClient(OpenAIChatClientBase):
         async_client = AsyncOpenAI(base_url=foundry_local.endpoint, api_key=foundry_local.api_key)
         args: dict[str, Any] = {
             "ai_model_id": model_info.id,
-            "foundry_local_manager": foundry_local,
             "client": async_client,
         }
         super().__init__(**args)
+        self._foundry_local_manager = foundry_local
+
+    @property
+    def manager(self) -> FoundryLocalManager:  # type: ignore[no-any-unimported]
+        """Get the FoundryLocalManager instance.
+
+        Use this property to access the FoundryLocalManager for advanced operations, such as model and cache management.
+        """
+        if not self._foundry_local_manager:
+            raise ServiceInitializationError("FoundryLocalManager is not initialized.")
+        return self._foundry_local_manager
