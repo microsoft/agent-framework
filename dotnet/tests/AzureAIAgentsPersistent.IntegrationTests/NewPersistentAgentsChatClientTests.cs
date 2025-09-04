@@ -249,7 +249,7 @@ public sealed class NewPersistentAgentsChatClientTests
         NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What time is it?", options);
 
         // Act
-        NewChatResponse? cancelResponse = (NewChatResponse?)await runnableChatClient.CancelRunAsync(response.RunId!);
+        NewChatResponse? cancelResponse = (NewChatResponse?)await runnableChatClient.CancelRunAsync(RunId.FromChatResponse(response));
 
         // Assert
         Assert.NotNull(cancelResponse);
@@ -271,7 +271,7 @@ public sealed class NewPersistentAgentsChatClientTests
         INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 
         // Act
-        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync("any-id");  // Deletion of runs is not supported
+        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(new RunId());  // Deletion of runs is not supported
 
         // Assert
         Assert.Null(deleteResponse);

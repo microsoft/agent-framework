@@ -17,9 +17,4 @@ public class NewChatResponse : ChatResponse
     /// Specifies the status of the response.
     /// </summary>
     public NewResponseStatus? Status { get; set; }
-
-    /// <summary>
-    /// Specifies the unique identifier of long-running operation.
-    /// </summary>
-    public string? RunId { get; set; }
 }

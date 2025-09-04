@@ -39,9 +39,4 @@ public class NewChatResponseUpdate : ChatResponseUpdate
     /// Specifies the sequence number of an update within a conversation.
     /// </summary>
     public string? SequenceNumber { get; set; }
-
-    /// <summary>
-    /// Specifies the unique identifier of long-running operation.
-    /// </summary>
-    public string? RunId { get; set; }
 }

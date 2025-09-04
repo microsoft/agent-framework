@@ -124,22 +124,32 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
     }
 
     /// <inheritdoc />
-    public async Task<ChatResponse?> CancelRunAsync(string runId, CancellationToken cancellationToken = default)
+    public async Task<ChatResponse?> CancelRunAsync(RunId runId, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNullOrEmpty(runId);
+        _ = Throw.IfNull(runId);
 
-        var openAIResponse = await _responseClient.CancelResponseAsync(runId, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(runId.ResponseId))
+        {
+            throw new ArgumentException("RunId.ResponseId cannot be null or empty.", nameof(runId));
+        }
+
+        var openAIResponse = await _responseClient.CancelResponseAsync(runId.ResponseId, cancellationToken).ConfigureAwait(false);
 
         // Convert the response to a ChatResponse.
         return FromOpenAIResponse(openAIResponse, openAIOptions: null);
     }
 
     /// <inheritdoc />
-    public async Task<ChatResponse?> DeleteRunAsync(string runId, CancellationToken cancellationToken = default)
+    public async Task<ChatResponse?> DeleteRunAsync(RunId runId, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNullOrEmpty(runId);
+        _ = Throw.IfNull(runId);
 
-        var openAIResponse = (await _responseClient.DeleteResponseAsync(runId, cancellationToken).ConfigureAwait(false)).Value;
+        if (string.IsNullOrEmpty(runId.ResponseId))
+        {
+            throw new ArgumentException("RunId.ResponseId cannot be null or empty.", nameof(runId));
+        }
+
+        var openAIResponse = (await _responseClient.DeleteResponseAsync(runId.ResponseId, cancellationToken).ConfigureAwait(false)).Value;
 
         return new()
         {
@@ -188,7 +198,6 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
         }
 
         response.Status = ToResponseStatus(openAIResponse.Status);
-        response.RunId = openAIResponse.Id;
 
         return response;
     }
@@ -310,7 +319,6 @@ internal sealed class NewOpenAIResponsesChatClient : INewRunnableChatClient
                     ResponseId = responseId,
                     Status = responseStatus,
                     SequenceNumber = streamingUpdate.SequenceNumber.ToString(),
-                    RunId = responseId,
                 };
             }
 

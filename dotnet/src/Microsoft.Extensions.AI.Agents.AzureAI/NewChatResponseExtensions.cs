@@ -416,13 +416,5 @@ public static class NewChatResponseExtensions
                 newResponse.Status = status;
             }
         }
-
-        if (update is NewChatResponseUpdate { RunId: { } runId })
-        {
-            if (response is NewChatResponse newResponse)
-            {
-                newResponse.RunId = runId;
-            }
-        }
     }
 }

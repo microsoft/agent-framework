@@ -315,10 +315,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
 
-        var runId = (await streamingResponse.ElementAtAsync(0)).RunId;
+        var update = (await streamingResponse.ElementAtAsync(0));
 
         // Act
-        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(runId!);
+        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(RunId.FromChatResponseUpdate(update));
 
         // Assert
         Assert.NotNull(response);
@@ -335,7 +335,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         INewRunnableChatClient runnableChatClient = client.GetService<INewRunnableChatClient>()!;
 
         // Act
-        ChatResponse? response = await runnableChatClient.DeleteRunAsync("any-id"); // Deletion of runs is not supported
+        ChatResponse? response = await runnableChatClient.DeleteRunAsync(new RunId()); // Deletion of runs is not supported
 
         // Assert
         Assert.Null(response);

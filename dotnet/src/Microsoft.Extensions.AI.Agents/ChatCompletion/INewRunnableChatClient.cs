@@ -13,10 +13,10 @@ public interface INewRunnableChatClient : IChatClient
     /// <summary>
     /// TBD
     /// </summary>
-    Task<ChatResponse?> CancelRunAsync(string runId, CancellationToken cancellationToken = default);
+    Task<ChatResponse?> CancelRunAsync(RunId runId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// TBD
     /// </summary>
-    Task<ChatResponse?> DeleteRunAsync(string runId, CancellationToken cancellationToken = default);
+    Task<ChatResponse?> DeleteRunAsync(RunId runId, CancellationToken cancellationToken = default);
 }

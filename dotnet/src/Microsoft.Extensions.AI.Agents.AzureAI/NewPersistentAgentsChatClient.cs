@@ -229,7 +229,6 @@ namespace Azure.AI.Agents.Persistent
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
                             Status = ToResponseStatus(runStatus),
-                            RunId = $"{responseId}:{threadId}"
                         };
 
                         if (ru.Value.Usage is { } usage)
@@ -274,7 +273,6 @@ namespace Azure.AI.Agents.Persistent
                             RawRepresentation = mcu,
                             ResponseId = responseId,
                             Status = ToResponseStatus(runStatus),
-                            RunId = $"{responseId}:{threadId}"
                         };
 
                         // Add any annotations from the text update. The OpenAI Assistants API does not support passing these back
@@ -328,7 +326,6 @@ namespace Azure.AI.Agents.Persistent
                             Role = ChatRole.Assistant,
                             Status = ToResponseStatus(runStatus),
                             SequenceNumber = stepId,
-                            RunId = $"{responseId}:{threadId}"
                         };
 
                         yield return updateToReturn;
@@ -831,7 +828,6 @@ namespace Azure.AI.Agents.Persistent
                 Role = message?.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant,
                 Status = ToResponseStatus(run.Status),
                 SequenceNumber = step?.Id,
-                RunId = $"{run.Id}:{run.ThreadId}"
             };
 
             if (run.Usage is { } usage)
@@ -885,21 +881,25 @@ namespace Azure.AI.Agents.Persistent
             }
         }
 
-        public async Task<ChatResponse?> CancelRunAsync(string runId, CancellationToken cancellationToken = default)
+        public async Task<ChatResponse?> CancelRunAsync(RunId runId, CancellationToken cancellationToken = default)
         {
-            _ = Throw.IfNullOrEmpty(runId);
+            _ = Throw.IfNull(runId);
 
-            string[] parts = runId.Split(':');
-            if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+            if (string.IsNullOrWhiteSpace(runId.ResponseId))
             {
-                throw new ArgumentException("Invalid run ID format. Expected format is '<runId>:<threadId>'.", nameof(runId));
+                throw new ArgumentException("RunId.ResponseId cannot be null or empty.", nameof(runId));
+            }
+
+            if (string.IsNullOrWhiteSpace(runId.ConversationId))
+            {
+                throw new ArgumentException("RunId.ConversationId cannot be null or empty.", nameof(runId));
             }
 
             ThreadRun run;
 
             try
             {
-                run = await _client!.Runs.CancelRunAsync(threadId: parts[1], runId: parts[0], cancellationToken).ConfigureAwait(false);
+                run = await _client!.Runs.CancelRunAsync(threadId: runId.ConversationId, runId: runId.ResponseId, cancellationToken).ConfigureAwait(false);
             }
             // Swallow the exception if the run is already completed. Original message: "Cannot cancel run with status 'completed'"
             catch (RequestFailedException ex) when (ex.Status == 400 && ex.Message.Contains("completed"))
@@ -915,7 +915,7 @@ namespace Azure.AI.Agents.Persistent
             return new[] { CreateChatResponseUpdate(run) }.NewToChatResponse();
         }
 
-        public Task<ChatResponse?> DeleteRunAsync(string runId, CancellationToken cancellationToken = default)
+        public Task<ChatResponse?> DeleteRunAsync(RunId runId, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<ChatResponse?>(null);
         }
