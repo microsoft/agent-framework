@@ -620,6 +620,15 @@ class FoundryChatClient(BaseChatClient):
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                 case HostedWebSearchTool():
                     additional_props = tool.additional_properties or {}
+                    config_args: dict[str, Any] = {}
+                    if count := additional_props.get("count"):
+                        config_args["count"] = count
+                    if freshness := additional_props.get("freshness"):
+                        config_args["freshness"] = freshness
+                    if market := additional_props.get("market"):
+                        config_args["market"] = market
+                    if set_lang := additional_props.get("set_lang"):
+                        config_args["set_lang"] = set_lang
                     # Bing Grounding
                     connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
                     # Custom Bing Search
@@ -631,7 +640,7 @@ class FoundryChatClient(BaseChatClient):
                     )
                     bing_search: BingGroundingTool | BingCustomSearchTool | None = None
                     if connection_id and not custom_connection_name and not custom_configuration_name:
-                        bing_search = BingGroundingTool(connection_id=connection_id)
+                        bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
                     if custom_connection_name and custom_configuration_name:
                         try:
                             bing_custom_connection = await self.client.connections.get(name=custom_connection_name)
@@ -643,6 +652,7 @@ class FoundryChatClient(BaseChatClient):
                             bing_search = BingCustomSearchTool(
                                 connection_id=bing_custom_connection.id,
                                 instance_name=custom_configuration_name,
+                                **config_args,
                             )
                     if not bing_search:
                         raise ServiceInitializationError(
@@ -651,17 +661,6 @@ class FoundryChatClient(BaseChatClient):
                             "These can be provided via the tool's additional_properties or environment variables: "
                             "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_NAME', 'BING_CUSTOM_INSTANCE_NAME'"
                         )
-
-                    config_args: dict[str, Any] = {}
-                    if count := additional_props.get("count"):
-                        config_args["count"] = count
-                    if freshness := additional_props.get("freshness"):
-                        config_args["freshness"] = freshness
-                    if market := additional_props.get("market"):
-                        config_args["market"] = market
-                    if set_lang := additional_props.get("set_lang"):
-                        config_args["set_lang"] = set_lang
-                    bing_search._search_configurations.update(config_args)  # type: ignore[reportPrivateUsage]
                     tool_definitions.extend(bing_search.definitions)
                 case HostedCodeInterpreterTool():
                     tool_definitions.append(CodeInterpreterToolDefinition())
@@ -688,15 +687,16 @@ class FoundryChatClient(BaseChatClient):
                                 err,
                             ) from err
                         else:
+                            query_type_enum = AzureAISearchQueryType.SIMPLE
                             if query_type := additional_props.get("query_type"):
-                                if query_type not in AzureAISearchQueryType._value2member_map_:
+                                try:
+                                    query_type_enum = AzureAISearchQueryType(query_type)
+                                except ValueError as ex:
                                     raise ServiceInitializationError(
                                         f"Invalid query_type '{query_type}' for Azure AI Search. "
-                                        f"Valid values are: {[qt.value for qt in AzureAISearchQueryType]}"
-                                    )
-                                query_type_enum = AzureAISearchQueryType(query_type)
-                            else:
-                                query_type_enum = AzureAISearchQueryType.SIMPLE
+                                        f"Valid values are: {[qt.value for qt in AzureAISearchQueryType]}",
+                                        ex,
+                                    ) from ex
                             ai_search = AzureAISearchTool(
                                 index_connection_id=azs_conn_id.id,
                                 index_name=index_name,
