@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from mcp import types
 from mcp.client.session import ClientSession
-from mcp.shared.exceptions import MCPError
+from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl, ValidationError
 
 from agent_framework import (
@@ -430,7 +430,7 @@ async def test_local_mcp_server_function_execution_error():
             )
             # Mock a tool call that raises an MCP error
             self.session.call_tool = AsyncMock(
-                side_effect=MCPError(types.ErrorData(code=-1, message="Tool execution failed"))
+                side_effect=McpError(types.ErrorData(code=-1, message="Tool execution failed"))
             )
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
