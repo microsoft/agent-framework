@@ -790,12 +790,6 @@ class WorkflowBuilder:
                     self._edge_groups, self._executors, self._start_executor, context, self._max_iterations
                 )
 
-                # NOTE: We intentionally do NOT mutate executors here to mark sinks.
-                # Agent executors now rely on a simple, reliable rule: if their response
-                # cannot be delivered to any downstream executor (no edges or no compatible
-                # handler), they emit a WorkflowCompletedEvent. This yields the same user
-                # ergonomics without hidden post-build mutation.
-
                 # Set workflow attributes on the span
                 workflow_tracer.set_workflow_build_span_attributes(workflow)
 
