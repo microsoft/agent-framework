@@ -684,12 +684,10 @@ class ChatClientAgent(AgentBase):
 
             self.chat_client = OpenTelemetryChatClient(
                 self.chat_client,
-                enable_sensitive_data=enable_sensitive_data,
             )
 
         return OpenTelemetryAgent(
             self,
-            enable_sensitive_data=enable_sensitive_data,
             agent_system_name=agent_system_name,
         )
 

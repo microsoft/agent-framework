@@ -19,6 +19,7 @@ from ._pydantic import AFBaseSettings
 from .exceptions import AgentException, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
     from ._agents import AIAgent, ChatClientAgent
@@ -207,8 +208,52 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, 
 # region Telemetry utils
 
 
-class ModelDiagnosticSettings(AFBaseSettings):
-    """Settings for model diagnostics.
+def _configure_otlp_exporter(endpoint: str, resource: "Resource") -> None:
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.metrics import set_meter_provider
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.metrics.view import DropAggregation, View
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.trace import set_tracer_provider
+
+    # Logging
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter(endpoint=endpoint)))
+    set_logger_provider(logger_provider)
+    handler = LoggingHandler()
+    logger = logging.getLogger()
+    logger.addHandler(handler)
+    logger.setLevel(logging.NOTSET)
+
+    # Tracing
+    tracer_provider = TracerProvider(resource=resource)
+    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+    set_tracer_provider(tracer_provider)
+
+    # metrics
+    metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=endpoint), export_interval_millis=5000)
+    meter_provider = MeterProvider(
+        metric_readers=[metric_reader],
+        resource=resource,
+        views=[
+            # Dropping all instrument names except for those starting with "agent_framework"
+            View(instrument_name="*", aggregation=DropAggregation()),
+            View(instrument_name="agent_framework*"),
+        ],
+    )
+    # Sets the global default meter provider
+    set_meter_provider(meter_provider)
+
+
+class OtelSettings(AFBaseSettings):
+    """Settings for Open Telemetry.
 
     The settings are first loaded from environment variables with
     the prefix 'AGENT_FRAMEWORK_GENAI_'.
@@ -221,17 +266,24 @@ class ModelDiagnosticSettings(AFBaseSettings):
     Warning:
         Sensitive events should only be enabled on test and development environments.
 
-    Required settings for prefix 'AGENT_FRAMEWORK_GENAI_' are:
-    - enable_otel: bool - Enable OpenTelemetry diagnostics. Default is False.
-                (Env var AGENT_FRAMEWORK_GENAI_ENABLE_OTEL)
-    - enable_sensitive_data: bool - Enable OpenTelemetry sensitive events. Default is False.
-                (Env var AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA)
+    Args:
+        enable_otel: bool - Enable OpenTelemetry diagnostics. Default is False.
+                    (Env var AGENT_FRAMEWORK_ENABLE_OTEL)
+        enable_sensitive_data: bool - Enable OpenTelemetry sensitive events. Default is False.
+                    (Env var AGENT_FRAMEWORK_ENABLE_SENSITIVE_DATA)
+        connection_string: str | None - The Application Insights connection string. Default is None.
+                    (Env var AGENT_FRAMEWORK_CONNECTION_STRING)
+        otlp_endpoint: str | None - The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
+                    (Env var AGENT_FRAMEWORK_OTLP_ENDPOINT)
     """
 
-    env_prefix: ClassVar[str] = "AGENT_FRAMEWORK_GENAI_"
+    env_prefix: ClassVar[str] = "AGENT_FRAMEWORK_"
 
     enable_otel: bool = False
     enable_sensitive_data: bool = False
+    connection_string: str | None = None
+    otlp_endpoint: str | None = None
+    _executed_setup: bool = False
 
     @property
     def ENABLED(self) -> bool:
@@ -249,6 +301,43 @@ class ModelDiagnosticSettings(AFBaseSettings):
         """
         return self.enable_sensitive_data
 
+    @property
+    def is_setup(self) -> bool:
+        """Check if the setup has been executed."""
+        return self._executed_setup
+
+    def setup_telemetry(self) -> None:
+        """Setup telemetry based on the settings.
+
+        If both connection_string and otlp_endpoint both will be used.
+        """
+        if not self.ENABLED or self._executed_setup:
+            return
+
+        if not self.connection_string and not self.otlp_endpoint:
+            logger.warning("Telemetry is enabled but no connection string or OTLP endpoint is provided.")
+
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.semconv.attributes import service_attributes
+
+        resource = Resource.create({service_attributes.SERVICE_NAME: "agent_framework"})
+
+        if self.connection_string:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+
+            configure_azure_monitor(
+                connection_string=self.connection_string,
+                logger_name="agent_framework",
+                resource=resource,
+            )
+        if self.otlp_endpoint:
+            _configure_otlp_exporter(self.otlp_endpoint, resource)
+
+        self._executed_setup = True
+
+
+global OTEL_SETTINGS
+OTEL_SETTINGS: OtelSettings = OtelSettings()
 
 # region OtelChatClient
 
@@ -272,8 +361,8 @@ def _trace_get_response(
         messages: "str | ChatMessage | list[str] | list[ChatMessage]",
         **kwargs: Any,
     ) -> "ChatResponse":
-        model_diagnostics = chat_client._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
-        if not model_diagnostics and not model_diagnostics.ENABLED:
+        global OTEL_SETTINGS
+        if not OTEL_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await get_response_func(
                 messages=messages,
@@ -286,7 +375,7 @@ def _trace_get_response(
             chat_client=chat_client,
             **kwargs,
         ) as span:
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(span=span, system_name=model_provider, messages=messages)
             try:
                 response = await get_response_func(messages=messages, **kwargs)
@@ -295,7 +384,7 @@ def _trace_get_response(
                 raise
             else:
                 _capture_response(span=span, response=response)
-                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
                         span=span,
                         system_name=model_provider,
@@ -326,8 +415,9 @@ def _trace_get_streaming_response(
     async def wrap_get_streaming_response(
         messages: "str | ChatMessage | list[str] | list[ChatMessage]", **kwargs: Any
     ) -> AsyncIterable["ChatResponseUpdate"]:
-        model_diagnostics = chat_client._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
-        if not model_diagnostics and not model_diagnostics.ENABLED:
+        global OTEL_SETTINGS
+
+        if not OTEL_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_chat_message_contents in get_streaming_response_func(messages=messages, **kwargs):
                 yield streaming_chat_message_contents
@@ -343,7 +433,7 @@ def _trace_get_streaming_response(
             chat_client=chat_client,
             **kwargs,
         ) as span:
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
                     system_name=model_provider,
@@ -362,7 +452,7 @@ def _trace_get_streaming_response(
                 response = ChatResponse.from_chat_response_updates(all_updates)
                 _capture_response(span=span, response=response)
 
-                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
                         span=span,
                         system_name=model_provider,
@@ -377,7 +467,6 @@ def _trace_get_streaming_response(
 def OpenTelemetryChatClient(
     chat_client: "ChatClient",
     *,
-    enable_sensitive_data: bool | None = None,
     model_provider_name: str | None = None,
 ) -> "ChatClient":
     """Class decorator that enables telemetry for a chat client.
@@ -392,10 +481,6 @@ def OpenTelemetryChatClient(
         model_provider_name: The model provider name.
             If None, uses the value from the chat client's MODEL_PROVIDER_NAME variable.
     """
-    chat_client._model_diagnostic_settings = ModelDiagnosticSettings(  # type: ignore[reportAttributeAccessIssue, attr-defined]
-        enable_otel=True,
-        enable_sensitive_data=enable_sensitive_data,  # type: ignore[reportArgumentType]
-    )
     model_provider = model_provider_name or str(getattr(chat_client, "MODEL_PROVIDER_NAME", "unknown"))
     try:
         object.__setattr__(
@@ -448,8 +533,9 @@ def _trace_agent_run(
         thread: "AgentThread | None" = None,
         **kwargs: Any,
     ) -> "AgentRunResponse":
-        model_diagnostics = agent._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
-        if not model_diagnostics.ENABLED:
+        global OTEL_SETTINGS
+
+        if not OTEL_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(
                 messages=messages,
@@ -464,7 +550,7 @@ def _trace_agent_run(
             thread=thread,
             **kwargs,
         ) as current_span:
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=current_span,
                     system_name=agent_system_name,
@@ -478,7 +564,7 @@ def _trace_agent_run(
                 raise
             else:
                 _capture_response(current_span, response)
-                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
                         span=current_span,
                         system_name=agent_system_name,
@@ -510,8 +596,9 @@ def _trace_agent_run_streaming(
         thread: "AgentThread | None" = None,
         **kwargs: Any,
     ) -> AsyncIterable["AgentRunResponseUpdate"]:
-        model_diagnostics = agent._model_diagnostic_settings  # type: ignore[reportAttributeAccessIssue, attr-defined]
-        if not model_diagnostics.ENABLED:
+        global OTEL_SETTINGS
+
+        if not OTEL_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             async for streaming_agent_response in run_streaming_func(messages=messages, thread=thread, **kwargs):
                 yield streaming_agent_response
@@ -528,7 +615,7 @@ def _trace_agent_run_streaming(
             thread=thread,
             **kwargs,
         ) as current_span:
-            if model_diagnostics.SENSITIVE_DATA_ENABLED and messages:
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=current_span,
                     system_name=agent_system_name,
@@ -545,7 +632,7 @@ def _trace_agent_run_streaming(
             else:
                 response = AgentRunResponse.from_agent_run_response_updates(all_updates)
                 _capture_response(current_span, response)
-                if model_diagnostics.SENSITIVE_DATA_ENABLED and response.messages:
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
                         span=current_span,
                         system_name=agent_system_name,
@@ -559,14 +646,9 @@ def _trace_agent_run_streaming(
 def OpenTelemetryAgent(
     agent: TAgent,
     *,
-    enable_sensitive_data: bool | None = None,
     agent_system_name: str | None = None,
 ) -> TAgent:
     """Class decorator that enables telemetry for an agent."""
-    agent._model_diagnostic_settings = ModelDiagnosticSettings(  # type: ignore[reportAttributeAccessIssue, attr-defined]
-        enable_otel=True,
-        enable_sensitive_data=enable_sensitive_data,  # type: ignore[reportArgumentType]
-    )
     agent_system_name = agent_system_name or str(getattr(agent, "AGENT_SYSTEM_NAME", "Unknown"))
     try:
         object.__setattr__(agent, "run", _trace_agent_run(agent, agent.run, agent_system_name))

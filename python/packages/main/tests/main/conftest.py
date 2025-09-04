@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework import AITool, ChatMessage, ai_function
-from agent_framework.telemetry import ModelDiagnosticSettings
+from agent_framework.telemetry import OtelSettings
 
 
 @fixture(scope="function")
@@ -44,8 +44,8 @@ def ai_function_tool() -> AITool:
 
 
 @fixture
-def model_diagnostic_settings(monkeypatch, request) -> ModelDiagnosticSettings:
-    """Fixture to set environment variables for ModelDiagnosticSettings."""
+def model_diagnostic_settings(monkeypatch, request) -> OtelSettings:
+    """Fixture to set environment variables for OtelSettings."""
     enabled = getattr(request, "param", (None, None))[0]
     sensitive = getattr(request, "param", (None, None))[1]
     if enabled is None:
@@ -56,4 +56,4 @@ def model_diagnostic_settings(monkeypatch, request) -> ModelDiagnosticSettings:
         monkeypatch.delenv("AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA", raising=False)
     else:
         monkeypatch.setenv("AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA", str(sensitive).lower())
-    return ModelDiagnosticSettings(env_file_path="test.env")
+    return OtelSettings(env_file_path="test.env")

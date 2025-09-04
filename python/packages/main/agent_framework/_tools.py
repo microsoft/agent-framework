@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, PrivateAttr, create_model
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from .exceptions import ChatClientInitializationError
-from .telemetry import ModelDiagnosticSettings, OtelAttr, _capture_exception, _start_as_current_span
+from .telemetry import OtelAttr, OtelSettings, _capture_exception, _start_as_current_span
 
 if TYPE_CHECKING:
     from ._clients import ChatClient
@@ -301,7 +301,7 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
         self,
         *,
         arguments: ArgsT | None = None,
-        model_diagnostic_settings: ModelDiagnosticSettings | None = None,
+        model_diagnostic_settings: OtelSettings | None = None,
         **kwargs: Any,
     ) -> ReturnT:
         """Run the AI function with the provided arguments as a Pydantic model.
@@ -467,7 +467,7 @@ async def _auto_invoke_function(
     tool_map: dict[str, AIFunction[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
-    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: OtelSettings | None = None,
 ) -> "AIContents":
     """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
     from ._types import FunctionResultContent
@@ -523,7 +523,7 @@ async def execute_function_calls(
     attempt_idx: int,
     function_calls: Sequence["FunctionCallContent"],
     tools: "AITool | list[AITool] | Callable[..., Any] | list[Callable[..., Any]] | MutableMapping[str, Any] | list[MutableMapping[str, Any]]",  # noqa: E501
-    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: OtelSettings | None = None,
 ) -> list["AIContents"]:
     tool_map = _get_tool_map(tools)
     # Run all function calls concurrently
@@ -543,7 +543,7 @@ async def execute_function_calls(
 def _handle_function_calls_response(
     get_response_func: Callable[..., Awaitable["ChatResponse"]],
     max_iterations: int = 10,
-    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: OtelSettings | None = None,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the get_response method to enable function calls.
 
@@ -628,7 +628,7 @@ def _handle_function_calls_response(
 def _handle_function_calls_streaming_response(
     get_streaming_response_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
     max_iterations: int = 10,
-    model_diagnostic_settings: ModelDiagnosticSettings | None = None,
+    model_diagnostic_settings: OtelSettings | None = None,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the get_streaming_response method to handle function calls.
 

@@ -511,7 +511,6 @@ class ChatClientBase(AFBaseModel, ABC):
         """
         return OpenTelemetryChatClient(
             self,
-            enable_sensitive_data=enable_sensitive_data,
             model_provider_name=model_provider_name,
         )  # type: ignore
 
@@ -604,7 +603,6 @@ class ChatClientBuilder:
         self.add_decorator(
             partial(
                 OpenTelemetryChatClient,
-                enable_sensitive_data=enable_sensitive_data,
                 model_provider_name=model_provider_name,
             )
         )

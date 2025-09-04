@@ -143,19 +143,19 @@ def test_modifies_original_dict():
     assert "User-Agent" in headers
 
 
-# region ModelDiagnosticSettings tests
+# region OtelSettings tests
 
 
 @pytest.mark.parametrize("model_diagnostic_settings", [(None, None)], indirect=True)
 def test_default_values(model_diagnostic_settings):
-    """Test default values for ModelDiagnosticSettings."""
+    """Test default values for OtelSettings."""
     assert not model_diagnostic_settings.ENABLED
     assert not model_diagnostic_settings.SENSITIVE_DATA_ENABLED
 
 
 @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
 def test_disabled(model_diagnostic_settings):
-    """Test default values for ModelDiagnosticSettings."""
+    """Test default values for OtelSettings."""
     assert not model_diagnostic_settings.ENABLED
     assert not model_diagnostic_settings.SENSITIVE_DATA_ENABLED
 

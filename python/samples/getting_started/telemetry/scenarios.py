@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from agent_framework import ChatClientBuilder, __version__, ai_function
 from agent_framework.openai import OpenAIChatClient
-from agent_framework.telemetry import ModelDiagnosticSettings
+from agent_framework.telemetry import OtelSettings
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace
 from opentelemetry._logs import set_logger_provider
@@ -251,7 +251,7 @@ async def run_ai_function() -> None:
     with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT):
         print("Running scenario: AI Function")
         func = ai_function(get_weather)
-        func.model_diagnostic_settings = ModelDiagnosticSettings(enable_otel=True, enable_sensitive_data=True)
+        func.model_diagnostic_settings = OtelSettings(enable_otel=True, enable_sensitive_data=True)
         weather = await func.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 
