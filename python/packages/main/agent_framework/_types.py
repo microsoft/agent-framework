@@ -1719,11 +1719,9 @@ class ChatOptions(AFBaseModel):
         cls,
         tools: (
             AITool
-            | list[AITool]
             | Callable[..., Any]
-            | list[Callable[..., Any]]
             | MutableMapping[str, Any]
-            | list[MutableMapping[str, Any]]
+            | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
             | None
         ),
     ) -> list[AITool | MutableMapping[str, Any]] | None:

@@ -59,6 +59,7 @@ class Executor(AFBaseModel):
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
+        self._instance_handler_specs: list[dict[str, Any]] = []
         self._discover_handlers()
 
         if not self._handlers and not self._request_interceptors:
@@ -253,6 +254,34 @@ class Executor(AFBaseModel):
             True if the executor can handle the message type, False otherwise.
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
+
+    def register_instance_handler(
+        self,
+        name: str,
+        func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]],
+        message_type: type,
+        ctx_annotation: Any,
+        output_types: list[type],
+    ) -> None:
+        """Register a handler at instance level.
+
+        Args:
+            name: Name of the handler function for error reporting
+            func: The async handler function to register
+            message_type: Type of message this handler processes
+            ctx_annotation: The WorkflowContext[T] annotation from the function
+            output_types: List of output types inferred from ctx_annotation
+        """
+        if message_type in self._handlers:
+            raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
+
+        self._handlers[message_type] = func
+        self._instance_handler_specs.append({
+            "name": name,
+            "message_type": message_type,
+            "ctx_annotation": ctx_annotation,
+            "output_types": output_types,
+        })
 
     def can_handle_type(self, message_type: type[Any]) -> bool:
         """Check if the executor can handle a given message type.

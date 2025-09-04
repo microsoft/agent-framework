@@ -15,11 +15,9 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from agent_framework import AIFunction, AITool, UsageContent
-
 from .._clients import ChatClientBase, use_tool_calling
 from .._logging import get_logger
-from .._tools import HostedWebSearchTool
+from .._tools import AIFunction, AITool, HostedWebSearchTool
 from .._types import (
     AIContents,
     ChatFinishReason,
@@ -31,6 +29,7 @@ from .._types import (
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
+    UsageContent,
     UsageDetails,
 )
 from ..exceptions import (

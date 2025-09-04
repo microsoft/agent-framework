@@ -18,6 +18,9 @@ public sealed class TestConfiguration
     /// <summary>Gets the configuration settings for the Azure OpenAI integration.</summary>
     public static AzureOpenAIConfig AzureOpenAI => LoadSection<AzureOpenAIConfig>();
 
+    /// <summary>Gets the configuration settings for the AzureAI integration.</summary>
+    public static AzureAIConfig AzureAI => LoadSection<AzureAIConfig>();
+
     /// <summary>Represents the configuration settings required to interact with the OpenAI service.</summary>
     public class OpenAIConfig
     {
@@ -71,11 +74,6 @@ public sealed class TestConfiguration
     {
         this._configRoot = configRoot;
     }
-
-    /// <summary>
-    /// Gets the configuration settings for the AzureAI integration.
-    /// </summary>
-    public static AzureAIConfig AzureAI => LoadSection<AzureAIConfig>();
 
     private static T LoadSection<T>([CallerMemberName] string? caller = null)
     {

@@ -1,0 +1,14 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  id: my_workflow
+  type: Message
+  actions:
+    - kind: SetVariable
+      id: set_var
+      variable: Topic.MyVar
+      value: 42
+    - kind: ResetVariable
+      id: clear_var
+      variable: Topic.MyVar
+  

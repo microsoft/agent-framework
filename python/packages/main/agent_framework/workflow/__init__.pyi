@@ -14,6 +14,7 @@ from agent_framework_workflow import (
     ExecutorEvent,
     ExecutorInvokeEvent,
     FileCheckpointStorage,
+    FunctionExecutor,
     InMemoryCheckpointStorage,
     MagenticBuilder,
     MagenticCallbackEvent,
@@ -42,6 +43,7 @@ from agent_framework_workflow import (
     WorkflowStartedEvent,
     WorkflowViz,
     __version__,
+    executor,
     handler,
     intercepts_request,
 )
@@ -60,6 +62,7 @@ __all__ = [
     "ExecutorEvent",
     "ExecutorInvokeEvent",
     "FileCheckpointStorage",
+    "FunctionExecutor",
     "InMemoryCheckpointStorage",
     "MagenticBuilder",
     "MagenticCallbackEvent",
@@ -88,6 +91,7 @@ __all__ = [
     "WorkflowStartedEvent",
     "WorkflowViz",
     "__version__",
+    "executor",
     "handler",
     "intercepts_request",
 ]
