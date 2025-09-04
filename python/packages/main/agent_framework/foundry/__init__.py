@@ -5,7 +5,7 @@ from typing import Any
 
 PACKAGE_NAME = "agent_framework_foundry"
 PACKAGE_EXTRA = "foundry"
-_IMPORTS = ["__version__", "FoundryChatClient", "FoundrySettings"]
+_IMPORTS = ["__version__", "FoundryChatClient", "FoundrySettings", "FoundryLocalChatClient"]
 
 
 def __getattr__(name: str) -> Any:

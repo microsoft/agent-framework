@@ -3,6 +3,7 @@
 import importlib.metadata
 
 from ._chat_client import FoundryChatClient, FoundrySettings
+from ._foundry_local_client import FoundryLocalChatClient
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -11,6 +12,7 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "FoundryChatClient",
+    "FoundryLocalChatClient",
     "FoundrySettings",
     "__version__",
 ]

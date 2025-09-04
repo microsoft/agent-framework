@@ -26,7 +26,8 @@ dependencies = [
     "agent-framework",
     "azure-ai-projects >= 1.0.0b11",
     "azure-ai-agents >= 1.1.0b1",
-    "aiohttp ~= 3.8"
+    "aiohttp ~= 3.8",
+    "foundry-local-sdk>=0.3.1",
 ]
 
 [tool.uv]
