@@ -22,7 +22,7 @@ from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
 from ._shared import (
-    AzureOpenAIBaseConfig,
+    AzureOpenAIConfigMixin,
     AzureOpenAISettings,
 )
 
@@ -37,7 +37,7 @@ TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
 TAzureChatClient = TypeVar("TAzureChatClient", bound="AzureChatClient")
 
 
-class AzureChatClient(AzureOpenAIBaseConfig, OpenAIBaseChatClient):
+class AzureChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
     """Azure Chat completion class."""
 
     def __init__(

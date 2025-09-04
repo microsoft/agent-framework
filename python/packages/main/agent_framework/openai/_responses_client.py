@@ -61,7 +61,7 @@ from ..exceptions import (
 )
 from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIBase, OpenAIBaseConfig, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -815,7 +815,7 @@ TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponse
 
 @use_telemetry
 @use_tool_calling
-class OpenAIResponsesClient(OpenAIBaseConfig, OpenAIBaseResponsesClient):
+class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
     """OpenAI Responses client class."""
 
     def __init__(

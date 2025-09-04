@@ -124,7 +124,7 @@ class OpenAIBase(AFBaseModel):
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class OpenAIBaseConfig(OpenAIBase):
+class OpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an OpenAI service."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
