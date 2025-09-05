@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -28,7 +28,7 @@ public sealed class McpAuthentication
     internal McpAuthentication(IDictionary<string, object> props) : this()
     {
         Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Credentials = props.GetValueOrDefault<Options>("credentials") ?? throw new ArgumentException("Properties must contain a property named: credentials", nameof(props));
+        Credentials = props.GetValueOrDefault<Dictionary<string, object>>("credentials") ?? throw new ArgumentException("Properties must contain a property named: credentials", nameof(props));
     }
     
     /// <summary>
@@ -42,7 +42,7 @@ public sealed class McpAuthentication
     /// The credentials to use for authentication
     /// </summary>
     
-    public Options Credentials { get; set; } = new Options();
+    public Dictionary<string, object> Credentials { get; set; } = new Dictionary<string, object>();
     
 }
 #pragma warning restore RCS1037 // Remove trailing white-space

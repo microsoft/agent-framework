@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -44,7 +44,7 @@ public sealed class Template
         Format = props.GetValueOrDefault<string>("format") ?? throw new ArgumentException("Properties must contain a property named: format", nameof(props));
         Parser = props.GetValueOrDefault<string>("parser") ?? throw new ArgumentException("Properties must contain a property named: parser", nameof(props));
         Strict = props.GetValueOrDefault<bool?>("strict");
-        Options = props.GetValueOrDefault<Options?>("options");
+        Options = props.GetValueOrDefault<Dictionary<string, object>?>("options");
     }
     
     /// <summary>
@@ -72,7 +72,7 @@ public sealed class Template
     /// Additional options for the template engine
     /// </summary>
     
-    public Options? Options { get; set; }
+    public Dictionary<string, object>? Options { get; set; }
     
 }
 #pragma warning restore RCS1037 // Remove trailing white-space

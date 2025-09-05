@@ -26,7 +26,7 @@ public static class YamlAgentFactoryExtensions
         Throw.IfNull(agentFactory);
         Throw.IfNullOrEmpty(text);
 
-        AgentDefinition agentDefinition = AgentDefinitionYaml.FromYaml(text);
+        AgentDefinition agentDefinition = AgentDefinitionYaml.FromYaml(text, options.Configuration);
 
         return await agentFactory.CreateAsync(
             agentDefinition,

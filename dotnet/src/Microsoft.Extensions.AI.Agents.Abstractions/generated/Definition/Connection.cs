@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -32,7 +32,7 @@ public sealed class Connection
         Provider = props.GetValueOrDefault<string>("provider") ?? throw new ArgumentException("Properties must contain a property named: provider", nameof(props));
         Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
         Endpoint = props.GetValueOrDefault<string>("endpoint") ?? throw new ArgumentException("Properties must contain a property named: endpoint", nameof(props));
-        Options = props.GetValueOrDefault<Options?>("options");
+        Options = props.GetValueOrDefault<Dictionary<string, object>?>("options");
     }
     
     /// <summary>
@@ -60,7 +60,7 @@ public sealed class Connection
     /// Additional options for model execution
     /// </summary>
     
-    public Options? Options { get; set; }
+    public Dictionary<string, object>? Options { get; set; }
     
 }
 #pragma warning restore RCS1037 // Remove trailing white-space

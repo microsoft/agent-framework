@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -32,7 +32,7 @@ public sealed class ServerTool : Tool
     internal ServerTool(IDictionary<string, object> props) : this()
     {
         Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Options = props.GetValueOrDefault<Options>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
+        Options = props.GetValueOrDefault<Dictionary<string, object>>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
     }
     
     /// <summary>
@@ -46,7 +46,7 @@ public sealed class ServerTool : Tool
     /// Configuration options for the server tool
     /// </summary>
     
-    public Options Options { get; set; } = new Options();
+    public Dictionary<string, object> Options { get; set; } = new Dictionary<string, object>();
     
 }
 #pragma warning restore RCS1037 // Remove trailing white-space

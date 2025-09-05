@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using Azure.AI.OpenAI;
+using Azure.Core;
 
 namespace Microsoft.Extensions.AI.Agents.AzureAI;
 
@@ -11,7 +12,7 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
     /// <summary>
     /// The type of the chat client agent.
     /// </summary>
-    public const string AzureOpenAIAgentType = "azureopenai_agent";
+    public const string AzureOpenAIAgentType = "azure_openai_agent";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AzureOpenAIAgentFactory"/> class.
@@ -31,17 +32,39 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
         {
             IChatClient? chatClient = null;
 
+            var deploymentName = agentDefinition.Model.Connection?.Options?["deployment_name"] as string;
+            if (string.IsNullOrEmpty(deploymentName))
+            {
+                throw new InvalidOperationException("The deployment_name must be specified in the agent definition model connection options to create a ChatClient.");
+            }
+
             var client = agentCreationOptions.ServiceProvider?.GetService(typeof(AzureOpenAIClient)) as AzureOpenAIClient;
             if (client is not null)
             {
-                //agentDefinition.Model.Connection?.Options
-                //chatClient = client.GetChatClient(deploymentName).AsIChatClient();
+                chatClient = client.GetChatClient(deploymentName).AsIChatClient();
+            }
+            else
+            {
+                var endpoint = agentDefinition.Model.Connection?.Endpoint;
+                if (string.IsNullOrEmpty(endpoint))
+                {
+                    throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AzureOpenAIClient.");
+                }
+
+                var credential = agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) as TokenCredential;
+                if (credential is null)
+                {
+                    throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an AzureOpenAIClient.");
+                }
+
+                chatClient = new AzureOpenAIClient(
+                    new Uri(endpoint),
+                    credential)
+                     .GetChatClient(deploymentName)
+                     .AsIChatClient();
             }
 
-            if (chatClient is not null)
-            {
-                agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(), agentCreationOptions.LoggerFactory);
-            }
+            agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(), agentCreationOptions.LoggerFactory);
         }
 
         return Task.FromResult<AIAgent?>(agent);

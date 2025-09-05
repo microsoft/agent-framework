@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -23,6 +24,11 @@ public class AgentCreationOptions
     /// Gets or sets the <see cref="IServiceProvider"/> instance to use when creating the <see cref="AIAgent"/>.
     /// </summary>
     public IServiceProvider? ServiceProvider { get; set; } = null;
+
+    /// <summary>
+    /// Gets or sets the <see cref="IConfiguration"/> instance to use when creating the <see cref="AIAgent"/>.
+    /// </summary>
+    public IConfiguration? Configuration { get; set; } = null;
 
     /// <summary>
     /// Gets or sets the <see cref="ILoggerFactory"/> instance to use when creating the <see cref="AIAgent"/>.

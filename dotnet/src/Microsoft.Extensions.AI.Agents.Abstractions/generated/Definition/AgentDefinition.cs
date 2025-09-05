@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -37,7 +37,7 @@ public sealed class AgentDefinition
         Version = props.GetValueOrDefault<string?>("version");
         Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
         Description = props.GetValueOrDefault<string?>("description");
-        Metadata = props.GetValueOrDefault<AgentMetadata?>("metadata");
+        Metadata = props.GetValueOrDefault<Dictionary<string, object>?>("metadata");
         Model = props.GetValueOrDefault<Model>("model") ?? throw new ArgumentException("Properties must contain a property named: model", nameof(props));
         Inputs = props.GetValueOrDefault<IList<AgentInput>?>("inputs");
         Outputs = props.GetValueOrDefault<IList<AgentOutput>?>("outputs");
@@ -86,7 +86,7 @@ public sealed class AgentDefinition
     /// Additional metadata including authors, tags, and other arbitrary properties
     /// </summary>
     
-    public AgentMetadata? Metadata { get; set; }
+    public Dictionary<string, object>? Metadata { get; set; }
     
     
     /// <summary>

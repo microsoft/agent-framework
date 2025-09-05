@@ -53,7 +53,7 @@ internal static class AgentDefinitionYaml
 
         if (configuration is not null)
         {
-            //agentDefinition!.Normalize(configuration);
+            agentDefinition!.Normalize(configuration);
         }
 
         return agentDefinition!;
