@@ -16,6 +16,8 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 internal static class SystemScope
 {
+    private static readonly RecordValue s_emptyMessage = new ChatMessage(ChatRole.User, string.Empty).ToRecord();
+
     public static class Names
     {
         public const string Activity = nameof(Activity);
@@ -53,8 +55,7 @@ internal static class SystemScope
         scopes.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
         scopes.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
 
-        ChatMessage message = new(ChatRole.User, string.Empty); // %%% STATIC
-        scopes.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
+        scopes.Set(Names.LastMessage, s_emptyMessage, VariableScopeNames.System);
         Set(Names.LastMessageId);
         Set(Names.LastMessageText);
 
