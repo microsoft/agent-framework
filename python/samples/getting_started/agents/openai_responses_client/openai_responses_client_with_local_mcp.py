@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, McpStreamableHttpTool
+from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -16,11 +16,11 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=McpStreamableHttpTool(  # Tools defined at agent creation
+        tools=MCPStreamableHTTPTool(  # Tools defined at agent creation
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
         ),
@@ -29,7 +29,7 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
         query1 = "How to create an Azure storage account using az cli?"
         print(f"User: {query1}")
         print(f"{agent.name}: ", end="")
-        async for chunk in agent.run_streaming(query1):
+        async for chunk in agent.run_stream(query1):
             if show_raw_stream:
                 print("Streamed event: ", chunk.raw_representation.raw_representation)  # type:ignore
             elif chunk.text:
@@ -40,7 +40,7 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
         query2 = "What is Microsoft Semantic Kernel?"
         print(f"User: {query2}")
         print(f"{agent.name}: ", end="")
-        async for chunk in agent.run_streaming(query2):
+        async for chunk in agent.run_stream(query2):
             if show_raw_stream:
                 print("Streamed event: ", chunk.raw_representation.raw_representation)  # type:ignore
             elif chunk.text:
@@ -54,11 +54,11 @@ async def run_with_mcp() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=McpStreamableHttpTool(  # Tools defined at agent creation
+        tools=MCPStreamableHTTPTool(  # Tools defined at agent creation
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
         ),

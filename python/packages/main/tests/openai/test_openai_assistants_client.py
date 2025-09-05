@@ -14,19 +14,19 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
-    ChatClient,
-    ChatClientAgent,
+    ChatAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     ChatToolMode,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedVectorStoreContent,
+    Role,
     TextContent,
     UriContent,
     UsageContent,
@@ -125,7 +125,7 @@ def test_openai_assistants_client_init_with_client(mock_async_openai: MagicMock)
     assert chat_client.assistant_id == "existing-assistant-id"
     assert chat_client.thread_id == "test-thread-id"
     assert not chat_client._should_delete_assistant  # type: ignore
-    assert isinstance(chat_client, ChatClient)
+    assert isinstance(chat_client, ChatClientProtocol)
 
 
 def test_openai_assistants_client_init_auto_create_client(
@@ -185,7 +185,7 @@ def test_openai_assistants_client_init_with_default_headers(openai_unit_test_env
     )
 
     assert chat_client.ai_model_id == "gpt-4"
-    assert isinstance(chat_client, ChatClient)
+    assert isinstance(chat_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
     for key, value in default_headers.items():
@@ -412,7 +412,7 @@ async def test_openai_assistants_client_process_stream_events_thread_run_created
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == ChatRole.ASSISTANT
+    assert update.role == Role.ASSISTANT
     assert update.contents == []
     assert update.raw_representation == mock_response.data
 
@@ -457,7 +457,7 @@ async def test_openai_assistants_client_process_stream_events_message_delta_text
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == ChatRole.ASSISTANT
+    assert update.role == Role.ASSISTANT
     assert update.text == "Hello from assistant"
     assert update.raw_representation == mock_message_delta
 
@@ -497,7 +497,7 @@ async def test_openai_assistants_client_process_stream_events_requires_action(mo
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == ChatRole.ASSISTANT
+    assert update.role == Role.ASSISTANT
     assert len(update.contents) == 1
     assert update.contents[0] == test_function_content
     assert update.raw_representation == mock_run
@@ -579,7 +579,7 @@ async def test_openai_assistants_client_process_stream_events_run_completed_with
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == ChatRole.ASSISTANT
+    assert update.role == Role.ASSISTANT
     assert len(update.contents) == 1
 
     # Check the usage content
@@ -632,7 +632,7 @@ def test_openai_assistants_client_create_run_options_basic(mock_async_openai: Ma
         top_p=0.9,
     )
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -661,7 +661,7 @@ def test_openai_assistants_client_create_run_options_with_ai_function_tool(mock_
         tool_choice="auto",
     )
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -686,7 +686,7 @@ def test_openai_assistants_client_create_run_options_with_code_interpreter(mock_
         tool_choice="auto",
     )
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Calculate something")]
+    messages = [ChatMessage(role=Role.USER, text="Calculate something")]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -706,7 +706,7 @@ def test_openai_assistants_client_create_run_options_tool_choice_none(mock_async
         tool_choice="none",
     )
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -727,7 +727,7 @@ def test_openai_assistants_client_create_run_options_required_function(mock_asyn
         tool_choice=tool_choice,
     )
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Hello")]
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -753,7 +753,7 @@ def test_openai_assistants_client_create_run_options_with_file_search_tool(mock_
         tool_choice="auto",
     )
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Search for information")]
+    messages = [ChatMessage(role=Role.USER, text="Search for information")]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -778,7 +778,7 @@ def test_openai_assistants_client_create_run_options_with_mapping_tool(mock_asyn
         tool_choice="auto",
     )
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Use custom tool")]
+    messages = [ChatMessage(role=Role.USER, text="Use custom tool")]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
@@ -795,8 +795,8 @@ def test_openai_assistants_client_create_run_options_with_system_message(mock_as
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     messages = [
-        ChatMessage(role=ChatRole.SYSTEM, text="You are a helpful assistant."),
-        ChatMessage(role=ChatRole.USER, text="Hello"),
+        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant."),
+        ChatMessage(role=Role.USER, text="Hello"),
     ]
 
     # Call the method
@@ -816,7 +816,7 @@ def test_openai_assistants_client_create_run_options_with_image_content(mock_asy
 
     # Create message with image content
     image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage(role=ChatRole.USER, contents=[image_content])]
+    messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
     # Call the method
     run_options, tool_results = chat_client._create_run_options(messages, None)  # type: ignore
@@ -924,7 +924,7 @@ def get_weather(
 async def test_openai_assistants_client_get_response() -> None:
     """Test OpenAI Assistants Client response."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
-        assert isinstance(openai_assistants_client, ChatClient)
+        assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(
@@ -948,7 +948,7 @@ async def test_openai_assistants_client_get_response() -> None:
 async def test_openai_assistants_client_get_response_tools() -> None:
     """Test OpenAI Assistants Client response with tools."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
-        assert isinstance(openai_assistants_client, ChatClient)
+        assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
@@ -969,7 +969,7 @@ async def test_openai_assistants_client_get_response_tools() -> None:
 async def test_openai_assistants_client_streaming() -> None:
     """Test OpenAI Assistants Client streaming response."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
-        assert isinstance(openai_assistants_client, ChatClient)
+        assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(
@@ -999,7 +999,7 @@ async def test_openai_assistants_client_streaming() -> None:
 async def test_openai_assistants_client_streaming_tools() -> None:
     """Test OpenAI Assistants Client streaming response with tools."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
-        assert isinstance(openai_assistants_client, ChatClient)
+        assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
@@ -1035,7 +1035,7 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
         async with OpenAIAssistantsClient(
             ai_model_id="gpt-4o-mini", assistant_id=assistant_id
         ) as openai_assistants_client:
-            assert isinstance(openai_assistants_client, ChatClient)
+            assert isinstance(openai_assistants_client, ChatClientProtocol)
             assert openai_assistants_client.assistant_id == assistant_id
 
             messages = [ChatMessage(role="user", text="What can you do?")]
@@ -1052,7 +1052,7 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
 async def test_openai_assistants_client_file_search() -> None:
     """Test OpenAI Assistants Client response."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
-        assert isinstance(openai_assistants_client, ChatClient)
+        assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
@@ -1074,7 +1074,7 @@ async def test_openai_assistants_client_file_search() -> None:
 async def test_openai_assistants_client_file_search_streaming() -> None:
     """Test OpenAI Assistants Client response."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
-        assert isinstance(openai_assistants_client, ChatClient)
+        assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
@@ -1101,8 +1101,8 @@ async def test_openai_assistants_client_file_search_streaming() -> None:
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_basic_run():
-    """Test ChatClientAgent basic run functionality with OpenAIAssistantsClient."""
-    async with ChatClientAgent(
+    """Test ChatAgent basic run functionality with OpenAIAssistantsClient."""
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
     ) as agent:
         # Run a simple query
@@ -1117,13 +1117,13 @@ async def test_openai_assistants_agent_basic_run():
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_basic_run_streaming():
-    """Test ChatClientAgent basic streaming functionality with OpenAIAssistantsClient."""
-    async with ChatClientAgent(
+    """Test ChatAgent basic streaming functionality with OpenAIAssistantsClient."""
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
     ) as agent:
         # Run streaming query
         full_message: str = ""
-        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert chunk is not None
             assert isinstance(chunk, AgentRunResponseUpdate)
             if chunk.text:
@@ -1136,8 +1136,8 @@ async def test_openai_assistants_agent_basic_run_streaming():
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_thread_persistence():
-    """Test ChatClientAgent thread persistence across runs with OpenAIAssistantsClient."""
-    async with ChatClientAgent(
+    """Test ChatAgent thread persistence across runs with OpenAIAssistantsClient."""
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
@@ -1164,11 +1164,11 @@ async def test_openai_assistants_agent_thread_persistence():
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_existing_thread_id():
-    """Test ChatClientAgent with existing thread ID to continue conversations across agent instances."""
+    """Test ChatAgent with existing thread ID to continue conversations across agent instances."""
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
@@ -1188,7 +1188,7 @@ async def test_openai_assistants_agent_existing_thread_id():
 
     # Now continue with the same thread ID in a new agent instance
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(thread_id=existing_thread_id),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
@@ -1208,9 +1208,9 @@ async def test_openai_assistants_agent_existing_thread_id():
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_code_interpreter():
-    """Test ChatClientAgent with code interpreter through OpenAIAssistantsClient."""
+    """Test ChatAgent with code interpreter through OpenAIAssistantsClient."""
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful assistant that can write and execute Python code.",
         tools=[HostedCodeInterpreterTool()],
@@ -1229,7 +1229,7 @@ async def test_openai_assistants_agent_code_interpreter():
 async def test_openai_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Assistants Client."""
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
@@ -1264,7 +1264,7 @@ async def test_openai_assistants_client_run_level_tool_isolation():
         call_count += 1
         return f"The weather in {location} is sunny and 72°F."
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful assistant.",
     ) as agent:

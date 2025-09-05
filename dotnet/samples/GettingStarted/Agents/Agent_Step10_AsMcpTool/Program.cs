@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to expose an AI agent as am MCP tool.
+// This sample shows how to expose an AI agent as an MCP tool.
 
 using System;
 using Agent_Step10_AsMcpTool;

@@ -8,8 +8,8 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     ChatMessage,
-    ChatRole,
     FunctionResultContent,
+    Role,
     TextContent,
     UsageContent,
     UsageDetails,
@@ -43,11 +43,11 @@ class SimpleExecutor(Executor):
         response_text = f"{self.response_text}: {input_text}"
 
         # Create response message for both streaming and non-streaming cases
-        response_message = ChatMessage(role=ChatRole.ASSISTANT, contents=[TextContent(text=response_text)])
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
 
         # Emit update event.
         streaming_update = AgentRunResponseUpdate(
-            contents=[TextContent(text=response_text)], role=ChatRole.ASSISTANT, message_id=str(uuid.uuid4())
+            contents=[TextContent(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
 
@@ -68,7 +68,7 @@ class RequestingExecutor(Executor):
         # Handle the response and emit completion response
         update = AgentRunResponseUpdate(
             contents=[TextContent(text="Request completed successfully")],
-            role=ChatRole.ASSISTANT,
+            role=Role.ASSISTANT,
             message_id=str(uuid.uuid4()),
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
@@ -132,7 +132,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to capture streaming events
         updates = []
-        async for update in agent.run_streaming("Test input"):
+        async for update in agent.run_stream("Test input"):
             updates.append(update)
 
         # Should have received at least one streaming update
@@ -165,7 +165,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to get request info event
         updates = []
-        async for update in agent.run_streaming("Start request"):
+        async for update in agent.run_stream("Start request"):
             updates.append(update)
         # Should have received a function call for the request info
         assert len(updates) > 0
@@ -192,7 +192,7 @@ class TestWorkflowAgent:
 
         # Now provide a function result response to test continuation
         response_message = ChatMessage(
-            role=ChatRole.USER,
+            role=Role.USER,
             contents=[FunctionResultContent(call_id=function_call.call_id, result="User provided answer")],
         )
 
@@ -252,7 +252,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response B, Message 2 (latest in resp B)
             AgentRunResponseUpdate(
                 contents=[TextContent(text="RespB-Msg2")],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id="resp-b",
                 message_id="msg-2",
                 created_at="2024-01-01T12:02:00Z",
@@ -260,7 +260,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response A, Message 1 (earliest overall)
             AgentRunResponseUpdate(
                 contents=[TextContent(text="RespA-Msg1")],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id="resp-a",
                 message_id="msg-1",
                 created_at="2024-01-01T12:00:00Z",
@@ -268,7 +268,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response B, Message 1 (earlier in resp B)
             AgentRunResponseUpdate(
                 contents=[TextContent(text="RespB-Msg1")],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id="resp-b",
                 message_id="msg-1",
                 created_at="2024-01-01T12:01:00Z",
@@ -276,7 +276,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response A, Message 2 (later in resp A)
             AgentRunResponseUpdate(
                 contents=[TextContent(text="RespA-Msg2")],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id="resp-a",
                 message_id="msg-2",
                 created_at="2024-01-01T12:00:30Z",
@@ -284,7 +284,7 @@ class TestWorkflowAgentMergeUpdates:
             # Global dangling update (no response_id) - should go at end
             AgentRunResponseUpdate(
                 contents=[TextContent(text="Global-Dangling")],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id=None,
                 message_id="msg-global",
                 created_at="2024-01-01T11:59:00Z",  # Earliest timestamp but should be last
@@ -360,7 +360,7 @@ class TestWorkflowAgentMergeUpdates:
                         details=UsageDetails(input_token_count=10, output_token_count=5, total_token_count=15)
                     ),
                 ],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id="resp-1",
                 message_id="msg-1",
                 created_at="2024-01-01T12:00:00Z",
@@ -373,7 +373,7 @@ class TestWorkflowAgentMergeUpdates:
                         details=UsageDetails(input_token_count=20, output_token_count=8, total_token_count=28)
                     ),
                 ],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id="resp-2",
                 message_id="msg-2",
                 created_at="2024-01-01T12:01:00Z",  # Later timestamp
@@ -384,7 +384,7 @@ class TestWorkflowAgentMergeUpdates:
                     TextContent(text="Third"),
                     UsageContent(details=UsageDetails(input_token_count=5, output_token_count=3, total_token_count=8)),
                 ],
-                role=ChatRole.ASSISTANT,
+                role=Role.ASSISTANT,
                 response_id="resp-1",  # Same response_id as first
                 message_id="msg-3",
                 created_at="2024-01-01T11:59:00Z",  # Earlier timestamp
