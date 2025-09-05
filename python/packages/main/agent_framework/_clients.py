@@ -11,31 +11,31 @@ from pydantic import BaseModel
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
-from ._tools import AIFunction, AITool
+from ._tools import AIFunction, ToolProtocol
 from ._types import (
-    AIContents,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatToolMode,
+    Contents,
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
 )
 
 if TYPE_CHECKING:
-    from ._agents import ChatClientAgent
+    from ._agents import ChatAgent
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
-TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
+TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
 
 logger = get_logger()
 
 __all__ = [
-    "ChatClient",
-    "ChatClientBase",
+    "BaseChatClient",
+    "ChatClientProtocol",
     "EmbeddingGenerator",
     "use_tool_calling",
 ]
@@ -50,7 +50,7 @@ async def _auto_invoke_function(
     tool_map: dict[str, AIFunction[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
-) -> AIContents:
+) -> Contents:
     """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
     tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.name)
     if tool is None:
@@ -81,7 +81,7 @@ def _tool_call_non_streaming(
 
     @wraps(func)
     async def wrapper(
-        self: "ChatClientBase",
+        self: "BaseChatClient",
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
@@ -157,7 +157,7 @@ def _tool_call_streaming(
 
     @wraps(func)
     async def wrapper(
-        self: "ChatClientBase",
+        self: "BaseChatClient",
         *,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions,
@@ -217,11 +217,11 @@ def _tool_call_streaming(
     return wrapper
 
 
-def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
+def use_tool_calling(cls: type[TBaseChatClient]) -> type[TBaseChatClient]:
     """Class decorator that enables tool calling for a chat client.
 
     Remarks:
-        This only works on classes that derive from ChatClientBase
+        This only works on classes that derive from BaseChatClient
         and the `_inner_get_response`
         and `_inner_get_streaming_response` methods.
         It also sets a `__maximum_iterations_per_request` attribute on the class.
@@ -247,11 +247,11 @@ def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
     return cls
 
 
-# region ChatClient Protocol
+# region ChatClientProtocol Protocol
 
 
 @runtime_checkable
-class ChatClient(Protocol):
+class ChatClientProtocol(Protocol):
     """A protocol for a chat client that can generate responses."""
 
     async def get_response(
@@ -270,10 +270,10 @@ class ChatClient(Protocol):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
+        tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -327,10 +327,10 @@ class ChatClient(Protocol):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
+        tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -370,7 +370,7 @@ class ChatClient(Protocol):
         ...
 
 
-class ChatClientBase(AFBaseModel, ABC):
+class BaseChatClient(AFBaseModel, ABC):
     """Base class for chat clients."""
 
     MODEL_PROVIDER_NAME: str = "unknown"
@@ -457,10 +457,10 @@ class ChatClientBase(AFBaseModel, ABC):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
+        tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -537,10 +537,10 @@ class ChatClientBase(AFBaseModel, ABC):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
+        tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -633,14 +633,14 @@ class ChatClientBase(AFBaseModel, ABC):
         *,
         name: str | None = None,
         instructions: str | None = None,
-        tools: AITool
+        tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[AITool | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         **kwargs: Any,
-    ) -> "ChatClientAgent":
+    ) -> "ChatAgent":
         """Create an agent with the given name and instructions.
 
         Args:
@@ -650,14 +650,14 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
             **kwargs: Additional keyword arguments to pass to the agent.
-                See ChatClientAgent for all the available options.
+                See ChatAgent for all the available options.
 
         Returns:
-            An instance of ChatClientAgent.
+            An instance of ChatAgent.
         """
-        from ._agents import ChatClientAgent
+        from ._agents import ChatAgent
 
-        return ChatClientAgent(
+        return ChatAgent(
             chat_client=self,
             name=name,
             instructions=instructions,

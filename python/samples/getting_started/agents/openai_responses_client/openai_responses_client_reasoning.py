@@ -22,7 +22,7 @@ async def reasoning_example() -> None:
     print(f"User: {query}")
     print(f"{agent.name}: ", end="", flush=True)
     usage = None
-    async for chunk in agent.run_streaming(query):
+    async for chunk in agent.run_stream(query):
         if chunk.contents:
             for content in chunk.contents:
                 if isinstance(content, TextReasoningContent):

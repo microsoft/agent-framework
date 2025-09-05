@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from uuid import uuid4
 
-from agent_framework import AgentRunResponseUpdate, AIContents, ChatClient, ChatMessage, ChatRole
+from agent_framework import AgentRunResponseUpdate, ChatClientProtocol, ChatMessage, Contents, Role
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.workflow import AgentRunUpdateEvent, Executor, WorkflowBuilder, WorkflowContext, handler
 from pydantic import BaseModel
@@ -51,7 +51,7 @@ class ReviewResponse:
 class Reviewer(Executor):
     """An executor that reviews messages and provides feedback."""
 
-    def __init__(self, chat_client: ChatClient) -> None:
+    def __init__(self, chat_client: ChatClientProtocol) -> None:
         super().__init__()
         self._chat_client = chat_client
 
@@ -69,7 +69,7 @@ class Reviewer(Executor):
         # Define the system prompt.
         messages = [
             ChatMessage(
-                role=ChatRole.SYSTEM,
+                role=Role.SYSTEM,
                 text="You are a reviewer for an AI agent, please provide feedback on the "
                 "following exchange between a user and the AI agent, "
                 "and indicate if the agent's responses are approved or not.\n"
@@ -91,7 +91,7 @@ class Reviewer(Executor):
 
         # Add add one more instruction for the assistant to follow.
         messages.append(
-            ChatMessage(role=ChatRole.USER, text="Please provide a review of the agent's responses to the user.")
+            ChatMessage(role=Role.USER, text="Please provide a review of the agent's responses to the user.")
         )
 
         print("🔍 Reviewer: Sending review request to LLM...")
@@ -113,7 +113,7 @@ class Reviewer(Executor):
 class Worker(Executor):
     """An executor that performs tasks for the user."""
 
-    def __init__(self, chat_client: ChatClient) -> None:
+    def __init__(self, chat_client: ChatClientProtocol) -> None:
         super().__init__()
         self._chat_client = chat_client
         self._pending_requests: dict[str, tuple[ReviewRequest, list[ChatMessage]]] = {}
@@ -124,7 +124,7 @@ class Worker(Executor):
 
         # Handle user messages and prepare a review request for the reviewer.
         # Define the system prompt.
-        messages = [ChatMessage(role=ChatRole.SYSTEM, text="You are a helpful assistant.")]
+        messages = [ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant.")]
 
         # Add user messages.
         messages.extend(user_messages)
@@ -163,14 +163,14 @@ class Worker(Executor):
             print("✅ Worker: Response approved! Emitting to external consumer...")
             # If approved, emit the agent run response update to the workflow's
             # external consumer.
-            contents: list[AIContents] = []
+            contents: list[Contents] = []
             for message in request.agent_messages:
                 contents.extend(message.contents)
             # Emitting an AgentRunUpdateEvent in a workflow wrapped by a WorkflowAgent
             # will send the AgentRunResponseUpdate to the WorkflowAgent's
             # event stream.
             await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=ChatRole.ASSISTANT))
+                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=Role.ASSISTANT))
             )
             return
 
@@ -178,12 +178,12 @@ class Worker(Executor):
         print("🔧 Worker: Incorporating feedback and regenerating response...")
 
         # Construct new messages with feedback.
-        messages.append(ChatMessage(role=ChatRole.SYSTEM, text=review.feedback))
+        messages.append(ChatMessage(role=Role.SYSTEM, text=review.feedback))
 
         # Add additional instruction to address the feedback.
         messages.append(
             ChatMessage(
-                role=ChatRole.SYSTEM,
+                role=Role.SYSTEM,
                 text="Please incorporate the feedback above, and provide a response to user's next message.",
             )
         )
@@ -234,7 +234,7 @@ async def main() -> None:
     print("-" * 50)
 
     # Run the agent and stream events.
-    async for event in agent.run_streaming(
+    async for event in agent.run_stream(
         "Write code for parallel reading 1 million files on disk and write to a sorted output file."
     ):
         print(f"📤 Agent Response: {event}")

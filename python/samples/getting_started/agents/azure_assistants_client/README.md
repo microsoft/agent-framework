@@ -6,7 +6,7 @@ This folder contains examples demonstrating different ways to create and use age
 
 | File | Description |
 |------|-------------|
-| [`azure_assistants_basic.py`](azure_assistants_basic.py) | The simplest way to create an agent using `ChatClientAgent` with `AzureAssistantsClient`. Shows both streaming and non-streaming responses with automatic assistant creation and cleanup. |
+| [`azure_assistants_basic.py`](azure_assistants_basic.py) | The simplest way to create an agent using `ChatAgent` with `AzureAssistantsClient`. Shows both streaming and non-streaming responses with automatic assistant creation and cleanup. |
 | [`azure_assistants_with_existing_assistant.py`](azure_assistants_with_existing_assistant.py) | Shows how to work with a pre-existing assistant by providing the assistant ID to the Azure Assistants client. Demonstrates proper cleanup of manually created assistants. |
 | [`azure_assistants_with_explicit_settings.py`](azure_assistants_with_explicit_settings.py) | Shows how to initialize an agent with a specific assistants client, configuring settings explicitly including endpoint and deployment name. |
 | [`azure_assistants_with_function_tools.py`](azure_assistants_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |
