@@ -22,6 +22,12 @@ if (this.Namespace is not null)
 {#>
 namespace <#= this.Namespace #>;
 <#} #>
+<#
+foreach (string executor in this.Executors)
+{ #>
+<#= executor.Trim() #>
+<#
+}#>
 public static class WorkflowProvider
 {
     public static Workflow<TInput> CreateWorkflow<TInput>(
@@ -50,10 +56,3 @@ foreach (string edge in ByLine(this.Edges))
         return builder.Build<TInput>();
     }
 }
-<#
-foreach (string executor in this.Executors)
-{ #>
-<#= executor.Trim() #>
-<#
-}
- #>

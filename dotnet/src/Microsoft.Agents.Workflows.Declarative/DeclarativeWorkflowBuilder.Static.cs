@@ -5,7 +5,7 @@ using System.IO;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Declarative.Templates;
+using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Yaml;
 using Microsoft.Extensions.AI;

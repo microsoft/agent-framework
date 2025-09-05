@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Templates;
+using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Templates;
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 
 public class WorkflowTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
@@ -83,7 +83,7 @@ public class WorkflowTemplateTest(ITestOutputHelper output) : WorkflowActionTemp
         string? @namespace = null)
     {
         // Arrange
-        WorkflowTemplate template = new(executors, instances, edges) { Namespace = @namespace };
+        WorkflowTemplate template = new("worflow-id", executors, instances, edges) { Namespace = @namespace };
 
         // Act
         string text = this.Execute(() => template.TransformText());

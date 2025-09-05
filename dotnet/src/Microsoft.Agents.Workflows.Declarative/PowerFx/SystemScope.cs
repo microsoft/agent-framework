@@ -53,7 +53,8 @@ internal static class SystemScope
         scopes.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
         scopes.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
 
-        scopes.Set(Names.LastMessage, FormulaType.String.NewBlank(), VariableScopeNames.System);
+        ChatMessage message = new(ChatRole.User, string.Empty); // %%% STATIC
+        scopes.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
         Set(Names.LastMessageId);
         Set(Names.LastMessageText);
 

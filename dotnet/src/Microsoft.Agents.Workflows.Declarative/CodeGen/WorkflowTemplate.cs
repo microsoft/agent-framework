@@ -65,6 +65,30 @@ if (this.Namespace is not null)
             
             #line default
             #line hidden
+            this.Write("\n");
+            
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+
+foreach (string executor in this.Executors)
+{ 
+            
+            #line default
+            #line hidden
+            this.Write("\n");
+            
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(executor.Trim()));
+            
+            #line default
+            #line hidden
+            this.Write("\n");
+            
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+
+}
+            
+            #line default
+            #line hidden
             this.Write(@"
 public static class WorkflowProvider
 {
@@ -125,31 +149,6 @@ foreach (string edge in ByLine(this.Edges))
             #line default
             #line hidden
             this.Write("\n\n        // Build the workflow\n        return builder.Build<TInput>();\n    }\n}\n");
-            
-            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
-
-foreach (string executor in this.Executors)
-{ 
-            
-            #line default
-            #line hidden
-            this.Write("\n");
-            
-            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(executor.Trim()));
-            
-            #line default
-            #line hidden
-            this.Write("\n");
-            
-            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
-
-}
- 
-            
-            #line default
-            #line hidden
-            this.Write("\n");
             return this.GenerationEnvironment.ToString();
         }
     }

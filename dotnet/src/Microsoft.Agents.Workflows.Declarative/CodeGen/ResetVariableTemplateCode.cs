@@ -4,7 +4,7 @@ using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Templates;
+namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class ResetVariableTemplate
 {

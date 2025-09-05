@@ -8,7 +8,7 @@ beginDialog:
     - kind: SetVariable
       id: set_input
       variable: Topic.TestValue
-      value: =Value(System.LastMessage.Text)
+      value: =System.LastMessageText
 
     - kind: SendActivity
       id: activity_input

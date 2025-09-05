@@ -2,7 +2,7 @@
 
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 
-namespace Microsoft.Agents.Workflows.Declarative.Templates;
+namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class EdgeTemplate
 {

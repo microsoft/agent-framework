@@ -3,7 +3,7 @@
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 
-namespace Microsoft.Agents.Workflows.Declarative.Templates;
+namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class EmptyTemplate
 {

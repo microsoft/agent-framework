@@ -4,7 +4,7 @@ using System;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Templates;
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 
 /// <summary>
 /// Base test class for text template.

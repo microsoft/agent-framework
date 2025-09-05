@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Templates;
+using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Templates;
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 
 public class EdgeTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {

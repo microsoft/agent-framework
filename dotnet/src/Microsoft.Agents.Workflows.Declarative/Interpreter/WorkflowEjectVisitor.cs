@@ -3,7 +3,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Templates;
+using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;

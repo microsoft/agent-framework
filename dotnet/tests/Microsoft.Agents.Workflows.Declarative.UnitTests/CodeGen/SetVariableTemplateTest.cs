@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Templates;
+using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Templates;
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 
 public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
