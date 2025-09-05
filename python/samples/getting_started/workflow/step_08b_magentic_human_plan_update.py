@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import cast
 
-from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
+from agent_framework import ChatAgent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework_workflow import (
     MagenticAgentDeltaEvent,
@@ -30,8 +30,8 @@ Magentic workflow with human-in-the-loop plan review and update.
 This sample builds a Magentic workflow with two cooperating agents and enables
 plan review so a human can approve or revise the plan before execution:
 
-- researcher: ChatClientAgent backed by OpenAIChatClient (web/search-capable model)
-- coder: ChatClientAgent backed by OpenAIAssistantsClient with the Hosted Code Interpreter tool
+- researcher: ChatAgent backed by OpenAIChatClient (web/search-capable model)
+- coder: ChatAgent backed by OpenAIAssistantsClient with the Hosted Code Interpreter tool
 
 Key behaviors demonstrated:
 - with_plan_review(): requests a PlanReviewRequest before coordination begins
@@ -46,7 +46,7 @@ clients can run. You can swap clients/models as needed.
 
 
 async def main() -> None:
-    researcher_agent = ChatClientAgent(
+    researcher_agent = ChatAgent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
@@ -54,11 +54,11 @@ async def main() -> None:
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
         # Feel free to explore with other agents that support web search, for example,
-        # the `OpenAIResponseAgent` or `AzureAIAgent` with bing grounding.
+        # the `OpenAIResponseAgent` or `AzureAgentProtocol` with bing grounding.
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     )
 
-    coder_agent = ChatClientAgent(
+    coder_agent = ChatAgent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
@@ -140,7 +140,7 @@ async def main() -> None:
         while True:
             # Phase 1: run until either completion or a HIL request
             if pending_request is None:
-                async for event in workflow.run_streaming(task):
+                async for event in workflow.run_stream(task):
                     print(f"Event: {event}")
 
                     if isinstance(event, WorkflowCompletedEvent):

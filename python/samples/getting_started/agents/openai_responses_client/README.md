@@ -6,7 +6,7 @@ This folder contains examples demonstrating different ways to create and use age
 
 | File | Description |
 |------|-------------|
-| [`openai_responses_client_basic.py`](openai_responses_client_basic.py) | The simplest way to create an agent using `ChatClientAgent` with `OpenAIResponsesClient`. Shows both streaming and non-streaming responses for structured response generation with OpenAI models. |
+| [`openai_responses_client_basic.py`](openai_responses_client_basic.py) | The simplest way to create an agent using `ChatAgent` with `OpenAIResponsesClient`. Shows both streaming and non-streaming responses for structured response generation with OpenAI models. |
 | [`openai_responses_client_reasoning.py`](openai_responses_client_reasoning.py) | Demonstrates how to use reasoning capabilities with OpenAI agents, showing how the agent can provide detailed reasoning for its responses. |
 | [`openai_responses_client_with_explicit_settings.py`](openai_responses_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific responses client, configuring settings explicitly including API key and model ID. |
 | [`openai_responses_client_with_function_tools.py`](openai_responses_client_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |

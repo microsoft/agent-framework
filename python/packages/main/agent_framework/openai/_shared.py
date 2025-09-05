@@ -22,7 +22,7 @@ from pydantic.types import StringConstraints
 
 from .._logging import get_logger
 from .._pydantic import AFBaseModel, AFBaseSettings
-from .._types import AIContents, ChatOptions, SpeechToTextOptions, TextToSpeechOptions
+from .._types import ChatOptions, Contents, SpeechToTextOptions, TextToSpeechOptions
 from ..exceptions import ServiceInitializationError
 from ..telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 
@@ -50,7 +50,7 @@ __all__ = [
 ]
 
 
-def prepare_function_call_results(content: AIContents | Any | list[AIContents | Any]) -> str | list[str]:
+def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str | list[str]:
     """Prepare the values of the function call results."""
     if isinstance(content, list):
         results: list[str] = []
@@ -117,14 +117,14 @@ class OpenAISettings(AFBaseSettings):
     realtime_model_id: str | None = None
 
 
-class OpenAIHandler(AFBaseModel):
+class OpenAIBase(AFBaseModel):
     """Base class for OpenAI Clients."""
 
     client: AsyncOpenAI
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class OpenAIConfigBase(OpenAIHandler):
+class OpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an OpenAI service."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]

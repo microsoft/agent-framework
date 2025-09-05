@@ -135,7 +135,7 @@ async def main():
     )
 
     print("Running workflow with initial message...")
-    async for event in workflow.run_streaming(message="hello world"):
+    async for event in workflow.run_stream(message="hello world"):
         print(f"Event: {event}")
 
     # Inspect checkpoints
@@ -179,7 +179,7 @@ async def main():
     )
 
     print(f"\nResuming from checkpoint: {checkpoint_id}")
-    async for event in new_workflow.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
+    async for event in new_workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
         print(f"Resumed Event: {event}")
 
     """

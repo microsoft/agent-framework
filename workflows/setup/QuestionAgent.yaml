@@ -1,0 +1,10 @@
+type: foundry_agent
+name: Answer
+description: Demo agent for Question workflow
+model:
+  id: ${AzureAI:ModelDeployment}
+tools:
+  - type: bing_grounding
+    options:
+      tool_connections:
+        - ${AzureAI:BingConnectionId}

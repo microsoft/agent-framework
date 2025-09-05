@@ -5,7 +5,7 @@ import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
@@ -38,6 +38,9 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # Avoid runtime import cycles; enables proper type checking of as_agent return type
+    from ._agent import WorkflowAgent
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
@@ -222,7 +225,7 @@ class Workflow(AFBaseModel):
                 workflow_tracer.add_workflow_error_event(e)
                 raise
 
-    async def run_streaming(self, message: Any) -> AsyncIterable[WorkflowEvent]:
+    async def run_stream(self, message: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a starting message and stream events.
 
         Args:
@@ -249,7 +252,7 @@ class Workflow(AFBaseModel):
         async for event in self._run_workflow_with_tracing(initial_executor_fn=initial_execution, reset_context=True):
             yield event
 
-    async def run_streaming_from_checkpoint(
+    async def run_stream_from_checkpoint(
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
@@ -365,7 +368,7 @@ class Workflow(AFBaseModel):
         Returns:
             A WorkflowRunResult instance containing a list of events generated during the workflow execution.
         """
-        events = [event async for event in self.run_streaming(message)]
+        events = [event async for event in self.run_stream(message)]
         return WorkflowRunResult(events)
 
     async def run_from_checkpoint(
@@ -391,7 +394,7 @@ class Workflow(AFBaseModel):
             RuntimeError: If checkpoint restoration fails.
         """
         events = [
-            event async for event in self.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage, responses)
+            event async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses)
         ]
         return WorkflowRunResult(events)
 
@@ -533,6 +536,20 @@ class Workflow(AFBaseModel):
                         source_span_ids=msg_data.get("source_span_ids"),
                     )
                 )
+
+    def as_agent(self, name: str | None = None) -> "WorkflowAgent":
+        """Create a WorkflowAgent that wraps this workflow.
+
+        Args:
+            name: Optional name for the agent. If None, a default name will be generated.
+
+        Returns:
+            A WorkflowAgent instance that wraps this workflow.
+        """
+        # Import here to avoid circular imports
+        from ._agent import WorkflowAgent
+
+        return WorkflowAgent(workflow=self, name=name)
 
 
 # region WorkflowBuilder

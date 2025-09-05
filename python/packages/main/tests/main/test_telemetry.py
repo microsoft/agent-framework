@@ -13,7 +13,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
+    Role,
     UsageDetails,
 )
 from agent_framework.telemetry import (
@@ -301,7 +301,7 @@ def test_start_span_empty_metadata():
 
 
 def test_decorator_with_valid_class():
-    """Test that decorator works with a valid ChatClientBase-like class."""
+    """Test that decorator works with a valid BaseChatClient-like class."""
 
     # Create a mock class with the required methods
     class MockChatClient:
@@ -373,7 +373,7 @@ def mock_chat_client():
             self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
         ):
             return ChatResponse(
-                messages=[ChatMessage(role=ChatRole.ASSISTANT, text="Test response")],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
                 usage_details=UsageDetails(input_token_count=10, output_token_count=20),
                 finish_reason=None,
             )
@@ -381,8 +381,8 @@ def mock_chat_client():
         async def _inner_get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
         ):
-            yield ChatResponseUpdate(text="Hello", role=ChatRole.ASSISTANT)
-            yield ChatResponseUpdate(text=" world", role=ChatRole.ASSISTANT)
+            yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT)
 
     return MockChatClient()
 
@@ -393,7 +393,7 @@ async def test_telemetry_disabled_bypasses_instrumentation(mock_chat_client, mod
     decorated_class = use_telemetry(type(mock_chat_client))
     client = decorated_class()
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Test message")]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     chat_options = ChatOptions()
 
     with (
@@ -412,7 +412,7 @@ async def test_instrumentation_enabled(mock_chat_client, model_diagnostic_settin
     decorated_class = use_telemetry(type(mock_chat_client))
     client = decorated_class()
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Test message")]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     chat_options = ChatOptions()
 
     with (
@@ -432,7 +432,7 @@ async def test_streaming_response_with_diagnostics_enabled_via_decorator(mock_ch
     """Test streaming telemetry through the use_telemetry decorator."""
     decorated_class = use_telemetry(type(mock_chat_client))
     client = decorated_class()
-    messages = [ChatMessage(role=ChatRole.USER, text="Test")]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     chat_options = ChatOptions()
 
     with (
@@ -470,7 +470,7 @@ async def test_streaming_response_with_exception_via_decorator(mock_chat_client,
     async def _inner_get_streaming_response(
         self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
     ) -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text="Partial", role=ChatRole.ASSISTANT)
+        yield ChatResponseUpdate(text="Partial", role=Role.ASSISTANT)
         raise ValueError("Test streaming error")
 
     type(mock_chat_client)._inner_get_streaming_response = _inner_get_streaming_response
@@ -478,7 +478,7 @@ async def test_streaming_response_with_exception_via_decorator(mock_chat_client,
     decorated_class = use_telemetry(type(mock_chat_client))
     client = decorated_class()
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Test")]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     chat_options = ChatOptions()
 
     with (
@@ -513,12 +513,12 @@ async def test_streaming_response_diagnostics_disabled_via_decorator(model_diagn
         async def _inner_get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
         ) -> AsyncIterable[ChatResponseUpdate]:
-            yield ChatResponseUpdate(text="Test", role=ChatRole.ASSISTANT)
+            yield ChatResponseUpdate(text="Test", role=Role.ASSISTANT)
 
     decorated_class = use_telemetry(MockStreamingClientNoDiagnostics)
     client = decorated_class()
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Test")]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     chat_options = ChatOptions()
 
     with (
@@ -561,7 +561,7 @@ async def test_empty_streaming_response_via_decorator(model_diagnostic_settings)
     decorated_class = use_telemetry(MockEmptyStreamingClient)
     client = decorated_class()
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Test")]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     chat_options = ChatOptions()
 
     with (
@@ -617,7 +617,7 @@ def test_prepend_user_agent_with_none_value():
 
 
 def test_agent_decorator_with_valid_class():
-    """Test that agent decorator works with a valid ChatClientAgent-like class."""
+    """Test that agent decorator works with a valid ChatAgent-like class."""
     from agent_framework.telemetry import use_agent_telemetry
 
     # Create a mock class with the required methods
@@ -633,7 +633,7 @@ def test_agent_decorator_with_valid_class():
         async def run(self, messages=None, *, thread=None, **kwargs):
             return Mock()
 
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
+        async def run_stream(self, messages=None, *, thread=None, **kwargs):
             async def gen():
                 yield Mock()
 
@@ -644,7 +644,7 @@ def test_agent_decorator_with_valid_class():
 
     # Check that the methods were wrapped
     assert hasattr(decorated_class.run, "__model_diagnostics_agent_run__")
-    assert hasattr(decorated_class.run_streaming, "__model_diagnostics_streaming_agent_run__")
+    assert hasattr(decorated_class.run_stream, "__model_diagnostics_streaming_agent_run__")
 
 
 def test_agent_decorator_with_missing_methods():
@@ -680,7 +680,7 @@ def test_agent_decorator_with_partial_methods():
 
     # Only the present method should be wrapped
     assert hasattr(decorated_class.run, "__model_diagnostics_agent_run__")
-    assert not hasattr(decorated_class, "run_streaming")
+    assert not hasattr(decorated_class, "run_stream")
 
 
 # region Test agent telemetry decorator with mock agent
@@ -689,7 +689,7 @@ def test_agent_decorator_with_partial_methods():
 @pytest.fixture
 def mock_chat_client_agent():
     """Create a mock chat client agent for testing."""
-    from agent_framework import AgentRunResponse, ChatMessage, ChatRole, UsageDetails
+    from agent_framework import AgentRunResponse, ChatMessage, Role, UsageDetails
 
     class MockChatClientAgent:
         AGENT_SYSTEM_NAME = "test_agent_system"
@@ -702,17 +702,17 @@ def mock_chat_client_agent():
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentRunResponse(
-                messages=[ChatMessage(role=ChatRole.ASSISTANT, text="Agent response")],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
                 raw_representation=Mock(finish_reason=Mock(value="stop")),
             )
 
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
+        async def run_stream(self, messages=None, *, thread=None, **kwargs):
             from agent_framework import AgentRunResponseUpdate
 
-            yield AgentRunResponseUpdate(text="Hello", role=ChatRole.ASSISTANT)
-            yield AgentRunResponseUpdate(text=" from agent", role=ChatRole.ASSISTANT)
+            yield AgentRunResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield AgentRunResponseUpdate(text=" from agent", role=Role.ASSISTANT)
 
     return MockChatClientAgent()
 
@@ -778,7 +778,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
 
         # Collect all yielded updates
         updates = []
-        async for update in agent.run_streaming("Test message"):
+        async for update in agent.run_stream("Test message"):
             updates.append(update)
 
         # Verify we got the expected updates
@@ -795,13 +795,13 @@ async def test_agent_streaming_response_with_exception_via_decorator(mock_chat_c
     """Test agent streaming telemetry exception handling through decorator."""
     from agent_framework.telemetry import use_agent_telemetry
 
-    async def run_streaming(self, messages=None, *, thread=None, **kwargs):
-        from agent_framework import AgentRunResponseUpdate, ChatRole
+    async def run_stream(self, messages=None, *, thread=None, **kwargs):
+        from agent_framework import AgentRunResponseUpdate, Role
 
-        yield AgentRunResponseUpdate(text="Partial", role=ChatRole.ASSISTANT)
+        yield AgentRunResponseUpdate(text="Partial", role=Role.ASSISTANT)
         raise ValueError("Test agent streaming error")
 
-    type(mock_chat_client_agent).run_streaming = run_streaming
+    type(mock_chat_client_agent).run_stream = run_stream
 
     decorated_class = use_agent_telemetry(type(mock_chat_client_agent))
     agent = decorated_class()
@@ -819,7 +819,7 @@ async def test_agent_streaming_response_with_exception_via_decorator(mock_chat_c
 
         # Should raise the exception and call error handler
         with pytest.raises(ValueError, match="Test agent streaming error"):
-            async for _ in agent.run_streaming("Test message"):
+            async for _ in agent.run_stream("Test message"):
                 pass
 
         # Verify error was recorded
@@ -830,7 +830,7 @@ async def test_agent_streaming_response_with_exception_via_decorator(mock_chat_c
 @pytest.mark.parametrize("model_diagnostic_settings", [(False, False)], indirect=True)
 async def test_agent_streaming_response_diagnostics_disabled_via_decorator(model_diagnostic_settings):
     """Test agent streaming response when diagnostics are disabled."""
-    from agent_framework import AgentRunResponseUpdate, ChatRole
+    from agent_framework import AgentRunResponseUpdate, Role
     from agent_framework.telemetry import use_agent_telemetry
 
     class MockStreamingAgentNoDiagnostics:
@@ -841,8 +841,8 @@ async def test_agent_streaming_response_diagnostics_disabled_via_decorator(model
             self.name = "test_agent"
             self.display_name = "Test Agent"
 
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
-            yield AgentRunResponseUpdate(text="Test", role=ChatRole.ASSISTANT)
+        async def run_stream(self, messages=None, *, thread=None, **kwargs):
+            yield AgentRunResponseUpdate(text="Test", role=Role.ASSISTANT)
 
     decorated_class = use_agent_telemetry(MockStreamingAgentNoDiagnostics)
     agent = decorated_class()
@@ -853,7 +853,7 @@ async def test_agent_streaming_response_diagnostics_disabled_via_decorator(model
     ):
         # Should not create spans when diagnostics are disabled
         updates = []
-        async for update in agent.run_streaming("Test message"):
+        async for update in agent.run_stream("Test message"):
             updates.append(update)
 
         assert len(updates) == 1
@@ -874,7 +874,7 @@ async def test_agent_empty_streaming_response_via_decorator(model_diagnostic_set
             self.name = "test_agent"
             self.display_name = "Test Agent"
 
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
+        async def run_stream(self, messages=None, *, thread=None, **kwargs):
             # Return empty stream
             return
             yield  # This will never be reached
@@ -895,7 +895,7 @@ async def test_agent_empty_streaming_response_via_decorator(model_diagnostic_set
 
         # Should handle empty stream gracefully
         updates = []
-        async for update in agent.run_streaming("Test message"):
+        async for update in agent.run_stream("Test message"):
             updates.append(update)
 
         assert len(updates) == 0
@@ -943,16 +943,16 @@ async def test_agent_run_with_thread_and_kwargs(mock_chat_client_agent, model_di
 @pytest.mark.parametrize("model_diagnostic_settings", [(True, False)], indirect=True)
 async def test_agent_run_with_list_messages(mock_chat_client_agent, model_diagnostic_settings):
     """Test agent run with list of messages."""
-    from agent_framework import ChatMessage, ChatRole
+    from agent_framework import ChatMessage, Role
     from agent_framework.telemetry import use_agent_telemetry
 
     decorated_class = use_agent_telemetry(type(mock_chat_client_agent))
     agent = decorated_class()
 
     messages = [
-        ChatMessage(role=ChatRole.USER, text="First message"),
-        ChatMessage(role=ChatRole.ASSISTANT, text="Response"),
-        ChatMessage(role=ChatRole.USER, text="Second message"),
+        ChatMessage(role=Role.USER, text="First message"),
+        ChatMessage(role=Role.ASSISTANT, text="Response"),
+        ChatMessage(role=Role.USER, text="Second message"),
     ]
 
     with (
