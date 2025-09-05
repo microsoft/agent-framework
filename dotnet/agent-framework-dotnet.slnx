@@ -67,6 +67,12 @@
   <Folder Name="/Samples/GettingStarted/Workflow/SharedStates/">
     <Project Path="samples/GettingStarted/Workflow/SharedStates/SharedStates.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/Loop/">
+    <Project Path="samples/GettingStarted/Workflow/Loop/Loop.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/Agents/">
+    <Project Path="samples/GettingStarted/Workflow/Agents/CustomAgentExecutors/CustomAgentExecutors.csproj" />
+  </Folder>
   <Folder Name="/Samples/DeclarativeWorkflow/">
     <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
   </Folder>

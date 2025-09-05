@@ -18,11 +18,19 @@ Once completed, please proceed to other samples listed below.
 
 > Note that you don't need to follow a strict order after the foundational samples. However, some samples build upon concepts from previous ones, so it's beneficial to be aware of the dependencies.
 
+### Agents
+
 ### Concurrent Execution
 
 | Sample | Concepts |
 |--------|----------|
 | [Fan-Out and Fan-In](./Concurrent) | Introduces parallel processing with fan-out and fan-in patterns |
+
+### Loop
+
+| Sample | Concepts |
+|--------|----------|
+| [Looping](./Loop) | Shows how to create a loop within a workflow |
 
 ### Workflow Shared States
 
