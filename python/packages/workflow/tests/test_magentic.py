@@ -11,11 +11,11 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
+    Role,
     TextContent,
 )
-from agent_framework._agents import AgentBase
-from agent_framework._clients import ChatClient as AFChatClient
+from agent_framework._agents import BaseAgent
+from agent_framework._clients import ChatClientProtocol as AFChatClient
 
 from agent_framework_workflow import (
     Executor,
@@ -42,7 +42,7 @@ def test_magentic_start_message_from_string():
     msg = MagenticStartMessage.from_string("Do the thing")
     assert isinstance(msg, MagenticStartMessage)
     assert isinstance(msg.task, ChatMessage)
-    assert msg.task.role == ChatRole.USER
+    assert msg.task.role == Role.USER
     assert msg.task.text == "Do the thing"
 
 
@@ -67,11 +67,11 @@ def test_plan_review_request_defaults_and_reply_variants():
 
 def test_magentic_context_reset_behavior():
     ctx = MagenticContext(
-        task=ChatMessage(role=ChatRole.USER, text="task"),
+        task=ChatMessage(role=Role.USER, text="task"),
         participant_descriptions={"Alice": "Researcher"},
     )
     # seed context state
-    ctx.chat_history.append(ChatMessage(role=ChatRole.ASSISTANT, text="draft"))
+    ctx.chat_history.append(ChatMessage(role=Role.ASSISTANT, text="draft"))
     ctx.stall_count = 2
     prev_reset = ctx.reset_count
 
@@ -97,18 +97,18 @@ class FakeManager(MagenticManagerBase):
     instruction_text: str = "Proceed with step 1"
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        facts = ChatMessage(role=ChatRole.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- A\n")
-        plan = ChatMessage(role=ChatRole.ASSISTANT, text="- Do X\n- Do Y\n")
+        facts = ChatMessage(role=Role.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- A\n")
+        plan = ChatMessage(role=Role.ASSISTANT, text="- Do X\n- Do Y\n")
         self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
         combined = f"Task: {magentic_context.task.text}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
-        return ChatMessage(role=ChatRole.ASSISTANT, text=combined, author_name="magentic_manager")
+        return ChatMessage(role=Role.ASSISTANT, text=combined, author_name="magentic_manager")
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        facts = ChatMessage(role=ChatRole.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- A2\n")
-        plan = ChatMessage(role=ChatRole.ASSISTANT, text="- Do Z\n")
+        facts = ChatMessage(role=Role.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- A2\n")
+        plan = ChatMessage(role=Role.ASSISTANT, text="- Do Z\n")
         self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
         combined = f"Task: {magentic_context.task.text}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
-        return ChatMessage(role=ChatRole.ASSISTANT, text=combined, author_name="magentic_manager")
+        return ChatMessage(role=Role.ASSISTANT, text=combined, author_name="magentic_manager")
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         is_satisfied = self.satisfied_after_signoff and len(magentic_context.chat_history) > 0
@@ -121,18 +121,18 @@ class FakeManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role=ChatRole.ASSISTANT, text="FINAL", author_name="magentic_manager")
+        return ChatMessage(role=Role.ASSISTANT, text="FINAL", author_name="magentic_manager")
 
 
 async def test_standard_manager_plan_and_replan_combined_ledger():
     manager = FakeManager(max_round_count=10, max_stall_count=3, max_reset_count=2)
     ctx = MagenticContext(
-        task=ChatMessage(role=ChatRole.USER, text="demo task"),
+        task=ChatMessage(role=Role.USER, text="demo task"),
         participant_descriptions={"agentA": "Agent A"},
     )
 
     first = await manager.plan(ctx.model_copy(deep=True))
-    assert first.role == ChatRole.ASSISTANT and "Facts:" in first.text and "Plan:" in first.text
+    assert first.role == Role.ASSISTANT and "Facts:" in first.text and "Plan:" in first.text
     assert manager.task_ledger is not None
 
     replanned = await manager.replan(ctx.model_copy(deep=True))
@@ -142,7 +142,7 @@ async def test_standard_manager_plan_and_replan_combined_ledger():
 async def test_standard_manager_progress_ledger_and_fallback():
     manager = FakeManager(max_round_count=10)
     ctx = MagenticContext(
-        task=ChatMessage(role=ChatRole.USER, text="demo"),
+        task=ChatMessage(role=Role.USER, text="demo"),
         participant_descriptions={"agentA": "Agent A"},
     )
 
@@ -166,7 +166,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     )
 
     req_event: RequestInfoEvent | None = None
-    async for ev in wf.run_streaming("do work"):
+    async for ev in wf.run_stream("do work"):
         if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
             req_event = ev
     assert req_event is not None
@@ -205,7 +205,7 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
 
     # Wait for the initial plan review request
     req_event: RequestInfoEvent | None = None
-    async for ev in wf.run_streaming("do work"):
+    async for ev in wf.run_stream("do work"):
         if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
             req_event = ev
     assert req_event is not None
@@ -242,7 +242,7 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     from agent_framework_workflow import WorkflowEvent  # type: ignore
 
     events: list[WorkflowEvent] = []
-    async for ev in wf.run_streaming("round limit test"):
+    async for ev in wf.run_stream("round limit test"):
         events.append(ev)
         if len(events) > 50:
             break
@@ -251,7 +251,7 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     assert completed is not None
     data = getattr(completed, "data", None)
     assert isinstance(data, ChatMessage)
-    assert data.role == ChatRole.ASSISTANT
+    assert data.role == Role.ASSISTANT
 
 
 class _DummyExec(Executor):
@@ -268,7 +268,7 @@ from agent_framework_workflow import StandardMagenticManager  # noqa: E402
 
 class _StubChatClient(AFChatClient):
     async def get_response(self, messages, **kwargs):  # type: ignore[override]
-        return ChatResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, text="ok")])
+        return ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
     def get_streaming_response(self, messages, **kwargs) -> AsyncIterable[ChatResponseUpdate]:  # type: ignore[override]
         async def _gen():
@@ -284,14 +284,14 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     async def fake_complete_plan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         # Return a different response depending on call order length
         if any("FACTS" in (m.text or "") for m in messages):
-            return ChatMessage(role=ChatRole.ASSISTANT, text="- step A\n- step B")
-        return ChatMessage(role=ChatRole.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- fact1")
+            return ChatMessage(role=Role.ASSISTANT, text="- step A\n- step B")
+        return ChatMessage(role=Role.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- fact1")
 
     # First, patch to produce facts then plan
     mgr._complete = fake_complete_plan  # type: ignore[attr-defined]
 
     ctx = MagenticContext(
-        task=ChatMessage(role=ChatRole.USER, text="T"),
+        task=ChatMessage(role=Role.USER, text="T"),
         participant_descriptions={"A": "desc"},
     )
     combined = await mgr.plan(ctx.model_copy(deep=True))
@@ -303,8 +303,8 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     # Now replan with new outputs
     async def fake_complete_replan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         if any("Please briefly explain" in (m.text or "") for m in messages):
-            return ChatMessage(role=ChatRole.ASSISTANT, text="- new step")
-        return ChatMessage(role=ChatRole.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- updated")
+            return ChatMessage(role=Role.ASSISTANT, text="- new step")
+        return ChatMessage(role=Role.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- updated")
 
     mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
     combined2 = await mgr.replan(ctx.model_copy(deep=True))
@@ -314,7 +314,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
 async def test_standard_manager_progress_ledger_success_and_error():
     mgr = StandardMagenticManager(chat_client=_StubChatClient())
     ctx = MagenticContext(
-        task=ChatMessage(role=ChatRole.USER, text="task"),
+        task=ChatMessage(role=Role.USER, text="task"),
         participant_descriptions={"alice": "desc"},
     )
 
@@ -327,7 +327,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
             '"next_speaker": {"reason": "r", "answer": "alice"}, '
             '"instruction_or_question": {"reason": "r", "answer": "do"}}'
         )
-        return ChatMessage(role=ChatRole.ASSISTANT, text=json_text)
+        return ChatMessage(role=Role.ASSISTANT, text=json_text)
 
     mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
     ledger = await mgr.create_progress_ledger(ctx.model_copy(deep=True))
@@ -335,7 +335,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
 
     # Error path: invalid JSON now raises to avoid emitting planner-oriented instructions to agents
     async def fake_complete_bad(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
-        return ChatMessage(role=ChatRole.ASSISTANT, text="not-json")
+        return ChatMessage(role=Role.ASSISTANT, text="not-json")
 
     mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError):
@@ -348,10 +348,10 @@ class InvokeOnceManager(MagenticManagerBase):
         self._invoked = False
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role=ChatRole.ASSISTANT, text="ledger")
+        return ChatMessage(role=Role.ASSISTANT, text="ledger")
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role=ChatRole.ASSISTANT, text="re-ledger")
+        return ChatMessage(role=Role.ASSISTANT, text="re-ledger")
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         if not self._invoked:
@@ -374,43 +374,41 @@ class InvokeOnceManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role=ChatRole.ASSISTANT, text="final")
+        return ChatMessage(role=Role.ASSISTANT, text="final")
 
 
-class StubThreadAgent(AgentBase):
-    async def run_streaming(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
+class StubThreadAgent(BaseAgent):
+    async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
         yield AgentRunResponseUpdate(
             contents=[TextContent(text="thread-ok")],
             author_name="agentA",
-            role=ChatRole.ASSISTANT,
+            role=Role.ASSISTANT,
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentRunResponse(messages=[ChatMessage(role=ChatRole.ASSISTANT, text="thread-ok", author_name="agentA")])
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="thread-ok", author_name="agentA")])
 
 
 class StubAssistantsClient:
     pass  # class name used for branch detection
 
 
-class StubAssistantsAgent(AgentBase):
+class StubAssistantsAgent(BaseAgent):
     chat_client: object | None = None  # allow assignment via Pydantic field
 
     def __init__(self) -> None:
         super().__init__()
         self.chat_client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    async def run_streaming(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
+    async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
         yield AgentRunResponseUpdate(
             contents=[TextContent(text="assistants-ok")],
             author_name="agentA",
-            role=ChatRole.ASSISTANT,
+            role=Role.ASSISTANT,
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentRunResponse(
-            messages=[ChatMessage(role=ChatRole.ASSISTANT, text="assistants-ok", author_name="agentA")]
-        )
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="assistants-ok", author_name="agentA")])
 
 
 async def _collect_agent_responses_setup(participant_obj: object):
@@ -432,7 +430,7 @@ async def _collect_agent_responses_setup(participant_obj: object):
 
     # Run a bounded stream to allow one invoke and then completion
     events: list[WorkflowEvent] = []
-    async for ev in wf.run_streaming("task"):  # plan review disabled
+    async for ev in wf.run_stream("task"):  # plan review disabled
         events.append(ev)
         if len(events) > 50:
             break

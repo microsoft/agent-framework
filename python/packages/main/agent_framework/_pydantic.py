@@ -7,9 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, UrlConstraints
 from pydantic.networks import AnyUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-HttpsUrl = Annotated[AnyUrl, UrlConstraints(max_length=2083, allowed_schemes=["https"])]
+HTTPsUrl = Annotated[AnyUrl, UrlConstraints(max_length=2083, allowed_schemes=["https"])]
 
-__all__ = ["AFBaseModel", "AFBaseSettings", "HttpsUrl"]
+__all__ = ["AFBaseModel", "AFBaseSettings", "HTTPsUrl"]
 
 
 class AFBaseModel(BaseModel):
