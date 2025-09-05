@@ -167,7 +167,6 @@ class Runner:
                     # Find executor that can intercept the wrapped type
                     interceptor_found = False
                     for executor in self._executors.values():
-                        # Use getattr to avoid protected-member lint noise; treated as plugin hook list.
                         interceptors = getattr(executor, "_request_interceptors", [])
                         if interceptors and executor.id != message.source_id:
                             for registered_type in interceptors:  # type: ignore[assignment]

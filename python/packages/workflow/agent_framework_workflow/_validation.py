@@ -180,7 +180,6 @@ class WorkflowGraphValidator:
                 edge_executor_ids.add(_e.source_id)
                 edge_executor_ids.add(_e.target_id)
             if start_executor_id not in edge_executor_ids:
-                # Mirror the original expected error wording so tests relying on substring match succeed.
                 raise GraphConnectivityError(
                     f"Start executor '{start_executor_id}' is not present in the workflow graph"
                 )
