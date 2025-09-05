@@ -6,7 +6,7 @@ You're getting early access to Microsoft's comprehensive multi-language framewor
 
 **A few important notes:**
 - There currently are not public pypi or nuget packages for the SDKs. In order for the code and samples to work, please clone this repo and run the code here.
-- The repo is an active project so make sure to sync your fork/git pull regularly.
+- The repo is an active project so make sure to sync regularly.
 
 **We want your feedback!** 
 - For bugs, please file a [GitHub issue](https://github.com/microsoft/agent-framework/issues).
