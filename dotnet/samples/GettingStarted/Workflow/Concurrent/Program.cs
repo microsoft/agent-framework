@@ -29,7 +29,7 @@ namespace WorkflowConcurrentSample;
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - Foundational samples must be completed first.
+/// - Foundational samples should be completed first.
 /// - An Azure OpenAI chat completion deployment must be configured.
 /// </remarks>
 public static class Program
@@ -41,7 +41,7 @@ public static class Program
 
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
-        // Create agents
+        // Create the executors
         ChatClientAgent physicist = new(
             chatClient,
             name: "Physicist",
@@ -52,12 +52,10 @@ public static class Program
             name: "Chemist",
             instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective."
         );
-
-        // Create the executors
         var startExecutor = new ConcurrentStartExecutor();
         var aggregationExecutor = new ConcurrentAggregationExecutor();
 
-        // Build the workflow
+        // Build the workflow by adding executors and connecting them
         WorkflowBuilder builder = new(startExecutor);
         builder.AddFanOutEdge(startExecutor, targets: [physicist, chemist]);
         builder.AddFanInEdge(aggregationExecutor, sources: [physicist, chemist]);

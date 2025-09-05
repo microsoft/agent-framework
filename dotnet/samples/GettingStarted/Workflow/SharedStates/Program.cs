@@ -16,7 +16,7 @@ namespace WorkflowSharedStatesSample;
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - Foundational samples must be completed first.
+/// - Foundational samples should be completed first.
 /// - This sample also uses the fan-out and fan-in patterns to achieve parallel processing.
 /// </remarks>
 public static class Program

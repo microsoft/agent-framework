@@ -30,7 +30,7 @@ namespace WorkflowSwitchCaseSample;
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - Foundational samples must be completed first.
+/// - Foundational samples should be completed first.
 /// - Shared state is used in this sample to persist email data between executors.
 /// - An Azure OpenAI chat completion deployment that supports structured outputs must be configured.
 /// </remarks>
@@ -54,7 +54,7 @@ public static class Program
         var handleSpamExecutor = new HandleSpamExecutor();
         var handleUncertainExecutor = new HandleUncertainExecutor();
 
-        // Build the workflow
+        // Build the workflow by adding executors and connecting them
         WorkflowBuilder builder = new(spamDetectionExecutor);
         builder.AddSwitch(spamDetectionExecutor, switchBuilder =>
             switchBuilder

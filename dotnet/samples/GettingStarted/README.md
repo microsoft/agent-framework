@@ -10,4 +10,3 @@ of the agent framework.
 |[Agents](./Agents/README.md)|Getting started with agents|
 |[Agent Providers](./AgentProviders/README.md)|Getting started with creating agents using various providers|
 |[Agent Open Telemetry](./AgentOpenTelemetry/README.md)|Getting started with OpenTelemetry for agents|
-|[Workflow](./Workflow/README.md)|Getting started with building workflows|

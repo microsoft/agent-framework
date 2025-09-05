@@ -39,7 +39,7 @@ public static class Program
         AIAgent spanishAgent = GetTranslationAgent("Spanish", chatClient);
         AIAgent englishAgent = GetTranslationAgent("English", chatClient);
 
-        // Build the workflow
+        // Build the workflow by adding executors and connecting them
         WorkflowBuilder builder = new(frenchAgent);
         builder.AddEdge(frenchAgent, spanishAgent);
         builder.AddEdge(spanishAgent, englishAgent);
