@@ -2,6 +2,8 @@
 
 A lightweight, standalone debug interface for Agent Framework supporting both **directory-based discovery** and **in-memory agent registration**.
 
+![DevUI Screenshot](./docs/devuiscreen.png)
+
 ## Overview
 
 DevUI is a lightweight debug interface for Agent Framework agents and workflows. It follows the principle of being **"just another view to test and observe agents - not a product"**. DevUI leverages all existing Agent Framework capabilities without reimplementing any core functionality.
