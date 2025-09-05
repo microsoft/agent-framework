@@ -5,12 +5,13 @@ import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agent_framework import AgentProtocol
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
 
+from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
@@ -39,9 +40,6 @@ else:
 
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:  # Avoid runtime import cycles; enables proper type checking of as_agent return type
-    from ._agent import WorkflowAgent
 
 
 class WorkflowRunResult(list[WorkflowEvent]):

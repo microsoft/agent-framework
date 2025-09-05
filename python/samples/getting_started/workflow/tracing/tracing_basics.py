@@ -16,7 +16,7 @@ The sample raises an error if tracing is not configured.
 Purpose:
 - Require diagnostics by checking AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS and wiring a console exporter.
 - Show the span categories produced by a simple graph:
-  - workflow.build (events: build.started, build.validation_completed, build.completed)
+  - workflow.build (events: build.started, build.validation_completed, build.completed, edge_group.process)
   - workflow.run (events: workflow.started, workflow.completed or workflow.error)
   - executor.process (for each executor invocation)
   - message.send (for each outbound message)

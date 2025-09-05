@@ -61,7 +61,7 @@ _CYCLE_SENTINEL = "<cycle>"
 
 
 def _is_pydantic_model(obj: object) -> bool:
-    """Best-effort check for Pydantic v2 models (e.g., AFBaseModel).
+    """Best-effort check for Pydantic models (e.g., AFBaseModel).
 
     We avoid hard dependencies by duck-typing on model_dump/model_validate.
     """
@@ -92,7 +92,7 @@ def _encode_checkpoint_value(value: Any) -> Any:
 
         # Pydantic (AFBaseModel) handling
         if _is_pydantic_model(v):
-            cls = cast(type[Any], type(v))
+            cls = cast(type[Any], type(v))  # type: ignore
             try:
                 return {
                     _PYDANTIC_MARKER: f"{cls.__module__}:{cls.__name__}",
@@ -110,12 +110,13 @@ def _encode_checkpoint_value(value: Any) -> Any:
                 return _CYCLE_SENTINEL
             stack.add(oid)
             try:
-                cls = cast(type[Any], type(v))
+                # type(v) already narrows sufficiently; cast was redundant
+                dc_cls: type[Any] = type(v)
                 field_values: dict[str, Any] = {}
                 for f in fields(v):  # type: ignore[arg-type]
                     field_values[f.name] = _enc(getattr(v, f.name), stack, depth + 1)
                 return {
-                    _DATACLASS_MARKER: f"{cls.__module__}:{cls.__name__}",
+                    _DATACLASS_MARKER: f"{dc_cls.__module__}:{dc_cls.__name__}",
                     "value": field_values,
                 }
             finally:
@@ -214,11 +215,9 @@ def _decode_checkpoint_value(value: Any) -> Any:
             decoded[k_any] = _decode_checkpoint_value(v_any)
         return decoded
     if isinstance(value, list):
-        value_list = cast(list[Any], value)
-        decoded_list: list[Any] = []
-        for v_any in value_list:
-            decoded_list.append(_decode_checkpoint_value(v_any))
-        return decoded_list
+        # After isinstance check, treat value as list[Any] for decoding
+        value_list: list[Any] = value  # type: ignore[assignment]
+        return [_decode_checkpoint_value(v_any) for v_any in value_list]
     return value
 
 
