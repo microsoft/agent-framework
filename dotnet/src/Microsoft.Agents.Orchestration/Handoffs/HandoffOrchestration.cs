@@ -98,18 +98,9 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
             // Create the options for the next agent request, including handoff functions.
             HandoffContext handoffCtx = new(handoffs);
-            ChatClientAgentRunOptions? options = null;
+            AgentRunOptions options = new() { Tools = [] };
             List<AITool> handoffTools = handoffCtx.CreateHandoffFunctions(this.InteractiveCallback is not null);
-            if (context.Options is ChatClientAgentRunOptions contextOptions)
-            {
-                ChatOptions chatOptions = contextOptions.ChatOptions?.Clone() ?? new();
-                chatOptions.Tools = chatOptions.Tools is { Count: > 0 } ? [.. chatOptions.Tools, .. handoffTools] : handoffTools;
-                options = new(chatOptions);
-            }
-            else
-            {
-                options = new(new() { Tools = handoffTools });
-            }
+            options.Tools = options.Tools is { Count: > 0 } ? [.. options.Tools, .. handoffTools] : handoffTools;
 
             // Invoke the next agent with all of the messages collected so far.
             response = await RunAsync(agent, context, allMessages, options, cancellationToken).ConfigureAwait(false);

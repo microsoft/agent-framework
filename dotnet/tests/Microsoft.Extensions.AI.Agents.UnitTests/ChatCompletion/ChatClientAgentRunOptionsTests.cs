@@ -14,26 +14,26 @@ public class ChatClientAgentRunOptionsTests
         var runOptions = new ChatClientAgentRunOptions();
 
         // Assert
-        Assert.Null(runOptions.ChatOptions);
+        Assert.NotNull(runOptions.ChatOptions);
     }
 
     /// <summary>
     /// Verify that ChatClientAgentRunOptions ChatOptions property is set and mutable.
     /// </summary>
     [Fact]
-    public void ChatOptionsPropertyIsReadOnly()
+    public void ChatOptionsPropertyIsCloned()
     {
         // Arrange
         var chatOptions = new ChatOptions { MaxOutputTokens = 100 };
-        var runOptions = new ChatClientAgentRunOptions(chatOptions);
+        var runOptions = new ChatClientAgentRunOptions(null, chatOptions);
         chatOptions.MaxOutputTokens = 200; // Change the property to verify mutability
 
         // Act & Assert
-        Assert.Same(chatOptions, runOptions.ChatOptions);
+        Assert.NotSame(chatOptions, runOptions.ChatOptions);
 
         // Verify that the property doesn't have a setter by checking if it's the same instance
         var retrievedOptions = runOptions.ChatOptions!;
-        Assert.Same(chatOptions, retrievedOptions);
-        Assert.Equal(200, retrievedOptions.MaxOutputTokens); // Ensure the change is reflected
+        Assert.NotSame(chatOptions, retrievedOptions);
+        Assert.Equal(100, retrievedOptions.MaxOutputTokens); // Ensure the change is not reflected
     }
 }

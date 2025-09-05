@@ -117,10 +117,10 @@ async Task AFAgent()
 
     var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
         .GetOpenAIResponseClient(deploymentName)
-        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
+        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.") as ChatClientAgent;
 
-    var thread = agent.GetNewThread();
-    var agentOptions = new ChatClientAgentRunOptions(new()
+    var thread = agent!.GetNewThread();
+    var chatOptions = new ChatOptions()
     {
         MaxOutputTokens = 8000,
         // Microsoft.Extensions.AI currently does not have an abstraction for reasoning-effort,
@@ -133,9 +133,9 @@ async Task AFAgent()
                 ReasoningSummaryVerbosity = OpenAI.Responses.ResponseReasoningSummaryVerbosity.Detailed
             }
         }
-    });
+    };
 
-    var result = await agent.RunAsync(userInput, thread, agentOptions);
+    var result = await agent.RunAsync(userInput, thread, chatOptions: chatOptions);
 
     // Retrieve the thinking as a full text block requires flattening multiple TextReasoningContents from multiple messages content lists.
     string assistantThinking = string.Join("\n", result.Messages
@@ -148,7 +148,7 @@ async Task AFAgent()
     Console.WriteLine($"Assistant: \n{assistantText}\n---\n");
 
     Console.WriteLine("---");
-    await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))
+    await foreach (var update in agent.RunStreamingAsync(userInput, thread, chatOptions: chatOptions))
     {
         var thinkingContents = update.Contents
             .OfType<TextReasoningContent>()

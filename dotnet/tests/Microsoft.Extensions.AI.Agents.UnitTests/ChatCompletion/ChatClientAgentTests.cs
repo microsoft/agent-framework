@@ -113,7 +113,7 @@ public class ChatClientAgentTests
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], options: new ChatClientAgentRunOptions(chatOptions));
+        await agent.RunAsync([new(ChatRole.User, "test")], options: new ChatClientAgentRunOptions(null, chatOptions));
 
         // Assert
         mockService.Verify(
@@ -319,7 +319,7 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act & Assert
-        var response = await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions));
+        var response = await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(null, chatOptions));
         Assert.NotNull(response);
     }
 
@@ -339,7 +339,7 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ThreadId" };
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(null, chatOptions)));
     }
 
     /// <summary>
@@ -362,7 +362,7 @@ public class ChatClientAgentTests
         AgentThread thread = new() { ConversationId = "ConvId" };
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions));
+        await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(null, chatOptions));
 
         // Assert
         Assert.Null(chatOptions.ConversationId);
@@ -756,7 +756,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
+        await agent.RunAsync(messages, chatOptions: requestChatOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -818,7 +818,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
+        await agent.RunAsync(messages, chatOptions: requestChatOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -897,7 +897,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
+        await agent.RunAsync(messages, chatOptions: requestChatOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -947,7 +947,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
+        await agent.RunAsync(messages, chatOptions: requestChatOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -994,7 +994,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
+        await agent.RunAsync(messages, chatOptions: requestChatOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -1073,7 +1073,7 @@ public class ChatClientAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
-        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(requestChatOptions));
+        await agent.RunAsync(messages, chatOptions: requestChatOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);

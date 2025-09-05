@@ -2,6 +2,7 @@
 
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.SemanticKernel;
@@ -76,16 +77,16 @@ async Task AFAgent()
     });
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
-    var agent = serviceProvider.GetRequiredService<AIAgent>();
+    var agent = serviceProvider.GetRequiredService<AIAgent>() as ChatClientAgent;
 
-    var thread = agent.GetNewThread();
-    var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 1000 });
+    var thread = agent!.GetNewThread();
+    var chatOptions = new ChatOptions() { MaxOutputTokens = 1000 };
 
-    var result = await agent.RunAsync(userInput, thread, agentOptions);
+    var result = await agent.RunAsync(userInput, thread, chatOptions: chatOptions);
     Console.WriteLine(result);
 
     Console.WriteLine("---");
-    await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))
+    await foreach (var update in agent.RunStreamingAsync(userInput, thread, chatOptions: chatOptions))
     {
         Console.Write(update);
     }

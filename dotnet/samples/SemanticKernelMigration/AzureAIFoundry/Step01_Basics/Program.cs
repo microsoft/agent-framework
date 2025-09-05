@@ -2,6 +2,7 @@
 
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.AzureAI;
@@ -59,13 +60,13 @@ async Task AFAgent()
         instructions: "You are good at telling jokes.");
 
     var thread = agent.GetNewThread();
-    var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 1000 });
+    var chatOptions = new ChatOptions() { MaxOutputTokens = 1000 };
 
-    var result = await agent.RunAsync(userInput, thread, agentOptions);
+    var result = await agent.RunAsync(userInput, thread, chatOptions: chatOptions);
     Console.WriteLine(result);
 
     Console.WriteLine("---");
-    await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))
+    await foreach (var update in agent.RunStreamingAsync(userInput, thread, chatOptions: chatOptions))
     {
         Console.Write(update);
     }

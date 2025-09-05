@@ -68,7 +68,7 @@ async Task AFAgent()
     var agent = await azureAgentClient.CreateAIAgentAsync(deploymentName, instructions: "Answer questions about the menu");
 
     var thread = agent.GetNewThread();
-    var agentOptions = new ChatClientAgentRunOptions(new() { Tools = [AIFunctionFactory.Create(GetWeather)] });
+    AgentRunOptions agentOptions = new() { Tools = [AIFunctionFactory.Create(GetWeather)] };
 
     var result = await agent.RunAsync(userInput, thread, agentOptions);
     Console.WriteLine(result);

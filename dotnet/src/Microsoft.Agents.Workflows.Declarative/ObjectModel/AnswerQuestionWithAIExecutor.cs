@@ -47,12 +47,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
             userInput = expressionResult.Value;
         }
 
-        ChatClientAgentRunOptions options =
-            new(
-                new ChatOptions()
-                {
-                    Instructions = additionalInstructions,
-                });
+        AgentRunOptions options = new() { Instructions = additionalInstructions };
 
         FormulaValue conversationValue =
             this.Model.AutoSend ? // ISSUE #485: Conversation implicitly managed until updated OM is available.
