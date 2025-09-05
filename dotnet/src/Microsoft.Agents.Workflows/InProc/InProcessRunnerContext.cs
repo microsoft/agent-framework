@@ -35,7 +35,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
                 throw new InvalidOperationException($"Executor with ID '{executorId}' is not registered.");
             }
 
-            this._executors[executorId] = executor = registration.Provider();
+            this._executors[executorId] = executor = await registration.ProviderAsync().ConfigureAwait(false);
             tracer?.TraceActivated(executorId);
 
             if (executor is RequestInfoExecutor requestInputExecutor)

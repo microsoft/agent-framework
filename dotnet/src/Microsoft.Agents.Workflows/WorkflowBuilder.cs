@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -228,8 +230,15 @@ public class WorkflowBuilder
             throw new InvalidOperationException($"Start executor with ID '{this._startExecutorId}' is not bound.");
         }
 
+        using AutoResetEvent evt = new(false);
         // TODO: Delay-instantiate the start executor, and ensure it take input of type T
-        Executor startExecutor = startRegistration.Provider();
+        Task<Executor> executor = startRegistration.ProviderAsync().AsTask();
+        executor.ConfigureAwait(false).GetAwaiter().OnCompleted(() => evt.Set());
+        evt.WaitOne();
+
+#pragma warning disable VSTHRD002 // We are using an EventWaitHandle to synchronize this
+        Executor startExecutor = executor.Result;
+#pragma warning restore VSTHRD002 
 
         if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(T))))
         {
