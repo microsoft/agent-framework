@@ -21,7 +21,11 @@ from agent_framework.workflow import (
     handler,
 )
 
-from samples.getting_started.workflow.ai_agent.workflow_as_agent_reflection import ReviewRequest, ReviewResponse, Worker
+from samples.getting_started.workflow.agents.workflow_as_agent_reflection_pattern import (
+    ReviewRequest,
+    ReviewResponse,
+    Worker,
+)
 
 """
 Sample: Workflow Agent with Human-in-the-Loop

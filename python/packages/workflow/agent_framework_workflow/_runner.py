@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -74,19 +74,17 @@ class Runner:
         if max_iterations is not None:
             self._max_iterations = max_iterations
 
-    async def run_until_convergence(self) -> AsyncIterable[WorkflowEvent]:
+    async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
         if self._running:
             raise RuntimeError("Runner is already running.")
 
         self._running = True
         try:
-            # Process any events from initial execution before checkpointing
+            # Emit any events already produced prior to entering loop
             if await self._ctx.has_events():
-                logger.info("Processing events from initial execution")
-                events = await self._ctx.drain_events()
-                for event in events:
-                    logger.info(f"Yielding initial event: {event}")
+                logger.info("Yielding pre-loop events")
+                for event in await self._ctx.drain_events():
                     yield event
 
             # Create first checkpoint if there are messages from initial execution
@@ -102,21 +100,32 @@ class Runner:
 
             while self._iteration < self._max_iterations:
                 logger.info(f"Starting superstep {self._iteration + 1}")
-                await self._run_iteration()
+
+                # Run iteration concurrently with live event streaming: we poll
+                # for new events while the iteration coroutine progresses.
+                iteration_task = asyncio.create_task(self._run_iteration())
+                while not iteration_task.done():
+                    try:
+                        # Wait briefly for any new event; timeout allows progress checks
+                        event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
+                        yield event
+                    except asyncio.TimeoutError:
+                        # Periodically continue to let iteration advance
+                        continue
+
+                # Propagate errors from iteration
+                await iteration_task
                 self._iteration += 1
+
+                # Drain any straggler events emitted at tail end
+                if await self._ctx.has_events():
+                    for event in await self._ctx.drain_events():
+                        yield event
 
                 # Update context with current iteration state immediately
                 await self._update_context_with_shared_state()
 
                 logger.info(f"Completed superstep {self._iteration}")
-
-                # Process events first before any checkpointing
-                if await self._ctx.has_events():
-                    logger.info("Processing events before checkpointing")
-                    events = await self._ctx.drain_events()
-                    for event in events:
-                        logger.debug(f"Yielding event: {event}")
-                        yield event
 
                 # Create checkpoint after each superstep iteration
                 await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
@@ -142,7 +151,7 @@ class Runner:
                 from ._executor import SubWorkflowRequestInfo
 
                 # Handle SubWorkflowRequestInfo messages - only process those not already targeted
-                sub_workflow_messages = []
+                sub_workflow_messages: list[Message] = []
                 for msg in messages:
                     # Skip messages sent directly to RequestInfoExecutor - they are already forwarded
                     if self._is_message_to_request_info_executor(msg):
@@ -152,14 +161,16 @@ class Runner:
                         sub_workflow_messages.append(msg)
 
                 for message in sub_workflow_messages:
-                    sub_request = message.data
+                    # message.data is guaranteed to be SubWorkflowRequestInfo via filtering above
+                    sub_request = message.data  # type: ignore[assignment]
 
                     # Find executor that can intercept the wrapped type
                     interceptor_found = False
                     for executor in self._executors.values():
-                        if hasattr(executor, "_request_interceptors") and executor.id != message.source_id:
-                            # Check if any registered interceptor can handle this request type
-                            for registered_type in executor._request_interceptors:
+                        # Use getattr to avoid protected-member lint noise; treated as plugin hook list.
+                        interceptors = getattr(executor, "_request_interceptors", [])
+                        if interceptors and executor.id != message.source_id:
+                            for registered_type in interceptors:  # type: ignore[assignment]
                                 # Check type matching - handle both type and string cases
                                 matched = False
                                 if (
@@ -234,7 +245,7 @@ class Runner:
             # since they were handled specially
             from ._executor import SubWorkflowRequestInfo
 
-            non_sub_workflow_messages = []
+            non_sub_workflow_messages: list[Message] = []
             for msg in messages:
                 # Keep messages sent directly to RequestInfoExecutor (forwarded messages)
                 if self._is_message_to_request_info_executor(msg):
@@ -424,7 +435,8 @@ class Runner:
         """
         parsed: defaultdict[str, list[EdgeRunner]] = defaultdict(list)
         for runner in edge_runners:
-            for source_executor_id in runner._edge_group.source_executor_ids:
+            # Accessing protected attribute (_edge_group) intentionally for internal wiring.
+            for source_executor_id in runner._edge_group.source_executor_ids:  # type: ignore[attr-defined]
                 parsed[source_executor_id].append(runner)
 
         return parsed

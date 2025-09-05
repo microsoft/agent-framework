@@ -807,13 +807,18 @@ class AgentExecutor(Executor):
             streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
             id: A unique identifier for the executor. If None, a new UUID will be generated.
         """
-        super().__init__(id or agent.id)
+        # Prefer provided id; else use agent.name if present; else generate deterministic prefix
+        if id is not None:
+            exec_id = id
+        else:
+            agent_name = agent.name
+            exec_id = str(agent_name) if agent_name else f"executor_{uuid.uuid4()}"
+        super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
         self._streaming = streaming
         self._cache: list[ChatMessage] = []
 
-    # ---- Internal helpers -------------------------------------------------
     async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
         """Execute the underlying agent, emit events, and enqueue response.
 
@@ -827,6 +832,19 @@ class AgentExecutor(Executor):
                 self._cache,
                 thread=self._agent_thread,
             ):
+                # Skip empty updates (no textual or structural content)
+                if not update:
+                    continue
+                contents = getattr(update, "contents", None)
+                text_val = getattr(update, "text", "")
+                has_text_content = False
+                if contents:
+                    for c in contents:
+                        if getattr(c, "text", None):
+                            has_text_content = True
+                            break
+                if not (text_val or has_text_content):
+                    continue
                 updates.append(update)
                 await ctx.add_event(AgentRunUpdateEvent(self.id, update))
             response = AgentRunResponse.from_agent_run_response_updates(updates)
@@ -862,6 +880,18 @@ class AgentExecutor(Executor):
                     self._cache,
                     thread=self._agent_thread,
                 ):
+                    if not update:
+                        continue
+                    contents = getattr(update, "contents", None)
+                    text_val = getattr(update, "text", "")
+                    has_text_content = False
+                    if contents:
+                        for c in contents:
+                            if getattr(c, "text", None):
+                                has_text_content = True
+                                break
+                    if not (text_val or has_text_content):
+                        continue
                     updates.append(update)
                     await ctx.add_event(AgentRunUpdateEvent(self.id, update))
                 response = AgentRunResponse.from_agent_run_response_updates(updates)

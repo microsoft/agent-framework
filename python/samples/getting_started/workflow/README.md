@@ -34,11 +34,14 @@ Once comfortable with these, explore the rest of the samples.
 
 ## Samples Overview (by directory)
 
-### ai_agent
+### agents
 | Sample | File | Concepts |
 |---|---|---|
-| Workflow as Agent | [ai_agent/workflow_as_agent.py](./ai_agent/workflow_as_agent.py) | Wrap a workflow so it can behave like an agent |
-| Workflow as Agent + HITL | [ai_agent/workflow_as_agent_human_in_the_loop.py](./ai_agent/workflow_as_agent_human_in_the_loop.py) | Extend workflow-as-agent with human-in-the-loop capability |
+| Azure Chat Agents Streaming | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py) | Directly adds Azure agents as edges and handling streaming events |
+| Custom Agent Executors | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py) | Create executors to handle agent run methods |
+| Foundry Chat Agents Streaming | [agents/foundry_chat_agents_streaming.py](./agents/foundry_chat_agents_streaming.py) | Directly adds Foundry agents as edges and handling streaming events |
+| Workflow as Agent | [ai_agent/workflow_as_agent.py](./agents/workflow_as_agent.py) | Wrap a workflow so it can behave like an agent |
+| Workflow as Agent + HITL | [ai_agent/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py) | Extend workflow-as-agent with human-in-the-loop capability |
 
 ### checkpoint
 | Sample | File | Concepts |
