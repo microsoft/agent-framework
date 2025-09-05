@@ -15,7 +15,7 @@ internal sealed class ChatClientAgentRunOptions : AgentRunOptions
     /// <param name="agentRunOptions">An optional <see cref="AgentRunOptions"/> to clone from.</param>
     /// <param name="chatOptions">Optional chat options to pass to the agent's invocation.</param>
     /// <remarks>
-    /// Providing both <paramref name="agentRunOptions"/> and <paramref name="chatOptions"/> is will result in the
+    /// Providing both <paramref name="agentRunOptions"/> and <paramref name="chatOptions"/> will result in the
     /// merge of instructions and tools when both are present.
     /// 1. <see cref="AgentRunOptions.Instructions"/> and <see cref="ChatOptions.Instructions"/>
     /// 2. <see cref="AgentRunOptions.Tools"/> and <see cref="ChatOptions.Tools"/>
@@ -63,7 +63,7 @@ internal sealed class ChatClientAgentRunOptions : AgentRunOptions
         if (!string.IsNullOrWhiteSpace(agentRunOptions.Instructions) && !string.IsNullOrWhiteSpace(this.ChatOptions.Instructions))
         {
             // If both instructions are provided, concatenate in different lines.
-            this.ChatOptions.Instructions = string.Concat(agentRunOptions.Instructions, "\n", this.Instructions);
+            this.ChatOptions.Instructions = string.Concat(agentRunOptions.Instructions, "\n", this.ChatOptions.Instructions);
         }
     }
 
@@ -77,7 +77,7 @@ internal sealed class ChatClientAgentRunOptions : AgentRunOptions
 
         this.ChatOptions.Tools ??= [];
 
-        // Add to the chat options tools we any existing agent run options tools.
+        // Add to the chat options tools any existing agent run options tools.
         if (this.ChatOptions.Tools is List<AITool> runToolsList)
         {
             runToolsList.AddRange(agentRunOptions.Tools);
