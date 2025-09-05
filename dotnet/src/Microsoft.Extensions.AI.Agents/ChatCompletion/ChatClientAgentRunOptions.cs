@@ -77,7 +77,7 @@ internal sealed class ChatClientAgentRunOptions : AgentRunOptions
 
         this.ChatOptions.Tools ??= [];
 
-        // Add to the chat options tools we any existing agent run options tools.
+        // Add to the chat options tools any existing agent run options tools.
         if (this.ChatOptions.Tools is List<AITool> runToolsList)
         {
             runToolsList.AddRange(agentRunOptions.Tools);
