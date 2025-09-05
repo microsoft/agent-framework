@@ -225,7 +225,7 @@ jobs:
   python-tests-samples:
     name: Python Tests - Samples
     needs: paths-filter
-    if: needs.paths-filter.outputs.pythonChanges == 'true' && vars.RUN_SAMPLES_TESTS == 'true'
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true' && vars.RUN_SAMPLES_TESTS == 'true'
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
     strategy:
