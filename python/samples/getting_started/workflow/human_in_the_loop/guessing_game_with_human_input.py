@@ -44,10 +44,23 @@ Prerequisites:
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
 
+# What RequestInfoExecutor does:
+# RequestInfoExecutor is a workflow-native bridge that pauses the graph at a request for information,
+# emits a RequestInfoEvent with a typed payload, and then resumes the graph only after your application
+# supplies a matching RequestResponse keyed by the emitted request_id. It does not gather input by itself.
+# Your application is responsible for collecting the human reply from any UI or CLI and then calling
+# send_responses_streaming with a dict mapping request_id to the human's answer. The executor exists to
+# standardize pause-and-resume human gating, to carry typed request payloads, and to preserve correlation.
+
 
 # Request type sent to the RequestInfoExecutor for human feedback.
 # Including the agent's last guess allows the UI or CLI to display context and helps
 # the turn manager avoid extra state reads.
+# Why subclass RequestInfoMessage:
+# Subclassing RequestInfoMessage defines the exact schema of the request that the human will see.
+# This gives you strong typing, forward-compatible validation, and clear correlation semantics.
+# It also lets you attach contextual fields (such as the previous guess) so the UI can render a rich prompt
+# without fetching extra state from elsewhere.
 @dataclass
 class HumanFeedbackRequest(RequestInfoMessage):
     prompt: str = ""
@@ -156,7 +169,13 @@ async def main() -> None:
     # Build a simple loop: TurnManager <-> RequestInfoExecutor.
     # TurnManager runs the agent, asks the human, processes feedback, and either finishes or repeats.
     turn_manager = TurnManager(agent=agent, id="turn_manager")
+
+    # Naming note:
+    # This variable is currently named hitl for historical reasons. The name can feel ambiguous or magical.
+    # Consider renaming to request_info_executor in your own code for clarity, since it directly represents
+    # the RequestInfoExecutor node that gathers human replies out of band.
     hitl = RequestInfoExecutor(id="request_info")
+
     top_builder = (
         WorkflowBuilder()
         .set_start_executor(turn_manager)
@@ -171,6 +190,15 @@ async def main() -> None:
     # Human in the loop run: alternate between invoking the workflow and supplying collected responses.
     pending_responses: dict[str, str] | None = None
     completed: WorkflowCompletedEvent | None = None
+
+    # User guidance printing:
+    # If you want to instruct users up front, print a short banner before the loop.
+    # Example:
+    # print(
+    #     "Interactive mode. When prompted, type one of: higher, lower, correct, or exit. "
+    #     "The agent will keep guessing until you reply correct.",
+    #     flush=True,
+    # )
 
     while not completed:
         # First iteration uses run_stream("start").
@@ -197,6 +225,8 @@ async def main() -> None:
             for req_id, prompt in requests:
                 # Simple console prompt for the sample.
                 print(f"HITL> {prompt}")
+                # Instructional print already appears above. The input line below is the user entry point.
+                # If desired, you can add more guidance here, but keep it concise.
                 answer = input("Enter higher/lower/correct/exit: ").lower()
                 if answer == "exit":
                     print("Exiting...")

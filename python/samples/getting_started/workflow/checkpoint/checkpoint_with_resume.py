@@ -41,7 +41,8 @@ What you learn:
 - How to persist shared workflow state using ctx.set_shared_state for cross-executor visibility.
 - How to configure FileCheckpointStorage and call with_checkpointing on WorkflowBuilder.
 - How to list and inspect checkpoints programmatically.
-- How to resume a workflow from a chosen checkpoint using run_stream_from_checkpoint.
+- How to interactively choose a checkpoint to resume from (instead of always resuming
+    from the most recent or a hard-coded one) using run_stream_from_checkpoint.
 
 Prerequisites:
 - Azure AI or Azure OpenAI available for AzureChatClient.
@@ -152,25 +153,6 @@ class ReverseTextExecutor(Executor):
         await ctx.send_message(result)
 
 
-async def find_checkpoint_with_message(
-    checkpoint_storage: FileCheckpointStorage, workflow_id: str, needle: str
-) -> str | None:
-    """Search checkpoints for a message whose data equals the given needle. Return its checkpoint_id if found."""
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow_id=workflow_id)
-
-    # Sort by timestamp so we search in chronological order.
-    checkpoints.sort(key=lambda cp: cp.timestamp)
-
-    # Each checkpoint contains a map of executor_id -> list[message dict].
-    # We scan messages for an exact data match.
-    for checkpoint in checkpoints:
-        for executor_messages in checkpoint.messages.values():
-            for message in executor_messages:
-                if message.get("data") == needle:
-                    return checkpoint.checkpoint_id
-    return None
-
-
 async def main():
     # Clear existing checkpoints in this sample directory for a clean run.
     checkpoint_dir = Path(TEMP_DIR)
@@ -236,11 +218,38 @@ async def main():
             f"shared_state: original_input='{orig}', upper_output='{upper}'"
         )
 
-    # Locate the checkpoint whose recorded message data equals the reversed uppercase string.
-    # Resuming from that point will execute only the agent stage and the finalizer.
-    checkpoint_id = await find_checkpoint_with_message(checkpoint_storage, workflow_id, "DLROW OLLEH")
-    if not checkpoint_id:
-        print("Could not find checkpoint with 'DLROW OLLEH'!")
+    # Offer an interactive selection of checkpoints to resume from.
+    sorted_cps = sorted([cp for cp in all_checkpoints if cp.workflow_id == workflow_id], key=lambda c: c.timestamp)
+
+    print("\nAvailable checkpoints to resume from:")
+    for idx, cp in enumerate(sorted_cps):
+        msg_count = sum(len(v) for v in cp.messages.values())
+        print(f"  [{idx}] id={cp.checkpoint_id} iter={cp.iteration_count} messages={msg_count}")
+
+    user_input = input(
+        "\nEnter checkpoint index (or paste checkpoint id) to resume from, or press Enter to skip resume: "
+    ).strip()
+
+    if not user_input:
+        print("No checkpoint selected. Exiting without resuming.")
+        return
+
+    chosen_cp_id: str | None = None
+
+    # Try as index first
+    if user_input.isdigit():
+        idx = int(user_input)
+        if 0 <= idx < len(sorted_cps):
+            chosen_cp_id = sorted_cps[idx].checkpoint_id
+    # Fall back to direct id match
+    if chosen_cp_id is None:
+        for cp in sorted_cps:
+            if cp.checkpoint_id.startswith(user_input):  # allow prefix match for convenience
+                chosen_cp_id = cp.checkpoint_id
+                break
+
+    if chosen_cp_id is None:
+        print("Input did not match any checkpoint. Exiting without resuming.")
         return
 
     # You can reuse the same workflow graph definition and resume from a prior checkpoint.
@@ -256,8 +265,8 @@ async def main():
         .build()
     )
 
-    print(f"\nResuming from checkpoint: {checkpoint_id}")
-    async for event in new_workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
+    print(f"\nResuming from checkpoint: {chosen_cp_id}")
+    async for event in new_workflow.run_stream_from_checkpoint(chosen_cp_id, checkpoint_storage=checkpoint_storage):
         print(f"Resumed Event: {event}")
 
     """
@@ -280,6 +289,13 @@ async def main():
     - dfc63e72-8e8d-454f-9b6d-0d740b9062e6 | label='after_initial_execution' | iter=0 | messages=1 | states=['upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
     - a78c345a-e5d9-45ba-82c0-cb725452d91b | label='superstep_1' | iter=1 | messages=1 | states=['reverse_text_executor', 'upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
     - 637c1dbd-a525-4404-9583-da03980537a2 | label='superstep_2' | iter=2 | messages=0 | states=['finalize', 'lower_agent', 'reverse_text_executor', 'submit_lower', 'upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
+
+    Available checkpoints to resume from:
+        [0] id=dfc63e72-... iter=0 messages=1 label='after_initial_execution'
+        [1] id=a78c345a-... iter=1 messages=1 label='superstep_1'
+        [2] id=637c1dbd-... iter=2 messages=0 label='superstep_2'
+
+    Enter checkpoint index (or paste checkpoint id) to resume from, or press Enter to skip resume: 1
 
     Resuming from checkpoint: a78c345a-e5d9-45ba-82c0-cb725452d91b
     LowerAgent (shared_state): original_input='hello world', upper_output='HELLO WORLD'
