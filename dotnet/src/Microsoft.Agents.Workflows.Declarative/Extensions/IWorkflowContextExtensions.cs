@@ -9,16 +9,25 @@ using Microsoft.Bot.ObjectModel;
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 /// <summary>
-/// %%% COMMENT
+/// Extension methods for <see cref="IWorkflowContext"/> that assist with
+/// Power Fx expression evaluation.
 /// </summary>
 public static class IWorkflowContextExtensions
 {
     /// <summary>
-    /// %%% COMMENT
+    /// Formats one or more template lines by restoring the workflow's declarative state
+    /// and evaluating any embedded expressions (e.g., Power Fx) contained within each line.
     /// </summary>
-    /// <param name="context"></param>
-    /// <param name="lines"></param>
-    /// <returns></returns>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="lines">The template lines to format.</param>
+    /// <returns>
+    /// A single string containing the formatted results of all lines separated by newline characters.
+    /// A trailing newline will be present if at least one line was processed.
+    /// </returns>
+    /// <example>
+    /// Example:
+    /// var text = await context.FormatAsync("Hello @{User.Name}", "Count: @{Metrics.Count}");
+    /// </example>
     public static async ValueTask<string> FormatAsync(this IWorkflowContext context, params string[] lines)
     {
         DeclarativeWorkflowState state = new(RecalcEngineFactory.Create());

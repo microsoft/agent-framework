@@ -9,15 +9,16 @@ using Microsoft.Agents.Workflows.Reflection;
 namespace Microsoft.Agents.Workflows.Declarative; // %%% TODO
 
 /// <summary>
-/// %%% COMMENT
+/// Base class for an action executor that receives the initial trigger message.
 /// </summary>
 public abstract class ActionExecutor :
     ReflectingExecutor<ActionExecutor>,
     IMessageHandler<string> // %%% IDK
 {
     /// <summary>
-    /// %%% COMMENT
+    /// Initializes a new instance of the <see cref="ActionExecutor"/> class.
     /// </summary>
+    /// <param name="id">The executor id</param>
     protected ActionExecutor(string id)
         : base(id)
     {
@@ -26,8 +27,6 @@ public abstract class ActionExecutor :
     /// <inheritdoc/>
     public async ValueTask HandleAsync(string message, IWorkflowContext context)
     {
-        //await this.State.RestoreAsync(context, default).ConfigureAwait(false); // %%% TODO
-
         try
         {
             await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
@@ -48,10 +47,10 @@ public abstract class ActionExecutor :
     }
 
     /// <summary>
-    /// %%% COMMENT
+    /// Executes the core logic of the action.
     /// </summary>
-    /// <param name="context"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
+    /// <param name="context">The workflow execution context providing messaging and state services.</param>
+    /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
     protected abstract ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 }

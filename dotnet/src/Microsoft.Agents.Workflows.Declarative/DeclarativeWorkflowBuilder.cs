@@ -76,11 +76,11 @@ public static class DeclarativeWorkflowBuilder
     }
 
     /// <summary>
-    /// %%% COMMENT
+    /// Generates source code (provider/executor scaffolding) for the workflow defined in the YAML file.
     /// </summary>
-    /// <param name="workflowFile">The path to the workflow.</param>
-    /// <param name="namespace">// %%% COMMENT</param>
-    /// <returns>// %%% COMMENT</returns>
+    /// <param name="workflowFile">The path to the workflow YAML file.</param>
+    /// <param name="namespace">Optional target namespace for the generated code.</param>
+    /// <returns>The generated source code representing the workflow.</returns>
     public static string Eject(
         string workflowFile,
         string? @namespace = null)
@@ -90,11 +90,11 @@ public static class DeclarativeWorkflowBuilder
     }
 
     /// <summary>
-    /// %%% COMMENT
+    /// Generates source code (provider/executor scaffolding) for the workflow defined in the provided YAML reader.
     /// </summary>
-    /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
-    /// <param name="namespace">// %%% COMMENT</param>
-    /// <returns>// %%% COMMENT</returns>
+    /// <param name="yamlReader">The reader supplying the workflow YAML.</param>
+    /// <param name="namespace">Optional target namespace for the generated code.</param>
+    /// <returns>The generated source code representing the workflow.</returns>
     public static string Eject(
         TextReader yamlReader,
         string? @namespace = null)
@@ -125,10 +125,10 @@ public static class DeclarativeWorkflowBuilder
     }
 
     /// <summary>
-    /// %%% COMMENT
+    /// Provides a default conversion of an input object into a <see cref="ChatMessage"/>.
     /// </summary>
-    /// <param name="message"></param>
-    /// <returns></returns>
+    /// <param name="message">The original input object.</param>
+    /// <returns>A <see cref="ChatMessage"/> derived from the input.</returns>
     public static ChatMessage DefaultTransform(object message) =>
         message switch
         {
