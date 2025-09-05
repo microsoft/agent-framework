@@ -24,7 +24,7 @@ from ._pydantic import AFBaseModel
 from .telemetry import GenAIAttributes, start_as_current_span
 
 if TYPE_CHECKING:
-    from ._types import AIContents
+    from ._types import Contents
 
 tracer: trace.Tracer = trace.get_tracer("agent_framework")
 meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
@@ -32,24 +32,24 @@ logger = get_logger()
 
 __all__ = [
     "AIFunction",
-    "AITool",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
     "HostedWebSearchTool",
+    "ToolProtocol",
     "ai_function",
 ]
 
 
 def _parse_inputs(
-    inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None",
-) -> list["AIContents"]:
-    """Parse the inputs for a tool, ensuring they are of type AIContents."""
+    inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None",
+) -> list["Contents"]:
+    """Parse the inputs for a tool, ensuring they are of type Contents."""
     if inputs is None:
         return []
 
-    from ._types import AIContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
+    from ._types import BaseContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
 
-    parsed_inputs: list["AIContents"] = []
+    parsed_inputs: list["Contents"] = []
     if not isinstance(inputs, list):
         inputs = [inputs]
     for input_item in inputs:
@@ -75,15 +75,15 @@ def _parse_inputs(
                 parsed_inputs.append(DataContent(**input_item))
             else:
                 raise ValueError(f"Unsupported input type: {input_item}")
-        elif isinstance(input_item, AIContent):
+        elif isinstance(input_item, BaseContent):
             parsed_inputs.append(input_item)
         else:
-            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected AIContents or dict.")
+            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected Contents or dict.")
     return parsed_inputs
 
 
 @runtime_checkable
-class AITool(Protocol):
+class ToolProtocol(Protocol):
     """Represents a generic tool that can be specified to an AI service.
 
     Attributes:
@@ -111,7 +111,7 @@ ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 
 
-class AIToolBase(AFBaseModel):
+class BaseTool(AFBaseModel):
     """Base class for AI tools, providing common attributes and methods.
 
     Args:
@@ -131,7 +131,7 @@ class AIToolBase(AFBaseModel):
         return f"{self.__class__.__name__}(name={self.name})"
 
 
-class HostedCodeInterpreterTool(AIToolBase):
+class HostedCodeInterpreterTool(BaseTool):
     """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
 
     This tool does not implement code interpretation itself. It serves as a marker to inform a service
@@ -143,7 +143,7 @@ class HostedCodeInterpreterTool(AIToolBase):
     def __init__(
         self,
         *,
-        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
+        inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None" = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -155,8 +155,8 @@ class HostedCodeInterpreterTool(AIToolBase):
                 This should mostly be HostedFileContent or HostedVectorStoreContent.
                 Can also be DataContent, depending on the service used.
                 When supplying a list, it can contain:
-                - AIContents instances
-                - dicts with properties for AIContents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - Contents instances
+                - dicts with properties for Contents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
                 - strings (which will be converted to UriContent with media_type "text/plain").
                 If None, defaults to an empty list.
             description: A description of the tool.
@@ -177,7 +177,7 @@ class HostedCodeInterpreterTool(AIToolBase):
         super().__init__(**args, **kwargs)
 
 
-class HostedWebSearchTool(AIToolBase):
+class HostedWebSearchTool(BaseTool):
     """Represents a web search tool that can be specified to an AI service to enable it to perform web searches."""
 
     def __init__(
@@ -206,7 +206,7 @@ class HostedWebSearchTool(AIToolBase):
         super().__init__(**args, **kwargs)
 
 
-class HostedFileSearchTool(AIToolBase):
+class HostedFileSearchTool(BaseTool):
     """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
 
     inputs: list[Any] | None = None
@@ -214,7 +214,7 @@ class HostedFileSearchTool(AIToolBase):
 
     def __init__(
         self,
-        inputs: "AIContents | dict[str, Any] | str | list[AIContents | dict[str, Any] | str] | None" = None,
+        inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None" = None,
         max_results: int | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -226,8 +226,8 @@ class HostedFileSearchTool(AIToolBase):
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should be one or more HostedVectorStoreContents.
                 When supplying a list, it can contain:
-                - AIContents instances
-                - dicts with properties for AIContents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - Contents instances
+                - dicts with properties for Contents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
                 - strings (which will be converted to UriContent with media_type "text/plain").
                 If None, defaults to an empty list.
             max_results: The maximum number of results to return from the file search.
@@ -252,8 +252,8 @@ class HostedFileSearchTool(AIToolBase):
         super().__init__(**args, **kwargs)
 
 
-class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
-    """A AITool that is callable as code.
+class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
+    """A ToolProtocol that is callable as code.
 
     Args:
         name: The name of the function.

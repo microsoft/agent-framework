@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: accepted
 contact: eavanvalkenburg
-date: 2025-09-03
+date: 2025-09-04
 deciders: markwallace-microsoft, dmytrostruk, peterychang, ekzhu, sphenry
 consulted: taochenosu, alliscode, moonbox3, johanste
 ---
@@ -49,6 +49,9 @@ The table below represents the majority of the naming changes discussed in issue
 | ChatFinishReason | FinishReason | accepted | More concise while still clear in context. | None |
 | AIContent | BaseContent | accepted | More accurate as it serves as the base class for all content types. | Content, too generic. |
 | AIContents | Contents | accepted | This is the annotated typing object that is the union of all concrete content types, so plural makes sense and since this is used as a type hint, the generic nature of the name is acceptable. | None |
+| AIAnnotations | Annotations | accepted | In sync with contents | None |
+| AIAnnotation | BaseAnnotation | accepted | In sync with contents | None |
+| *Mcp* & *Http* | *MCP* & *HTTP* | accepted | Acronyms should be uppercased in class names, according to PEP 8. | None |
 | `agent.run_streaming` | `agent.run_stream` | accepted | Shorter and more closely aligns with AutoGen and Semantic Kernel names for the same methods. | None |
 | `workflow.run_streaming` | `workflow.run_stream` | accepted | In sync with `agent.run_stream` and shorter and more closely aligns with AutoGen and Semantic Kernel names for the same methods. | None |
 | AgentRunResponse & AgentRunResponseUpdate | AgentResponse & AgentResponseUpdate | rejected | Rejected, because it is the response to a run invocation and AgentResponse is too generic. | None |

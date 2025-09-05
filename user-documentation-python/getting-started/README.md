@@ -14,7 +14,7 @@ Before you begin, ensure you have the following:
 
 ## Running a Basic Agent Sample
 
-This sample demonstrates how to create and use a simple AI agent with Azure AI Foundry as the backend. It will create a basic agent using `ChatClientAgent` with `FoundryChatClient` and custom instructions.
+This sample demonstrates how to create and use a simple AI agent with Azure AI Foundry as the backend. It will create a basic agent using `ChatAgent` with `FoundryChatClient` and custom instructions.
 
 Make sure to set the following environment variables:
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
@@ -26,14 +26,14 @@ For detailed information about different ways to run examples and configure envi
 
 ```python
 import asyncio
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 async def main():
     async with (
         AzureCliCredential() as credential,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are good at telling jokes."
         ) as agent,

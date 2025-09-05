@@ -110,7 +110,7 @@ async def main():
     )
 
     # Step 3: Run the workflow with an input message.
-    async for event in workflow.run_streaming("This is a spam."):
+    async for event in workflow.run_stream("This is a spam."):
         print(f"Event: {event}")
 
 

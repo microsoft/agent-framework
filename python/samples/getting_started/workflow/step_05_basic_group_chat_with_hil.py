@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -39,7 +39,7 @@ class CriticGroupChatManager(Executor):
     @handler
     async def start(self, task: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         """Handler that starts the group chat with an initial task."""
-        initial_message = ChatMessage(ChatRole.USER, text=task)
+        initial_message = ChatMessage(Role.USER, text=task)
 
         # Send the initial message to the members
         await asyncio.gather(*[
@@ -129,7 +129,7 @@ class CriticGroupChatManager(Executor):
             return False
 
         last_message = self._chat_history[-1]
-        return bool(last_message.role == ChatRole.USER and "approve" in last_message.text.lower())
+        return bool(last_message.role == Role.USER and "approve" in last_message.text.lower())
 
     def _should_request_info(self) -> bool:
         """Determine if the group chat should request HIL based on the last message."""
@@ -137,7 +137,7 @@ class CriticGroupChatManager(Executor):
             return True
 
         last_message = self._chat_history[-1]
-        return last_message.role == ChatRole.ASSISTANT
+        return last_message.role == Role.ASSISTANT
 
     def _get_next_member(self) -> str:
         """Get the next member in the round-robin sequence."""
@@ -200,12 +200,12 @@ async def main():
         # Depending on whether we have a RequestInfoEvent event, we either
         # run the workflow normally or send the message to the HIL executor.
         if not request_info_event:
-            response_stream = workflow.run_streaming(
+            response_stream = workflow.run_stream(
                 "Create a slogan for a new electric SUV that is affordable and fun to drive."
             )
         else:
             response_stream = workflow.send_responses_streaming({
-                request_info_event.request_id: [ChatMessage(ChatRole.USER, text=user_input)]
+                request_info_event.request_id: [ChatMessage(Role.USER, text=user_input)]
             })
             request_info_event = None
 
