@@ -105,7 +105,7 @@ async def main():
 
     # Step 3: Run the workflow and print the events.
     iterations = 0
-    async for event in workflow.run_streaming(NumberSignal.INIT):
+    async for event in workflow.run_stream(NumberSignal.INIT):
         if isinstance(event, ExecutorCompletedEvent) and event.executor_id == guess_number_executor.id:
             iterations += 1
         print(f"Event: {event}")

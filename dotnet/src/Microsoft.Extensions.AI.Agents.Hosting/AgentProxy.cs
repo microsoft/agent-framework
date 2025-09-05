@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -27,10 +26,8 @@ public sealed class AgentProxy : AIAgent
     /// <param name="client">The actor client used to communicate with the agent.</param>
     public AgentProxy(string name, IActorClient client)
     {
-        Throw.IfNull(client);
-        Throw.IfNullOrEmpty(name);
-        this._client = client;
-        this.Name = name;
+        this._client = Throw.IfNull(client, nameof(client));
+        this.Name = Throw.IfNullOrEmpty(name, nameof(name));
     }
 
     /// <inheritdoc/>
@@ -53,9 +50,9 @@ public sealed class AgentProxy : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(messages);
-        var agentThread = GetAgentThreadId(thread);
-        return await this.RunAsync(messages, agentThread, cancellationToken).ConfigureAwait(false);
+        Throw.IfNull(messages, nameof(messages));
+        string agentThreadId = GetAgentThreadId(thread);
+        return await this.RunAsync(messages, agentThreadId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -65,9 +62,9 @@ public sealed class AgentProxy : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(messages);
-        var agentThread = GetAgentThreadId(thread);
-        await foreach (var item in this.RunStreamingAsync(messages, agentThread, cancellationToken).ConfigureAwait(false))
+        Throw.IfNull(messages, nameof(messages));
+        string agentThreadId = GetAgentThreadId(thread);
+        await foreach (var item in this.RunStreamingAsync(messages, agentThreadId, cancellationToken).ConfigureAwait(false))
         {
             yield return item;
         }
@@ -75,7 +72,6 @@ public sealed class AgentProxy : AIAgent
 
     private async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
     {
-        Throw.IfNull(messages);
         var handle = await this.RunCoreAsync(messages, threadId, cancellationToken).ConfigureAwait(false);
         var response = await handle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
         return response.Status switch
@@ -93,7 +89,6 @@ public sealed class AgentProxy : AIAgent
         string threadId,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        Throw.IfNull(messages);
         var response = await this.RunCoreAsync(messages, threadId, cancellationToken).ConfigureAwait(false);
         var updateTypeInfo = AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate));
         await foreach (var update in response.WatchUpdatesAsync(cancellationToken).ConfigureAwait(false))
@@ -130,9 +125,7 @@ public sealed class AgentProxy : AIAgent
 
     private async Task<ActorResponseHandle> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
     {
-        Debug.Assert(messages is not null);
-        Debug.Assert(threadId is not null);
-        var newMessages = new List<ChatMessage>(messages);
+        List<ChatMessage> newMessages = [.. messages];
 
         var runRequest = new AgentRunRequest
         {
@@ -140,7 +133,7 @@ public sealed class AgentProxy : AIAgent
         };
 
         string messageId = newMessages.LastOrDefault()?.MessageId ?? Guid.NewGuid().ToString();
-        var actorRequest = new ActorRequest(
+        ActorRequest actorRequest = new(
             actorId: new ActorId(this.Name, threadId),
             messageId,
             method: AgentActorConstants.RunMethodName,

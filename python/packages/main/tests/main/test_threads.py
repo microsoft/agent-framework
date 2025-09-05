@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from agent_framework import AgentThread, ChatMessage, ChatMessageList, ChatRole
+from agent_framework import AgentThread, ChatMessage, ChatMessageList, Role
 from agent_framework._threads import StoreState, ThreadState, deserialize_thread_state, thread_on_new_messages
 
 
@@ -37,16 +37,16 @@ class MockChatMessageStore:
 def sample_messages() -> list[ChatMessage]:
     """Fixture providing sample chat messages for testing."""
     return [
-        ChatMessage(role=ChatRole.USER, text="Hello", message_id="msg1"),
-        ChatMessage(role=ChatRole.ASSISTANT, text="Hi there!", message_id="msg2"),
-        ChatMessage(role=ChatRole.USER, text="How are you?", message_id="msg3"),
+        ChatMessage(role=Role.USER, text="Hello", message_id="msg1"),
+        ChatMessage(role=Role.ASSISTANT, text="Hi there!", message_id="msg2"),
+        ChatMessage(role=Role.USER, text="How are you?", message_id="msg3"),
     ]
 
 
 @pytest.fixture
 def sample_message() -> ChatMessage:
     """Fixture providing a single sample chat message for testing."""
-    return ChatMessage(role=ChatRole.USER, text="Test message", message_id="test1")
+    return ChatMessage(role=Role.USER, text="Test message", message_id="test1")
 
 
 class TestAgentThread:
@@ -171,7 +171,7 @@ class TestAgentThread:
 
     async def test_on_new_messages_with_existing_store(self, sample_message: ChatMessage) -> None:
         """Test _on_new_messages adds to existing message store."""
-        initial_messages = [ChatMessage(role=ChatRole.USER, text="Initial", message_id="init1")]
+        initial_messages = [ChatMessage(role=Role.USER, text="Initial", message_id="init1")]
         store = ChatMessageList(initial_messages)
         thread = AgentThread(message_store=store)
 

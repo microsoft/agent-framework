@@ -58,7 +58,7 @@ async def main():
 
     # Step 3: Run the workflow with an initial message.
     completion_event = None
-    async for event in workflow.run_streaming("hello world"):
+    async for event in workflow.run_stream("hello world"):
         print(f"Event: {event}")
         if isinstance(event, WorkflowCompletedEvent):
             # The WorkflowCompletedEvent contains the final result.

@@ -1,0 +1,24 @@
+#
+# This workflow demonstrates a single agent interaction based on user input.
+#
+# Any Foundry Agent may be used to provide the response.
+# See: ./setup/QuestionAgent.yaml
+#
+kind: AdaptiveDialog
+beginDialog:
+
+  kind: OnActivity
+  id: workflow_demo
+  actions:
+
+      # Respond with input
+    - kind: SendActivity
+      id: sendActivity_demo
+      activity: "Working..."
+      
+      # Use AI to answer the question
+    - kind: AnswerQuestionWithAI
+      id: question_demo
+      variable: Topic.Answer
+      userInput: =System.LastMessage.Text
+      additionalInstructions: {Env.FOUNDRY_AGENT_ANSWER}

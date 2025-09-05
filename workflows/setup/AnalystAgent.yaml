@@ -1,0 +1,10 @@
+type: foundry_agent
+name: ResearchAnalyst
+description: Demo agent for DeepResearch workflow
+model:
+  id: ${AzureAI:ModelDeployment}
+tools:
+  - type: bing_grounding
+    options:
+      tool_connections:
+        - ${AzureAI:BingConnectionId}
