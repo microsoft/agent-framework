@@ -1524,6 +1524,373 @@ public class ChatClientAgentTests
 
     #endregion
 
+    #region AgentRunOptions Conditional Logic Tests
+
+    /// <summary>
+    /// Verify that RunAsync with AgentRunOptions containing Instructions transfers instructions to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncWithAgentRunOptionsInstructionsTransfersInstructionsToRequestChatOptionsAsync()
+    {
+        // Arrange
+        const string TestInstructions = "Test instructions from AgentRunOptions";
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Instructions == TestInstructions),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Instructions = TestInstructions };
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
+
+        // Assert
+        mockService.Verify(
+            x => x.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Instructions == TestInstructions),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync with AgentRunOptions containing Tools transfers tools to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncWithAgentRunOptionsToolsTransfersToolsToRequestChatOptionsAsync()
+    {
+        // Arrange
+        var testTool = AIFunctionFactory.Create(() => "test tool result");
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Tools != null && opts.Tools.Count == 1 && opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Tools = [testTool] };
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
+
+        // Assert
+        mockService.Verify(
+            x => x.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Tools != null && opts.Tools.Count == 1 && opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync with AgentRunOptions containing both Instructions and Tools transfers both to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncWithAgentRunOptionsInstructionsAndToolsTransfersBothToRequestChatOptionsAsync()
+    {
+        // Arrange
+        const string TestInstructions = "Test instructions from AgentRunOptions";
+        var testTool = AIFunctionFactory.Create(() => "test tool result");
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts =>
+                    opts.Instructions == TestInstructions &&
+                    opts.Tools != null &&
+                    opts.Tools.Count == 1 &&
+                    opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions
+        {
+            Instructions = TestInstructions,
+            Tools = [testTool]
+        };
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
+
+        // Assert
+        mockService.Verify(
+            x => x.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts =>
+                    opts.Instructions == TestInstructions &&
+                    opts.Tools != null &&
+                    opts.Tools.Count == 1 &&
+                    opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync with AgentRunOptions containing null/whitespace Instructions does not transfer instructions to requestChatOptions.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RunAsyncWithAgentRunOptionsNullOrWhitespaceInstructionsDoesNotTransferInstructionsAsync(string? instructions)
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Instructions = instructions };
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
+
+        // Assert
+        mockService.Verify(
+            x => x.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync with AgentRunOptions containing null Tools does not transfer tools to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncWithAgentRunOptionsNullToolsDoesNotTransferToolsAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Tools = null };
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
+
+        // Assert
+        mockService.Verify(
+            x => x.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with AgentRunOptions containing Instructions transfers instructions to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncWithAgentRunOptionsInstructionsTransfersInstructionsToRequestChatOptionsAsync()
+    {
+        // Arrange
+        const string TestInstructions = "Test instructions from AgentRunOptions";
+        ChatResponseUpdate[] returnUpdates = [new ChatResponseUpdate(role: ChatRole.Assistant, content: "response")];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Instructions == TestInstructions),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Instructions = TestInstructions };
+
+        // Act
+        var updates = agent.RunStreamingAsync([new(ChatRole.User, "test")], options: runOptions);
+        List<AgentRunResponseUpdate> result = [];
+        await foreach (var update in updates)
+        {
+            result.Add(update);
+        }
+
+        // Assert
+        Assert.Single(result);
+        mockService.Verify(
+            x => x.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Instructions == TestInstructions),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with AgentRunOptions containing Tools transfers tools to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncWithAgentRunOptionsToolsTransfersToolsToRequestChatOptionsAsync()
+    {
+        // Arrange
+        var testTool = AIFunctionFactory.Create(() => "test tool result");
+        ChatResponseUpdate[] returnUpdates = [new ChatResponseUpdate(role: ChatRole.Assistant, content: "response")];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Tools != null && opts.Tools.Count == 1 && opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Tools = [testTool] };
+
+        // Act
+        var updates = agent.RunStreamingAsync([new(ChatRole.User, "test")], options: runOptions);
+        List<AgentRunResponseUpdate> result = [];
+        await foreach (var update in updates)
+        {
+            result.Add(update);
+        }
+
+        // Assert
+        Assert.Single(result);
+        mockService.Verify(
+            x => x.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts => opts.Tools != null && opts.Tools.Count == 1 && opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with AgentRunOptions containing both Instructions and Tools transfers both to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncWithAgentRunOptionsInstructionsAndToolsTransfersBothToRequestChatOptionsAsync()
+    {
+        // Arrange
+        const string TestInstructions = "Test instructions from AgentRunOptions";
+        var testTool = AIFunctionFactory.Create(() => "test tool result");
+        ChatResponseUpdate[] returnUpdates = [new ChatResponseUpdate(role: ChatRole.Assistant, content: "response")];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts =>
+                    opts.Instructions == TestInstructions &&
+                    opts.Tools != null &&
+                    opts.Tools.Count == 1 &&
+                    opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions
+        {
+            Instructions = TestInstructions,
+            Tools = [testTool]
+        };
+
+        // Act
+        var updates = agent.RunStreamingAsync([new(ChatRole.User, "test")], options: runOptions);
+        List<AgentRunResponseUpdate> result = [];
+        await foreach (var update in updates)
+        {
+            result.Add(update);
+        }
+
+        // Assert
+        Assert.Single(result);
+        mockService.Verify(
+            x => x.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.Is<ChatOptions>(opts =>
+                    opts.Instructions == TestInstructions &&
+                    opts.Tools != null &&
+                    opts.Tools.Count == 1 &&
+                    opts.Tools[0] == testTool),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with AgentRunOptions containing null/whitespace Instructions does not transfer instructions to requestChatOptions.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RunStreamingAsyncWithAgentRunOptionsNullOrWhitespaceInstructionsDoesNotTransferInstructionsAsync(string? instructions)
+    {
+        // Arrange
+        ChatResponseUpdate[] returnUpdates = [new ChatResponseUpdate(role: ChatRole.Assistant, content: "response")];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Instructions = instructions };
+
+        // Act
+        var updates = agent.RunStreamingAsync([new(ChatRole.User, "test")], options: runOptions);
+        List<AgentRunResponseUpdate> result = [];
+        await foreach (var update in updates)
+        {
+            result.Add(update);
+        }
+
+        // Assert
+        Assert.Single(result);
+        mockService.Verify(
+            x => x.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with AgentRunOptions containing null Tools does not transfer tools to requestChatOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncWithAgentRunOptionsNullToolsDoesNotTransferToolsAsync()
+    {
+        // Arrange
+        ChatResponseUpdate[] returnUpdates = [new ChatResponseUpdate(role: ChatRole.Assistant, content: "response")];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object);
+        var runOptions = new AgentRunOptions { Tools = null };
+
+        // Act
+        var updates = agent.RunStreamingAsync([new(ChatRole.User, "test")], options: runOptions);
+        List<AgentRunResponseUpdate> result = [];
+        await foreach (var update in updates)
+        {
+            result.Add(update);
+        }
+
+        // Assert
+        Assert.Single(result);
+        mockService.Verify(
+            x => x.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                null,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    #endregion
+
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
     {
         await Task.Yield();
