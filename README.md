@@ -5,7 +5,7 @@
 You're getting early access to Microsoft's comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for both .NET and Python implementations. This framework provides everything from simple chat agents to complex multi-agent workflows with graph-based orchestration.
 
 **A few important notes:**
-- There currently are not public pypi or nuget packages for the SDKs. In order for the code and samples to work, please fork and clone this repo and run the code here.
+- There currently are not public pypi or nuget packages for the SDKs. In order for the code and samples to work, please clone this repo and run the code here.
 - The repo is an active project so make sure to sync your fork/git pull regularly.
 
 **We want your feedback!** 
