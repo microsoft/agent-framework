@@ -44,6 +44,7 @@
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureOpenAI/DeclarativeAgent_AzureOpenAI.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry/DeclarativeAgent_AzureAIFoundry.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
