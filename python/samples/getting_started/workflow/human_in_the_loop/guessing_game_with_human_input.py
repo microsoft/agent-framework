@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from agent_framework import AIAgent, ChatMessage, ChatRole
+from agent_framework import AgentProtocol, ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,  # Wraps an agent so it can run inside a workflow
@@ -36,7 +36,7 @@ RequestResponse objects.
 Demonstrate:
 - Alternating turns between an AgentExecutor and a human, driven by events.
 - Using Pydantic response_format to enforce structured JSON output from the agent instead of regex parsing.
-- Driving the loop in application code with run_streaming and send_responses_streaming.
+- Driving the loop in application code with run_stream and send_responses_streaming.
 
 Prerequisites:
 - Azure OpenAI configured for AzureChatClient with required environment variables.
@@ -69,7 +69,7 @@ class TurnManager(AgentExecutor):
     - After each human reply, either finish the game or prompt the agent again with feedback.
     """
 
-    def __init__(self, agent: AIAgent, id: str | None = None):
+    def __init__(self, agent: AgentProtocol, id: str | None = None):
         super().__init__(agent, id=id)
 
     @handler
@@ -80,7 +80,7 @@ class TurnManager(AgentExecutor):
         - Input is a simple starter token (ignored here).
         - Output is an AgentExecutorRequest that triggers the agent to produce a guess.
         """
-        user = ChatMessage(ChatRole.USER, text="Start by making your first guess.")
+        user = ChatMessage(Role.USER, text="Start by making your first guess.")
         await ctx.send_message(AgentExecutorRequest(messages=[user], should_respond=True))
 
     @handler
@@ -133,7 +133,7 @@ class TurnManager(AgentExecutor):
         # Provide feedback to the agent to try again.
         # We keep the agent's output strictly JSON to ensure stable parsing on the next turn.
         user_msg = ChatMessage(
-            ChatRole.USER,
+            Role.USER,
             text=(f'Feedback: {reply}. Return ONLY a JSON object matching the schema {{"guess": <int 1..10>}}.'),
         )
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
@@ -173,12 +173,10 @@ async def main() -> None:
     completed: WorkflowCompletedEvent | None = None
 
     while not completed:
-        # First iteration uses run_streaming("start").
+        # First iteration uses run_stream("start").
         # Subsequent iterations use send_responses_streaming with pending_responses from the console.
         stream = (
-            workflow.send_responses_streaming(pending_responses)
-            if pending_responses
-            else workflow.run_streaming("start")
+            workflow.send_responses_streaming(pending_responses) if pending_responses else workflow.run_stream("start")
         )
         events = [event async for event in stream]
         pending_responses = None

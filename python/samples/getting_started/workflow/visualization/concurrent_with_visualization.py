@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -45,7 +45,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = ChatMessage(ChatRole.USER, text=prompt)
+        initial_message = ChatMessage(Role.USER, text=prompt)
         for expert_id in self._expert_ids:
             await ctx.send_message(
                 AgentExecutorRequest(messages=[initial_message], should_respond=True),
@@ -165,9 +165,7 @@ async def main() -> None:
 
     # 3) Run with a single prompt
     completion: WorkflowCompletedEvent | None = None
-    async for event in workflow.run_streaming(
-        "We are launching a new budget-friendly electric bike for urban commuters."
-    ):
+    async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
         if isinstance(event, AgentRunEvent):
             # Show which agent ran and what step completed.
             print(event)

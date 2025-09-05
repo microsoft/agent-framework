@@ -8,7 +8,7 @@ from agent_framework.workflow import WorkflowBuilder, WorkflowCompletedEvent, Wo
 Sample: Foundational sequential workflow with streaming using function-style executors.
 
 Two lightweight steps run in order. The first converts text to uppercase.
-The second reverses the text and completes the workflow. Events are printed as they arrive from run_streaming.
+The second reverses the text and completes the workflow. Events are printed as they arrive from run_stream.
 
 Purpose:
 Show how to declare executors with the @executor decorator, connect them with WorkflowBuilder,
@@ -58,7 +58,7 @@ async def main():
 
     # Step 3: Run the workflow and stream events in real time.
     completion_event = None
-    async for event in workflow.run_streaming("hello world"):
+    async for event in workflow.run_stream("hello world"):
         # You will see executor invoke and completion events, and then the final WorkflowCompletedEvent.
         print(f"Event: {event}")
         if isinstance(event, WorkflowCompletedEvent):

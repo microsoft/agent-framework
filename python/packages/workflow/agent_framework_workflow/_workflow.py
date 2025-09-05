@@ -225,7 +225,7 @@ class Workflow(AFBaseModel):
                 workflow_tracer.add_workflow_error_event(e)
                 raise
 
-    async def run_streaming(self, message: Any) -> AsyncIterable[WorkflowEvent]:
+    async def run_stream(self, message: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a starting message and stream events.
 
         Args:
@@ -252,7 +252,7 @@ class Workflow(AFBaseModel):
         async for event in self._run_workflow_with_tracing(initial_executor_fn=initial_execution, reset_context=True):
             yield event
 
-    async def run_streaming_from_checkpoint(
+    async def run_stream_from_checkpoint(
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
@@ -368,7 +368,7 @@ class Workflow(AFBaseModel):
         Returns:
             A WorkflowRunResult instance containing a list of events generated during the workflow execution.
         """
-        events = [event async for event in self.run_streaming(message)]
+        events = [event async for event in self.run_stream(message)]
         return WorkflowRunResult(events)
 
     async def run_from_checkpoint(
@@ -394,7 +394,7 @@ class Workflow(AFBaseModel):
             RuntimeError: If checkpoint restoration fails.
         """
         events = [
-            event async for event in self.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage, responses)
+            event async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses)
         ]
         return WorkflowRunResult(events)
 

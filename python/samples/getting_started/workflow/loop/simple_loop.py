@@ -3,7 +3,7 @@
 import asyncio
 from enum import Enum
 
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -95,7 +95,7 @@ class SubmitToJudgeAgent(Executor):
             f"Target: {self._target}\nGuess: {guess}\nResponse:"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
             target_id=self._judge_agent_id,
         )
 
@@ -146,7 +146,7 @@ async def main():
 
     # Step 3: Run the workflow and print the events.
     iterations = 0
-    async for event in workflow.run_streaming(NumberSignal.INIT):
+    async for event in workflow.run_stream(NumberSignal.INIT):
         if isinstance(event, ExecutorCompletedEvent) and event.executor_id == guess_number_executor.id:
             iterations += 1
         print(f"Event: {event}")

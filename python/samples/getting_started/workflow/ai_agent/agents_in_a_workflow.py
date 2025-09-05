@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, ChatMessage
+from agent_framework import ChatAgent, ChatMessage
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
 from azure.identity import AzureCliCredential
@@ -29,11 +29,11 @@ class Writer(Executor):
     """Custom executor that owns a domain specific agent responsible for generating content.
 
     This class demonstrates:
-    - Attaching a ChatClientAgent to an Executor so it participates as a node in a workflow.
+    - Attaching a ChatAgent to an Executor so it participates as a node in a workflow.
     - Using a @handler method to accept a typed input and forward a typed output via ctx.send_message.
     """
 
-    agent: ChatClientAgent
+    agent: ChatAgent
 
     def __init__(self, chat_client: AzureChatClient, id: str = "writer"):
         # Create a domain specific agent using your configured AzureChatClient.
@@ -75,7 +75,7 @@ class Reviewer(Executor):
     - Emitting a terminal WorkflowCompletedEvent with the final text outcome.
     """
 
-    agent: ChatClientAgent
+    agent: ChatAgent
 
     def __init__(self, chat_client: AzureChatClient, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.

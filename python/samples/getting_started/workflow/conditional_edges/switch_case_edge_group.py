@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
-from agent_framework import ChatMessage, ChatRole  # Core chat primitives used to form LLM requests
+from agent_framework import ChatMessage, Role  # Core chat primitives used to form LLM requests
 from agent_framework.azure import AzureChatClient  # Thin client for Azure OpenAI chat models
 from agent_framework.workflow import (
     AgentExecutor,  # Wraps an agent so it can run inside a workflow
@@ -97,7 +97,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 
     # Kick off the detector by forwarding the email as a user message to the spam_detection_agent.
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -118,7 +118,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content from shared state using the id carried in DetectionResult.
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
     )
 
 
@@ -212,7 +212,7 @@ async def main():
         )
 
     # Run and print the terminal event for whichever branch completes.
-    async for event in workflow.run_streaming(email):
+    async for event in workflow.run_stream(email):
         if isinstance(event, WorkflowCompletedEvent):
             print(f"{event}")
 

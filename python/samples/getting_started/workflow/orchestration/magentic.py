@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
+from agent_framework import ChatAgent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework_workflow import (
     MagenticAgentDeltaEvent,
@@ -25,9 +25,9 @@ Sample: Magentic Orchestration (multi-agent)
 What it does:
 - Orchestrates multiple agents using `MagenticBuilder` with streaming callbacks.
 
-- ResearcherAgent (ChatClientAgent backed by an OpenAI chat client) for
+- ResearcherAgent (ChatAgent backed by an OpenAI chat client) for
     finding information.
-- CoderAgent (ChatClientAgent backed by OpenAI Assistants with the hosted
+- CoderAgent (ChatAgent backed by OpenAI Assistants with the hosted
     code interpreter tool) for analysis and computation.
 
 The workflow is configured with:
@@ -45,7 +45,7 @@ Prerequisites:
 
 
 async def main() -> None:
-    researcher_agent = ChatClientAgent(
+    researcher_agent = ChatAgent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
@@ -53,11 +53,11 @@ async def main() -> None:
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
         # Feel free to explore with other agents that support web search, for example,
-        # the `OpenAIResponseAgent` or `AzureAIAgent` with bing grounding.
+        # the `OpenAIResponseAgent` or `AzureAgentProtocol` with bing grounding.
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     )
 
-    coder_agent = ChatClientAgent(
+    coder_agent = ChatAgent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
@@ -132,7 +132,7 @@ async def main() -> None:
 
     try:
         completion_event = None
-        async for event in workflow.run_streaming(task):
+        async for event in workflow.run_stream(task):
             print(f"Event: {event}")
 
             if isinstance(event, WorkflowCompletedEvent):

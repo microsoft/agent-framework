@@ -63,7 +63,7 @@ async def main():
     # Run the workflow in streaming mode.
     # Streaming yields intermediate AgentRunEvent objects as agents generate output,
     # followed by a WorkflowCompletedEvent once the workflow finishes.
-    async for event in workflow.run_streaming(
+    async for event in workflow.run_stream(
         "Create a slogan for a new electric SUV that is affordable and fun to drive."
     ):
         if isinstance(event, AgentRunEvent):

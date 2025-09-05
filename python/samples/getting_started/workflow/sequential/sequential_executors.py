@@ -15,7 +15,7 @@ from agent_framework.workflow import (
 Sample: Sequential workflow with streaming.
 
 Two custom executors run in sequence. The first converts text to uppercase,
-the second reverses the text and completes the workflow. The run_streaming loop prints events as they occur.
+the second reverses the text and completes the workflow. The run_stream loop prints events as they occur.
 
 Purpose:
 Show how to define explicit Executor classes with @handler methods, wire them in order with
@@ -76,7 +76,7 @@ async def main():
     # Step 3: Stream events for a single input.
     # The stream will include executor invoke and completion events, plus the final WorkflowCompletedEvent.
     completion_event = None
-    async for event in workflow.run_streaming("hello world"):
+    async for event in workflow.run_stream("hello world"):
         print(f"Event: {event}")
         if isinstance(event, WorkflowCompletedEvent):
             completion_event = event

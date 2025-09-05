@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIAssistantsClient
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
@@ -36,7 +36,7 @@ async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with OpenAI Assistants."""
     print("=== OpenAI Assistants Agent with Code Interpreter Example ===")
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIAssistantsClient(),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
@@ -45,7 +45,7 @@ async def main() -> None:
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""
-        async for chunk in agent.run_streaming(query):
+        async for chunk in agent.run_stream(query):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
             code_interpreter_chunk = get_code_interpreter_chunk(chunk)

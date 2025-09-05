@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -90,7 +90,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     await ctx.set_shared_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -117,7 +117,7 @@ async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowConte
 
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
     )
 
 
@@ -132,7 +132,7 @@ async def summarize_email(analysis: AnalysisResult, ctx: WorkflowContext[AgentEx
     # Only called for long NotSpam emails by selection_func
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
     )
 
 
@@ -257,7 +257,7 @@ async def main() -> None:
     else:
         email = "Hello team, here are the updates for this week..."
 
-    async for event in workflow.run_streaming(email):
+    async for event in workflow.run_stream(email):
         if isinstance(event, (WorkflowCompletedEvent, DatabaseEvent)):
             print(f"{event}")
 

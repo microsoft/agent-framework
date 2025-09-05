@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from uuid import uuid4
 
-from agent_framework import AgentRunResponseUpdate, AIContents, ChatClient, ChatMessage, ChatRole
+from agent_framework import AgentRunResponseUpdate, ChatClientProtocol, ChatMessage, Contents, Role
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.workflow import AgentRunUpdateEvent, Executor, WorkflowBuilder, WorkflowContext, handler
 from pydantic import BaseModel
@@ -54,7 +54,7 @@ class ReviewResponse:
 class Reviewer(Executor):
     """Executor that reviews agent responses and provides structured feedback."""
 
-    def __init__(self, chat_client: ChatClient) -> None:
+    def __init__(self, chat_client: ChatClientProtocol) -> None:
         super().__init__()
         self._chat_client = chat_client
 
@@ -70,7 +70,7 @@ class Reviewer(Executor):
         # Construct review instructions and context.
         messages = [
             ChatMessage(
-                role=ChatRole.SYSTEM,
+                role=Role.SYSTEM,
                 text=(
                     "You are a reviewer for an AI agent. Provide feedback on the "
                     "exchange between a user and the agent. Indicate approval only if:\n"
@@ -87,7 +87,7 @@ class Reviewer(Executor):
         messages.extend(request.agent_messages)
 
         # Add explicit review instruction.
-        messages.append(ChatMessage(role=ChatRole.USER, text="Please review the agent's responses."))
+        messages.append(ChatMessage(role=Role.USER, text="Please review the agent's responses."))
 
         print("Reviewer: Sending review request to LLM...")
         response = await self._chat_client.get_response(messages=messages, response_format=_Response)
@@ -106,7 +106,7 @@ class Reviewer(Executor):
 class Worker(Executor):
     """Executor that generates responses and incorporates feedback when necessary."""
 
-    def __init__(self, chat_client: ChatClient) -> None:
+    def __init__(self, chat_client: ChatClientProtocol) -> None:
         super().__init__()
         self._chat_client = chat_client
         self._pending_requests: dict[str, tuple[ReviewRequest, list[ChatMessage]]] = {}
@@ -116,7 +116,7 @@ class Worker(Executor):
         print("Worker: Received user messages, generating response...")
 
         # Initialize chat with system prompt.
-        messages = [ChatMessage(role=ChatRole.SYSTEM, text="You are a helpful assistant.")]
+        messages = [ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant.")]
         messages.extend(user_messages)
 
         print("Worker: Calling LLM to generate response...")
@@ -145,13 +145,13 @@ class Worker(Executor):
 
         if review.approved:
             print("Worker: Response approved. Emitting to external consumer...")
-            contents: list[AIContents] = []
+            contents: list[Contents] = []
             for message in request.agent_messages:
                 contents.extend(message.contents)
 
             # Emit approved result to external consumer via AgentRunUpdateEvent.
             await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=ChatRole.ASSISTANT))
+                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=Role.ASSISTANT))
             )
             return
 
@@ -159,9 +159,9 @@ class Worker(Executor):
         print("Worker: Regenerating response with feedback...")
 
         # Incorporate review feedback.
-        messages.append(ChatMessage(role=ChatRole.SYSTEM, text=review.feedback))
+        messages.append(ChatMessage(role=Role.SYSTEM, text=review.feedback))
         messages.append(
-            ChatMessage(role=ChatRole.SYSTEM, text="Please incorporate the feedback and regenerate the response.")
+            ChatMessage(role=Role.SYSTEM, text="Please incorporate the feedback and regenerate the response.")
         )
         messages.extend(request.user_messages)
 
@@ -207,7 +207,7 @@ async def main() -> None:
     print("-" * 50)
 
     # Run agent in streaming mode to observe incremental updates.
-    async for event in agent.run_streaming(
+    async for event in agent.run_stream(
         "Write code for parallel reading 1 million files on disk and write to a sorted output file."
     ):
         print(f"Agent Response: {event}")

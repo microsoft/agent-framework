@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import ChatMessage, ChatRole  # Core chat primitives to build LLM requests
+from agent_framework import ChatMessage, Role  # Core chat primitives to build LLM requests
 from agent_framework.azure import AzureChatClient  # Client wrapper for Azure OpenAI chat models
 from agent_framework.workflow import (
     AgentExecutor,  # Wraps an LLM agent for use inside a workflow
@@ -49,7 +49,7 @@ class DispatchToExperts(Executor):
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
         # Each send_message targets a different AgentExecutor by id so that branches run in parallel.
-        initial_message = ChatMessage(ChatRole.USER, text=prompt)
+        initial_message = ChatMessage(Role.USER, text=prompt)
         for expert_id in self._expert_ids:
             await ctx.send_message(
                 AgentExecutorRequest(messages=[initial_message], should_respond=True),
@@ -151,9 +151,7 @@ async def main() -> None:
 
     # 3) Run with a single prompt and print progress plus the final consolidated output
     completion: WorkflowCompletedEvent | None = None
-    async for event in workflow.run_streaming(
-        "We are launching a new budget-friendly electric bike for urban commuters."
-    ):
+    async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
         if isinstance(event, AgentRunEvent):
             # Show which agent ran and what step completed for lightweight observability.
             print(event)

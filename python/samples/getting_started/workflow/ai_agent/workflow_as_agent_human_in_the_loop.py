@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 from agent_framework import (
     ChatMessage,
-    ChatRole,
     FunctionCallContent,
     FunctionResultContent,
+    Role,
 )
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.workflow import (
@@ -144,10 +144,9 @@ async def main() -> None:
             call_id=human_review_function_call.call_id,
             result=human_response,
         )
-
-        # Send the human review result back to the agent for continuation.
-        response = await agent.run(ChatMessage(role=ChatRole.TOOL, contents=[human_review_function_result]))
-        print(f"Agent Response: {response.messages[-1].text}")
+        # Send the human review result back to the agent.
+        response = await agent.run(ChatMessage(role=Role.TOOL, contents=[human_review_function_result]))
+        print(f"📤 Agent Response: {response.messages[-1].text}")
 
     print("=" * 50)
     print("Workflow completed!")

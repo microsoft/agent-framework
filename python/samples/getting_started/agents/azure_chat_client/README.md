@@ -6,7 +6,7 @@ This folder contains examples demonstrating different ways to create and use age
 
 | File | Description |
 |------|-------------|
-| [`azure_chat_client_basic.py`](azure_chat_client_basic.py) | The simplest way to create an agent using `ChatClientAgent` with `AzureChatClient`. Shows both streaming and non-streaming responses for chat-based interactions with Azure OpenAI models. |
+| [`azure_chat_client_basic.py`](azure_chat_client_basic.py) | The simplest way to create an agent using `ChatAgent` with `AzureChatClient`. Shows both streaming and non-streaming responses for chat-based interactions with Azure OpenAI models. |
 | [`azure_chat_client_with_explicit_settings.py`](azure_chat_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific chat client, configuring settings explicitly including endpoint and deployment name. |
 | [`azure_chat_client_with_function_tools.py`](azure_chat_client_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |
 | [`azure_chat_client_with_thread.py`](azure_chat_client_with_thread.py) | Demonstrates thread management with Azure agents, including automatic thread creation for stateless conversations and explicit thread management for maintaining conversation context across multiple interactions. |

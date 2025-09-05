@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
     AgentExecutor,
@@ -41,7 +41,7 @@ What you learn:
 - How to persist shared workflow state using ctx.set_shared_state for cross-executor visibility.
 - How to configure FileCheckpointStorage and call with_checkpointing on WorkflowBuilder.
 - How to list and inspect checkpoints programmatically.
-- How to resume a workflow from a chosen checkpoint using run_streaming_from_checkpoint.
+- How to resume a workflow from a chosen checkpoint using run_stream_from_checkpoint.
 
 Prerequisites:
 - Azure AI or Azure OpenAI available for AzureChatClient.
@@ -102,7 +102,7 @@ class SubmitToLowerAgent(Executor):
 
         # Send to the AgentExecutor. should_respond=True instructs the agent to produce a reply.
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
             target_id=self._agent_id,
         )
 
@@ -211,7 +211,7 @@ async def main():
 
     # Run the full workflow once and observe events as they stream.
     print("Running workflow with initial message...")
-    async for event in workflow.run_streaming(message="hello world"):
+    async for event in workflow.run_stream(message="hello world"):
         print(f"Event: {event}")
 
     # Inspect checkpoints written during the run.
@@ -257,7 +257,7 @@ async def main():
     )
 
     print(f"\nResuming from checkpoint: {checkpoint_id}")
-    async for event in new_workflow.run_streaming_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
+    async for event in new_workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage=checkpoint_storage):
         print(f"Resumed Event: {event}")
 
     """

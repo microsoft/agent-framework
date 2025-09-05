@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, ChatMessage
+from agent_framework import ChatAgent, ChatMessage
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
 from azure.identity import AzureCliCredential
@@ -12,7 +12,7 @@ Step 3: Agents in a workflow with streaming
 
 A Writer agent generates content,
 then passes the conversation to a Reviewer agent that finalizes the result.
-The workflow is invoked with run_streaming so you can observe events as they occur.
+The workflow is invoked with run_stream so you can observe events as they occur.
 
 Purpose:
 Show how to wrap chat agents created by AzureChatClient inside workflow executors, wire them with WorkflowBuilder,
@@ -31,11 +31,11 @@ class Writer(Executor):
     """Custom executor that owns a domain specific agent for content generation.
 
     This class demonstrates:
-    - Attaching a ChatClientAgent to an Executor so it participates as a node in a workflow.
+    - Attaching a ChatAgent to an Executor so it participates as a node in a workflow.
     - Using a @handler method to accept a typed input and forward a typed output via ctx.send_message.
     """
 
-    agent: ChatClientAgent
+    agent: ChatAgent
 
     def __init__(self, chat_client: AzureChatClient, id: str = "writer"):
         # Create a domain specific agent using your configured AzureChatClient.
@@ -72,7 +72,7 @@ class Writer(Executor):
 class Reviewer(Executor):
     """Custom executor that owns a review agent and completes the workflow."""
 
-    agent: ChatClientAgent
+    agent: ChatAgent
 
     def __init__(self, chat_client: AzureChatClient, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
@@ -108,7 +108,7 @@ async def main():
 
     # Run the workflow with the user's initial message and stream events as they occur.
     # Events include executor invoke and completion, as well as the terminal WorkflowCompletedEvent.
-    async for event in workflow.run_streaming(
+    async for event in workflow.run_stream(
         ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
     ):
         print(event)

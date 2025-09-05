@@ -4,7 +4,7 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import ChatMessage, ChatRole  # Core chat primitives used to build requests
+from agent_framework import ChatMessage, Role  # Core chat primitives used to build requests
 from agent_framework.azure import AzureChatClient  # Thin client wrapper for Azure OpenAI chat models
 from agent_framework.workflow import (
     AgentExecutor,  # Wraps an LLM agent that can be invoked inside a workflow
@@ -122,7 +122,7 @@ async def to_email_assistant_request(
     """
     # Bridge executor. Converts a structured DetectionResult into a ChatMessage and forwards it as a new request.
     detection = DetectionResult.model_validate_json(response.agent_run_response.text)
-    user_msg = ChatMessage(ChatRole.USER, text=detection.email_content)
+    user_msg = ChatMessage(Role.USER, text=detection.email_content)
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
@@ -185,9 +185,9 @@ async def main() -> None:
         email = email_file.read()
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
-    # run_streaming yields events as they occur. We watch for the terminal WorkflowCompletedEvent and print it.
-    request = AgentExecutorRequest(messages=[ChatMessage(ChatRole.USER, text=email)], should_respond=True)
-    async for event in workflow.run_streaming(request):
+    # run_stream yields events as they occur. We watch for the terminal WorkflowCompletedEvent and print it.
+    request = AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email)], should_respond=True)
+    async for event in workflow.run_stream(request):
         if isinstance(event, WorkflowCompletedEvent):
             print(f"{event}")
 
