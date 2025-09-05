@@ -260,6 +260,9 @@ jobs:
       - name: Install the project
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Install samples dependencies
+        run: |
+          uv pip install azure-monitor-opentelemetry azure-monitor-opentelemetry-exporter opentelemetry-exporter-otlp-proto-grpc
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
