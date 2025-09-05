@@ -31,8 +31,6 @@ public abstract class RootExecutor<TInput> :
     /// <inheritdoc/>
     public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        //await this.State.RestoreAsync(context, default).ConfigureAwait(false); // %%% TODO
-
         try
         {
             await this.ExecuteAsync(message, context, cancellationToken: default).ConfigureAwait(false);

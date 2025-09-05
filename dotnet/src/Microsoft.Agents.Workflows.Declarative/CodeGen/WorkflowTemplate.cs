@@ -86,7 +86,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("\n        // Set user variables to default values");
+            this.Write("\n\n        // Set user variables to default values");
             
             #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
 

@@ -23,6 +23,7 @@ internal sealed class <#= this.TypeName #>Executor<TInput>(
         await context.QueueStateUpdateAsync("<#= variableName #>", this.GetEnvironmentVariable("<#= variableName #>"), "Env").ConfigureAwait(false); <#
         }
         #>
+
         // Set user variables to default values<#
         foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
         { // %%% DEFAULT VALUE #>

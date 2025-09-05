@@ -33,17 +33,15 @@ internal sealed class RootWorkflowDemoExecutor<TInput>(
     protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         ChatMessage input = inputTransform.Invoke(message);
-        //await context.SetLastMessageAsync(input).ConfigureAwait(false);
+        //await context.SetLastMessageAsync(input).ConfigureAwait(false); // %%% SYSTEM VARS
         await context.QueueStateUpdateAsync("LastMessageText", input.Text, "System").ConfigureAwait(false);
 
         // Set environment variables
-        await context.QueueStateUpdateAsync("USERNAME", GetEnvironmentVariable("USERNAME"), "Env").ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("USERNAME", this.GetEnvironmentVariable("USERNAME"), "Env").ConfigureAwait(false);
 
         // Set user variables to default values
         await context.QueueStateUpdateAsync("UserName", string.Empty, "Global").ConfigureAwait(false);
         await context.QueueStateUpdateAsync("UserInput", string.Empty, "Topic").ConfigureAwait(false);
-
-        await context.SendMessageAsync(this.Id).ConfigureAwait(false);
     }
 }
 
