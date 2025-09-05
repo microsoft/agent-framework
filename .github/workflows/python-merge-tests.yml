@@ -17,6 +17,7 @@ env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   RUN_INTEGRATION_TESTS: "true"
+  RUN_SAMPLES_TESTS: ${{ vars.RUN_SAMPLES_TESTS }}
 
 jobs:
   paths-filter:
