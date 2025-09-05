@@ -222,6 +222,22 @@ public sealed class ChatClientAgent : AIAgent
     {
         ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions?.Clone();
 
+        if (requestChatOptions is null)
+        {
+            // If the runOptions is not a ChatClientAgentRunOptions, we need to get instructions and tools from the AgentRunOptions instead.
+            if (!string.IsNullOrWhiteSpace(runOptions?.Instructions))
+            {
+                requestChatOptions ??= new();
+                requestChatOptions.Instructions = runOptions.Instructions;
+            }
+
+            if (runOptions?.Tools is not null)
+            {
+                requestChatOptions ??= new();
+                requestChatOptions.Tools = runOptions.Tools;
+            }
+        }
+
         // If no agent chat options were provided, return the request chat options as is.
         if (this._agentOptions?.ChatOptions is null)
         {
