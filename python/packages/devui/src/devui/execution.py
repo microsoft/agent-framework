@@ -76,7 +76,37 @@ class ExecutionEngine:
                     ) as span:
                         span.set_attribute("devui.session_id", thread_id)
                         
-                        # Execute agent using framework's native streaming
+                        try:
+                            # Execute agent using framework's native streaming
+                            update_count = 0
+                            async for update in agent.run_stream(message, thread=thread):
+                                update_count += 1
+                                # Yield any pending trace events first
+                                while trace_events:
+                                    yield trace_events.pop(0)
+                                
+                                # Minimal wrapping - preserve native types completely
+                                yield DebugStreamEvent(
+                                    type="agent_run_update",
+                                    update=update,  # Native AgentRunResponseUpdate - no modification
+                                    timestamp=self._get_timestamp(),
+                                    thread_id=thread_id,
+                                    debug_metadata=self._get_debug_metadata(update) if capture_traces else None
+                                )
+                            
+                            # Mark span as successful after processing all updates
+                            span.set_status(trace.Status(trace.StatusCode.OK))
+                            span.set_attribute("devui.update_count", update_count)
+                            
+                        except Exception as e:
+                            # Mark span as failed on exception
+                            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                            span.record_exception(e)
+                            raise
+                except ImportError:
+                    logger.debug("OpenTelemetry not available for manual span creation")
+                    # Fall back to execution without spans
+                    try:
                         async for update in agent.run_stream(message, thread=thread):
                             # Yield any pending trace events first
                             while trace_events:
@@ -90,9 +120,12 @@ class ExecutionEngine:
                                 thread_id=thread_id,
                                 debug_metadata=self._get_debug_metadata(update) if capture_traces else None
                             )
-                except ImportError:
-                    logger.debug("OpenTelemetry not available for manual span creation")
-                    # Fall back to execution without spans
+                    except Exception as e:
+                        logger.error(f"Error in agent execution fallback: {e}")
+                        raise
+            else:
+                # Execute without tracing
+                try:
                     async for update in agent.run_stream(message, thread=thread):
                         # Yield any pending trace events first
                         while trace_events:
@@ -106,21 +139,9 @@ class ExecutionEngine:
                             thread_id=thread_id,
                             debug_metadata=self._get_debug_metadata(update) if capture_traces else None
                         )
-            else:
-                # Execute without tracing
-                async for update in agent.run_stream(message, thread=thread):
-                    # Yield any pending trace events first
-                    while trace_events:
-                        yield trace_events.pop(0)
-                    
-                    # Minimal wrapping - preserve native types completely
-                    yield DebugStreamEvent(
-                        type="agent_run_update",
-                        update=update,  # Native AgentRunResponseUpdate - no modification
-                        timestamp=self._get_timestamp(),
-                        thread_id=thread_id,
-                        debug_metadata=self._get_debug_metadata(update) if capture_traces else None
-                    )
+                except Exception as e:
+                    logger.error(f"Error in agent execution without tracing: {e}")
+                    raise
                 
             # Yield any remaining trace events
             while trace_events:
@@ -180,20 +201,84 @@ class ExecutionEngine:
                 )
             except Exception as e:
                 logger.warning(f"Could not generate workflow structure: {e}")
-            
-            # Execute workflow using framework's native streaming
-            async for event in workflow.run_stream(input_data):
-                # Yield any pending trace events first
-                while trace_events:
-                    yield trace_events.pop(0)
+
+            # Create a span for workflow execution if tracing is enabled
+            if tracing_manager and capture_traces:
+                try:
+                    from opentelemetry import trace
+                    tracer = trace.get_tracer("devui.execution")
                     
-                # Minimal wrapping - preserve native types completely
-                yield DebugStreamEvent(
-                    type="workflow_event",
-                    event=self._serialize_workflow_event(event),  # Convert to serializable format
-                    timestamp=self._get_timestamp(),
-                    debug_metadata=self._get_debug_metadata(event) if capture_traces else None
-                )
+                    with tracer.start_as_current_span(
+                        f"workflow_execution.{getattr(workflow, 'name', 'unknown')}",
+                        attributes={
+                            "workflow_name": getattr(workflow, 'name', 'unknown'),
+                            "input_data": input_data[:100] + "..." if len(input_data) > 100 else input_data
+                        }
+                    ) as span:
+                        try:
+                            # Execute workflow using framework's native streaming
+                            event_count = 0
+                            async for event in workflow.run_stream(input_data):
+                                event_count += 1
+                                # Yield any pending trace events first
+                                while trace_events:
+                                    yield trace_events.pop(0)
+                                    
+                                # Minimal wrapping - preserve native types completely
+                                yield DebugStreamEvent(
+                                    type="workflow_event",
+                                    event=self._serialize_workflow_event(event),  # Convert to serializable format
+                                    timestamp=self._get_timestamp(),
+                                    debug_metadata=self._get_debug_metadata(event) if capture_traces else None
+                                )
+                            
+                            # Mark span as successful
+                            span.set_status(trace.Status(trace.StatusCode.OK))
+                            span.set_attribute("devui.event_count", event_count)
+                            
+                        except Exception as e:
+                            # Mark span as failed
+                            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                            span.record_exception(e)
+                            raise
+                            
+                except ImportError:
+                    logger.debug("OpenTelemetry not available for workflow span creation")
+                    # Fall back to execution without spans
+                    try:
+                        async for event in workflow.run_stream(input_data):
+                            # Yield any pending trace events first
+                            while trace_events:
+                                yield trace_events.pop(0)
+                                
+                            # Minimal wrapping - preserve native types completely
+                            yield DebugStreamEvent(
+                                type="workflow_event",
+                                event=self._serialize_workflow_event(event),  # Convert to serializable format
+                                timestamp=self._get_timestamp(),
+                                debug_metadata=self._get_debug_metadata(event) if capture_traces else None
+                            )
+                    except Exception as e:
+                        logger.error(f"Error in workflow execution fallback: {e}")
+                        raise
+            else:
+                # Execute without tracing
+                try:
+                    async for event in workflow.run_stream(input_data):
+                        # Yield any pending trace events first
+                        while trace_events:
+                            yield trace_events.pop(0)
+                            
+                        # Minimal wrapping - preserve native types completely
+                        yield DebugStreamEvent(
+                            type="workflow_event",
+                            event=self._serialize_workflow_event(event),  # Convert to serializable format
+                            timestamp=self._get_timestamp(),
+                            debug_metadata=self._get_debug_metadata(event) if capture_traces else None
+                        )
+                except Exception as e:
+                    logger.error(f"Error in workflow execution without tracing: {e}")
+                    raise
                 
             # Yield any remaining trace events
             while trace_events:

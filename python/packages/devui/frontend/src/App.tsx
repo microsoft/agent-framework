@@ -13,7 +13,13 @@ import { ModeToggle } from "@/components/mode-toggle";
 import { LoadingState } from "@/components/ui/loading-state";
 import { apiClient } from "@/services/api";
 import { Plus, Settings, ChevronLeft, GripVertical } from "lucide-react";
-import type { AgentInfo, WorkflowInfo, ChatMessage, AppState, ChatState } from "@/types";
+import type {
+  AgentInfo,
+  WorkflowInfo,
+  ChatMessage,
+  AppState,
+  ChatState,
+} from "@/types";
 import type { AgentRunResponseUpdate } from "@/types/agent-framework";
 import {
   isTextContent,
@@ -37,8 +43,6 @@ function extractMessageContent(
 ): string {
   if (!update) return "";
 
-  console.log("📦 Extracting from update:", update);
-
   // Use the text property if available (concatenated text from all TextContent)
   if (update.text && typeof update.text === "string") {
     console.log("✅ Found text property:", update.text);
@@ -51,12 +55,9 @@ function extractMessageContent(
     return "";
   }
 
-  console.log(`📝 Processing ${update.contents.length} content items`);
-
   const textParts: string[] = [];
 
   for (const content of update.contents) {
-    console.log("📄 Content:", content);
     if (isTextContent(content)) {
       textParts.push(content.text);
     } else if (isFunctionCallContent(content)) {
@@ -111,12 +112,12 @@ function extractMessageContent(
       }
       // If incomplete, don't add anything to textParts yet
     } else if (isFunctionResultContent(content)) {
-      textParts.push(`Tool result: ${content.result}`);
+      // Tool results are already shown in the debug panel, so we don't include them in main chat
+      // textParts.push(`Tool result: ${content.result}`);
     }
   }
 
   const result = textParts.join("\n");
-  console.log("🎯 Extracted content:", result);
   return result;
 }
 
@@ -137,7 +138,11 @@ export default function App() {
   const [workflowLoading, setWorkflowLoading] = useState(false);
 
   const [debugPanelOpen, setDebugPanelOpen] = useState(true);
-  const [debugPanelWidth, setDebugPanelWidth] = useState(320); // Default 320px (w-80)
+  const [debugPanelWidth, setDebugPanelWidth] = useState(() => {
+    // Initialize from localStorage or default to 320
+    const savedWidth = localStorage.getItem("debugPanelWidth");
+    return savedWidth ? parseInt(savedWidth, 10) : 320;
+  });
   const [isResizing, setIsResizing] = useState(false);
 
   // Function call accumulator for streaming function arguments
@@ -157,7 +162,12 @@ export default function App() {
           ...prev,
           agents,
           workflows,
-          selectedAgent: agents.length > 0 ? agents[0] : workflows.length > 0 ? workflows[0] : undefined,
+          selectedAgent:
+            agents.length > 0
+              ? agents[0]
+              : workflows.length > 0
+              ? workflows[0]
+              : undefined,
           isLoading: false,
         }));
       } catch (error) {
@@ -171,14 +181,6 @@ export default function App() {
     };
 
     loadData();
-  }, []);
-
-  // Load debug panel width from localStorage
-  useEffect(() => {
-    const savedWidth = localStorage.getItem("debugPanelWidth");
-    if (savedWidth) {
-      setDebugPanelWidth(parseInt(savedWidth, 10));
-    }
   }, []);
 
   // Save debug panel width to localStorage
@@ -449,7 +451,7 @@ export default function App() {
           fullPage={true}
         />
       </div>
-    )
+    );
   }
 
   // Show error state if loading failed
@@ -473,28 +475,29 @@ export default function App() {
             <div className="text-destructive text-lg font-medium">
               Failed to load agents
             </div>
-            <p className="text-muted-foreground text-sm">
-              {appState.error}
-            </p>
-            <Button 
-              onClick={() => window.location.reload()} 
-              variant="outline"
-            >
+            <p className="text-muted-foreground text-sm">{appState.error}</p>
+            <Button onClick={() => window.location.reload()} variant="outline">
               Retry
             </Button>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   // Show empty state if no agents or workflows are available
-  if (!appState.isLoading && appState.agents.length === 0 && appState.workflows.length === 0) {
+  if (
+    !appState.isLoading &&
+    appState.agents.length === 0 &&
+    appState.workflows.length === 0
+  ) {
     return (
       <div className="h-screen flex flex-col bg-background">
         {/* Top Bar */}
         <header className="flex h-14 items-center gap-4 border-b px-4">
-          <div className="text-sm text-muted-foreground">No agents available</div>
+          <div className="text-sm text-muted-foreground">
+            No agents available
+          </div>
           <div className="flex items-center gap-2 ml-auto">
             <ModeToggle />
             <Button variant="ghost" size="sm">
@@ -506,22 +509,18 @@ export default function App() {
         {/* Empty State Content */}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-4 max-w-md">
-            <div className="text-lg font-medium">
-              No agents configured
-            </div>
+            <div className="text-lg font-medium">No agents configured</div>
             <p className="text-muted-foreground text-sm">
-              No agents or workflows were found in your configuration. Please check your setup and ensure agents are properly configured.
+              No agents or workflows were found in your configuration. Please
+              check your setup and ensure agents are properly configured.
             </p>
-            <Button 
-              onClick={() => window.location.reload()} 
-              variant="outline"
-            >
+            <Button onClick={() => window.location.reload()} variant="outline">
               Retry
             </Button>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (

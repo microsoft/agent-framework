@@ -35,49 +35,199 @@ interface DebugPanelProps {
   isStreaming?: boolean;
 }
 
-// Helper function to determine if an event is significant enough to show
-function isSignificantEvent(event: DebugStreamEvent): boolean {
-  // Always show completion and error events
-  if (event.type === "completion" || event.type === "error") return true;
+// Helper function to accumulate events into meaningful units
+function processEventsForDisplay(
+  events: DebugStreamEvent[]
+): DebugStreamEvent[] {
+  const processedEvents: DebugStreamEvent[] = [];
+  let currentToolCall: {
+    name?: string;
+    arguments?: string | object;
+    callId?: string;
+    timestamp: string;
+  } | null = null;
+  let accumulatedText = "";
+  let lastTextTimestamp = "";
 
-  // Always show workflow events
-  if (event.type === "workflow_event") return true;
-
-  // For agent_run_update events, filter out small text-only updates
-  if (event.type === "agent_run_update" && event.update) {
-    const update = event.update;
-    if (!update.contents || update.contents.length === 0) return false;
-
-    // Show function results (always significant)
-    const hasFunctionResult = update.contents.some(isFunctionResultContent);
-    if (hasFunctionResult) return true;
-
-    // For function calls, only show if they have a name (indicating start of call)
-    // This filters out the streaming fragments that only have partial arguments
-    const hasFunctionCall = update.contents.some(
-      (content) =>
-        isFunctionCallContent(content) &&
-        content.name &&
-        content.name.trim() !== ""
-    );
-    if (hasFunctionCall) return true;
-
-    // For text content, only show if it's substantial (>10 chars) or is the first text in a sequence
-    const textContents = update.contents.filter(isTextContent);
-    if (textContents.length > 0) {
-      const totalText = textContents.map((c) => c.text).join("");
-      return (
-        totalText.length > 10 ||
-        totalText.trim().endsWith("\n") ||
-        totalText.includes("\n")
-      );
+  for (const event of events) {
+    // Always show completion, error, and workflow events
+    if (
+      event.type === "completion" ||
+      event.type === "error" ||
+      event.type === "workflow_event"
+    ) {
+      // Flush any accumulated text before showing these events
+      if (accumulatedText.trim()) {
+        processedEvents.push({
+          type: "agent_run_update",
+          timestamp: lastTextTimestamp,
+          update: {
+            contents: [{ type: "text", text: accumulatedText.trim() }],
+          },
+        } as DebugStreamEvent);
+        accumulatedText = "";
+      }
+      processedEvents.push(event);
+      continue;
     }
 
-    // Show other content types (data, uri, etc.)
-    return update.contents.some((c) => !isTextContent(c));
+    if (event.type === "agent_run_update" && event.update?.contents) {
+      const contents = event.update.contents;
+
+      // Handle function calls - accumulate until we have a complete call
+      const functionCalls = contents.filter(isFunctionCallContent);
+      if (functionCalls.length > 0) {
+        const call = functionCalls[0];
+
+        // If this is a new function call (has a name), finalize any previous call
+        if (call.name && call.name.trim()) {
+          if (currentToolCall && currentToolCall.name) {
+            // Emit the previous complete tool call
+            processedEvents.push({
+              type: "agent_run_update",
+              timestamp: currentToolCall.timestamp,
+              update: {
+                contents: [
+                  {
+                    type: "function_call",
+                    name: currentToolCall.name,
+                    arguments: currentToolCall.arguments,
+                    call_id: currentToolCall.callId,
+                  },
+                ],
+              },
+            } as DebugStreamEvent);
+          }
+
+          // Start new tool call
+          currentToolCall = {
+            name: call.name,
+            arguments: call.arguments || "",
+            callId: call.call_id,
+            timestamp: event.timestamp,
+          };
+        } else if (currentToolCall && call.arguments) {
+          // Accumulate arguments for current tool call
+          if (
+            typeof currentToolCall.arguments === "string" &&
+            typeof call.arguments === "string"
+          ) {
+            currentToolCall.arguments += call.arguments;
+          } else {
+            currentToolCall.arguments = call.arguments;
+          }
+        }
+        continue;
+      }
+
+      // Handle function results - always show these
+      const functionResults = contents.filter(isFunctionResultContent);
+      if (functionResults.length > 0) {
+        // Finalize any pending tool call first
+        if (currentToolCall && currentToolCall.name) {
+          processedEvents.push({
+            type: "agent_run_update",
+            timestamp: currentToolCall.timestamp,
+            update: {
+              contents: [
+                {
+                  type: "function_call",
+                  name: currentToolCall.name,
+                  arguments: currentToolCall.arguments,
+                  call_id: currentToolCall.callId,
+                },
+              ],
+            },
+          } as DebugStreamEvent);
+          currentToolCall = null;
+        }
+
+        processedEvents.push(event);
+        continue;
+      }
+
+      // Handle text content - accumulate until we have substantial content
+      const textContents = contents.filter(isTextContent);
+      if (textContents.length > 0) {
+        const newText = textContents.map((c) => c.text).join("");
+        accumulatedText += newText;
+        lastTextTimestamp = event.timestamp;
+
+        // Only emit if we have substantial content AND hit a natural paragraph break
+        // This makes the text accumulation much more aggressive
+        if (
+          accumulatedText.length > 100 &&
+          (accumulatedText.includes("\n\n") ||
+            accumulatedText.trim().match(/[.!?]\s*$/))
+        ) {
+          processedEvents.push({
+            type: "agent_run_update",
+            timestamp: lastTextTimestamp,
+            update: {
+              contents: [{ type: "text", text: accumulatedText.trim() }],
+            },
+          } as DebugStreamEvent);
+          accumulatedText = "";
+        }
+        continue;
+      }
+
+      // Handle other content types - but filter out usage events which are noise
+      const otherContents = contents.filter(
+        (c) =>
+          !isTextContent(c) &&
+          !isFunctionCallContent(c) &&
+          !isFunctionResultContent(c)
+      );
+
+      if (otherContents.length > 0) {
+        // Skip usage events as they're just noise - filter them out
+        const nonUsageContents = otherContents.filter(
+          (c) => c.type !== "usage"
+        );
+
+        if (nonUsageContents.length > 0) {
+          processedEvents.push({
+            ...event,
+            update: {
+              ...event.update,
+              contents: nonUsageContents,
+            },
+          });
+        }
+      }
+    }
   }
 
-  return true;
+  // Finalize any remaining accumulated content
+  if (currentToolCall && currentToolCall.name) {
+    processedEvents.push({
+      type: "agent_run_update",
+      timestamp: currentToolCall.timestamp,
+      update: {
+        contents: [
+          {
+            type: "function_call",
+            name: currentToolCall.name,
+            arguments: currentToolCall.arguments,
+            call_id: currentToolCall.callId,
+          },
+        ],
+      },
+    } as DebugStreamEvent);
+  }
+
+  if (accumulatedText.trim()) {
+    processedEvents.push({
+      type: "agent_run_update",
+      timestamp: lastTextTimestamp,
+      update: {
+        contents: [{ type: "text", text: accumulatedText.trim() }],
+      },
+    } as DebugStreamEvent);
+  }
+
+  return processedEvents;
 }
 
 interface EventItemProps {
@@ -171,17 +321,17 @@ function getEventIcon(type: DebugStreamEvent["type"]) {
 function getEventColor(type: DebugStreamEvent["type"]) {
   switch (type) {
     case "agent_run_update":
-      return "text-blue-600";
+      return "text-blue-600 dark:text-blue-400";
     case "workflow_event":
-      return "text-purple-600";
+      return "text-purple-600 dark:text-purple-400";
     case "completion":
-      return "text-green-600";
+      return "text-green-600 dark:text-green-400";
     case "error":
-      return "text-red-600";
+      return "text-red-600 dark:text-red-400";
     case "debug_trace":
-      return "text-orange-600";
+      return "text-orange-600 dark:text-orange-400";
     default:
-      return "text-gray-600";
+      return "text-gray-600 dark:text-gray-400";
   }
 }
 
@@ -203,8 +353,8 @@ function EventItem({ event }: EventItemProps) {
       <div className="text-sm flex items-center gap-2">
         {event.error ? (
           <>
-            <XCircle className="h-3 w-3 text-red-600 flex-shrink-0" />
-            <div className="text-red-600">{event.error}</div>
+            <XCircle className="h-3 w-3 text-red-600 dark:text-red-400 flex-shrink-0" />
+            <div className="text-red-600 dark:text-red-400">{event.error}</div>
           </>
         ) : event.update ? (
           <>
@@ -225,15 +375,15 @@ function EventItem({ event }: EventItemProps) {
 
               if (hasFunctionCall)
                 return (
-                  <Wrench className="h-3 w-3 text-blue-600 flex-shrink-0" />
+                  <Wrench className="h-3 w-3 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                 );
               if (hasFunctionResult)
                 return (
-                  <CheckCircle2 className="h-3 w-3 text-green-600 flex-shrink-0" />
+                  <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400 flex-shrink-0" />
                 );
               if (hasText)
                 return (
-                  <MessageSquare className="h-3 w-3 text-gray-600 flex-shrink-0" />
+                  <MessageSquare className="h-3 w-3 text-gray-600 dark:text-gray-400 flex-shrink-0" />
                 );
               return (
                 <Activity className="h-3 w-3 text-muted-foreground flex-shrink-0" />
@@ -245,14 +395,14 @@ function EventItem({ event }: EventItemProps) {
           </>
         ) : event.event ? (
           <>
-            <Play className="h-3 w-3 text-purple-600 flex-shrink-0" />
+            <Play className="h-3 w-3 text-purple-600 dark:text-purple-400 flex-shrink-0" />
             <div className="text-muted-foreground">
               {getEventSummary(event.event)}
             </div>
           </>
         ) : (
           <>
-            <CheckCircle2 className="h-3 w-3 text-green-600 flex-shrink-0" />
+            <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400 flex-shrink-0" />
             <div className="text-muted-foreground">Completed</div>
           </>
         )}
@@ -270,15 +420,15 @@ function EventsTab({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Filter events to show only significant ones to reduce noise
-  const significantEvents = events.filter(isSignificantEvent);
+  // Process events to accumulate tool calls and reduce noise
+  const processedEvents = processEventsForDisplay(events);
 
   // Auto-scroll to bottom for new events
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [significantEvents]);
+  }, [processedEvents]);
 
   return (
     <div className="h-full">
@@ -287,15 +437,15 @@ function EventsTab({
           <Activity className="h-4 w-4" />
           <span className="font-medium">Events</span>
           <Badge variant="outline">
-            {significantEvents.length}
-            {events.length > significantEvents.length
-              ? `/${events.length}`
+            {processedEvents.length}
+            {events.length > processedEvents.length
+              ? ` (${events.length} raw)`
               : ""}
           </Badge>
         </div>
         {isStreaming && (
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
+            <div className="h-2 w-2 animate-pulse rounded-full bg-green-500 dark:bg-green-400" />
             Streaming
           </div>
         )}
@@ -303,15 +453,15 @@ function EventsTab({
 
       <ScrollArea ref={scrollRef}>
         <div className="p-3">
-          {significantEvents.length === 0 ? (
+          {processedEvents.length === 0 ? (
             <div className="text-center text-muted-foreground text-sm py-8">
               {events.length === 0
                 ? "No events yet. Start a conversation to see real-time events."
-                : `${events.length} events filtered out (too small). Major events will appear here.`}
+                : "Processing events... Accumulated events will appear here."}
             </div>
           ) : (
             <div className="space-y-2">
-              {significantEvents.map((event, index) => (
+              {processedEvents.map((event, index) => (
                 <EventItem key={`${event.timestamp}-${index}`} event={event} />
               ))}
             </div>
@@ -357,42 +507,72 @@ function TraceSpanItem({ event }: { event: DebugStreamEvent }) {
   // This function should only be called with trace_span events
   if (!event.trace_span) {
     return (
-      <div className="border rounded p-3 text-red-600 text-xs">
+      <div className="border rounded p-3 text-red-600 dark:text-red-400 text-xs">
         Error: Expected trace_span event but got {event.type}
       </div>
     );
   }
 
   const span = event.trace_span;
-
+  console.log("Rendering TraceSpanItem for span:", span);
   return (
     <div className="border rounded p-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-blue-600" />
-          <span className="font-medium text-sm">{span.operation_name}</span>
+      <div className="flex flex-col gap-2 mb-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+            <span className="font-medium text-sm truncate">
+              {span.operation_name}
+            </span>
+          </div>
+          <span className="text-xs text-muted-foreground font-mono flex-shrink-0">
+            {new Date(event.timestamp).toLocaleTimeString()}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
           {span.duration_ms && (
             <Badge variant="secondary" className="text-xs">
               {span.duration_ms.toFixed(1)}ms
             </Badge>
           )}
-          <Badge
-            variant={span.status === "OK" ? "default" : "destructive"}
-            className="text-xs"
-          >
-            {span.status}
-          </Badge>
+          {span.status === "StatusCode.OK" || span.status === "OK" ? (
+            <div className="flex items-center gap-1 text-xs">
+              <div className="h-2 w-2 rounded-full bg-green-500" />
+              <span className="text-green-700 dark:text-green-400 font-medium">
+                {span.status}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-xs">
+              <div
+                className={`h-2 w-2 rounded-full ${
+                  span.status?.includes("ERROR") ||
+                  span.status?.includes("FAIL")
+                    ? "bg-red-500"
+                    : "bg-gray-400"
+                }`}
+              />
+              <span
+                className={`font-medium ${
+                  span.status?.includes("ERROR") ||
+                  span.status?.includes("FAIL")
+                    ? "text-red-700 dark:text-red-400"
+                    : "text-gray-600 dark:text-gray-400"
+                }`}
+              >
+                {span.status}
+              </span>
+            </div>
+          )}
         </div>
-        <span className="text-xs text-muted-foreground font-mono">
-          {new Date(event.timestamp).toLocaleTimeString()}
-        </span>
       </div>
 
       {/* Span hierarchy */}
       {span.parent_span_id && (
-        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+        <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground mb-2">
           <span>↳ Child of</span>
-          <code className="bg-muted px-1 rounded text-xs">
+          <code className="bg-muted px-1 rounded text-xs break-all">
             {span.parent_span_id.slice(-8)}
           </code>
         </div>
@@ -404,15 +584,15 @@ function TraceSpanItem({ event }: { event: DebugStreamEvent }) {
           <div className="text-xs font-medium text-muted-foreground mb-1">
             Attributes:
           </div>
-          <div className="grid gap-1 text-xs">
+          <div className="space-y-1 text-xs">
             {Object.entries(span.attributes)
               .slice(0, 3)
               .map(([key, value]) => (
-                <div key={key} className="flex gap-2">
-                  <span className="font-mono text-muted-foreground min-w-0 flex-shrink-0">
+                <div key={key} className="flex flex-col sm:flex-row sm:gap-2">
+                  <span className="font-mono text-muted-foreground flex-shrink-0">
                     {key}:
                   </span>
-                  <span className="font-mono truncate">{String(value)}</span>
+                  <span className="font-mono break-all">{String(value)}</span>
                 </div>
               ))}
             {Object.keys(span.attributes).length > 3 && (
@@ -478,8 +658,11 @@ function TraceSpanItem({ event }: { event: DebugStreamEvent }) {
 }
 
 function ToolsTab({ events }: { events: DebugStreamEvent[] }) {
+  // Process events first to get clean tool calls
+  const processedEvents = processEventsForDisplay(events);
+
   // Extract tool-related events using proper type checking
-  const toolEvents = events.filter((event) => {
+  const toolEvents = processedEvents.filter((event) => {
     if (event.type !== "agent_run_update" || !event.update) return false;
 
     const update = event.update;
@@ -522,7 +705,7 @@ function ToolsTab({ events }: { events: DebugStreamEvent[] }) {
                   <div key={index} className="border rounded p-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <Zap className="h-4 w-4 text-yellow-600" />
+                        <Zap className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
                         <span className="font-medium text-sm">
                           Tool Activity
                         </span>
@@ -536,11 +719,11 @@ function ToolsTab({ events }: { events: DebugStreamEvent[] }) {
                     {functionCalls.map((call, callIndex) => (
                       <div
                         key={`call-${callIndex}`}
-                        className="mb-3 p-2 bg-blue-50 rounded"
+                        className="mb-3 p-2 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded"
                       >
                         <div className="flex items-center gap-2 mb-1">
-                          <Wrench className="h-3 w-3 text-blue-600" />
-                          <span className="text-xs font-mono bg-blue-100 px-2 py-1 rounded">
+                          <Wrench className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                          <span className="text-xs font-mono bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded">
                             CALL
                           </span>
                           <span className="font-medium text-sm">
@@ -553,7 +736,7 @@ function ToolsTab({ events }: { events: DebugStreamEvent[] }) {
                             <span className="text-muted-foreground">
                               Arguments:
                             </span>
-                            <pre className="mt-1 p-2 bg-white rounded text-xs overflow-auto">
+                            <pre className="mt-1 p-2 bg-background border rounded text-xs overflow-auto">
                               {typeof call.arguments === "string"
                                 ? call.arguments
                                 : JSON.stringify(call.arguments, null, 2)}
@@ -567,17 +750,17 @@ function ToolsTab({ events }: { events: DebugStreamEvent[] }) {
                     {functionResults.map((result, resultIndex) => (
                       <div
                         key={`result-${resultIndex}`}
-                        className="mb-2 p-2 bg-green-50 rounded"
+                        className="mb-2 p-2 bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 rounded"
                       >
                         <div className="flex items-center gap-2 mb-1">
-                          <CheckCircle2 className="h-3 w-3 text-green-600" />
-                          <span className="text-xs font-mono bg-green-100 px-2 py-1 rounded">
+                          <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
+                          <span className="text-xs font-mono bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
                             RESULT
                           </span>
                         </div>
 
                         <div className="text-xs">
-                          <pre className="mt-1 p-2 bg-white rounded text-xs overflow-auto max-h-32">
+                          <pre className="mt-1 p-2 bg-background border rounded text-xs overflow-auto max-h-32">
                             {typeof result.result === "string"
                               ? result.result
                               : JSON.stringify(result.result, null, 2)}
@@ -585,8 +768,8 @@ function ToolsTab({ events }: { events: DebugStreamEvent[] }) {
                         </div>
 
                         {result.exception ? (
-                          <div className="mt-2 p-2 bg-red-50 rounded">
-                            <span className="text-xs text-red-600">
+                          <div className="mt-2 p-2 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded">
+                            <span className="text-xs text-red-600 dark:text-red-400">
                               Error: {String(result.exception)}
                             </span>
                           </div>
