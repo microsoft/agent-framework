@@ -10,6 +10,7 @@
 #nullable enable
 #pragma warning disable IDE0005 // Extra using directive is ok.
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
@@ -36,7 +37,7 @@ public static class WorkflowProvider
         where TInput : notnull
     {
         // Define the workflow builder
-        DeclarativeWorkflowBuilder<TInput> builder = new(this.Id, options, inputTransform); // %%% ID
+        DeclarativeWorkflowBuilder<TInput> builder = new("<#= this.Id #>", options, inputTransform);
 
         // Create executor instances<#
 foreach (string edge in ByLine(this.Instances))

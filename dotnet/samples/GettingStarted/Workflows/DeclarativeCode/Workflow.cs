@@ -5,7 +5,7 @@
 // ------------------------------------------------------------------------------
 
 #nullable enable
-#pragma warning disable IDE0005 // Using directive is unnecessary.
+#pragma warning disable IDE0005 // Extra using directive is ok.
 
 using System;
 using System.Threading;
@@ -18,32 +18,8 @@ using Microsoft.Extensions.AI.Agents;
 
 namespace Demo.DeclarativeCode;
 
-public static class WorkflowProvider
-{
-    public static Workflow<TInput> CreateWorkflow<TInput>(
-        DeclarativeWorkflowOptions options,
-        Func<TInput, ChatMessage>? inputTransform = null)
-        where TInput : notnull
-    {
-        // Define the workflow builder
-        DeclarativeWorkflowBuilder<TInput> builder = new("workflow", options, inputTransform); // %%% ID
 
-        // Create executor instances
-        SetvarUserInputExecutor setvarUserInput = new();
-        SetvarUserNameExecutor setvarUserName = new();
-        SendResultExecutor sendResult = new();
-
-        // Connect executors
-        builder.AddEdge(builder.Root, setvarUserInput);
-        builder.AddEdge(setvarUserInput, setvarUserName);
-        builder.AddEdge(setvarUserName, sendResult);
-
-        // Build the workflow
-        return builder.Build<TInput>();
-    }
-}
-
-internal sealed class SetvarUserInputExecutor() : ActionExecutor(id: "setvar_user_input")
+internal sealed class SetUserInputExecutor() : ActionExecutor(id: "set_user_input")
 {
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -53,12 +29,11 @@ internal sealed class SetvarUserInputExecutor() : ActionExecutor(id: "setvar_use
     }
 }
 
-internal sealed class SetvarUserNameExecutor() : ActionExecutor(id: "setvar_user_name")
+internal sealed class SetUserNameExecutor() : ActionExecutor(id: "set_user_name")
 {
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        //object? value = await context.ReadStateAsync<object>("USERNAME", "Env").ConfigureAwait(false);
-        object? value = Environment.GetEnvironmentVariable("USERNAME");
+        object? value = await context.ReadStateAsync<object>("USERNAME", "Env").ConfigureAwait(false);
 
         await context.QueueStateUpdateAsync("UserName", value, "Global").ConfigureAwait(false);
     }
@@ -78,5 +53,30 @@ internal sealed class SendResultExecutor() : ActionExecutor(id: "send_result")
         AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
         await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
 
+    }
+}
+
+public static class WorkflowProvider
+{
+    public static Workflow<TInput> CreateWorkflow<TInput>(
+        DeclarativeWorkflowOptions options,
+        Func<TInput, ChatMessage>? inputTransform = null)
+        where TInput : notnull
+    {
+        // Define the workflow builder
+        DeclarativeWorkflowBuilder<TInput> builder = new("root_workflow_demo", options, inputTransform);
+
+        // Create executor instances
+        SetUserInputExecutor setUserInput = new();
+        SetUserNameExecutor setUserName = new();
+        SendResultExecutor sendResult = new();
+
+        // Connect executors
+        builder.AddEdge(builder.Root, setUserInput);
+        builder.AddEdge(builder.Root, setUserName);
+        builder.AddEdge(builder.Root, sendResult);
+
+        // Build the workflow
+        return builder.Build<TInput>();
     }
 }

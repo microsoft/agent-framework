@@ -35,6 +35,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 #nullable enable
 #pragma warning disable IDE0005 // Extra using directive is ok.
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
@@ -98,9 +99,14 @@ public static class WorkflowProvider
         where TInput : notnull
     {
         // Define the workflow builder
-        DeclarativeWorkflowBuilder<TInput> builder = new(this.Id, options, inputTransform); // %%% ID
-
-        // Create executor instances");
+        DeclarativeWorkflowBuilder<TInput> builder = new(""");
+            
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
+            
+            #line default
+            #line hidden
+            this.Write("\", options, inputTransform);\n\n        // Create executor instances");
             
             #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
 
