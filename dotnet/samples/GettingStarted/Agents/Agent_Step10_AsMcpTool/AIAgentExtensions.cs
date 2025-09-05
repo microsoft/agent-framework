@@ -25,18 +25,9 @@ internal static class AIAgentExtensions
     {
         async Task<string> RunAgentAsync(
             [Description("Available information that will guide in performing this operation.")] string query,
-            [Description("Optional agent thread identifier.")] string? threadId = null,
             CancellationToken cancellationToken = default)
         {
-            AgentThread? thread = null;
-
-            if (!string.IsNullOrEmpty(threadId))
-            {
-                thread = agent.GetNewThread();
-                thread.ConversationId = threadId;
-            }
-
-            AgentRunResponse response = await agent.RunAsync(query, thread, cancellationToken: cancellationToken);
+            AgentRunResponse response = await agent.RunAsync(query, cancellationToken: cancellationToken);
 
             return response.ToString();
         }
