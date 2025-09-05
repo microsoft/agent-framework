@@ -63,7 +63,7 @@ internal sealed class ChatClientAgentRunOptions : AgentRunOptions
         if (!string.IsNullOrWhiteSpace(agentRunOptions.Instructions) && !string.IsNullOrWhiteSpace(this.ChatOptions.Instructions))
         {
             // If both instructions are provided, concatenate in different lines.
-            this.ChatOptions.Instructions = string.Concat(agentRunOptions.Instructions, "\n", this.Instructions);
+            this.ChatOptions.Instructions = string.Concat(agentRunOptions.Instructions, "\n", this.ChatOptions.Instructions);
         }
     }
 
