@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devui"
+dynamic = ["version"]
+description = "Debug UI for Agent Framework"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Microsoft", email = "agentframework@microsoft.com" },
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0", 
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+]
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+]
+dev = [
+    "watchdog>=3.0.0",
+]
+all = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "watchdog>=3.0.0",
+]
+
+[project.scripts]
+devui = "devui:main"
+
+[tool.hatch.version]
+path = "src/devui/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+include = ["src/devui/**/*.py"]
+
+[tool.hatch.build.sources]
+"src" = ""

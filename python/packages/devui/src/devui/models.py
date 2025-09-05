@@ -1,0 +1,75 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Pydantic models for the Agent Framework Debug UI backend."""
+
+from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, Field
+
+class AgentInfo(BaseModel):
+    """Information about a discovered agent or workflow."""
+    id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    type: Literal["agent", "workflow"]
+    source: Literal["directory", "in_memory"]
+    tools: List[str] = Field(default_factory=list)
+    has_env: bool = False
+    module_path: Optional[str] = None
+
+class RunAgentRequest(BaseModel):
+    """Request to execute an agent."""
+    message: str
+    thread_id: Optional[str] = None
+    options: Optional[Dict[str, Any]] = None
+
+class CreateThreadRequest(BaseModel):
+    """Request to create a new thread."""
+    pass  # No additional fields needed
+
+class ThreadInfo(BaseModel):
+    """Information about a conversation thread."""
+    id: str
+    agent_id: str
+    created_at: str
+    message_count: int
+
+class SessionInfo(BaseModel):
+    """Information about a debug session."""
+    thread_id: str
+    agent_id: str
+    created_at: str
+    messages: List[Dict[str, Any]]
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class TraceSpan(BaseModel):
+    """Real-time trace span data for streaming."""
+    span_id: str
+    parent_span_id: Optional[str]
+    operation_name: str
+    start_time: float
+    end_time: Optional[float] = None
+    duration_ms: Optional[float] = None
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    status: str = "OK"
+    raw_span: Optional[Dict[str, Any]] = None  # Complete OpenTelemetry span data
+
+class DebugStreamEvent(BaseModel):
+    """Wrapper for streaming events with debug metadata."""
+    type: Literal["agent_run_update", "workflow_event", "workflow_structure", "completion", "error", "debug_trace", "trace_span"]
+    update: Optional[Any] = None  # Native AgentRunResponseUpdate
+    event: Optional[Any] = None   # Native WorkflowEvent
+    trace_span: Optional[TraceSpan] = None  # Real-time trace span
+    # Workflow structure data (minimal)
+    workflow_dump: Optional[Dict[str, Any]] = None
+    mermaid_diagram: Optional[str] = None
+    timestamp: str
+    debug_metadata: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    thread_id: Optional[str] = None  # Thread ID for session tracking
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+    status: Literal["healthy"]
+    agents_dir: Optional[str] = None
+    version: str = "1.0.0"
