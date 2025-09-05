@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Extensions for <see cref="ChatClientAgent"/> agent types.
 /// </summary>
-public static class ChatClientAgentExtensions
+public static class AIAgentExtensions
 {
     /// <summary>
     /// Run the agent with the provided messages and an optional thread.
@@ -23,7 +23,7 @@ public static class ChatClientAgentExtensions
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
     public static Task<AgentRunResponse> RunAsync(
-        this ChatClientAgent agent,
+        this AIAgent agent,
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? agentRunOptions = null,
@@ -47,7 +47,7 @@ public static class ChatClientAgentExtensions
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
     public static Task<AgentRunResponse> RunAsync(
-        this ChatClientAgent agent,
+        this AIAgent agent,
         string prompt,
         AgentThread? thread = null,
         AgentRunOptions? agentRunOptions = null,
@@ -70,7 +70,7 @@ public static class ChatClientAgentExtensions
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        this ChatClientAgent agent,
+        this AIAgent agent,
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? agentRunOptions = null,
@@ -94,7 +94,7 @@ public static class ChatClientAgentExtensions
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async enumerable of <see cref="AgentRunResponseUpdate"/> items for streaming the response.</returns>
     public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        this ChatClientAgent agent,
+        this AIAgent agent,
         string prompt,
         AgentThread? thread = null,
         AgentRunOptions? agentRunOptions = null,

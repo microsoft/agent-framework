@@ -33,7 +33,7 @@ public class ChatClientAgentExtensionsTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test message") };
 
         // Act & Assert - Should not throw
-        var result = await ChatClientAgentExtensions.RunAsync(agent, messages);
+        var result = await AIAgentExtensions.RunAsync(agent, messages);
         Assert.NotNull(result);
     }
 
@@ -49,7 +49,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            ChatClientAgentExtensions.RunAsync(agent, messages));
+            AIAgentExtensions.RunAsync(agent, messages));
         Assert.Equal("agent", exception.ParamName);
     }
 
@@ -65,7 +65,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            ChatClientAgentExtensions.RunAsync(agent, (IReadOnlyCollection<ChatMessage>)null!));
+            AIAgentExtensions.RunAsync(agent, (IReadOnlyCollection<ChatMessage>)null!));
         Assert.Equal("messages", exception.ParamName);
     }
 
@@ -88,7 +88,7 @@ public class ChatClientAgentExtensionsTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act - Call extension method (should not throw)
-        var result = await ChatClientAgentExtensions.RunAsync(agent, messages, chatOptions: chatOptions);
+        var result = await AIAgentExtensions.RunAsync(agent, messages, chatOptions: chatOptions);
 
         // Assert - Extension method completed successfully
         Assert.NotNull(result);
@@ -122,7 +122,7 @@ public class ChatClientAgentExtensionsTests
         var runOptions = new AgentRunOptions();
 
         // Act
-        await ChatClientAgentExtensions.RunAsync(agent, messages, agentRunOptions: runOptions);
+        await AIAgentExtensions.RunAsync(agent, messages, agentRunOptions: runOptions);
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "test" && m.Role == ChatRole.User);
@@ -149,7 +149,7 @@ public class ChatClientAgentExtensionsTests
         var thread = agent.GetNewThread();
 
         // Act
-        var result = await ChatClientAgentExtensions.RunAsync(agent, messages, thread: thread);
+        var result = await AIAgentExtensions.RunAsync(agent, messages, thread: thread);
 
         // Assert
         Assert.NotNull(result);
@@ -183,7 +183,7 @@ public class ChatClientAgentExtensionsTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act & Assert
-        await Assert.ThrowsAsync<OperationCanceledException>(() => ChatClientAgentExtensions.RunAsync(agent, messages, cancellationToken: cts.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => AIAgentExtensions.RunAsync(agent, messages, cancellationToken: cts.Token));
     }
 
     #endregion
@@ -208,7 +208,7 @@ public class ChatClientAgentExtensionsTests
         const string TestPrompt = "test prompt";
 
         // Act
-        var result = await ChatClientAgentExtensions.RunAsync(agent, TestPrompt);
+        var result = await AIAgentExtensions.RunAsync(agent, TestPrompt);
 
         // Assert
         Assert.NotNull(result);
@@ -234,7 +234,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            ChatClientAgentExtensions.RunAsync(agent, TestPrompt));
+            AIAgentExtensions.RunAsync(agent, TestPrompt));
         Assert.Equal("agent", exception.ParamName);
     }
 
@@ -250,7 +250,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            ChatClientAgentExtensions.RunAsync(agent, (string)null!));
+            AIAgentExtensions.RunAsync(agent, (string)null!));
         Assert.Equal("prompt", exception.ParamName);
     }
 
@@ -266,7 +266,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
-            ChatClientAgentExtensions.RunAsync(agent, "   "));
+            AIAgentExtensions.RunAsync(agent, "   "));
         Assert.Equal("prompt", exception.ParamName);
     }
 
@@ -292,7 +292,7 @@ public class ChatClientAgentExtensionsTests
         const string TestPrompt = "test prompt";
 
         // Act
-        await ChatClientAgentExtensions.RunAsync(agent, TestPrompt);
+        await AIAgentExtensions.RunAsync(agent, TestPrompt);
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "test prompt" && m.Role == ChatRole.User);
@@ -317,7 +317,7 @@ public class ChatClientAgentExtensionsTests
         const string TestPrompt = "test prompt";
 
         // Act
-        await ChatClientAgentExtensions.RunAsync(agent, TestPrompt, chatOptions: chatOptions);
+        await AIAgentExtensions.RunAsync(agent, TestPrompt, chatOptions: chatOptions);
 
         // Assert
         mockService.Verify(
@@ -351,7 +351,7 @@ public class ChatClientAgentExtensionsTests
         var runOptions = new AgentRunOptions();
 
         // Act
-        await ChatClientAgentExtensions.RunAsync(agent, TestPrompt, agentRunOptions: runOptions);
+        await AIAgentExtensions.RunAsync(agent, TestPrompt, agentRunOptions: runOptions);
 
         // Assert
         Assert.Contains(capturedMessages, m => m.Text == "test prompt" && m.Role == ChatRole.User);
@@ -376,7 +376,7 @@ public class ChatClientAgentExtensionsTests
         var thread = agent.GetNewThread();
 
         // Act
-        var result = await ChatClientAgentExtensions.RunAsync(agent, TestPrompt, thread: thread);
+        var result = await AIAgentExtensions.RunAsync(agent, TestPrompt, thread: thread);
 
         // Assert
         Assert.NotNull(result);
@@ -442,7 +442,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act
         var updates = new List<AgentRunResponseUpdate>();
-        await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages))
+        await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, messages))
         {
             updates.Add(update);
         }
@@ -472,7 +472,7 @@ public class ChatClientAgentExtensionsTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
         {
-            await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages))
+            await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, messages))
             {
                 // Should not reach here
             }
@@ -493,7 +493,7 @@ public class ChatClientAgentExtensionsTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
         {
-            await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, (IReadOnlyCollection<ChatMessage>)null!))
+            await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, (IReadOnlyCollection<ChatMessage>)null!))
             {
                 // Should not reach here
             }
@@ -523,7 +523,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act
         var updates = new List<AgentRunResponseUpdate>();
-        await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages, chatOptions: chatOptions))
+        await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, messages, chatOptions: chatOptions))
         {
             updates.Add(update);
         }
@@ -560,7 +560,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act
         var updates = new List<AgentRunResponseUpdate>();
-        await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages, thread: thread))
+        await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, messages, thread: thread))
         {
             updates.Add(update);
         }
@@ -598,7 +598,7 @@ public class ChatClientAgentExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(async () =>
         {
-            await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, messages, cancellationToken: cts.Token))
+            await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, messages, cancellationToken: cts.Token))
             {
                 // Should not reach here
             }
@@ -634,7 +634,7 @@ public class ChatClientAgentExtensionsTests
 
         // Act
         var updates = new List<AgentRunResponseUpdate>();
-        await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, TestPrompt))
+        await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, TestPrompt))
         {
             updates.Add(update);
         }
@@ -664,7 +664,7 @@ public class ChatClientAgentExtensionsTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
         {
-            await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, TestPrompt))
+            await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, TestPrompt))
             {
                 // Should not reach here
             }
@@ -685,7 +685,7 @@ public class ChatClientAgentExtensionsTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
         {
-            await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, (string)null!))
+            await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, (string)null!))
             {
                 // Should not reach here
             }
@@ -706,7 +706,7 @@ public class ChatClientAgentExtensionsTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
         {
-            await foreach (var update in ChatClientAgentExtensions.RunStreamingAsync(agent, "   "))
+            await foreach (var update in AIAgentExtensions.RunStreamingAsync(agent, "   "))
             {
                 // Should not reach here
             }

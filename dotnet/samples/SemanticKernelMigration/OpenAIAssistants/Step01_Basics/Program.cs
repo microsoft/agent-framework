@@ -60,9 +60,9 @@ async Task AFAgent()
 
     var assistantClient = new AssistantClient(apiKey);
 
-    var agent = (await assistantClient.CreateAIAgentAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.")) as ChatClientAgent;
+    var agent = (await assistantClient.CreateAIAgentAsync(modelId, name: "Joker", instructions: "You are good at telling jokes."));
 
-    var thread = agent!.GetNewThread();
+    var thread = agent.GetNewThread();
     var chatOptions = new ChatOptions() { MaxOutputTokens = 1000 };
 
     var result = await agent.RunAsync(userInput, thread, chatOptions: chatOptions);

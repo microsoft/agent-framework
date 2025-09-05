@@ -50,9 +50,9 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var agent = new OpenAIClient(apiKey).GetChatClient(modelId)
-        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.") as ChatClientAgent;
+        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
 
-    var thread = agent!.GetNewThread();
+    var thread = agent.GetNewThread();
     var chatOptions = new ChatOptions() { MaxOutputTokens = 1000 };
 
     var result = await agent.RunAsync(userInput, thread, chatOptions: chatOptions);

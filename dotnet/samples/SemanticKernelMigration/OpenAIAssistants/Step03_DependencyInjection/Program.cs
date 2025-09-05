@@ -77,9 +77,9 @@ async Task AFAgent()
     });
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
-    var agent = serviceProvider.GetRequiredService<AIAgent>() as ChatClientAgent;
+    var agent = serviceProvider.GetRequiredService<AIAgent>();
 
-    var thread = agent!.GetNewThread();
+    var thread = agent.GetNewThread();
     var chatOptions = new ChatOptions() { MaxOutputTokens = 1000 };
 
     var result = await agent.RunAsync(userInput, thread, chatOptions: chatOptions);

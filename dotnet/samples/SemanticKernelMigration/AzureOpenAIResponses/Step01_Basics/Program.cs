@@ -53,9 +53,9 @@ async Task AFAgent()
 
     var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
         .GetOpenAIResponseClient(deploymentName)
-        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.") as ChatClientAgent;
+        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
 
-    var thread = agent!.GetNewThread();
+    var thread = agent.GetNewThread();
     var chatOptions = new ChatOptions() { MaxOutputTokens = 1000 };
 
     var result = await agent.RunAsync(userInput, thread, chatOptions: chatOptions);
