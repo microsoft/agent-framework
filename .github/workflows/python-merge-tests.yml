@@ -77,8 +77,16 @@ jobs:
       - name: Install the project
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+      - name: Install samples dependencies
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: |
+          uv pip install azure-monitor-opentelemetry azure-monitor-opentelemetry-exporter opentelemetry-exporter-otlp-proto-grpc
       - name: Test with pytest
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Test openai samples
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "openai" --junitxml=coverage_samples_main.xml
         working-directory: ./python
       - name: Move coverage file
         run: |
@@ -142,6 +150,10 @@ jobs:
       - name: Test with pytest
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
+      - name: Test azure samples
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "azure" --junitxml=coverage_samples_azure.xml
+        working-directory: ./python
       - name: Move coverage file
         run: |
           mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
@@ -203,6 +215,10 @@ jobs:
       - name: Test with pytest
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
+      - name: Test foundry samples
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "foundry" --junitxml=coverage_samples_foundry.xml
+        working-directory: ./python
       - name: Move coverage file
         run: |
           mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
@@ -222,72 +238,6 @@ jobs:
           fail-on-empty: true
           title: Test results
 
-  python-tests-samples:
-    name: Python Tests - Samples
-    needs: paths-filter
-    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true' && vars.RUN_SAMPLES_TESTS == 'true'
-    runs-on: ${{ matrix.os }}
-    environment: ${{ matrix.environment }}
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ["3.10"]
-        os: [ubuntu-latest]
-        environment: ["integration"]
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
-      LOCAL_MCP_URL: ${{ vars.LOCAL_MCP_URL }}
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version-file: "python/pyproject.toml"
-          enable-cache: true
-          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
-          cache-dependency-glob: "**/uv.lock"
-      - name: Install the project
-        run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
-      - name: Install samples dependencies
-        run: |
-          uv pip install azure-monitor-opentelemetry azure-monitor-opentelemetry-exporter opentelemetry-exporter-otlp-proto-grpc
-      - name: Azure CLI Login
-        if: github.event_name != 'pull_request'
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Test samples with pytest
-        run: uv run pytest tests/samples/ --junitxml=coverage_samples.xml
-        working-directory: ./python
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-samples
-          path: ./python/coverage_samples.xml
-      - name: Surface failing tests
-        if: always()
-        uses: pmeier/pytest-results-action@v0.7.2
-        with:
-          path: ./python/**.xml
-          summary: true
-          display-options: fEX
-          fail-on-empty: true
-          title: Test results
-
   python-integration-tests-check:
     if: always()
     runs-on: ubuntu-latest
@@ -295,8 +245,7 @@ jobs:
       [
         python-tests-main,
         python-tests-azure,
-        python-tests-foundry,
-        python-tests-samples
+        python-tests-foundry
       ]
     steps:
 

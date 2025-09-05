@@ -23,25 +23,37 @@ telemetry_samples = [
         telemetry_agent,
         ["What's the weather in Seattle?", "exit"],  # Interactive sample - ask question then exit
         id="telemetry_agent",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         telemetry_interactive,
         ["What's the weather in London?", "exit"],  # Interactive sample - ask question then exit
         id="telemetry_interactive",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         telemetry_scenarios,
         [],  # Non-interactive sample
         id="telemetry_scenarios",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         telemetry_workflow,
         [],  # Non-interactive sample
         id="telemetry_workflow",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
 ]
 

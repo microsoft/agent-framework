@@ -44,51 +44,73 @@ chat_client_samples = [
         azure_assistants_client,
         [],  # Non-interactive sample
         id="azure_assistants_client",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.azure,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         azure_chat_client,
         [],  # Non-interactive sample
         id="azure_chat_client",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.azure,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         azure_responses_client,
         [],  # Non-interactive sample
         id="azure_responses_client",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.azure,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     # Foundry Chat Client samples
     param(
         foundry_chat_client,
         [],  # Non-interactive sample
         id="foundry_chat_client",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.foundry,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     # OpenAI Chat Client samples
     param(
         openai_assistants_client,
         [],  # Non-interactive sample
         id="openai_assistants_client",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         openai_chat_client,
         [],  # Non-interactive sample
         id="openai_chat_client",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         openai_responses_client,
         [],  # Non-interactive sample
         id="openai_responses_client",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     # General Chat Client samples (no provider-specific environment variable)
     param(
         chat_response_cancellation,
         [],  # Non-interactive sample
         id="chat_response_cancellation",
+        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
     ),
 ]
 

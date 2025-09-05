@@ -21,13 +21,19 @@ thread_samples = [
         threads_custom_store,
         [],  # Non-interactive sample
         id="threads_custom_store",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
     param(
         threads_suspend_resume,
         [],  # Non-interactive sample
         id="threads_suspend_resume",
-        marks=pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        marks=[
+            pytest.mark.openai,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
     ),
 ]
 
