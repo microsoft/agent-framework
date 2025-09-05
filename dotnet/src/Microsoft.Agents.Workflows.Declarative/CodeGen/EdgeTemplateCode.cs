@@ -6,12 +6,12 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class EdgeTemplate
 {
-    internal EdgeTemplate(string targetId, string? sourceId = null)
+    internal EdgeTemplate(string sourceId, string targetId)
     {
-        this.SourceId = sourceId.FormatOptional();
+        this.SourceId = sourceId.FormatName();
         this.TargetId = targetId.FormatName();
     }
 
-    public string? SourceId { get; }
+    public string SourceId { get; }
     public string TargetId { get; }
 }

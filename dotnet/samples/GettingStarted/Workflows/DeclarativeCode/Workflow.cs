@@ -13,11 +13,39 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Extensions.Configuration;
 
 namespace Demo.DeclarativeCode;
 
+/// <summary>
+/// The root executor for a declarative workflow.
+/// </summary>
+internal sealed class RootWorkflowDemoExecutor<TInput>(
+    IConfiguration? configuration,
+    Func<TInput, ChatMessage> inputTransform) :
+    RootExecutor<TInput>("root_workflow_demo", configuration)
+    where TInput : notnull
+{
+    protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        ChatMessage input = inputTransform.Invoke(message);
+        //await context.SetLastMessageAsync(input).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("LastMessageText", input.Text, "System").ConfigureAwait(false);
+
+        // Set environment variables
+        await context.QueueStateUpdateAsync("USERNAME", GetEnvironmentVariable("USERNAME"), "Env").ConfigureAwait(false);
+
+        // Set user variables to default values
+        await context.QueueStateUpdateAsync("UserName", string.Empty, "Global").ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("UserInput", string.Empty, "Topic").ConfigureAwait(false);
+
+        await context.SendMessageAsync(this.Id).ConfigureAwait(false);
+    }
+}
 
 internal sealed class SetUserInputExecutor() : ActionExecutor(id: "set_user_input")
 {
@@ -63,18 +91,20 @@ public static class WorkflowProvider
         Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
     {
-        // Define the workflow builder
-        DeclarativeWorkflowBuilder<TInput> builder = new("root_workflow_demo", options, inputTransform);
-
         // Create executor instances
+        inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
+        RootWorkflowDemoExecutor<TInput> rootWorkflowDemo = new(options.Configuration, inputTransform);
         SetUserInputExecutor setUserInput = new();
         SetUserNameExecutor setUserName = new();
         SendResultExecutor sendResult = new();
 
+        // Define the workflow builder
+        WorkflowBuilder builder = new(rootWorkflowDemo);
+
         // Connect executors
-        builder.AddEdge(builder.Root, setUserInput);
-        builder.AddEdge(builder.Root, setUserName);
-        builder.AddEdge(builder.Root, sendResult);
+        builder.AddEdge(rootWorkflowDemo, setUserInput);
+        builder.AddEdge(setUserInput, setUserName);
+        builder.AddEdge(setUserName, sendResult);
 
         // Build the workflow
         return builder.Build<TInput>();

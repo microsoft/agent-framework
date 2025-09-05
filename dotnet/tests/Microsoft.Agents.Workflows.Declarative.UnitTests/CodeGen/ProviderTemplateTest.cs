@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 
-public class WorkflowTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
+public class ProviderTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
     public async Task WithNamespace()
@@ -83,7 +83,7 @@ public class WorkflowTemplateTest(ITestOutputHelper output) : WorkflowActionTemp
         string? @namespace = null)
     {
         // Arrange
-        WorkflowTemplate template = new("worflow-id", executors, instances, edges) { Namespace = @namespace };
+        ProviderTemplate template = new("worflow-id", executors, instances, edges) { Namespace = @namespace };
 
         // Act
         string text = this.Execute(() => template.TransformText());

@@ -9,21 +9,15 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 public class EdgeTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public async Task InitializeRoot()
-    {
-        await this.ExecuteTest("set_variable_1");
-    }
-
-    [Fact]
     public async Task InitializeNext()
     {
-        await this.ExecuteTest("invoke_agent_2", "set_variable_1");
+        await this.ExecuteTest("set_variable_1", "invoke_agent_2");
     }
 
-    private async Task ExecuteTest(string targetId, string? sourceId = null)
+    private async Task ExecuteTest(string targetId, string sourceId)
     {
         // Arrange
-        EdgeTemplate template = new(targetId, sourceId);
+        EdgeTemplate template = new(sourceId, targetId);
 
         // Act
         string text = this.Execute(() => template.TransformText());

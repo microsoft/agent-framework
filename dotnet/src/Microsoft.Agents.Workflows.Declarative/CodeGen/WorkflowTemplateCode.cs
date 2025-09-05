@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
@@ -9,30 +9,14 @@ internal partial class WorkflowTemplate
 {
     internal WorkflowTemplate(
         string workflowId,
-        IEnumerable<string> executors,
-        IEnumerable<string> instances,
-        IEnumerable<string> edges)
+        WorkflowTypeInfo typeInfo)
     {
         this.Id = workflowId;
-        this.Executors = executors;
-        this.Instances = instances;
-        this.Edges = edges;
+        this.TypeInfo = typeInfo;
+        this.TypeName = workflowId.FormatType();
     }
 
     public string Id { get; }
-    public string? Namespace { get; init; }
-    public IEnumerable<string> Executors { get; }
-    public IEnumerable<string> Instances { get; }
-    public IEnumerable<string> Edges { get; }
-
-    public static IEnumerable<string> ByLine(IEnumerable<string> templates)
-    {
-        foreach (string template in templates)
-        {
-            foreach (string line in template.ByLine())
-            {
-                yield return line;
-            }
-        }
-    }
+    public WorkflowTypeInfo TypeInfo { get; }
+    public string TypeName { get; }
 }

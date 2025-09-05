@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
@@ -12,9 +14,21 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
+internal sealed record class WorkflowTypeInfo(ImmutableHashSet<string> EnvironmentVariables, IEnumerable<VariableInformationDiagnostic> UserVariables);
+
 internal static class WorkflowDiagnostics
 {
     private static readonly WorkflowFeatureConfiguration s_semanticFeatureConfig = new();
+
+    public static WorkflowTypeInfo Describe<TElement>(this TElement workflowElement) where TElement : BotElement, IDialogBase
+    {
+        SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
+
+        return
+            new WorkflowTypeInfo(
+                semanticModel.GetAllEnvironmentVariablesReferencedInTheBot(),
+                semanticModel.GetVariables(workflowElement.SchemaName.Value).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()));
+    }
 
     public static void Initialize<TElement>(this WorkflowScopes scopes, TElement workflowElement, IConfiguration? configuration) where TElement : BotElement, IDialogBase
     {
