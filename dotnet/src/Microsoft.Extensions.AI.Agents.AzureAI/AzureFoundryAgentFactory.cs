@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using Azure.AI.Agents.Persistent;
+using Azure.Core;
 
 namespace Microsoft.Extensions.AI.Agents.AzureAI;
 
@@ -22,52 +23,44 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
     }
 
     /// <inheritdoc/>
-    public override Task<AIAgent?> TryCreateAsync(AgentDefinition agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(AgentDefinition agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
     {
         //Throw.IfNull(agentDefinition);
 
         ChatClientAgent? agent = null;
-        /*
+        PersistentAgentsClient? persistentAgentsClient = null;
         if (this.IsSupported(agentDefinition))
         {
-            IChatClient? chatClient = null;
-
-            var deploymentName = agentDefinition.Model.Connection?.Options?["deployment_name"] as string;
-            if (string.IsNullOrEmpty(deploymentName))
+            var model = agentDefinition.Model.Id;
+            if (string.IsNullOrEmpty(model))
             {
-                throw new InvalidOperationException("The deployment_name must be specified in the agent definition model connection options to create a ChatClient.");
+                throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
             }
 
-            var client = agentCreationOptions.ServiceProvider?.GetService(typeof(AzureOpenAIClient)) as AzureOpenAIClient;
-            if (client is not null)
-            {
-                chatClient = client.GetChatClient(deploymentName).AsIChatClient();
-            }
-            else
+            persistentAgentsClient = agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
+            if (persistentAgentsClient is null)
             {
                 var endpoint = agentDefinition.Model.Connection?.Endpoint;
                 if (string.IsNullOrEmpty(endpoint))
                 {
-                    throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AzureOpenAIClient.");
+                    throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
                 }
 
-                var credential = agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) as TokenCredential;
-                if (credential is null)
+                if (agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) is not TokenCredential credential)
                 {
                     throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an AzureOpenAIClient.");
                 }
 
-                chatClient = new AzureOpenAIClient(
-                    new Uri(endpoint),
-                    credential)
-                     .GetChatClient(deploymentName)
-                     .AsIChatClient();
+                persistentAgentsClient = new PersistentAgentsClient(endpoint, credential);
             }
 
-            agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(), agentCreationOptions.LoggerFactory);
+            agent = await persistentAgentsClient.CreateAIAgentAsync(
+                model: model,
+                name: agentDefinition.Name,
+                instructions: agentDefinition.Instructions,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-        */
 
-        return Task.FromResult<AIAgent?>(agent);
+        return agent;
     }
 }

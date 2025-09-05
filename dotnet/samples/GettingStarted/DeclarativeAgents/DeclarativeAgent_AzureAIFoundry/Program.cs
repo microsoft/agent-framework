@@ -11,15 +11,14 @@ using Microsoft.Extensions.AI.Agents.AzureAI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4.1-mini";
 
 // Create a dictionary with your fixed properties  
 var inMemorySettings = new Dictionary<string, string?>
 {
-    { "AzureOpenAI:Endpoint", endpoint },
-    { "AzureOpenAI:DeploymentName", deploymentName },
-    { "AzureOpenAI:ModelId", deploymentName },
+    { "AzureFoundry:Endpoint", endpoint },
+    { "AzureFoundry:ModelId", model },
 };
 
 // Build the IConfiguration instance to allow for variable substitution in the YAML definition
@@ -35,22 +34,20 @@ IServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
 // Define the agent using a YAML definition.
 var text =
     """
-    type: azure_openai_agent
+    type: azure_foundry_agent
     name: Joker
     description: Joker Agent
     instructions: You are good at telling jokes.
     model:
-      id: ${AzureOpenAI:ModelId}
+      id: ${AzureFoundry:ModelId}
       connection:
-        type: azure_openai
-        provider: azure_openai
-        endpoint: ${AzureOpenAI:Endpoint}
-        options:
-          deployment_name: ${AzureOpenAI:DeploymentName}
+        type: azure_foundry
+        provider: azure_foundry
+        endpoint: ${AzureFoundry:Endpoint}
     """;
 
 // Create the agent from the YAML definition.
-var agentFactory = new AzureOpenAIAgentFactory();
+var agentFactory = new AzureFoundryAgentFactory();
 var creationOptions = new AgentCreationOptions()
 {
     Configuration = configuration,

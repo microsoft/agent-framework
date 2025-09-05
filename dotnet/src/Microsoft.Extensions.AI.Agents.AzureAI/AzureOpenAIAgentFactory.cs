@@ -51,8 +51,7 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
                     throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AzureOpenAIClient.");
                 }
 
-                var credential = agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) as TokenCredential;
-                if (credential is null)
+                if (agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) is not TokenCredential credential)
                 {
                     throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an AzureOpenAIClient.");
                 }
