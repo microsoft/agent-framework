@@ -40,6 +40,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step07_3rdPartyThreadStorage/Agent_Step07_3rdPartyThreadStorage.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step08_Telemetry/Agent_Step08_Telemetry.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
