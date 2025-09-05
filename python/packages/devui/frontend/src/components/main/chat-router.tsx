@@ -5,6 +5,7 @@ import type { AgentInfo, WorkflowInfo, ChatMessage, DebugStreamEvent } from '@/t
 interface ChatRouterProps {
   selectedItem?: AgentInfo;
   workflowInfo?: WorkflowInfo | null;
+  workflowLoading?: boolean;
   messages: ChatMessage[];
   debugEvents: DebugStreamEvent[];
   onSendMessage: (message: string) => void;
@@ -14,6 +15,7 @@ interface ChatRouterProps {
 export function ChatRouter({ 
   selectedItem, 
   workflowInfo,
+  workflowLoading = false,
   messages, 
   debugEvents, 
   onSendMessage, 
@@ -24,6 +26,7 @@ export function ChatRouter({
     return (
       <WorkflowChatView 
         workflowInfo={workflowInfo}
+        workflowLoading={workflowLoading}
         events={debugEvents} 
         isStreaming={isStreaming}
         onSendMessage={onSendMessage}

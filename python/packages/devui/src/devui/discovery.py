@@ -37,6 +37,14 @@ class DirectoryScanner:
             logger.warning(f"Agents directory does not exist: {self.agents_dir}")
             return []
             
+        # Check if agent_framework is available
+        try:
+            import agent_framework
+        except ImportError:
+            logger.error(f"agent_framework is not installed in the current Python environment. "
+                        f"Install it with: pip install agent-framework")
+            return []
+            
         discovered: List[AgentInfo] = []
         
         # Scan all subdirectories

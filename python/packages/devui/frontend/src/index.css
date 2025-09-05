@@ -119,76 +119,7 @@
   }
 }
 
-/* Workflow Mermaid Diagram Styles */
-.mermaid-container {
-  @apply w-full overflow-auto;
-}
-
-.mermaid-container svg {
-  @apply max-w-full h-auto;
-}
-
-/* Active executor highlighting for Mermaid diagrams */
-.mermaid-container .active-executor {
-  stroke: rgb(16, 185, 129) !important; /* emerald-500 */
-  stroke-width: 3px !important;
-  fill: rgb(209, 250, 229) !important; /* emerald-50 */
-  animation: workflow-pulse 2s infinite;
-}
-
-.mermaid-container .active-executor rect,
-.mermaid-container .active-executor circle,
-.mermaid-container .active-executor polygon {
-  stroke: rgb(16, 185, 129) !important; /* emerald-500 */
-  stroke-width: 3px !important;
-  fill: rgb(209, 250, 229) !important; /* emerald-50 */
-}
-
-/* Pulse animation for active workflow executors */
-@keyframes workflow-pulse {
-  0%, 100% { 
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% { 
-    opacity: 0.8;
-    transform: scale(1.02);
-  }
-}
-
-/* Dark mode adjustments for workflow diagrams */
-.dark .mermaid-container .active-executor {
-  fill: rgb(6, 78, 59) !important; /* emerald-900 */
-  stroke: rgb(52, 211, 153) !important; /* emerald-400 */
-}
-
-.dark .mermaid-container .active-executor rect,
-.dark .mermaid-container .active-executor circle,
-.dark .mermaid-container .active-executor polygon {
-  fill: rgb(6, 78, 59) !important; /* emerald-900 */
-  stroke: rgb(52, 211, 153) !important; /* emerald-400 */
-}
-
-/* Workflow diagram responsiveness */
-@media (max-width: 768px) {
-  .mermaid-container {
-    font-size: 12px;
-  }
-  
-  .mermaid-container svg {
-    min-height: 200px;
-  }
-}
-
-/* Ensure text in workflow diagrams is readable */
-.mermaid-container text {
-  @apply fill-current text-foreground;
-}
-
-.mermaid-container .node text,
-.mermaid-container .nodeLabel {
-  @apply fill-current text-foreground;
-}
+/* Mermaid diagram styles removed - visualization coming soon */
 
 /* Style workflow completion/error states */
 .workflow-chat-view .border-green-200 {

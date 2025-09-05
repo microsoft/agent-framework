@@ -9,6 +9,8 @@ import { Separator } from "@/components/ui/separator";
 import { AgentSwitcher } from "@/components/main/agent-switcher";
 import { ChatRouter } from "@/components/main/chat-router";
 import { DebugPanel } from "@/components/main/debug-panel";
+import { ModeToggle } from "@/components/mode-toggle";
+import { LoadingState } from "@/components/ui/loading-state";
 import { apiClient } from "@/services/api";
 import { Plus, Settings, ChevronLeft, GripVertical } from "lucide-react";
 import type { AgentInfo, WorkflowInfo, ChatMessage, AppState, ChatState } from "@/types";
@@ -132,6 +134,7 @@ export default function App() {
   });
 
   const [workflowInfo, setWorkflowInfo] = useState<WorkflowInfo | null>(null);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
 
   const [debugPanelOpen, setDebugPanelOpen] = useState(true);
   const [debugPanelWidth, setDebugPanelWidth] = useState(320); // Default 320px (w-80)
@@ -154,7 +157,7 @@ export default function App() {
           ...prev,
           agents,
           workflows,
-          selectedAgent: agents[0] || workflows[0], // Select first item by default
+          selectedAgent: agents.length > 0 ? agents[0] : workflows.length > 0 ? workflows[0] : undefined,
           isLoading: false,
         }));
       } catch (error) {
@@ -238,15 +241,19 @@ export default function App() {
 
     // Load workflow info if it's a workflow
     if (item.type === "workflow") {
+      setWorkflowLoading(true);
       try {
         const info = await apiClient.getWorkflowInfo(item.id);
         setWorkflowInfo(info);
       } catch (error) {
         console.error("Failed to load workflow info:", error);
         setWorkflowInfo(null);
+      } finally {
+        setWorkflowLoading(false);
       }
     } else {
       setWorkflowInfo(null);
+      setWorkflowLoading(false);
     }
   }, []);
 
@@ -421,6 +428,102 @@ export default function App() {
     [appState.selectedAgent, appState.currentThread, chatState.messages]
   );
 
+  // Show loading state while initializing
+  if (appState.isLoading) {
+    return (
+      <div className="h-screen flex flex-col bg-background">
+        {/* Top Bar - Skeleton */}
+        <header className="flex h-14 items-center gap-4 border-b px-4">
+          <div className="w-64 h-9 bg-muted animate-pulse rounded-md" />
+          <div className="flex items-center gap-2 ml-auto">
+            <div className="w-24 h-8 bg-muted animate-pulse rounded-md" />
+            <div className="w-8 h-8 bg-muted animate-pulse rounded-md" />
+            <div className="w-8 h-8 bg-muted animate-pulse rounded-md" />
+          </div>
+        </header>
+
+        {/* Loading Content */}
+        <LoadingState
+          message="Initializing DevUI..."
+          description="Loading agents and workflows from your configuration"
+          fullPage={true}
+        />
+      </div>
+    )
+  }
+
+  // Show error state if loading failed
+  if (appState.error) {
+    return (
+      <div className="h-screen flex flex-col bg-background">
+        {/* Top Bar */}
+        <header className="flex h-14 items-center gap-4 border-b px-4">
+          <div className="w-64 h-9 bg-muted animate-pulse rounded-md opacity-50" />
+          <div className="flex items-center gap-2 ml-auto">
+            <ModeToggle />
+            <Button variant="ghost" size="sm">
+              <Settings className="h-4 w-4" />
+            </Button>
+          </div>
+        </header>
+
+        {/* Error Content */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4 max-w-md">
+            <div className="text-destructive text-lg font-medium">
+              Failed to load agents
+            </div>
+            <p className="text-muted-foreground text-sm">
+              {appState.error}
+            </p>
+            <Button 
+              onClick={() => window.location.reload()} 
+              variant="outline"
+            >
+              Retry
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Show empty state if no agents or workflows are available
+  if (!appState.isLoading && appState.agents.length === 0 && appState.workflows.length === 0) {
+    return (
+      <div className="h-screen flex flex-col bg-background">
+        {/* Top Bar */}
+        <header className="flex h-14 items-center gap-4 border-b px-4">
+          <div className="text-sm text-muted-foreground">No agents available</div>
+          <div className="flex items-center gap-2 ml-auto">
+            <ModeToggle />
+            <Button variant="ghost" size="sm">
+              <Settings className="h-4 w-4" />
+            </Button>
+          </div>
+        </header>
+
+        {/* Empty State Content */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4 max-w-md">
+            <div className="text-lg font-medium">
+              No agents configured
+            </div>
+            <p className="text-muted-foreground text-sm">
+              No agents or workflows were found in your configuration. Please check your setup and ensure agents are properly configured.
+            </p>
+            <Button 
+              onClick={() => window.location.reload()} 
+              variant="outline"
+            >
+              Retry
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-screen flex flex-col bg-background max-h-screen">
       {/* Top Bar */}
@@ -446,6 +549,7 @@ export default function App() {
 
           <Separator orientation="vertical" className="h-6" />
 
+          <ModeToggle />
           <Button variant="ghost" size="sm">
             <Settings className="h-4 w-4" />
           </Button>
@@ -459,6 +563,7 @@ export default function App() {
           <ChatRouter
             selectedItem={appState.selectedAgent}
             workflowInfo={workflowInfo}
+            workflowLoading={workflowLoading}
             messages={chatState.messages}
             debugEvents={chatState.streamEvents}
             onSendMessage={handleSendMessage}

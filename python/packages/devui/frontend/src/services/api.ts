@@ -3,10 +3,17 @@
  * Handles agents, workflows, streaming, and session management
  */
 
-import type { AgentInfo, HealthResponse, RunAgentRequest, ThreadInfo } from "@/types";
+import type {
+  AgentInfo,
+  HealthResponse,
+  RunAgentRequest,
+  ThreadInfo,
+} from "@/types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ||
-  "http://localhost:8080";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL !== undefined
+    ? import.meta.env.VITE_API_BASE_URL
+    : "http://localhost:8080";
 
 class ApiClient {
   private baseUrl: string;
@@ -20,7 +27,7 @@ class ApiClient {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    
+
     const response = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
@@ -30,7 +37,9 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `API request failed: ${response.status} ${response.statusText}`
+      );
     }
 
     return response.json();
@@ -54,8 +63,12 @@ class ApiClient {
     return this.request<AgentInfo>(`/agents/${agentId}/info`);
   }
 
-  async getWorkflowInfo(workflowId: string): Promise<import("@/types").WorkflowInfo> {
-    return this.request<import("@/types").WorkflowInfo>(`/workflows/${workflowId}/info`);
+  async getWorkflowInfo(
+    workflowId: string
+  ): Promise<import("@/types").WorkflowInfo> {
+    return this.request<import("@/types").WorkflowInfo>(
+      `/workflows/${workflowId}/info`
+    );
   }
 
   // Thread management
@@ -76,11 +89,11 @@ class ApiClient {
     agentId: string,
     request: RunAgentRequest,
     isWorkflow: boolean = false
-  ): AsyncGenerator<any, void, unknown> {
+  ): AsyncGenerator<import("@/types").DebugStreamEvent, void, unknown> {
     const endpoint = isWorkflow
       ? `/workflows/${agentId}/run/stream`
       : `/agents/${agentId}/run/stream`;
-    
+
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: "POST",
       headers: {
@@ -105,13 +118,13 @@ class ApiClient {
     try {
       while (true) {
         const { done, value } = await reader.read();
-        
+
         if (done) {
           break;
         }
 
         buffer += decoder.decode(value, { stream: true });
-        
+
         // Parse SSE events
         const lines = buffer.split("\n");
         buffer = lines.pop() || ""; // Keep incomplete line in buffer
@@ -133,16 +146,30 @@ class ApiClient {
   }
 
   // Non-streaming execution (for testing)
-  async runAgent(agentId: string, request: RunAgentRequest): Promise<any> {
+  async runAgent(
+    agentId: string,
+    request: RunAgentRequest
+  ): Promise<{
+    thread_id: string;
+    result: unknown[];
+    message_count: number;
+  }> {
     return this.request(`/agents/${agentId}/run`, {
       method: "POST",
       body: JSON.stringify(request),
     });
   }
 
-  async runWorkflow(workflowId: string, request: RunAgentRequest): Promise<any> {
+  async runWorkflow(
+    workflowId: string,
+    request: RunAgentRequest
+  ): Promise<{
+    result: string;
+    events: number;
+    message_count: number;
+  }> {
     return this.request(`/workflows/${workflowId}/run`, {
-      method: "POST", 
+      method: "POST",
       body: JSON.stringify(request),
     });
   }

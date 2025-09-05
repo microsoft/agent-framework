@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { MermaidDiagram } from "../workflow/MermaidDiagram";
-import { CheckCircle, Clock, AlertCircle, Loader2, Send } from "lucide-react";
+import { CheckCircle, Clock, AlertCircle, Loader2, Send, Construction } from "lucide-react";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { WorkflowInfo } from "@/types";
@@ -8,6 +8,7 @@ import type { DebugStreamEvent } from "@/types/agent-framework";
 
 interface WorkflowChatViewProps {
   workflowInfo?: WorkflowInfo | null;
+  workflowLoading?: boolean;
   events: DebugStreamEvent[];
   isStreaming: boolean;
   onSendMessage?: (message: string) => void;
@@ -29,6 +30,7 @@ interface WorkflowExecution {
 
 export function WorkflowChatView({
   workflowInfo,
+  workflowLoading = false,
   events,
   isStreaming,
   onSendMessage,
@@ -57,7 +59,10 @@ export function WorkflowChatView({
     events.forEach((event) => {
       if (event.type === "workflow_event" && event.event) {
         // Check if this is an ExecutorEvent which has executor_id
-        const executorId = 'executor_id' in event.event ? (event.event as any).executor_id as string : undefined;
+        const executorId =
+          "executor_id" in event.event
+            ? ((event.event as any).executor_id as string)
+            : undefined;
         const eventData = event.event.data;
 
         if (executorId) {
@@ -130,15 +135,25 @@ export function WorkflowChatView({
     };
   }, [workflowInfo, events, isStreaming]);
 
+  // Show loading state when workflow is being loaded
+  if (workflowLoading) {
+    return (
+      <LoadingState
+        message="Loading workflow..."
+        description="Fetching workflow structure and configuration"
+      />
+    );
+  }
+
   if (
     !workflowExecution.mermaidDiagram &&
     !workflowExecution.executorHistory.length
   ) {
     return (
-      <div className="flex items-center justify-center p-8 text-gray-500">
-        <Loader2 className="w-6 h-6 animate-spin mr-2" />
-        Initializing workflow...
-      </div>
+      <LoadingState
+        message="Initializing workflow..."
+        description="Setting up workflow execution environment"
+      />
     );
   }
 
@@ -146,32 +161,36 @@ export function WorkflowChatView({
     <div className="workflow-chat-view space-y-6 p-4">
       {/* Workflow Diagram Section */}
       {workflowExecution.mermaidDiagram && (
-        <div className="border rounded-lg bg-white shadow-sm">
-          <div className="border-b px-4 py-3 bg-gray-50 rounded-t-lg">
+        <div className="border border-border rounded-lg bg-card shadow-sm">
+          <div className="border-b border-border px-4 py-3 bg-muted rounded-t-lg">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-gray-900">
+              <h3 className="text-sm font-medium text-foreground">
                 Workflow Execution
               </h3>
               {isStreaming && (
-                <div className="flex items-center gap-2 text-sm text-blue-600">
+                <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Running...
                 </div>
               )}
-              {!isStreaming && !workflowExecution.error && workflowExecution.executorHistory.length > 0 && (
-                <div className="flex items-center gap-2 text-sm text-green-600">
-                  <CheckCircle className="w-4 h-4" />
-                  Completed
-                </div>
-              )}
-              {!isStreaming && !workflowExecution.error && workflowExecution.executorHistory.length === 0 && (
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Clock className="w-4 h-4" />
-                  Ready
-                </div>
-              )}
+              {!isStreaming &&
+                !workflowExecution.error &&
+                workflowExecution.executorHistory.length > 0 && (
+                  <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle className="w-4 h-4" />
+                    Completed
+                  </div>
+                )}
+              {!isStreaming &&
+                !workflowExecution.error &&
+                workflowExecution.executorHistory.length === 0 && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Clock className="w-4 h-4" />
+                    Ready
+                  </div>
+                )}
               {workflowExecution.error && (
-                <div className="flex items-center gap-2 text-sm text-red-600">
+                <div className="flex items-center gap-2 text-sm text-destructive">
                   <AlertCircle className="w-4 h-4" />
                   Error
                 </div>
@@ -179,20 +198,25 @@ export function WorkflowChatView({
             </div>
           </div>
           <div className="p-4">
-            <MermaidDiagram
-              diagram={workflowExecution.mermaidDiagram}
-              activeExecutors={workflowExecution.activeExecutors}
-              className="max-w-full overflow-auto"
-            />
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Construction className="w-12 h-12 text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium text-foreground mb-2">
+                Workflow Visualization Coming Soon
+              </h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                We're working on an interactive workflow diagram to help you visualize execution flow. 
+                For now, you can track progress in the execution steps below.
+              </p>
+            </div>
           </div>
         </div>
       )}
 
       {/* Execution History */}
       {workflowExecution.executorHistory.length > 0 && (
-        <div className="border rounded-lg bg-white shadow-sm">
-          <div className="border-b px-4 py-3 bg-gray-50 rounded-t-lg">
-            <h4 className="text-sm font-medium text-gray-900">
+        <div className="border border-border rounded-lg bg-card shadow-sm">
+          <div className="border-b border-border px-4 py-3 bg-muted rounded-t-lg">
+            <h4 className="text-sm font-medium text-foreground">
               Execution Steps
             </h4>
           </div>
@@ -201,25 +225,25 @@ export function WorkflowChatView({
               <div key={index} className="flex items-start gap-3">
                 <div className="flex-shrink-0 mt-1">
                   {step.status === "completed" && (
-                    <CheckCircle className="w-4 h-4 text-green-500" />
+                    <CheckCircle className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
                   )}
                   {step.status === "running" && (
-                    <Clock className="w-4 h-4 text-blue-500" />
+                    <Clock className="w-4 h-4 text-blue-500 dark:text-blue-400" />
                   )}
                   {step.status === "error" && (
-                    <AlertCircle className="w-4 h-4 text-red-500" />
+                    <AlertCircle className="w-4 h-4 text-destructive" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium text-gray-900">
+                    <span className="text-sm font-medium text-foreground">
                       {step.executorId}
                     </span>
-                    <span className="text-xs text-gray-500">
+                    <span className="text-xs text-muted-foreground">
                       {new Date(step.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
-                  <p className="text-sm text-gray-600 break-words">
+                  <p className="text-sm text-muted-foreground break-words">
                     {step.message}
                   </p>
                 </div>
@@ -231,15 +255,17 @@ export function WorkflowChatView({
 
       {/* Final Result */}
       {workflowExecution.completionResult && (
-        <div className="border rounded-lg bg-green-50 border-green-200 shadow-sm">
-          <div className="border-b border-green-200 px-4 py-3 bg-green-100 rounded-t-lg">
+        <div className="border border-emerald-200 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 dark:border-emerald-800 shadow-sm">
+          <div className="border-b border-emerald-200 dark:border-emerald-800 px-4 py-3 bg-emerald-100 dark:bg-emerald-900/50 rounded-t-lg">
             <div className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-green-600" />
-              <h4 className="text-sm font-medium text-green-800">Result</h4>
+              <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <h4 className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                Result
+              </h4>
             </div>
           </div>
           <div className="p-4">
-            <p className="text-green-700 whitespace-pre-wrap break-words">
+            <p className="text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap break-words">
               {workflowExecution.completionResult}
             </p>
           </div>
@@ -248,15 +274,15 @@ export function WorkflowChatView({
 
       {/* Error Display */}
       {workflowExecution.error && (
-        <div className="border rounded-lg bg-red-50 border-red-200 shadow-sm">
-          <div className="border-b border-red-200 px-4 py-3 bg-red-100 rounded-t-lg">
+        <div className="border border-destructive/50 rounded-lg bg-destructive/5 shadow-sm">
+          <div className="border-b border-destructive/50 px-4 py-3 bg-destructive/10 rounded-t-lg">
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-red-600" />
-              <h4 className="text-sm font-medium text-red-800">Error</h4>
+              <AlertCircle className="w-4 h-4 text-destructive" />
+              <h4 className="text-sm font-medium text-destructive">Error</h4>
             </div>
           </div>
           <div className="p-4">
-            <p className="text-red-700 whitespace-pre-wrap break-words">
+            <p className="text-destructive whitespace-pre-wrap break-words">
               {workflowExecution.error}
             </p>
           </div>
@@ -265,13 +291,15 @@ export function WorkflowChatView({
 
       {/* Workflow Input */}
       {onSendMessage && (
-        <div className="border-t bg-gray-50 p-4">
+        <div className="border-t border-border bg-muted p-4">
           <div className="flex items-center gap-2">
             <Input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder={
-                workflowInfo?.workflow_dump?.executors?.[workflowInfo.workflow_dump.start_executor_id]?.type_ === "SpamDetector" 
+                workflowInfo?.workflow_dump?.executors?.[
+                  workflowInfo.workflow_dump.start_executor_id
+                ]?.type_ === "SpamDetector"
                   ? "Enter message to analyze (e.g., 'Hello, how are you today?')"
                   : "Enter workflow input..."
               }

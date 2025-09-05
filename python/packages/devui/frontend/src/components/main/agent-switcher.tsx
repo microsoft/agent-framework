@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ChevronDown, Bot, Workflow, FolderOpen, Database } from "lucide-react";
 import type { AgentInfo } from "@/types";
 
@@ -63,16 +64,25 @@ export function AgentSwitcher({
           className="w-64 justify-between font-mono text-sm"
           disabled={isLoading}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <TypeIcon className="h-4 w-4 flex-shrink-0" />
-            <span className="truncate">{displayName}</span>
-            {selectedItem && (
-              <Badge variant="secondary" className="ml-auto flex-shrink-0">
-                {toolCount} tools
-              </Badge>
-            )}
-          </div>
-          <ChevronDown className="h-4 w-4 opacity-50" />
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <LoadingSpinner size="sm" />
+              <span className="text-muted-foreground">Loading...</span>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 min-w-0">
+                <TypeIcon className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">{displayName}</span>
+                {selectedItem && (
+                  <Badge variant="secondary" className="ml-auto flex-shrink-0">
+                    {toolCount} tools
+                  </Badge>
+                )}
+              </div>
+              <ChevronDown className="h-4 w-4 opacity-50" />
+            </>
+          )}
         </Button>
       </DropdownMenuTrigger>
 

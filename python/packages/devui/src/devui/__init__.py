@@ -185,6 +185,21 @@ def main():
     agents_dir = os.path.abspath(args.directory)
     
     print(f"🔍 Scanning {agents_dir} for agents...")
+    
+    # Quick discovery check to provide feedback
+    from .discovery import DirectoryScanner
+    scanner = DirectoryScanner(agents_dir)
+    discovered = scanner.discover_agents()
+    
+    if discovered:
+        print(f"📋 Found {len(discovered)} agents/workflows:")
+        for item in discovered:
+            print(f"   • {item.id} ({item.type})")
+    else:
+        print(f"⚠️  No agents found in {agents_dir}")
+        print(f"   Make sure the directory contains valid agent/workflow modules")
+        print(f"   See documentation for directory structure requirements")
+    
     print(f"🚀 Starting devui on http://{args.host}:{args.port}")
     
     # Launch debug UI

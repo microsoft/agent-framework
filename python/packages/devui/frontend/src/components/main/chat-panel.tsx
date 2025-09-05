@@ -7,7 +7,8 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, User, Bot, Workflow, Loader2 } from "lucide-react";
+import { Send, User, Bot, Workflow } from "lucide-react";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentInfo, ChatMessage } from "@/types";
 
 interface ChatPanelProps {
@@ -120,7 +121,7 @@ export function ChatPanel({
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* Header */}
       <div className="border-b p-4 flex-shrink-0">
-        <h2 className="font-semibold">
+        <h2 className="font-semiboldd text-sm">
           {selectedItem ? (
             <div className="flex items-center gap-2">
               {selectedItem.type === "workflow" ? (
@@ -131,7 +132,7 @@ export function ChatPanel({
               Chat with {selectedItem.name || selectedItem.id}
             </div>
           ) : (
-            "Select an agent to start chatting"
+            "Select an agent or workflow from the dropdown to begin"
           )}
         </h2>
         {selectedItem?.description && (
@@ -187,7 +188,7 @@ export function ChatPanel({
               className="shrink-0"
             >
               {isSubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <LoadingSpinner size="sm" />
               ) : (
                 <Send className="h-4 w-4" />
               )}
@@ -195,7 +196,7 @@ export function ChatPanel({
           </form>
         ) : (
           <div className="text-center text-muted-foreground text-sm py-2">
-            Select an agent from the dropdown to start chatting
+            Select an agent or workflow from the dropdown to begin
           </div>
         )}
       </div>

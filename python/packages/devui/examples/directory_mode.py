@@ -6,6 +6,18 @@ Example of using Agent Framework Debug UI with directory-based discovery.
 
 This demonstrates the ADK-style approach where agents are discovered
 from the filesystem following standard conventions.
+
+IMPORTANT: This example requires agent_framework to be installed in your Python environment.
+If you get import errors, make sure to:
+1. Install the agent framework: pip install agent-framework
+2. Or run with the correct Python environment that has agent_framework installed
+
+Usage:
+    python examples/directory_mode.py                              # Uses ./examples/sample_agents (relative to script)
+    AGENTS_DIR=/path/to/agents python examples/directory_mode.py   # Uses custom directory
+    
+The script automatically looks for agents in a 'sample_agents' directory relative to its own location,
+making it work regardless of where you run it from.
 """
 
 import os
@@ -19,8 +31,12 @@ def main():
     print("🚀 Agent Framework Debug UI - Directory Mode Example")
     print("="*60)
     
-    # Look for agents in current directory by default
-    agents_dir = os.environ.get('AGENTS_DIR', './agents')
+    # Get the directory where this script is located
+    script_dir = Path(__file__).parent
+    
+    # Look for agents relative to this script's location by default
+    default_agents_dir = script_dir / "sample_agents"
+    agents_dir = os.environ.get('AGENTS_DIR', str(default_agents_dir))
     agents_path = Path(agents_dir).resolve()
     
     print(f"Scanning for agents in: {agents_path}")
@@ -30,6 +46,8 @@ def main():
         print(f"   Create it with sample agents using:")
         print(f"   mkdir -p {agents_path}")
         print(f"   # Then add agent directories following conventions")
+        print(f"   # Or run with: AGENTS_DIR=/path/to/your/agents python examples/directory_mode.py")
+        print(f"   # This script looks for agents relative to: {script_dir}")
         return
     
     # Check if there are any potential agent directories

@@ -2,8 +2,25 @@
 
 """Pydantic models for the Agent Framework Debug UI backend."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union, TYPE_CHECKING
 from pydantic import BaseModel, Field
+
+# Import required types with proper type handling
+if TYPE_CHECKING:
+    # For type checking, import the real types
+    from agent_framework import AgentRunResponseUpdate
+    from agent_framework_workflow._events import WorkflowEvent
+else:
+    # At runtime, try to import but fallback gracefully
+    try:
+        from agent_framework import AgentRunResponseUpdate
+    except ImportError:
+        AgentRunResponseUpdate = Dict[str, Any]
+        
+    try:
+        from agent_framework_workflow._events import WorkflowEvent
+    except ImportError:
+        WorkflowEvent = Dict[str, Any]
 
 class AgentInfo(BaseModel):
     """Information about a discovered agent or workflow."""
@@ -56,9 +73,11 @@ class TraceSpan(BaseModel):
 
 class DebugStreamEvent(BaseModel):
     """Wrapper for streaming events with debug metadata."""
+    model_config = {"arbitrary_types_allowed": True}
+    
     type: Literal["agent_run_update", "workflow_event", "workflow_structure", "completion", "error", "debug_trace", "trace_span"]
-    update: Optional[Any] = None  # Native AgentRunResponseUpdate
-    event: Optional[Any] = None   # Native WorkflowEvent
+    update: Optional[AgentRunResponseUpdate] = None  # Properly typed AgentRunResponseUpdate
+    event: Optional[Union[WorkflowEvent, Dict[str, Any]]] = None   # Accept WorkflowEvent instance or serialized dict
     trace_span: Optional[TraceSpan] = None  # Real-time trace span
     # Workflow structure data (minimal)
     workflow_dump: Optional[Dict[str, Any]] = None
