@@ -40,15 +40,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 ");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
- 
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+
 if (this.Namespace is not null) 
 {
             
@@ -56,14 +54,14 @@ if (this.Namespace is not null)
             #line hidden
             this.Write("\nnamespace ");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Namespace));
             
             #line default
             #line hidden
             this.Write(";\n");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 } 
 foreach (string executor in this.Executors)
 { 
@@ -72,14 +70,14 @@ foreach (string executor in this.Executors)
             #line hidden
             this.Write("\n");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(executor.Trim()));
             
             #line default
             #line hidden
             this.Write("\n");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 
 }
             
@@ -97,21 +95,21 @@ public static class WorkflowProvider
         inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
         ");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.RootExecutorType));
             
             #line default
             #line hidden
-            this.Write("<TInput> ");
+            this.Write("Executor<TInput> ");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.RootInstanceVariable));
             
             #line default
             #line hidden
-            this.Write(" = new(options.Configuration, inputTransform);");
+            this.Write(" = new(inputTransform, options.Configuration);");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 
 foreach (string instance in ByLine(this.Instances))
 { 
@@ -120,13 +118,13 @@ foreach (string instance in ByLine(this.Instances))
             #line hidden
             this.Write("\n        ");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(instance));
             
             #line default
             #line hidden
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 
 }
  
@@ -135,14 +133,14 @@ foreach (string instance in ByLine(this.Instances))
             #line hidden
             this.Write("\n\n        // Define the workflow builder\n        WorkflowBuilder builder = new(");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.RootInstanceVariable));
             
             #line default
             #line hidden
             this.Write(");\n\n        // Connect executors");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 
 foreach (string edge in ByLine(this.Edges))
 { 
@@ -151,13 +149,13 @@ foreach (string edge in ByLine(this.Edges))
             #line hidden
             this.Write("\n        ");
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(edge));
             
             #line default
             #line hidden
             
-            #line 11 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            #line 9 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 
 }
  

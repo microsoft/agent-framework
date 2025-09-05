@@ -51,7 +51,7 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
             
             #line default
             #line hidden
-            this.Write("\n        string activityText = \n            await context.FormatAsync( ");
+            this.Write("\n        string activityText = \n            await context.FormatTemplateAsync( ");
             
             #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
 

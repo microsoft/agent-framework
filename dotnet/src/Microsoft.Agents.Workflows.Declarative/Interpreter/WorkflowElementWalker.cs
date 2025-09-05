@@ -2,7 +2,7 @@
 
 using Microsoft.Bot.ObjectModel;
 
-namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 internal sealed class WorkflowElementWalker : BotElementWalker
 {

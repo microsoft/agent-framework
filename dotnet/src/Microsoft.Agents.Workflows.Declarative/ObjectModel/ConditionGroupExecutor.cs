@@ -3,7 +3,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
@@ -33,7 +33,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
 
     public bool IsMatch(ConditionItem conditionItem, object? result)
     {
-        if (result is not DeclarativeExecutorResult message)
+        if (result is not ActionExecutorResult message)
         {
             return false;
         }
@@ -43,7 +43,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
 
     public bool IsElse(object? result)
     {
-        if (result is not DeclarativeExecutorResult message)
+        if (result is not ActionExecutorResult message)
         {
             return false;
         }

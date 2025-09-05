@@ -9,7 +9,7 @@ internal partial class InstanceTemplate
     internal InstanceTemplate(string executorId)
     {
         this.InstanceVariable = executorId.FormatName();
-        this.ExecutorType = executorId.FormatType() + "Executor";
+        this.ExecutorType = executorId.FormatType();
     }
 
     public string InstanceVariable { get; }

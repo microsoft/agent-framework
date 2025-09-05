@@ -1,13 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.Configuration;
 
-namespace Microsoft.Agents.Workflows.Declarative; // %%% TODO
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 /// <summary>
 /// Base class for an entry-point workflow executor that receives the initial trigger message.
@@ -37,22 +36,9 @@ public abstract class RootExecutor<TInput> :
     /// <inheritdoc/>
     public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        try
-        {
-            await this.ExecuteAsync(message, context, cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(message, context, cancellationToken: default).ConfigureAwait(false);
 
-            await context.SendMessageAsync(this.Id).ConfigureAwait(false); // %%% TODO: ???
-        }
-        catch (DeclarativeActionException exception)
-        {
-            Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
-            throw;
-        }
-        catch (Exception exception)
-        {
-            Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
-            throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.GetType().Name})", exception);
-        }
+        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 
     /// <summary>

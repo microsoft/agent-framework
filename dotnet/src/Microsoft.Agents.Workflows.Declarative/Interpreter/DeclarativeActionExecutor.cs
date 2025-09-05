@@ -14,9 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
-
-internal sealed record class DeclarativeExecutorResult(string ExecutorId, object? Result = null);
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 internal abstract class DeclarativeActionExecutor<TAction>(TAction model, DeclarativeWorkflowState state) :
     WorkflowActionExecutor(model, state)
@@ -27,7 +25,7 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Declar
 
 internal abstract class WorkflowActionExecutor :
     ReflectingExecutor<WorkflowActionExecutor>,
-    IMessageHandler<DeclarativeExecutorResult>
+    IMessageHandler<ActionExecutorResult>
 {
     public const string RootActionId = "(root)";
 
@@ -61,7 +59,7 @@ internal abstract class WorkflowActionExecutor :
     protected DeclarativeWorkflowState State { get; }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
+    public async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {
@@ -75,7 +73,7 @@ internal abstract class WorkflowActionExecutor :
         {
             object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
-            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id, result)).ConfigureAwait(false);
+            await context.SendMessageAsync(new ActionExecutorResult(this.Id, result)).ConfigureAwait(false);
         }
         catch (DeclarativeActionException exception)
         {

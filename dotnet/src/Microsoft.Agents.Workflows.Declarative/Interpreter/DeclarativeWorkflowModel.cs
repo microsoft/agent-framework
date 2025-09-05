@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 /// <summary>
 /// Provides dynamic model for constructing a declarative workflow.

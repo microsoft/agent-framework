@@ -29,16 +29,6 @@ internal static class StringExtensions
 
     public static string FormatName(this string identifier) => FormatIdentifier(identifier, skipFirst: true);
 
-    //public static string? FormatOptional(this string? identifier) // %%% REMOVE
-    //{
-    //    if (identifier is null)
-    //    {
-    //        return null;
-    //    }
-
-    //    return FormatIdentifier(identifier, skipFirst: true);
-    //}
-
     private static string FormatIdentifier(string identifier, bool skipFirst = false)
     {
         string[] words = identifier.Split('_');

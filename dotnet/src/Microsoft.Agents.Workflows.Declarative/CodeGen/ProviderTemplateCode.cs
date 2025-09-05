@@ -13,15 +13,13 @@ internal partial class ProviderTemplate
         IEnumerable<string> instances,
         IEnumerable<string> edges)
     {
-        this.Id = workflowId;
         this.Executors = executors;
         this.Instances = instances;
         this.Edges = edges;
         this.RootInstanceVariable = workflowId.FormatName();
-        this.RootExecutorType = workflowId.FormatType() + "Executor";
+        this.RootExecutorType = workflowId.FormatType();
     }
 
-    public string Id { get; } // %%% NEEDED ???
     public string? Namespace { get; init; }
     public string RootInstanceVariable { get; }
     public string RootExecutorType { get; }

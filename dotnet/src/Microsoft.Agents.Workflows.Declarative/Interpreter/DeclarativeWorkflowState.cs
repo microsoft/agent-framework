@@ -12,7 +12,7 @@ using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 internal sealed class DeclarativeWorkflowState
 {
@@ -96,6 +96,10 @@ internal sealed class DeclarativeWorkflowState
             foreach (string key in keys)
             {
                 object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
+                if (value is null || value is UnassignedValue)
+                {
+                    value = FormulaValue.NewBlank();
+                }
                 this._scopes.Set(key, value.ToFormulaValue(), scopeName);
             }
 

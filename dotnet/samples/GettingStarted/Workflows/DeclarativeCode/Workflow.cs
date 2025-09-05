@@ -12,9 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Configuration;
@@ -25,8 +23,8 @@ namespace Demo.DeclarativeCode;
 /// The root executor for a declarative workflow.
 /// </summary>
 internal sealed class RootWorkflowDemoExecutor<TInput>(
-    IConfiguration? configuration,
-    Func<TInput, ChatMessage> inputTransform) :
+    Func<TInput, ChatMessage> inputTransform,
+    IConfiguration? configuration) :
     RootExecutor<TInput>("root_workflow_demo", configuration)
     where TInput : notnull
 {
@@ -40,8 +38,19 @@ internal sealed class RootWorkflowDemoExecutor<TInput>(
         await context.QueueStateUpdateAsync("USERNAME", this.GetEnvironmentVariable("USERNAME"), "Env").ConfigureAwait(false);
 
         // Set user variables to default values
-        await context.QueueStateUpdateAsync("UserName", string.Empty, "Global").ConfigureAwait(false);
-        await context.QueueStateUpdateAsync("UserInput", string.Empty, "Topic").ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("RunCount", UnassignedValue.Instance, "Global").ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("UserName", UnassignedValue.Instance, "Global").ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("UserInput", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+    }
+}
+
+internal sealed class SetCountExecutor() : ActionExecutor(id: "set_count")
+{
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        object? value = await context.EvaluateExpressionAsync("Global.RunCount + 1").ConfigureAwait(false);
+
+        await context.QueueStateUpdateAsync("RunCount", value, "Global").ConfigureAwait(false);
     }
 }
 
@@ -70,10 +79,11 @@ internal sealed class SendResultExecutor() : ActionExecutor(id: "send_result")
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         string activityText =
-            await context.FormatAsync(
+            await context.FormatTemplateAsync(
                 """
                 Hello {Global.UserName},
                 You said, "{Topic.UserInput}"
+                (x{Global.RunCount})
                 """
             );
         AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -91,7 +101,8 @@ public static class WorkflowProvider
     {
         // Create executor instances
         inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
-        RootWorkflowDemoExecutor<TInput> rootWorkflowDemo = new(options.Configuration, inputTransform);
+        RootWorkflowDemoExecutor<TInput> rootWorkflowDemo = new(inputTransform, options.Configuration);
+        SetCountExecutor setCount = new();
         SetUserInputExecutor setUserInput = new();
         SetUserNameExecutor setUserName = new();
         SendResultExecutor sendResult = new();
@@ -100,7 +111,8 @@ public static class WorkflowProvider
         WorkflowBuilder builder = new(rootWorkflowDemo);
 
         // Connect executors
-        builder.AddEdge(rootWorkflowDemo, setUserInput);
+        builder.AddEdge(rootWorkflowDemo, setCount);
+        builder.AddEdge(setCount, setUserInput);
         builder.AddEdge(setUserInput, setUserName);
         builder.AddEdge(setUserName, sendResult);
 

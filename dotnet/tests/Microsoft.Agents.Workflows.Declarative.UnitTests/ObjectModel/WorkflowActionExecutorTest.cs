@@ -4,7 +4,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
@@ -78,7 +78,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     {
         public async ValueTask HandleAsync(WorkflowScopes message, IWorkflowContext context)
         {
-            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+            await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
         }
     }
 }

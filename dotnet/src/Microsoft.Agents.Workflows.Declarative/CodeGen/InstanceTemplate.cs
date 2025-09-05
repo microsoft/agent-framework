@@ -32,7 +32,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write(" ");
+            this.Write("Executor ");
             
             #line 2 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InstanceTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.InstanceVariable));

@@ -15,12 +15,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-<# 
+<#
 if (this.Namespace is not null) 
 {#>
 namespace <#= this.Namespace #>;
@@ -39,7 +37,7 @@ public static class WorkflowProvider
     {
         // Create executor instances
         inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
-        <#= this.RootExecutorType #><TInput> <#= this.RootInstanceVariable #> = new(options.Configuration, inputTransform);<#
+        <#= this.RootExecutorType #>Executor<TInput> <#= this.RootInstanceVariable #> = new(inputTransform, options.Configuration);<#
 foreach (string instance in ByLine(this.Instances))
 { #>
         <#= instance #><#

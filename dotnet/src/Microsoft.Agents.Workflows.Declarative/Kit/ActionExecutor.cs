@@ -1,19 +1,17 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Reflection;
 
-namespace Microsoft.Agents.Workflows.Declarative; // %%% TODO
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 /// <summary>
 /// Base class for an action executor that receives the initial trigger message.
 /// </summary>
 public abstract class ActionExecutor :
     ReflectingExecutor<ActionExecutor>,
-    IMessageHandler<string> // %%% IDK
+    IMessageHandler<ActionExecutorResult>
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="ActionExecutor"/> class.
@@ -25,25 +23,11 @@ public abstract class ActionExecutor :
     }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
-        try
-        {
-            await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
-            //await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false); // %%% TODO
-            await context.SendMessageAsync(this.Id).ConfigureAwait(false); // %%% TODO
-        }
-        catch (DeclarativeActionException exception)
-        {
-            Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
-            throw;
-        }
-        catch (Exception exception)
-        {
-            Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
-            throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.GetType().Name})", exception);
-        }
+        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 
     /// <summary>

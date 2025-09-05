@@ -4,11 +4,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Reflection;
 
-namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 internal delegate ValueTask DelegateAction(IWorkflowContext context, CancellationToken cancellationToken);
 
-internal sealed class DelegateActionExecutor : ReflectingExecutor<DelegateActionExecutor>, IMessageHandler<DeclarativeExecutorResult>
+internal sealed class DelegateActionExecutor : ReflectingExecutor<DelegateActionExecutor>, IMessageHandler<ActionExecutorResult>
 {
     private readonly DelegateAction? _action;
 
@@ -18,13 +18,13 @@ internal sealed class DelegateActionExecutor : ReflectingExecutor<DelegateAction
         this._action = action;
     }
 
-    public async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
+    public async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
         if (this._action is not null)
         {
             await this._action.Invoke(context, default).ConfigureAwait(false);
         }
 
-        await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 }

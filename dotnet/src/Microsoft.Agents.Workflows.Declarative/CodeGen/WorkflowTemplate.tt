@@ -6,8 +6,8 @@
 /// The root executor for a declarative workflow.
 /// </summary>
 internal sealed class <#= this.TypeName #>Executor<TInput>(
-    IConfiguration? configuration,
-    Func<TInput, ChatMessage> inputTransform) :
+    Func<TInput, ChatMessage> inputTransform,
+    IConfiguration? configuration) :
     RootExecutor<TInput>("<#= this.Id #>", configuration)
     where TInput : notnull
 {
@@ -26,8 +26,8 @@ internal sealed class <#= this.TypeName #>Executor<TInput>(
 
         // Set user variables to default values<#
         foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
-        { // %%% DEFAULT VALUE #>
-        await context.QueueStateUpdateAsync("<#= variableInfo.Path.VariableName #>", string.Empty, "<#= variableInfo.Path.VariableScopeName #>").ConfigureAwait(false); <#
+        {#>
+        await context.QueueStateUpdateAsync("<#= variableInfo.Path.VariableName #>", UnassignedValue.Instance, "<#= variableInfo.Path.VariableScopeName #>").ConfigureAwait(false);<#
         }
         #>
     }

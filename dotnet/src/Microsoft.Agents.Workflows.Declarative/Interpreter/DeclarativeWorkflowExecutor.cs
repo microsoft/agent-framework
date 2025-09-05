@@ -6,7 +6,7 @@ using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
+namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 /// <summary>
 /// The root executor for a declarative workflow.
@@ -24,6 +24,6 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         ChatMessage input = inputTransform.Invoke(message);
         await state.SetLastMessageAsync(context, input).ConfigureAwait(false);
 
-        await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 }

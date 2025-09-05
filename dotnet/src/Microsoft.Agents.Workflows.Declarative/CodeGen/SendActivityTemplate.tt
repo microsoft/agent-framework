@@ -9,7 +9,7 @@ internal sealed class <#= this.Name #>Executor() : ActionExecutor(id: "<#= this.
 if (this.Model.Activity is MessageActivityTemplate messageActivity)
 { #>
         string activityText = 
-            await context.FormatAsync( <#
+            await context.FormatTemplateAsync( <#
     foreach (TemplateLine line in messageActivity.Text)
     {  #>
                 """<#

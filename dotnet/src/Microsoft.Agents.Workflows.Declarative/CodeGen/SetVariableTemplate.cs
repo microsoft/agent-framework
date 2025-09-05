@@ -92,7 +92,7 @@ else if (this.Model.Value.IsExpression)
             
             #line default
             #line hidden
-            this.Write("\n        object? value = await context.EvaluateExpression(\"");
+            this.Write("\n        object? value = await context.EvaluateExpressionAsync(\"");
             
             #line 6 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Value.ExpressionText));

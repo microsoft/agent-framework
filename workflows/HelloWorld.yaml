@@ -10,6 +10,12 @@ beginDialog:
   id: workflow_demo
   actions:
 
+    # Test init // %%% REMOVE
+    - kind: SetVariable
+      id: set_count
+      variable: Global.RunCount
+      value: =Global.RunCount + 1
+
     # Capture input
     - kind: SetVariable
       id: set_user_input
@@ -28,3 +34,4 @@ beginDialog:
       activity: |-
         Hello {Global.UserName},
         You said, "{Topic.UserInput}"
+        (x{Global.RunCount})
