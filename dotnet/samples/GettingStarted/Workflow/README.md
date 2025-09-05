@@ -10,9 +10,9 @@ Please begin with the [Foundational](./Foundational) samples in order. These thr
 
 | Sample | Concepts |
 |--------|----------|
-| [Executors and Edges](./Foundational/01_ExecutorsAndEdges.cs) | Minimal workflow with basic executors and edges |
-| [Streaming](./Foundational/02_Streaming.cs) | Extends workflows with event streaming |
-| [Agents](./Foundational/03_AgentsInWorkflows.cs) | Use agents in workflows |
+| [Executors and Edges](./Foundational/01_ExecutorsAndEdges) | Minimal workflow with basic executors and edges |
+| [Streaming](./Foundational/02_Streaming) | Extends workflows with event streaming |
+| [Agents](./Foundational/03_AgentsInWorkflows) | Use agents in workflows |
 
 Once completed, please proceed to other samples listed below.
 
@@ -22,20 +22,20 @@ Once completed, please proceed to other samples listed below.
 
 | Sample | Concepts |
 |--------|----------|
-| [Fan-Out and Fan-In](./Concurrent/ConcurrentExecution.cs) | Introduces parallel processing with fan-out and fan-in patterns |
+| [Fan-Out and Fan-In](./Concurrent) | Introduces parallel processing with fan-out and fan-in patterns |
 
 ### Workflow Shared States
 
 | Sample | Concepts |
 |--------|----------|
-| [Shared States](./SharedStates/WorkflowSharedStates.cs) | Demonstrates shared states between executors for data sharing and coordination |
+| [Shared States](./SharedStates) | Demonstrates shared states between executors for data sharing and coordination |
 
 ### Conditional Edges
 
 | Sample | Concepts |
 |--------|----------|
-| [Edge Conditions](./ConditionalEdges/01_EdgeConditions.cs) | Introduces conditional edges for dynamic routing based on executor outputs |
-| [Switch-Case Routing](./ConditionalEdges/02_SwitchCaseRouting.cs) | Extends conditional edges with switch-case routing for multiple paths |
-| [Multi-Selection Routing](./ConditionalEdges/03_MultiSelection.cs) | Demonstrates multi-selection routing where one executor can trigger multiple downstream executors |
+| [Edge Conditions](./ConditionalEdges/01_EdgeCondition) | Introduces conditional edges for dynamic routing based on executor outputs |
+| [Switch-Case Routing](./ConditionalEdges/02_SwitchCase) | Extends conditional edges with switch-case routing for multiple paths |
+| [Multi-Selection Routing](./ConditionalEdges/03_MultiSelection) | Demonstrates multi-selection routing where one executor can trigger multiple downstream executors |
 
 > These 3 samples build upon each other. It's recommended to explore them in sequence to fully grasp the concepts.

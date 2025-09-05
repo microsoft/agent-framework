@@ -49,7 +49,22 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflow/">
     <File Path="samples/GettingStarted/Workflow/README.md" />
-    <Project Path="samples/GettingStarted/Workflow/Workflow.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/Concurrent/">
+    <Project Path="samples/GettingStarted/Workflow/Concurrent/Concurrent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/ConditionalEdges/">
+    <Project Path="samples/GettingStarted/Workflow/ConditionalEdges/01_EdgeCondition/01_EdgeCondition.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/ConditionalEdges/02_SwitchCase/02_SwitchCase.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/ConditionalEdges/03_MultiSelection/03_MultiSelection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/Foundational/">
+    <Project Path="samples/GettingStarted/Workflow/Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/Foundational/02_Streaming/02_Streaming.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/SharedStates/">
+    <Project Path="samples/GettingStarted/Workflow/SharedStates/SharedStates.csproj" />
   </Folder>
   <Folder Name="/Samples/DeclarativeWorkflow/">
     <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />

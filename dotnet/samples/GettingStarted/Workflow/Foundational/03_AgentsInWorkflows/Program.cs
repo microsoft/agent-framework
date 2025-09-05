@@ -1,10 +1,14 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Threading.Tasks;
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
-namespace Workflow;
+namespace WorkflowAgentsInWorkflowsSample;
 
 /// <summary>
 /// This sample introduces the use of AI agents as executors within a workflow.
@@ -21,15 +25,19 @@ namespace Workflow;
 /// Pre-requisites:
 /// - An Azure OpenAI chat completion deployment must be configured.
 /// </remarks>
-public class AgentsInWorkflows(ITestOutputHelper output) : WorkflowSample(output)
+public static class Program
 {
-    [Fact]
-    public async Task RunAsync()
+    private static async Task Main()
     {
+        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+
         // Create agents
-        AIAgent frenchAgent = GetTranslationAgent("French");
-        AIAgent spanishAgent = GetTranslationAgent("Spanish");
-        AIAgent englishAgent = GetTranslationAgent("English");
+        AIAgent frenchAgent = GetTranslationAgent("French", chatClient);
+        AIAgent spanishAgent = GetTranslationAgent("Spanish", chatClient);
+        AIAgent englishAgent = GetTranslationAgent("English", chatClient);
 
         // Build the workflow
         WorkflowBuilder builder = new(frenchAgent);
@@ -56,10 +64,11 @@ public class AgentsInWorkflows(ITestOutputHelper output) : WorkflowSample(output
     /// Creates a translation agent for the specified target language.
     /// </summary>
     /// <param name="targetLanguage">The target language for translation</param>
+    /// <param name="chatClient">The chat client to use for the agent</param>
     /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private ChatClientAgent GetTranslationAgent(string targetLanguage)
+    private static ChatClientAgent GetTranslationAgent(string targetLanguage, IChatClient chatClient)
     {
         string instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.";
-        return new ChatClientAgent(GetAzureOpenAIChatClient(), instructions);
+        return new ChatClientAgent(chatClient, instructions);
     }
 }
