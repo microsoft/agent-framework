@@ -56,16 +56,16 @@ public static class ExecutorIshConfigurationExtensions
 
     private static ExecutorIsh ToExecutorIsh<TInput>(this FunctionExecutor<TInput> executor, Delegate raw)
     {
-        return new ExecutorIsh(executor.Configure(raw: raw)
-                                       .Super<FunctionExecutor<TInput>, Executor>(),
+        return new ExecutorIsh(Configured.FromInstance(executor, raw: raw)
+                                         .Super<FunctionExecutor<TInput>, Executor>(),
                                typeof(FunctionExecutor<TInput>),
                                ExecutorIsh.Type.Function);
     }
 
     private static ExecutorIsh ToExecutorIsh<TInput, TOutput>(this FunctionExecutor<TInput, TOutput> executor, Delegate raw)
     {
-        return new ExecutorIsh(executor.Configure(raw: raw)
-                                       .Super<FunctionExecutor<TInput, TOutput>, Executor>(),
+        return new ExecutorIsh(Configured.FromInstance(executor, raw: raw)
+                                         .Super<FunctionExecutor<TInput, TOutput>, Executor>(),
                                typeof(FunctionExecutor<TInput, TOutput>),
                                ExecutorIsh.Type.Function);
     }
@@ -168,7 +168,7 @@ public sealed class ExecutorIsh :
     public ExecutorIsh(Executor executor)
     {
         this.ExecutorType = Type.Executor;
-        this._configuredExecutor = Throw.IfNull(executor).Configure();
+        this._configuredExecutor = Configured.FromInstance(Throw.IfNull(executor));
         this._configuredExecutorType = executor.GetType();
     }
 

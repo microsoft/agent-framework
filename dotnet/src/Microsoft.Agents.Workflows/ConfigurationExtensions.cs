@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
@@ -9,41 +7,6 @@ namespace Microsoft.Agents.Workflows;
 /// </summary>
 public static class ConfigurationExtensions
 {
-    /// <summary>
-    /// Creates a <see cref="Configured{TSubject}"/> instance from an existing subject instance.
-    /// </summary>
-    /// <param name="subject">
-    /// The subject instance. If the subject implements <see cref="IIdentified"/>, its ID will be used
-    /// and checked against the provided ID (if any).
-    /// </param>
-    /// <param name="id">
-    /// A unique identifier for the configured subject. This is required if the subject does not implement
-    /// <see cref="IIdentified"/>
-    /// </param>
-    /// <param name="raw">
-    /// The raw representation of the subject instance.
-    /// </param>
-    /// <returns></returns>
-    public static Configured<TSubject> Configure<TSubject>(this TSubject subject, string? id = null, object? raw = null)
-    {
-        if (subject is IIdentified identified)
-        {
-            if (id != null && identified.Id != id)
-            {
-                throw new ArgumentException($"Provided ID '{id}' does not match subject's ID '{identified.Id}'.", nameof(id));
-            }
-
-            return new Configured<TSubject>((_) => new(subject), id: identified.Id, raw: subject);
-        }
-
-        if (id == null)
-        {
-            throw new ArgumentNullException(nameof(id), "ID must be provided when the subject does not implement IIdentified.");
-        }
-
-        return new Configured<TSubject>((_) => new(subject), id, raw: subject);
-    }
-
     /// <summary>
     /// Creates a new configuration that treats the subject as its base type, allowing configuration to be applied at
     /// the parent type level.
