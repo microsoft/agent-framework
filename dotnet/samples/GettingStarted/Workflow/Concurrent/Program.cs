@@ -85,7 +85,6 @@ internal sealed class ConcurrentStartExecutor() :
     /// </summary>
     /// <param name="message">The user message to process</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
-    /// <returns></returns>
     public async ValueTask HandleAsync(string message, IWorkflowContext context)
     {
         // Broadcast the message to all connected agents. Receiving agents will queue
@@ -110,7 +109,6 @@ internal sealed class ConcurrentAggregationExecutor() :
     /// </summary>
     /// <param name="message">The message from the agent</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
-    /// <returns></returns>
     public async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context)
     {
         this._messages.Add(message);

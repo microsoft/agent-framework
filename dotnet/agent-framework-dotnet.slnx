@@ -72,6 +72,8 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflow/Agents/">
     <Project Path="samples/GettingStarted/Workflow/Agents/CustomAgentExecutors/CustomAgentExecutors.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/Agents/FoundryAgent/FoundryAgent.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/DeclarativeWorkflow/">
     <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
