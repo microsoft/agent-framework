@@ -9,42 +9,27 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
 
-///// <summary>
-///// A delegate representing a method that handles a message of type <typeparamref name="TMessage"/> and produces
-///// an output message of type <typeparamref name="TResult"/>.
-///// </summary>
-///// <typeparam name="TMessage"></typeparam>
-///// <typeparam name="TResult"></typeparam>
-///// <param name="message"></param>
-///// <param name="context"></param>
-///// <param name="cancellation"></param>
-///// <returns></returns>
-//public delegate ValueTask<TResult> MessageHandler<in TMessage, TResult>(TMessage message, IWorkflowContext context, CancellationToken cancellation = default);
-
-///// <summary>
-///// A delegate representing a method that handles a message of type <typeparamref name="TMessage"/>
-///// </summary>
-///// <typeparam name="TMessage"></typeparam>
-///// <param name="message"></param>
-///// <param name="context"></param>
-///// <param name="cancellation"></param>
-///// <returns></returns>
-//public delegate ValueTask MessageHandler<in TMessage>(TMessage message, IWorkflowContext context, CancellationToken cancellation = default);
-
 /// <summary>
 /// Extension methods for configuring executors and functions as <see cref="ExecutorIsh"/> instances.
 /// </summary>
 public static class ExecutorIshConfigurationExtensions
 {
     /// <summary>
-    /// .
+    /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, with
+    /// the specified id and options.
     /// </summary>
-    /// <typeparam name="TExecutor"></typeparam>
-    /// <typeparam name="TOptions"></typeparam>
-    /// <param name="factoryAsync"></param>
-    /// <param name="id"></param>
-    /// <param name="options"></param>
-    /// <returns></returns>
+    /// <remarks>
+    /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
+    /// for it, in this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="WorkflowBuilder.Build{T}"/>,
+    /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
+    /// demanded <c>TInput</c>.
+    /// </remarks>
+    /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
+    /// <typeparam name="TOptions">The type of options object to be passed to the factory method.</typeparam>
+    /// <param name="factoryAsync">The factory method.</param>
+    /// <param name="id">An id for the executor to be instantiated.</param>
+    /// <param name="options">An optional parameter specifying the options.</param>
+    /// <returns>An ExecutorIsh instance that resolves to the result of the factory call when messages get sent to it.</returns>
     public static ExecutorIsh Configure<TExecutor, TOptions>(this Func<Config<TOptions>, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
         where TExecutor : Executor
         where TOptions : ExecutorOptions
@@ -71,25 +56,27 @@ public static class ExecutorIshConfigurationExtensions
     }
 
     /// <summary>
-    /// .
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
     /// </summary>
-    /// <typeparam name="TInput"></typeparam>
-    /// <param name="messageHandlerAsync"></param>
-    /// <param name="id"></param>
-    /// <param name="options"></param>
-    /// <returns></returns>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorIsh Configure<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null)
         => new FunctionExecutor<TInput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
-    /// .
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
     /// </summary>
-    /// <typeparam name="TInput"></typeparam>
-    /// <typeparam name="TOutput"></typeparam>
-    /// <param name="messageHandlerAsync"></param>
-    /// <param name="id"></param>
-    /// <param name="options"></param>
-    /// <returns></returns>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorIsh Configure<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null)
         => new FunctionExecutor<TInput, TOutput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
 }

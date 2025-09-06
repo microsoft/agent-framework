@@ -147,7 +147,7 @@ public class Configured<TSubject, TOptions>(Func<Config<TOptions>, ValueTask<TSu
     }
 
     /// <summary>
-    /// Memoizes erases the typed configuration options for the subject.
+    /// Memoizes and erases the typed configuration options for the subject.
     /// </summary>
     public Configured<TSubject> Memoize() => new(this.CreateValidatingMemoizedFactory(), this.Id);
 }

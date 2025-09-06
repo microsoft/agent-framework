@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows;
 /// Executes a user-provided asynchronous function in response to workflow messages of the specified input type.
 /// </summary>
 /// <typeparam name="TInput">The type of input message.</typeparam>
-/// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message and workflow context.</param>
+/// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
 /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
 public class FunctionExecutor<TInput>(Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerAsync,
@@ -44,7 +44,7 @@ public class FunctionExecutor<TInput>(Func<TInput, IWorkflowContext, Cancellatio
 /// </summary>
 /// <typeparam name="TInput">The type of input message.</typeparam>
 /// <typeparam name="TOutput">The type of output message.</typeparam>
-/// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message and workflow context.</param>
+/// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
 /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
 public class FunctionExecutor<TInput, TOutput>(Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerAsync,
@@ -54,6 +54,7 @@ public class FunctionExecutor<TInput, TOutput>(Func<TInput, IWorkflowContext, Ca
     internal static Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> WrapFunc(Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync)
     {
         return RunFuncAsync;
+
         ValueTask<TOutput> RunFuncAsync(TInput input, IWorkflowContext workflowContext, CancellationToken cancellation)
         {
             TOutput result = handlerSync(input, workflowContext, cancellation);
