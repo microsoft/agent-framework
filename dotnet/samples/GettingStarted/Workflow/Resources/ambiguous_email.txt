@@ -1,0 +1,19 @@
+Subject: Action Required: Verify Your Account
+
+Dear Valued Customer,
+
+We have detected unusual activity on your account and need to verify your identity to ensure your security.
+
+To maintain access to your account, please login to your account and complete the verification process.
+
+Account Details:
+- User: johndoe@contoso.com
+- Last Login: 08/15/2025
+- Location: Seattle, WA
+- Device: Mobile
+
+This is an automated security measure. If you believe this email was sent in error, please contact our support team immediately.
+
+Best regards,
+Security Team
+Customer Service Department

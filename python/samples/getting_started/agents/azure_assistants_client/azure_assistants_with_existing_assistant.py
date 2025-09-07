@@ -5,9 +5,9 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.azure import AzureAssistantsClient
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import AzureCliCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
 from pydantic import Field
 
@@ -23,7 +23,7 @@ def get_weather(
 async def main() -> None:
     print("=== Azure OpenAI Assistants Chat Client with Existing Assistant ===")
 
-    token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+    token_provider = get_bearer_token_provider(AzureCliCredential(), "https://cognitiveservices.azure.com/.default")
 
     client = AsyncAzureOpenAI(
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
@@ -37,7 +37,7 @@ async def main() -> None:
     )
 
     try:
-        async with ChatClientAgent(
+        async with ChatAgent(
             chat_client=AzureAssistantsClient(async_client=client, assistant_id=created_assistant.id),
             instructions="You are a helpful weather agent.",
             tools=get_weather,

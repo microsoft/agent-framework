@@ -6,11 +6,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Final
 
-from agent_framework._pydantic import AFBaseSettings, HttpsUrl
+from agent_framework._pydantic import AFBaseSettings, HTTPsUrl
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai._shared import OpenAIHandler
+from agent_framework.openai._shared import OpenAIBase
 from agent_framework.telemetry import USER_AGENT_KEY
-from azure.identity import ChainedTokenCredential
+from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureOpenAI
 from pydantic import ConfigDict, SecretStr, model_validator, validate_call
 
@@ -126,8 +126,8 @@ class AzureOpenAISettings(AFBaseSettings):
     audio_to_text_deployment_name: str | None = None
     text_to_audio_deployment_name: str | None = None
     realtime_deployment_name: str | None = None
-    endpoint: HttpsUrl | None = None
-    base_url: HttpsUrl | None = None
+    endpoint: HTTPsUrl | None = None
+    base_url: HTTPsUrl | None = None
     api_key: SecretStr | None = None
     api_version: str | None = None
     token_endpoint: str | None = None
@@ -135,7 +135,7 @@ class AzureOpenAISettings(AFBaseSettings):
     default_token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
 
     def get_azure_auth_token(
-        self, credential: "ChainedTokenCredential", token_endpoint: str | None = None, **kwargs: Any
+        self, credential: "TokenCredential", token_endpoint: str | None = None, **kwargs: Any
     ) -> str | None:
         """Retrieve a Microsoft Entra Auth Token for a given token endpoint for the use with Azure OpenAI.
 
@@ -165,7 +165,7 @@ class AzureOpenAISettings(AFBaseSettings):
         return self
 
 
-class AzureOpenAIConfigBase(OpenAIHandler):
+class AzureOpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -174,14 +174,14 @@ class AzureOpenAIConfigBase(OpenAIHandler):
     def __init__(
         self,
         deployment_name: str,
-        endpoint: HttpsUrl | None = None,
-        base_url: HttpsUrl | None = None,
+        endpoint: HTTPsUrl | None = None,
+        base_url: HTTPsUrl | None = None,
         api_version: str = DEFAULT_AZURE_API_VERSION,
         api_key: str | None = None,
         ad_token: str | None = None,
         ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
         token_endpoint: str | None = None,
-        ad_credential: ChainedTokenCredential | None = None,
+        credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncAzureOpenAI | None = None,
         instruction_role: str | None = None,
@@ -190,7 +190,7 @@ class AzureOpenAIConfigBase(OpenAIHandler):
         """Internal class for configuring a connection to an Azure OpenAI service.
 
         The `validate_call` decorator is used with a configuration that allows arbitrary types.
-        This is necessary for types like `HttpsUrl` and `OpenAIModelTypes`.
+        This is necessary for types like `HTTPsUrl` and `OpenAIModelTypes`.
 
         Args:
             deployment_name: Name of the deployment.
@@ -202,7 +202,7 @@ class AzureOpenAIConfigBase(OpenAIHandler):
             ad_token: Azure AD token for authentication.
             ad_token_provider: A callable or coroutine function providing Azure AD tokens.
             token_endpoint: Azure AD token endpoint use to get the token.
-            ad_credential: Azure AD credential for authentication.
+            credential: Azure credential for authentication.
             default_headers: Default headers for HTTP requests.
             client: An existing client to use.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
@@ -217,8 +217,8 @@ class AzureOpenAIConfigBase(OpenAIHandler):
             # If the client is None, the api_key is none, the ad_token is none, and the ad_token_provider is none,
             # then we will attempt to get the ad_token using the default endpoint specified in the Azure OpenAI
             # settings.
-            if not api_key and not ad_token_provider and not ad_token and token_endpoint and ad_credential:
-                ad_token = get_entra_auth_token(ad_credential, token_endpoint)
+            if not api_key and not ad_token_provider and not ad_token and token_endpoint and credential:
+                ad_token = get_entra_auth_token(credential, token_endpoint)
 
             if not api_key and not ad_token and not ad_token_provider:
                 raise ServiceInitializationError(

@@ -53,6 +53,7 @@ public class ChatClientAgentOptions
     /// Gets or sets the agent id.
     /// </summary>
     public string? Id { get; set; }
+
     /// <summary>
     /// Gets or sets the agent name.
     /// </summary>
@@ -77,7 +78,21 @@ public class ChatClientAgentOptions
     /// Gets or sets a factory function to create an instance of <see cref="IChatMessageStore"/>
     /// which will be used to store chat messages for this agent.
     /// </summary>
-    public Func<IChatMessageStore>? ChatMessageStoreFactory { get; set; } = null;
+    public Func<IChatMessageStore>? ChatMessageStoreFactory { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
+    /// without applying any default decorators.
+    /// </summary>
+    /// <remarks>
+    /// By default the <see cref="ChatClientAgent"/> applies decorators to the provided <see cref="IChatClient"/>
+    /// for doing for example automatic function invocation. Setting this property to <see langword="true"/>
+    /// disables adding these default decorators.
+    /// Disabling is recommended if you want to decorate the <see cref="IChatClient"/> with different decorators
+    /// than the default ones. The provided <see cref="IChatClient"/> instance should then already be decorated
+    /// with the desired decorators.
+    /// </remarks>
+    public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.

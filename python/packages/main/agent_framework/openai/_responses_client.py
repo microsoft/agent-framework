@@ -31,25 +31,27 @@ from openai.types.responses.web_search_tool_param import UserLocation as WebSear
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
-
-from .._clients import ChatClientBase, use_tool_calling
+from .._clients import BaseChatClient, use_tool_calling
 from .._logging import get_logger
-from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
+from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool, ToolProtocol
 from .._types import (
-    AIContents,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     CitationAnnotation,
+    Contents,
+    DataContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
     HostedVectorStoreContent,
+    Role,
     TextContent,
+    TextReasoningContent,
     TextSpanRegion,
+    UriContent,
+    UsageContent,
     UsageDetails,
 )
 from ..exceptions import (
@@ -59,7 +61,7 @@ from ..exceptions import (
 )
 from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -79,7 +81,7 @@ __all__ = ["OpenAIResponsesClient"]
 # region ResponsesClient
 
 
-class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
+class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     """Base class for all OpenAI Responses based API's."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
@@ -108,12 +110,10 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -166,7 +166,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             )
         )
 
-        chat_options = ChatOptions(
+        return await super().get_response(
+            messages=messages,
             max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
@@ -177,11 +178,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             top_p=top_p,
             user=user,
             additional_properties=additional_properties,
-        )
-
-        return await super().get_response(
-            messages=messages,
-            chat_options=chat_options,
             **kwargs,
         )
 
@@ -204,12 +200,10 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -262,7 +256,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             )
         )
 
-        chat_options = ChatOptions(
+        async for update in super().get_streaming_response(
+            messages=messages,
             max_tokens=max_tokens,
             response_format=response_format,
             seed=seed,
@@ -273,11 +268,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
             top_p=top_p,
             user=user,
             additional_properties=additional_properties,
-        )
-
-        async for update in super().get_streaming_response(
-            messages=messages,
-            chat_options=chat_options,
             **kwargs,
         ):
             yield update
@@ -312,16 +302,16 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt, with exception: {ex}",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
 
@@ -359,27 +349,27 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error",
+                    f"{type(self)} service encountered a content error: {ex}",
                     inner_exception=ex,
                 ) from ex
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
         except Exception as ex:
             raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt",
+                f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
 
     # region Prep methods
 
     def _chat_to_response_tool_spec(
-        self, tools: list[AITool | MutableMapping[str, Any]]
+        self, tools: list[ToolProtocol | MutableMapping[str, Any]]
     ) -> list[ToolParam | dict[str, Any]]:
         response_tools: list[ToolParam | dict[str, Any]] = []
         for tool in tools:
-            if isinstance(tool, AITool):
+            if isinstance(tool, ToolProtocol):
                 match tool:
                     case HostedCodeInterpreterTool():
                         tool_args: dict[str, Any] = {"type": "auto"}
@@ -435,7 +425,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                         )
                         response_tools.append(
                             WebSearchToolParam(
-                                type="web_search_preview",
+                                type="web_search",
                                 user_location=WebSearchUserLocation(
                                     type="approximate",
                                     city=location.get("city", None),
@@ -481,7 +471,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
 
-        ChatRole.TOOL messages need to be formatted different than system/user/assistant messages:
+        Role.TOOL messages need to be formatted different than system/user/assistant messages:
             They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
             be removed. The "encoding" key should also be removed.
 
@@ -517,7 +507,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
-        contents: list[AIContents] = []
+        contents: list[Contents] = []
         for item in response.output:  # type: ignore[reportUnknownMemberType]
             match item.type:
                 # types:
@@ -527,12 +517,12 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 # ResponseFunctionWebSearch |
                 # ResponseComputerToolCall |
                 # ResponseReasoningItem |
-                # McpCall |
-                # McpApprovalRequest |
+                # MCPCall |
+                # MCPApprovalRequest |
                 # ImageGenerationCall |
                 # LocalShellCall |
                 # LocalShellCallAction |
-                # McpListTools |
+                # MCPListTools |
                 # ResponseCodeInterpreterToolCall |
                 # ResponseCustomToolCall |
                 # ParsedResponseOutputMessage[BaseModel] |
@@ -687,7 +677,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
     ) -> ChatResponseUpdate:
         """Create a streaming chat message content object from a choice."""
         metadata: dict[str, Any] = {}
-        items: list[AIContents] = []
+        items: list[Contents] = []
         conversation_id: str | None = None
         model = self.ai_model_id
         # TODO(peterychang): Add support for other content types
@@ -730,7 +720,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         return ChatResponseUpdate(
             contents=items,
             conversation_id=conversation_id,
-            role=ChatRole.ASSISTANT,
+            role=Role.ASSISTANT,
             ai_model_id=model,
             additional_properties=metadata,
             raw_representation=event,
@@ -756,7 +746,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
         """Parse a chat message into the openai format."""
         all_messages: list[dict[str, Any]] = []
         args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
+            "role": message.role.value if isinstance(message.role, Role) else message.role,
         }
         if message.additional_properties:
             args["metadata"] = message.additional_properties
@@ -779,8 +769,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 
     def _openai_content_parser(
         self,
-        role: ChatRole,
-        content: AIContents,
+        role: Role,
+        content: Contents,
         call_id_to_id: dict[str, str],
     ) -> dict[str, Any]:
         """Parse contents into the openai format."""
@@ -797,7 +787,6 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
-                    "id": call_id_to_id.get(content.call_id),
                     "type": "function_call_output",
                 }
                 if content.result:
@@ -805,7 +794,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                 return args
             case TextContent():
                 return {
-                    "type": "output_text" if role == ChatRole.ASSISTANT else "input_text",
+                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
                     "text": content.text,
                 }
             # TODO(peterychang): We'll probably need to specialize the other content types as well
@@ -826,7 +815,7 @@ TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponse
 
 @use_telemetry
 @use_tool_calling
-class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
+class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
     """OpenAI Responses client class."""
 
     def __init__(
@@ -870,9 +859,14 @@ class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
             raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
 
         if not async_client and not openai_settings.api_key:
-            raise ServiceInitializationError("The OpenAI API key is required.")
+            raise ServiceInitializationError(
+                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
+            )
         if not openai_settings.responses_model_id:
-            raise ServiceInitializationError("The OpenAI model ID is required.")
+            raise ServiceInitializationError(
+                "OpenAI model ID is required. "
+                "Set via 'ai_model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
+            )
 
         super().__init__(
             ai_model_id=openai_settings.responses_model_id,

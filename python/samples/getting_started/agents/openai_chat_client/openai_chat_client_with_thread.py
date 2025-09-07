@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatClientAgent, ChatMessageList
+from agent_framework import AgentThread, ChatAgent, ChatMessageList
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
@@ -21,7 +21,7 @@ async def example_with_automatic_thread_creation() -> None:
     """Example showing automatic thread creation (service-managed thread)."""
     print("=== Automatic Thread Creation Example ===")
 
-    agent = ChatClientAgent(
+    agent = ChatAgent(
         chat_client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -46,7 +46,7 @@ async def example_with_thread_persistence() -> None:
     print("=== Thread Persistence Example ===")
     print("Using the same thread across multiple conversations to maintain context.\n")
 
-    agent = ChatClientAgent(
+    agent = ChatAgent(
         chat_client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -79,7 +79,7 @@ async def example_with_existing_thread_messages() -> None:
     """Example showing how to work with existing thread messages for OpenAI."""
     print("=== Existing Thread Messages Example ===")
 
-    agent = ChatClientAgent(
+    agent = ChatAgent(
         chat_client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -94,15 +94,14 @@ async def example_with_existing_thread_messages() -> None:
     print(f"Agent: {result1.text}")
 
     # The thread now contains the conversation history in memory
-    messages = await thread.list_messages()
-
-    message_count = len(messages or [])
-    print(f"Thread contains {message_count} messages")
+    if thread.message_store:
+        messages = await thread.message_store.list_messages()
+        print(f"Thread contains {len(messages or [])} messages")
 
     print("\n--- Continuing with the same thread in a new agent instance ---")
 
     # Create a new agent instance but use the existing thread with its message history
-    new_agent = ChatClientAgent(
+    new_agent = ChatAgent(
         chat_client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -118,7 +117,7 @@ async def example_with_existing_thread_messages() -> None:
     print("\n--- Alternative: Creating a new thread from existing messages ---")
 
     # You can also create a new thread from existing messages
-    messages = await thread.list_messages()
+    messages = await thread.message_store.list_messages() if thread.message_store else []
 
     new_thread = AgentThread(message_store=ChatMessageList(messages))
 

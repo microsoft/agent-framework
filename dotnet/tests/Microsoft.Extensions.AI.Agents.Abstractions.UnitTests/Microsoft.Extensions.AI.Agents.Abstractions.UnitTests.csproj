@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="System.Linq.Async" />
   </ItemGroup>
 
 </Project>

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
 
@@ -25,9 +26,15 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged
     /// UUID will be generated.</param>
-    protected Executor(string? id = null)
+    protected Executor(string? id = null) : this(ExecutorOptions.Default, id)
+    {
+    }
+
+    private readonly ExecutorOptions _options;
+    internal Executor(ExecutorOptions options, string? id = null)
     {
         this.Id = id ?? $"{this.GetType().Name}/{Guid.NewGuid():N}";
+        this._options = options;
     }
 
     /// <summary>
@@ -87,7 +94,7 @@ public abstract class Executor : IIdentified
 
         if (!result.IsSuccess)
         {
-            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}", result.Exception!);
+            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}", result.Exception);
         }
 
         if (result.IsVoid)
@@ -96,13 +103,29 @@ public abstract class Executor : IIdentified
         }
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
-        if (result.Result != null && ExecutorOptions.Default.AutoSendMessageHandlerResultObject)
+        if (result.Result != null && this._options.AutoSendMessageHandlerResultObject)
         {
             await context.SendMessageAsync(result.Result).ConfigureAwait(false);
         }
 
         return result.Result;
     }
+
+    /// <summary>
+    /// Invoked before a checkpoint is saved, allowing custom pre-save logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
+
+    /// <summary>
+    /// Invoked after a checkpoint is loaded, allowing custom post-load logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.

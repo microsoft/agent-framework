@@ -6,6 +6,8 @@ using System.Buffers;
 #endif
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+
 #if NET9_0_OR_GREATER
 using System.Text;
 #endif
@@ -13,6 +15,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Shared.Diagnostics;
+
+#pragma warning disable S109 // Magic numbers should not be used
+#pragma warning disable S1121 // Assignments should not be made from within sub-expressions
 
 namespace Microsoft.Extensions.AI.Agents;
 
@@ -81,6 +86,13 @@ public class AgentRunResponse
     /// </remarks>
     [JsonIgnore]
     public string Text => this._messages?.ConcatText() ?? string.Empty;
+
+    /// <summary>Gets the user input requests associated with the response.</summary>
+    /// <remarks>
+    /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
+    /// </remarks>
+    [JsonIgnore]
+    public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.SelectMany(x => x.Contents).OfType<UserInputRequestContent>() ?? [];
 
     /// <summary>Gets or sets the ID of the agent that produced the response.</summary>
     public string? AgentId { get; set; }
@@ -161,7 +173,6 @@ public class AgentRunResponse
         return updates;
     }
 
-    // TODO: Add overloads without serializer options.
     /// <summary>
     /// Deserializes the response text into the given type using the specified serializer options.
     /// </summary>
@@ -171,6 +182,8 @@ public class AgentRunResponse
     /// <exception cref="InvalidOperationException">The result is not parsable into the requested type.</exception>
     public T Deserialize<T>(JsonSerializerOptions serializerOptions)
     {
+        _ = Throw.IfNull(serializerOptions);
+
         var structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
         return failureReason switch
         {
@@ -189,6 +202,8 @@ public class AgentRunResponse
     /// <returns><see langword="true" /> if parsing was successful; otherwise, <see langword="false" />.</returns>
     public bool TryDeserialize<T>(JsonSerializerOptions serializerOptions, [NotNullWhen(true)] out T? structuredOutput)
     {
+        _ = Throw.IfNull(serializerOptions);
+
         try
         {
             structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);

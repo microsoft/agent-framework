@@ -7,19 +7,19 @@ from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
-    AIContents,
     AIFunction,
-    ChatClientBase,
+    BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     ChatToolMode,
+    Contents,
     DataContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    Role,
     TextContent,
     UriContent,
     UsageContent,
@@ -98,7 +98,7 @@ TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 
 @use_telemetry
 @use_tool_calling
-class FoundryChatClient(ChatClientBase):
+class FoundryChatClient(BaseChatClient):
     """Azure AI Foundry Chat client."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "azure_ai_foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -120,7 +120,7 @@ class FoundryChatClient(ChatClientBase):
         thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        async_ad_credential: AsyncTokenCredential | None = None,
+        async_credential: AsyncTokenCredential | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -137,7 +137,7 @@ class FoundryChatClient(ChatClientBase):
                 conversation_id property, when making a request.
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
-            async_ad_credential: Azure async credential to use for authentication.
+            async_credential: Azure async credential to use for authentication.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
@@ -157,20 +157,26 @@ class FoundryChatClient(ChatClientBase):
         should_close_client = False
         if client is None:
             if not foundry_settings.project_endpoint:
-                raise ServiceInitializationError("Project endpoint is required when client is not provided.")
+                raise ServiceInitializationError(
+                    "Foundry project endpoint is required. Set via 'project_endpoint' parameter "
+                    "or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
+                )
 
             if agent_id is None and not foundry_settings.model_deployment_name:
-                raise ServiceInitializationError("Model deployment name is required for agent creation.")
+                raise ServiceInitializationError(
+                    "Foundry model deployment name is required. Set via 'model_deployment_name' parameter "
+                    "or 'FOUNDRY_MODEL_DEPLOYMENT_NAME' environment variable."
+                )
 
-            # Use provided credential or fallback to DefaultAzureCredential
-            if not async_ad_credential:
-                raise ServiceInitializationError("Azure AD credential is required when client is not provided.")
-            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_ad_credential)
+            # Use provided credential
+            if not async_credential:
+                raise ServiceInitializationError("Azure credential is required when client is not provided.")
+            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_credential)
             should_close_client = True
 
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
-            credential=async_ad_credential,  # type: ignore[reportCallIssue]
+            credential=async_credential,  # type: ignore[reportCallIssue]
             agent_id=agent_id,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
             agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
@@ -379,12 +385,12 @@ class FoundryChatClient(ChatClientBase):
                     message_id=response_id,
                     raw_representation=event_data,
                     response_id=response_id,
-                    role=ChatRole.ASSISTANT,
+                    role=Role.ASSISTANT,
                 )
             elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
                 response_id = event_data.run_id
             elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
-                role = ChatRole.USER if event_data.delta.role == MessageRole.USER else ChatRole.ASSISTANT
+                role = Role.USER if event_data.delta.role == MessageRole.USER else Role.ASSISTANT
                 yield ChatResponseUpdate(
                     role=role,
                     text=event_data.text,
@@ -401,7 +407,7 @@ class FoundryChatClient(ChatClientBase):
                 contents = self._create_function_call_contents(event_data, response_id)
                 if contents:
                     yield ChatResponseUpdate(
-                        role=ChatRole.ASSISTANT,
+                        role=Role.ASSISTANT,
                         contents=contents,
                         conversation_id=thread_id,
                         message_id=response_id,
@@ -421,7 +427,7 @@ class FoundryChatClient(ChatClientBase):
                     )
                 )
                 yield ChatResponseUpdate(
-                    role=ChatRole.ASSISTANT,
+                    role=Role.ASSISTANT,
                     contents=[usage_content],
                     conversation_id=thread_id,
                     message_id=response_id,
@@ -441,12 +447,12 @@ class FoundryChatClient(ChatClientBase):
                     message_id=response_id,
                     raw_representation=event_data,  # type: ignore
                     response_id=response_id,
-                    role=ChatRole.ASSISTANT,
+                    role=Role.ASSISTANT,
                 )
 
-    def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[AIContents]:
+    def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
         """Create function call contents from a tool action event."""
-        contents: list[AIContents] = []
+        contents: list[Contents] = []
 
         if isinstance(event_data.required_action, SubmitToolOutputsAction):
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
@@ -557,7 +563,7 @@ class FoundryChatClient(ChatClientBase):
                     additional_messages = []
                 additional_messages.append(
                     ThreadMessageOptions(
-                        role=MessageRole.AGENT if chat_message.role == ChatRole.ASSISTANT else MessageRole.USER,
+                        role=MessageRole.AGENT if chat_message.role == Role.ASSISTANT else MessageRole.USER,
                         content=message_contents,
                     )
                 )
