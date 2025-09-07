@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from agent_framework import AgentProtocol
     from agent_framework.workflow import Workflow
 
-from .models import AgentInfo
+from .models import AgentInfo, WorkflowInfo
 
 logger = logging.getLogger(__name__)
 
@@ -224,46 +224,59 @@ class DirectoryScanner:
         # Extract tools/executors
         tools = self._extract_tools_from_object(obj, obj_type)
         
-        return AgentInfo(
-            id=agent_id,
-            name=getattr(obj, 'name', None),
-            description=getattr(obj, 'description', None),
-            type=obj_type,
-            source="directory",
-            tools=tools,
-            has_env=(Path(module_path) / ".env").exists(),
-            module_path=module_path
-        )
+        # Create appropriate info object based on type
+        if obj_type == "workflow":
+            # For workflows, we need to create WorkflowInfo with additional fields
+            try:
+                # Import utils functions
+                from .utils.workflow import (
+                    extract_workflow_input_info,
+                    generate_mermaid_diagram
+                )
+                
+                # Extract workflow-specific information
+                workflow_dump = obj.model_dump() if hasattr(obj, 'model_dump') else {}
+                mermaid_diagram = generate_mermaid_diagram(obj)
+                input_info = extract_workflow_input_info(obj)
+                
+                return WorkflowInfo(
+                    id=agent_id,
+                    name=getattr(obj, 'name', None),
+                    description=getattr(obj, 'description', None),
+                    source="directory",
+                    executors=tools,
+                    has_env=(Path(module_path) / ".env").exists(),
+                    module_path=module_path,
+                    workflow_dump=workflow_dump,
+                    mermaid_diagram=mermaid_diagram,
+                    input_schema=input_info["input_schema"],
+                    input_type_name=input_info["input_type_name"],
+                    start_executor_id=input_info["start_executor_id"]
+                )
+            except Exception as e:
+                logger.warning(f"Error creating WorkflowInfo for {agent_id}: {e}")
+                # Skip this workflow if we can't process it properly
+                return None
+        else:
+            # For agents, create AgentInfo
+            return AgentInfo(
+                id=agent_id,
+                name=getattr(obj, 'name', None),
+                description=getattr(obj, 'description', None),
+                type="agent",
+                source="directory",
+                tools=tools,
+                has_env=(Path(module_path) / ".env").exists(),
+                module_path=module_path
+            )
     
     def _extract_tools_from_object(self, obj: Any, obj_type: str) -> List[str]:
         """Extract tool names from an agent or workflow."""
-        tools = []
+        from .utils.workflow import extract_agent_tools, extract_workflow_tools
         
         if obj_type == "agent":
-            # For agents, try to find tools in chat_options or direct tools attribute
-            agent_tools = None
-            if hasattr(obj, 'chat_options') and hasattr(obj.chat_options, 'tools'):
-                agent_tools = obj.chat_options.tools
-            elif hasattr(obj, 'tools'):
-                agent_tools = obj.tools
-                
-            if agent_tools:
-                for tool in agent_tools:
-                    if hasattr(tool, '__name__'):
-                        tools.append(tool.__name__)
-                    elif hasattr(tool, 'name'):
-                        tools.append(tool.name)
-                    else:
-                        tools.append(str(tool))
-                        
+            return extract_agent_tools(obj)
         elif obj_type == "workflow":
-            # For workflows, try to list executors
-            if hasattr(obj, 'get_executors'):
-                try:
-                    executors = obj.get_executors()
-                    tools = [getattr(ex, 'id', str(ex)) for ex in executors]
-                except Exception as e:
-                    logger.debug(f"Could not extract executors: {e}")
-                    tools = []
-                    
-        return tools
+            return extract_workflow_tools(obj)
+        
+        return []

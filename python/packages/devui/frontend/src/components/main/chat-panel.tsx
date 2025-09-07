@@ -9,10 +9,10 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Send, User, Bot, Workflow } from "lucide-react";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import type { AgentInfo, ChatMessage } from "@/types";
+import type { AgentInfo, WorkflowInfo, ChatMessage } from "@/types";
 
 interface ChatPanelProps {
-  selectedItem?: AgentInfo;
+  selectedItem?: AgentInfo | WorkflowInfo;
   messages: ChatMessage[];
   onSendMessage: (message: string) => void;
   isStreaming?: boolean;

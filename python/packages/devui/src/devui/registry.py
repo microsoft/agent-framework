@@ -2,15 +2,22 @@
 
 """Agent registry supporting both directory-based and in-memory agents."""
 
+import inspect
 import logging
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent_framework import AgentProtocol
     from agent_framework.workflow import Workflow
     from .discovery import DirectoryScanner
 
-from .models import AgentInfo
+from .models import AgentInfo, WorkflowInfo
+from .utils.workflow import (
+    extract_workflow_input_info,
+    generate_mermaid_diagram,
+    extract_workflow_executors,
+    extract_agent_tools
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +124,7 @@ class AgentRegistry:
                 description=getattr(agent, 'description', None),
                 type="agent",
                 source="in_memory",
-                tools=self._extract_agent_tools(agent),
+                tools=extract_agent_tools(agent),
                 has_env=False,
                 module_path=None
             )
@@ -125,40 +132,72 @@ class AgentRegistry:
             
         return agents
     
-    def list_workflows(self) -> List[AgentInfo]:
+    def list_workflows(self) -> List[WorkflowInfo]:
         """Return list of all workflows with metadata."""
-        workflows: List[AgentInfo] = []
+        workflows: List[WorkflowInfo] = []
         
         # Add directory-discovered workflows
         if self.directory_scanner:
             try:
                 directory_items = self.directory_scanner.discover_agents()
-                # Filter to only workflows
+                # Filter to only workflows and convert to WorkflowInfo
                 for item in directory_items:
                     if item.type == "workflow":
-                        workflows.append(item)
+                        # Check if item is already a WorkflowInfo object
+                        if isinstance(item, WorkflowInfo):
+                            workflows.append(item)
+                        else:
+                            # Get the actual workflow object to extract input info
+                            workflow_obj = self.get_workflow(item.id)
+                            if workflow_obj:
+                                input_info = extract_workflow_input_info(workflow_obj)
+                                # Use executors instead of tools for WorkflowInfo
+                                executors = getattr(item, 'executors', getattr(item, 'tools', []))
+                                workflow_info = WorkflowInfo(
+                                    id=item.id,
+                                    name=item.name,
+                                    description=item.description,
+                                    source="directory",
+                                    executors=executors,
+                                    has_env=item.has_env,
+                                    module_path=item.module_path,
+                                    workflow_dump=workflow_obj.model_dump(),
+                                    mermaid_diagram=generate_mermaid_diagram(workflow_obj),
+                                    input_schema=input_info["input_schema"],
+                                    input_type_name=input_info["input_type_name"],
+                                    start_executor_id=input_info["start_executor_id"]
+                                )
+                                workflows.append(workflow_info)
             except Exception as e:
                 logger.error(f"Error discovering directory workflows: {e}")
         
         # Add in-memory workflows
         for workflow_id, workflow in self.workflows.items():
-            info = AgentInfo(
-                id=workflow_id,
-                name=getattr(workflow, 'name', None),
-                description=getattr(workflow, 'description', None),
-                type="workflow",
-                source="in_memory",
-                tools=self._extract_workflow_tools(workflow),
-                has_env=False,
-                module_path=None
-            )
-            workflows.append(info)
+            try:
+                input_info = extract_workflow_input_info(workflow)
+                info = WorkflowInfo(
+                    id=workflow_id,
+                    name=getattr(workflow, 'name', None),
+                    description=getattr(workflow, 'description', None),
+                    source="in_memory",
+                    executors=extract_workflow_executors(workflow),
+                    has_env=False,
+                    module_path=None,
+                    workflow_dump=workflow.model_dump(),
+                    mermaid_diagram=generate_mermaid_diagram(workflow),
+                    input_schema=input_info["input_schema"],
+                    input_type_name=input_info["input_type_name"],
+                    start_executor_id=input_info["start_executor_id"]
+                )
+                workflows.append(info)
+            except Exception as e:
+                logger.error(f"Error processing workflow {workflow_id}: {e}")
             
         return workflows
     
     def list_all_items(self) -> List[AgentInfo]:
-        """Return combined list of agents and workflows."""
-        return self.list_agents() + self.list_workflows()
+        """Return list of agents only. Use list_workflows() for workflows."""
+        return self.list_agents()
     
     def remove_agent(self, agent_id: str) -> bool:
         """Remove an in-memory agent."""
@@ -181,49 +220,3 @@ class AgentRegistry:
         if self.directory_scanner:
             self.directory_scanner.clear_cache()
         
-    def _extract_agent_tools(self, agent: 'AgentProtocol') -> List[str]:
-        """Extract tool names from an agent."""
-        tools = []
-        
-        try:
-            # For agents, check chat_options.tools first
-            chat_options = getattr(agent, 'chat_options', None)
-            if chat_options and hasattr(chat_options, 'tools'):
-                for tool in chat_options.tools:
-                    if hasattr(tool, '__name__'):
-                        tools.append(tool.__name__)
-                    elif hasattr(tool, 'name'):
-                        tools.append(tool.name)
-                    else:
-                        tools.append(str(tool))
-            else:
-                # Fallback to direct tools attribute
-                agent_tools = getattr(agent, 'tools', None)
-                if agent_tools:
-                    for tool in agent_tools:
-                        if hasattr(tool, '__name__'):
-                            tools.append(tool.__name__)
-                        elif hasattr(tool, 'name'):
-                            tools.append(tool.name)
-                        else:
-                            tools.append(str(tool))
-                            
-        except Exception as e:
-            logger.debug(f"Error extracting tools from agent {type(agent)}: {e}")
-            tools = []
-                
-        return tools
-    
-    def _extract_workflow_tools(self, workflow: 'Workflow') -> List[str]:
-        """Extract executor names from a workflow."""
-        tools = []
-        
-        try:
-            if hasattr(workflow, 'get_executors_list'):
-                executors = workflow.get_executors_list()
-                tools = [getattr(ex, 'id', str(ex)) for ex in executors]
-        except Exception as e:
-            logger.debug(f"Error extracting tools from workflow {type(workflow)}: {e}")
-            tools = []
-                
-        return tools

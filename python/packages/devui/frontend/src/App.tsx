@@ -224,40 +224,43 @@ export default function App() {
   }, []);
 
   // Handle agent/workflow selection
-  const handleAgentSelect = useCallback(async (item: AgentInfo) => {
-    setAppState((prev) => ({
-      ...prev,
-      selectedAgent: item,
-      currentThread: undefined,
-    }));
+  const handleAgentSelect = useCallback(
+    async (item: AgentInfo | WorkflowInfo) => {
+      setAppState((prev) => ({
+        ...prev,
+        selectedAgent: item,
+        currentThread: undefined,
+      }));
 
-    // Clear chat when switching agents
-    setChatState({
-      messages: [],
-      isStreaming: false,
-      streamEvents: [],
-    });
+      // Clear chat when switching agents
+      setChatState({
+        messages: [],
+        isStreaming: false,
+        streamEvents: [],
+      });
 
-    // Clear function call accumulator
-    functionCallAccumulator.current = {};
+      // Clear function call accumulator
+      functionCallAccumulator.current = {};
 
-    // Load workflow info if it's a workflow
-    if (item.type === "workflow") {
-      setWorkflowLoading(true);
-      try {
-        const info = await apiClient.getWorkflowInfo(item.id);
-        setWorkflowInfo(info);
-      } catch (error) {
-        console.error("Failed to load workflow info:", error);
+      // Load workflow info if it's a workflow
+      if (item.type === "workflow") {
+        setWorkflowLoading(true);
+        try {
+          const info = await apiClient.getWorkflowInfo(item.id);
+          setWorkflowInfo(info);
+        } catch (error) {
+          console.error("Failed to load workflow info:", error);
+          setWorkflowInfo(null);
+        } finally {
+          setWorkflowLoading(false);
+        }
+      } else {
         setWorkflowInfo(null);
-      } finally {
         setWorkflowLoading(false);
       }
-    } else {
-      setWorkflowInfo(null);
-      setWorkflowLoading(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   // Handle new thread creation
   const handleNewThread = useCallback(() => {
@@ -527,6 +530,7 @@ export default function App() {
     <div className="h-screen flex flex-col bg-background max-h-screen">
       {/* Top Bar */}
       <header className="flex h-14 items-center gap-4 border-b px-4">
+        <div className="font-semibold">Dev UI</div>
         <AgentSwitcher
           agents={appState.agents}
           workflows={appState.workflows}

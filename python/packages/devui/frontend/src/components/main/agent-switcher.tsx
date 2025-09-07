@@ -16,13 +16,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ChevronDown, Bot, Workflow, FolderOpen, Database } from "lucide-react";
-import type { AgentInfo } from "@/types";
+import type { AgentInfo, WorkflowInfo } from "@/types";
 
 interface AgentSwitcherProps {
   agents: AgentInfo[];
-  workflows: AgentInfo[];
-  selectedItem?: AgentInfo;
-  onSelect: (item: AgentInfo) => void;
+  workflows: WorkflowInfo[];
+  selectedItem?: AgentInfo | WorkflowInfo;
+  onSelect: (item: AgentInfo | WorkflowInfo) => void;
   isLoading?: boolean;
 }
 
@@ -42,19 +42,23 @@ export function AgentSwitcher({
   isLoading = false,
 }: AgentSwitcherProps) {
   const [open, setOpen] = useState(false);
-  
-  const allItems = [...agents, ...workflows].sort((a, b) => 
-    a.name?.localeCompare(b.name || a.id) || a.id.localeCompare(b.id)
+
+  const allItems = [...agents, ...workflows].sort(
+    (a, b) => a.name?.localeCompare(b.name || a.id) || a.id.localeCompare(b.id)
   );
 
-  const handleSelect = (item: AgentInfo) => {
+  const handleSelect = (item: AgentInfo | WorkflowInfo) => {
     onSelect(item);
     setOpen(false);
   };
 
   const TypeIcon = selectedItem ? getTypeIcon(selectedItem.type) : Bot;
   const displayName = selectedItem?.name || selectedItem?.id || "Select Agent";
-  const toolCount = selectedItem?.tools.length || 0;
+  const itemCount =
+    selectedItem?.type === "workflow"
+      ? (selectedItem as WorkflowInfo).executors?.length || 0
+      : (selectedItem as AgentInfo)?.tools?.length || 0;
+  const itemLabel = selectedItem?.type === "workflow" ? "executors" : "tools";
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -76,7 +80,7 @@ export function AgentSwitcher({
                 <span className="truncate">{displayName}</span>
                 {selectedItem && (
                   <Badge variant="secondary" className="ml-auto flex-shrink-0">
-                    {toolCount} tools
+                    {itemCount} {itemLabel}
                   </Badge>
                 )}
               </div>
@@ -160,7 +164,7 @@ export function AgentSwitcher({
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <SourceIcon className="h-3 w-3 opacity-60" />
                       <Badge variant="outline" className="text-xs">
-                        workflow
+                        {workflow.executors.length}
                       </Badge>
                     </div>
                   </div>

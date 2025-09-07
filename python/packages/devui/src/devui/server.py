@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from .models import (
     AgentInfo,
+    WorkflowInfo,
     CreateThreadRequest, 
     DebugStreamEvent,
     HealthResponse,
@@ -170,7 +171,7 @@ class AgentFrameworkDebugServer:
                 logger.error(f"Error listing agents: {e}")
                 raise HTTPException(status_code=500, detail=f"Agent listing failed: {str(e)}")
                 
-        @app.get("/workflows", response_model=List[AgentInfo])
+        @app.get("/workflows", response_model=List[WorkflowInfo])
         async def list_workflows():
             """List all available workflows."""
             try:
@@ -192,31 +193,19 @@ class AgentFrameworkDebugServer:
                 raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
             return agent_info
             
-        @app.get("/workflows/{workflow_id}/info")
+        @app.get("/workflows/{workflow_id}/info", response_model=WorkflowInfo)
         async def get_workflow_info(workflow_id: str):
-            """Get detailed information about a specific workflow including structure."""
+            """Get detailed information about a specific workflow including input schema."""
             workflow = self.registry.get_workflow(workflow_id)
             if not workflow:
                 raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+            
             workflows = self.registry.list_workflows()
             workflow_info = next((w for w in workflows if w.id == workflow_id), None)
             if not workflow_info:
                 raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
             
-            # Add workflow structure with minimal abstraction
-            result = workflow_info.model_dump()
-            result["workflow_dump"] = workflow.model_dump()  # Raw workflow data - zero abstraction
-            
-            # Only add mermaid diagram (minimal custom logic)
-            try:
-                from agent_framework_workflow._viz import WorkflowViz
-                viz = WorkflowViz(workflow)
-                result["mermaid_diagram"] = viz.to_mermaid()
-            except Exception as e:
-                logger.debug(f"Could not generate mermaid diagram for {workflow_id}: {e}")
-                result["mermaid_diagram"] = None
-            
-            return result
+            return workflow_info
             
         @app.post("/agents/{agent_id}/threads", response_model=ThreadInfo)
         async def create_thread(agent_id: str, request: CreateThreadRequest):

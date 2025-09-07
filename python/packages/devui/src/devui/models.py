@@ -23,15 +23,35 @@ else:
         WorkflowEvent = Dict[str, Any]
 
 class AgentInfo(BaseModel):
-    """Information about a discovered agent or workflow."""
+    """Information about a discovered agent."""
     id: str
     name: Optional[str] = None
     description: Optional[str] = None
-    type: Literal["agent", "workflow"]
+    type: Literal["agent"] = "agent"
     source: Literal["directory", "in_memory"]
     tools: List[str] = Field(default_factory=list)
     has_env: bool = False
     module_path: Optional[str] = None
+
+class WorkflowInfo(BaseModel):
+    """Information about a discovered workflow."""
+    id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    type: Literal["workflow"] = "workflow"
+    source: Literal["directory", "in_memory"]
+    executors: List[str] = Field(default_factory=list)
+    has_env: bool = False
+    module_path: Optional[str] = None
+    
+    # Workflow structure
+    workflow_dump: Dict[str, Any]
+    mermaid_diagram: Optional[str] = None
+    
+    # Input specification
+    input_schema: Dict[str, Any]  # JSON Schema for workflow input
+    input_type_name: str  # Human-readable input type name
+    start_executor_id: str
 
 class RunAgentRequest(BaseModel):
     """Request to execute an agent."""

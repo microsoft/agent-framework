@@ -55,8 +55,8 @@ class ApiClient {
     return this.request<AgentInfo[]>("/agents");
   }
 
-  async getWorkflows(): Promise<AgentInfo[]> {
-    return this.request<AgentInfo[]>("/workflows");
+  async getWorkflows(): Promise<import("@/types").WorkflowInfo[]> {
+    return this.request<import("@/types").WorkflowInfo[]>("/workflows");
   }
 
   async getAgentInfo(agentId: string): Promise<AgentInfo> {

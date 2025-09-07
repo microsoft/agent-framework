@@ -168,7 +168,9 @@ export interface AgentThread {
 
 // Workflow events
 export interface WorkflowEvent {
+  type?: string; // Event class name like "WorkflowCompletedEvent", "ExecutorInvokeEvent", etc.
   data?: unknown;
+  executor_id?: string; // Present for executor-related events
 }
 
 export interface WorkflowStartedEvent extends WorkflowEvent {

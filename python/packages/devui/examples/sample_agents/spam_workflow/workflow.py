@@ -62,9 +62,9 @@ class SendResponse(Executor):
 
         # Simulate processing delay
         print(f"Responding to message: {spam_detector_response.email}")
-        await asyncio.sleep(1)
+        await asyncio.sleep(5)
 
-        await ctx.add_event(WorkflowCompletedEvent("Message processed successfully."))
+        await ctx.add_event(WorkflowCompletedEvent("Message processed successfully. Message is not spam"))
 
 
 class RemoveSpam(Executor):
@@ -82,7 +82,7 @@ class RemoveSpam(Executor):
 
         # Simulate processing delay
         print(f"Removing spam message: {spam_detector_response.email}")
-        await asyncio.sleep(1)
+        await asyncio.sleep(5)
 
         await ctx.add_event(WorkflowCompletedEvent("Spam message removed."))
 

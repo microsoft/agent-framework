@@ -6,10 +6,10 @@ from unittest.mock import Mock, patch
 from collections.abc import AsyncIterable
 
 from agent_framework import AgentProtocol, AgentThread, AgentRunResponse, AgentRunResponseUpdate
-from agent_framework.workflow import Workflow, Executor
+from agent_framework.workflow import Workflow, Executor, WorkflowBuilder, WorkflowContext, handler
 
 from devui.registry import AgentRegistry
-from devui.models import AgentInfo
+from devui.models import AgentInfo, WorkflowInfo
 
 
 class MockAgent(AgentProtocol):
@@ -49,30 +49,35 @@ class MockAgent(AgentProtocol):
         return Mock()
 
 
-class MockWorkflow(Workflow):
-    """Mock workflow implementing Workflow for testing."""
+class MockExecutor(Executor):
+    """Mock executor for testing."""
     
-    def __init__(self, name: str = "TestWorkflow"):
-        self._name = name
-        self._description = f"Test workflow: {name}"
+    def __init__(self, exec_id: str):
+        # Properly initialize via parent constructor
+        super().__init__(id=exec_id)
+        
+    @handler
+    async def mock_handler(self, message: str, ctx: WorkflowContext[str]) -> None:
+        """Mock handler that accepts string input."""
+        pass
+        
+
+def create_mock_workflow(name: str = "TestWorkflow"):
+    """Create a real workflow for testing instead of trying to mock the complex Workflow class."""
+    executor1 = MockExecutor("executor1")
+    executor2 = MockExecutor("executor2")
     
-    @property
-    def name(self) -> str | None:
-        return self._name
-        
-    @property
-    def description(self) -> str | None:
-        return self._description
-        
-    def get_graph(self):
-        return {}
-        
-    def get_executors_list(self) -> List[Executor]:
-        executor1 = Mock(spec=Executor)
-        executor1.id = "executor1"
-        executor2 = Mock(spec=Executor) 
-        executor2.id = "executor2"
-        return [executor1, executor2]
+    workflow = (
+        WorkflowBuilder()
+        .add_edge(executor1, executor2)
+        .set_start_executor(executor1)
+        .build()
+    )
+    
+    # Real workflows don't have name/description fields in the Pydantic model
+    # The registry will get None for these, which is expected behavior
+    
+    return workflow
 
 
 def mock_tool_function():
@@ -106,7 +111,7 @@ async def test_register_agent():
 async def test_register_workflow():
     """Test registering an in-memory workflow."""
     registry = AgentRegistry()
-    workflow = MockWorkflow("TestWorkflow")
+    workflow = create_mock_workflow("TestWorkflow")
     
     # Should register successfully
     registry.register_workflow("test_workflow", workflow)
@@ -119,9 +124,11 @@ async def test_register_workflow():
     workflows = registry.list_workflows()
     assert len(workflows) == 1
     assert workflows[0].id == "test_workflow"
-    assert workflows[0].name == "TestWorkflow"
-    assert workflows[0].type == "workflow"
+    assert workflows[0].name is None  # Real workflows don't have name field
     assert workflows[0].source == "in_memory"
+    # Should have schema extraction working
+    assert workflows[0].input_type_name == "str"
+    assert workflows[0].input_schema["type"] == "string"
 
 
 @pytest.mark.asyncio
@@ -164,15 +171,20 @@ async def test_agent_tool_extraction():
 async def test_workflow_executor_extraction():
     """Test extracting executor names from workflows."""
     registry = AgentRegistry()
-    workflow = MockWorkflow("ExecutorWorkflow")
+    workflow = create_mock_workflow("ExecutorWorkflow")
     
     registry.register_workflow("executor_workflow", workflow)
     
-    # Check executors are extracted
+    # Check that workflow structure is extracted (WorkflowInfo doesn't have tools field)
     workflows = registry.list_workflows()
     assert len(workflows) == 1
-    assert "executor1" in workflows[0].tools
-    assert "executor2" in workflows[0].tools
+    assert workflows[0].workflow_dump is not None
+    assert "executors" in workflows[0].workflow_dump
+    # Check executor IDs in the workflow dump
+    executors = workflows[0].workflow_dump["executors"]
+    executor_ids = list(executors.keys())
+    assert "executor1" in executor_ids
+    assert "executor2" in executor_ids
 
 
 @pytest.mark.asyncio
@@ -192,7 +204,7 @@ async def test_remove_items():
     
     # Add items
     agent = MockAgent()
-    workflow = MockWorkflow()
+    workflow = create_mock_workflow()
     registry.register_agent("agent1", agent)
     registry.register_workflow("workflow1", workflow)
     
@@ -285,3 +297,197 @@ async def test_tool_extraction_edge_cases():
     mixed_agent = next(a for a in agents if a.id == "mixed_tools")
     assert "named_tool" in mixed_agent.tools
     assert "string_tool" in mixed_agent.tools
+
+
+# Comprehensive Workflow Input Schema Tests
+from dataclasses import dataclass
+from typing import Optional
+from pydantic import BaseModel, Field
+from agent_framework.workflow import WorkflowBuilder, WorkflowContext, handler
+from devui.models import WorkflowInfo
+
+
+class UserRequest(BaseModel):
+    """A user request with various field types for testing."""
+    name: str = Field(..., description="User's name")
+    age: int = Field(default=25, ge=0, le=120, description="User's age")
+    email: Optional[str] = Field(default=None, description="Optional email address")
+    is_premium: bool = Field(default=False, description="Premium user status")
+    preferences: dict = Field(default_factory=dict, description="User preferences")
+
+
+@dataclass
+class SimpleDataClass:
+    """Simple dataclass for testing."""
+    message: str
+    count: int = 0
+
+
+class StringExecutor(Executor):
+    """Executor that accepts string input."""
+    
+    @handler
+    async def handle_string(self, message: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(f"Processed: {message}")
+
+
+class IntExecutor(Executor):
+    """Executor that accepts int input."""
+    
+    @handler
+    async def handle_int(self, number: int, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(f"Number squared: {number * number}")
+
+
+class PydanticExecutor(Executor):
+    """Executor that accepts Pydantic model input."""
+    
+    @handler
+    async def handle_user_request(self, request: UserRequest, ctx: WorkflowContext[str]) -> None:
+        response = f"Hello {request.name}, age {request.age}"
+        if request.is_premium:
+            response += " (Premium user)"
+        await ctx.send_message(response)
+
+
+class DataClassExecutor(Executor):
+    """Executor that accepts dataclass input."""
+    
+    @handler
+    async def handle_dataclass(self, data: SimpleDataClass, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(f"{data.message} (count: {data.count})")
+
+
+class MultiHandlerExecutor(Executor):
+    """Executor with multiple handlers to test our 'first handler' logic."""
+    
+    @handler
+    async def handle_string(self, message: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(f"String: {message}")
+    
+    @handler 
+    async def handle_int(self, number: int, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(f"Int: {number}")
+
+
+@pytest.mark.asyncio
+async def test_workflow_multiple_handlers():
+    """Test that we handle executors with multiple handlers correctly."""
+    registry = AgentRegistry()
+    
+    # Create workflow with multi-handler executor
+    multi_executor = MultiHandlerExecutor(id="multi_exec")
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(multi_executor)
+        .build()
+    )
+    
+    registry.register_workflow("multi_workflow", workflow)
+    workflows = registry.list_workflows()
+    
+    workflow_info = workflows[0]
+    # Should pick one of the handler types (our implementation picks first)
+    assert workflow_info.input_type_name in ["str", "int"]
+    assert workflow_info.start_executor_id == "multi_exec"
+
+
+def create_string_workflow():
+    """Create workflow that accepts string input."""
+    string_executor = StringExecutor(id="string_exec")
+    return (
+        WorkflowBuilder()
+        .set_start_executor(string_executor)
+        .build()
+    )
+
+
+def create_pydantic_workflow():
+    """Create workflow that accepts Pydantic model input."""
+    pydantic_executor = PydanticExecutor(id="pydantic_exec")
+    return (
+        WorkflowBuilder()
+        .set_start_executor(pydantic_executor)
+        .build()
+    )
+
+
+@pytest.mark.asyncio
+async def test_workflow_string_input_schema():
+    """Test workflow with string input type schema extraction."""
+    registry = AgentRegistry()
+    workflow = create_string_workflow()
+    registry.register_workflow("string_workflow", workflow)
+    
+    workflows = registry.list_workflows()
+    assert len(workflows) == 1
+    
+    workflow_info = workflows[0]
+    assert isinstance(workflow_info, WorkflowInfo)
+    assert workflow_info.id == "string_workflow"
+    assert workflow_info.input_type_name == "str"
+    assert workflow_info.start_executor_id == "string_exec"
+    assert workflow_info.input_schema["type"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_workflow_pydantic_input_schema():
+    """Test workflow with Pydantic model input type schema extraction."""
+    registry = AgentRegistry()
+    workflow = create_pydantic_workflow()
+    registry.register_workflow("pydantic_workflow", workflow)
+    
+    workflows = registry.list_workflows()
+    assert len(workflows) == 1
+    
+    workflow_info = workflows[0]
+    assert workflow_info.input_type_name == "UserRequest"
+    assert workflow_info.start_executor_id == "pydantic_exec"
+    
+    # Check rich Pydantic schema with defaults, validation, descriptions
+    schema = workflow_info.input_schema
+    assert "properties" in schema
+    assert "name" in schema["properties"]
+    assert "age" in schema["properties"]
+    assert "email" in schema["properties"]
+    assert "is_premium" in schema["properties"]
+    
+    # Check field details
+    name_field = schema["properties"]["name"]
+    assert name_field["type"] == "string"
+    assert "description" in name_field
+    
+    age_field = schema["properties"]["age"]
+    assert age_field["type"] == "integer"
+    assert age_field["default"] == 25
+    assert "minimum" in age_field
+    assert "maximum" in age_field
+    
+    premium_field = schema["properties"]["is_premium"]
+    assert premium_field["type"] == "boolean"
+    assert premium_field["default"] is False
+
+
+@pytest.mark.asyncio
+async def test_workflow_info_structure():
+    """Test that WorkflowInfo has all required fields."""
+    registry = AgentRegistry()
+    workflow = create_string_workflow()
+    registry.register_workflow("test_workflow", workflow)
+    
+    workflows = registry.list_workflows()
+    workflow_info = workflows[0]
+    
+    # Should have workflow dump
+    assert workflow_info.workflow_dump is not None
+    assert isinstance(workflow_info.workflow_dump, dict)
+    assert "executors" in workflow_info.workflow_dump
+    
+    # Should have input schema info
+    assert workflow_info.input_schema is not None
+    assert workflow_info.input_type_name is not None
+    assert workflow_info.start_executor_id is not None
+    
+    # Mermaid diagram might be None if viz package not available
+    if workflow_info.mermaid_diagram is not None:
+        assert isinstance(workflow_info.mermaid_diagram, str)

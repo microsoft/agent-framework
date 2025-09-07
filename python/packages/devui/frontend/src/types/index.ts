@@ -25,9 +25,37 @@ export interface AgentInfo {
   module_path?: string;
 }
 
-export interface WorkflowInfo extends AgentInfo {
-  workflow_dump?: any; // Raw workflow.model_dump() - zero abstraction
+// JSON Schema types for workflow input
+export interface JSONSchemaProperty {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  format?: string;
+  properties?: Record<string, JSONSchemaProperty>;
+  required?: string[];
+  items?: JSONSchemaProperty;
+}
+
+export interface JSONSchema {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  format?: string;
+  properties?: Record<string, JSONSchemaProperty>;
+  required?: string[];
+  items?: JSONSchemaProperty;
+}
+
+export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {
+  executors: string[]; // List of executor IDs in this workflow
+  workflow_dump?: Record<string, unknown>; // Raw workflow.model_dump() - zero abstraction
   mermaid_diagram?: string;
+  // Input specification for dynamic form generation
+  input_schema: JSONSchema; // JSON Schema for workflow input
+  input_type_name: string; // Human-readable input type name
+  start_executor_id: string; // Entry point executor ID
 }
 
 export interface ThreadInfo {
@@ -75,10 +103,10 @@ export interface ChatMessage {
 
 // UI State types
 export interface AppState {
-  selectedAgent?: AgentInfo;
+  selectedAgent?: AgentInfo | WorkflowInfo;
   currentThread?: ThreadInfo;
   agents: AgentInfo[];
-  workflows: AgentInfo[];
+  workflows: WorkflowInfo[];
   isLoading: boolean;
   error?: string;
 }
