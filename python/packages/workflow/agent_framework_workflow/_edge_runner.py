@@ -10,6 +10,7 @@ from ._edge import Edge, EdgeGroup, FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeG
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
+from ._telemetry import EdgeGroupDeliveryStatus, workflow_tracer
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,8 @@ class EdgeRunner(ABC):
             ctx: The context for the runner.
 
         Returns:
-            bool: True if the message was sent successfully, False if the target executor cannot handle the message.
+            bool: True if the message was processed successfully,
+                False if the target executor cannot handle the message.
         """
         raise NotImplementedError
 
@@ -49,7 +51,12 @@ class EdgeRunner(ABC):
         return self._executors[executor_id].can_handle(message_data)
 
     async def _execute_on_target(
-        self, target_id: str, source_id: str, message: Message, shared_state: SharedState, ctx: RunnerContext
+        self,
+        target_id: str,
+        source_ids: list[str],
+        message: Message,
+        shared_state: SharedState,
+        ctx: RunnerContext,
     ) -> None:
         """Execute a message on a target executor with trace context."""
         if target_id not in self._executors:
@@ -57,24 +64,14 @@ class EdgeRunner(ABC):
 
         target_executor = self._executors[target_id]
 
-        # Handle both old single trace context format and new multiple trace contexts format
-        trace_contexts = getattr(message, "trace_contexts", None)
-        source_span_ids = getattr(message, "source_span_ids", None)
-
-        # Backwards compatibility: if old format is used, convert to new format
-        if trace_contexts is None and hasattr(message, "trace_context") and message.trace_context:
-            trace_contexts = [message.trace_context]
-        if source_span_ids is None and hasattr(message, "source_span_id") and message.source_span_id:
-            source_span_ids = [message.source_span_id]
-
         # Create WorkflowContext with trace contexts from message
         workflow_context: WorkflowContext[Any] = WorkflowContext(
             target_id,
-            [source_id],
+            source_ids,
             shared_state,
             ctx,
-            trace_contexts=trace_contexts,  # Pass trace contexts to WorkflowContext
-            source_span_ids=source_span_ids,  # Pass source span IDs for linking
+            trace_contexts=message.trace_contexts,  # Pass trace contexts to WorkflowContext
+            source_span_ids=message.source_span_ids,  # Pass source span IDs for linking
         )
 
         # Execute with trace context in WorkflowContext
@@ -90,12 +87,47 @@ class SingleEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the single edge."""
-        if message.target_id and message.target_id != self._edge.target_id:
-            return False
+        should_execute = False
+        target_id = None
+        source_id = None
 
-        if self._can_handle(self._edge.target_id, message.data):
-            if self._edge.should_route(message.data):
-                await self._execute_on_target(self._edge.target_id, self._edge.source_id, message, shared_state, ctx)
+        with workflow_tracer.create_edge_group_processing_span(
+            self._edge_group.__class__.__name__,
+            edge_group_id=self._edge_group.id,
+            message_source_id=message.source_id,
+            message_target_id=message.target_id,
+            source_trace_contexts=message.trace_contexts,
+            source_span_ids=message.source_span_ids,
+        ):
+            try:
+                if message.target_id and message.target_id != self._edge.target_id:
+                    workflow_tracer.set_edge_group_span_attributes(
+                        False, EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH
+                    )
+                    return False
+
+                if self._can_handle(self._edge.target_id, message.data):
+                    if self._edge.should_route(message.data):
+                        workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+                        should_execute = True
+                        target_id = self._edge.target_id
+                        source_id = self._edge.source_id
+                    else:
+                        workflow_tracer.set_edge_group_span_attributes(
+                            False, EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE
+                        )
+                        # Return True here because message was processed, just condition failed
+                        return True
+                else:
+                    workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH)
+                    return False
+            except Exception as e:
+                workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                raise e
+
+        # Execute outside the span
+        if should_execute and target_id and source_id:
+            await self._execute_on_target(target_id, [source_id], message, shared_state, ctx)
             return True
 
         return False
@@ -113,37 +145,92 @@ class FanOutEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-out edge group."""
-        selection_results = (
-            self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
-        )
-        if not self._validate_selection_result(selection_results):
-            raise RuntimeError(
-                f"Invalid selection result: {selection_results}. "
-                f"Expected selections to be a subset of valid target executor IDs: {self._target_ids}."
+        deliverable_edges = []
+        single_target_edge = None
+
+        # Process routing logic within span
+        with workflow_tracer.create_edge_group_processing_span(
+            self._edge_group.__class__.__name__,
+            edge_group_id=self._edge_group.id,
+            message_source_id=message.source_id,
+            message_target_id=message.target_id,
+            source_trace_contexts=message.trace_contexts,
+            source_span_ids=message.source_span_ids,
+        ):
+            try:
+                selection_results = (
+                    self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
+                )
+                if not self._validate_selection_result(selection_results):
+                    workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                    raise RuntimeError(
+                        f"Invalid selection result: {selection_results}. "
+                        f"Expected selections to be a subset of valid target executor IDs: {self._target_ids}."
+                    )
+
+                if message.target_id:
+                    # If the target ID is specified and the selection result contains it, send the message to that edge
+                    if message.target_id in selection_results:
+                        edge = self._target_map.get(message.target_id)
+                        if edge and self._can_handle(edge.target_id, message.data):
+                            if edge.should_route(message.data):
+                                workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+                                single_target_edge = edge
+                            else:
+                                workflow_tracer.set_edge_group_span_attributes(
+                                    False, EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE
+                                )
+                                # For targeted messages with condition failure, return True (message was processed)
+                                return True
+                        else:
+                            workflow_tracer.set_edge_group_span_attributes(
+                                False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH
+                            )
+                            # For targeted messages that can't be handled, return False
+                            return False
+                    else:
+                        workflow_tracer.set_edge_group_span_attributes(
+                            False, EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH
+                        )
+                        # For targeted messages not in selection, return False
+                        return False
+                else:
+                    # If no target ID, send the message to the selected targets
+                    for target_id in selection_results:
+                        edge = self._target_map[target_id]
+                        if self._can_handle(edge.target_id, message.data) and edge.should_route(message.data):
+                            deliverable_edges.append(edge)
+
+                    if len(deliverable_edges) > 0:
+                        workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+                    else:
+                        workflow_tracer.set_edge_group_span_attributes(
+                            False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH
+                        )
+
+            except Exception as e:
+                workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                raise e
+
+        # Execute outside the span
+        if single_target_edge:
+            await self._execute_on_target(
+                single_target_edge.target_id, [single_target_edge.source_id], message, shared_state, ctx
             )
+            return True
 
-        if message.target_id:
-            # If the target ID is specified and the selection result contains it, send the message to that edge
-            if message.target_id in selection_results:
-                edge = self._target_map.get(message.target_id)
-                if edge and self._can_handle(edge.target_id, message.data):
-                    if edge.should_route(message.data):
-                        await self._execute_on_target(edge.target_id, edge.source_id, message, shared_state, ctx)
-                    return True
-            return False
+        if deliverable_edges:
 
-        # If no target ID, send the message to the selected targets
-        async def send_to_edge(edge: Edge) -> bool:
-            """Send the message to the edge."""
-            if self._can_handle(edge.target_id, message.data):
-                if edge.should_route(message.data):
-                    await self._execute_on_target(edge.target_id, edge.source_id, message, shared_state, ctx)
+            async def send_to_edge(edge: Edge) -> bool:
+                await self._execute_on_target(edge.target_id, [edge.source_id], message, shared_state, ctx)
                 return True
-            return False
 
-        tasks = [send_to_edge(self._target_map[target_id]) for target_id in selection_results]
-        results = await asyncio.gather(*tasks)
-        return any(results)
+            tasks = [send_to_edge(edge) for edge in deliverable_edges]
+            results = await asyncio.gather(*tasks)
+            return any(results)
+
+        # If we get here, it's a broadcast message with no deliverable edges
+        return False
 
     def _validate_selection_result(self, selection_results: list[str]) -> bool:
         """Validate the selection results to ensure all IDs are valid target executor IDs."""
@@ -162,40 +249,72 @@ class FanInEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-in edge group."""
-        if message.target_id and message.target_id != self._edges[0].target_id:
-            return False
+        execution_data: dict[str, Any] | None = None
 
-        # Check if target can handle list of message data (fan-in aggregates multiple messages)
-        if self._can_handle(self._edges[0].target_id, [message.data]):
-            # If the edge can handle the data, buffer the message
-            self._buffer[message.source_id].append(message)
-        else:
-            # If the edge cannot handle the data, return False
-            return False
+        with workflow_tracer.create_edge_group_processing_span(
+            self._edge_group.__class__.__name__,
+            edge_group_id=self._edge_group.id,
+            message_source_id=message.source_id,
+            message_target_id=message.target_id,
+            source_trace_contexts=message.trace_contexts,
+            source_span_ids=message.source_span_ids,
+        ):
+            try:
+                if message.target_id and message.target_id != self._edges[0].target_id:
+                    workflow_tracer.set_edge_group_span_attributes(
+                        False, EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH
+                    )
+                    return False
 
-        if self._is_ready_to_send():
-            # If all edges in the group have data, send the buffered messages to the target executor
-            messages_to_send = [msg for edge in self._edges for msg in self._buffer[edge.source_id]]
-            self._buffer.clear()
-            # Send aggregated data to target
-            aggregated_data = [msg.data for msg in messages_to_send]
+                # Check if target can handle list of message data (fan-in aggregates multiple messages)
+                if self._can_handle(self._edges[0].target_id, [message.data]):
+                    # If the edge can handle the data, buffer the message
+                    self._buffer[message.source_id].append(message)
+                    workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.BUFFERED)
+                else:
+                    # If the edge cannot handle the data, return False
+                    workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH)
+                    return False
 
-            # Collect all trace contexts and source span IDs for fan-in linking
-            trace_contexts = [msg.trace_context for msg in messages_to_send if msg.trace_context]
-            source_span_ids = [msg.source_span_id for msg in messages_to_send if msg.source_span_id]
+                if self._is_ready_to_send():
+                    # If all edges in the group have data, prepare for execution
+                    messages_to_send = [msg for edge in self._edges for msg in self._buffer[edge.source_id]]
+                    self._buffer.clear()
+                    # Send aggregated data to target
+                    aggregated_data = [msg.data for msg in messages_to_send]
 
-            # Create a new Message object for the aggregated data
-            aggregated_message = Message(
-                data=aggregated_data,
-                source_id=self._edge_group.__class__.__name__,
-                trace_contexts=trace_contexts,
-                source_span_ids=source_span_ids,
-            )
+                    # Collect all trace contexts and source span IDs for fan-in linking
+                    trace_contexts = [msg.trace_context for msg in messages_to_send if msg.trace_context]
+                    source_span_ids = [msg.source_span_id for msg in messages_to_send if msg.source_span_id]
+
+                    # Create a new Message object for the aggregated data
+                    aggregated_message = Message(
+                        data=aggregated_data,
+                        source_id=self._edge_group.__class__.__name__,  # This won't be used in self._execute_on_target.
+                        trace_contexts=trace_contexts,
+                        source_span_ids=source_span_ids,
+                    )
+                    workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+
+                    # Store execution data for later
+                    execution_data = {
+                        "target_id": self._edges[0].target_id,
+                        "source_ids": [edge.source_id for edge in self._edges],
+                        "message": aggregated_message,
+                    }
+
+            except Exception as e:
+                workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                raise e
+
+        # Execute outside the span if needed
+        if execution_data:
             await self._execute_on_target(
-                self._edges[0].target_id, self._edge_group.__class__.__name__, aggregated_message, shared_state, ctx
+                execution_data["target_id"], execution_data["source_ids"], execution_data["message"], shared_state, ctx
             )
+            return True
 
-        return True
+        return True  # Return True for buffered messages (waiting for more)
 
     def _is_ready_to_send(self) -> bool:
         """Check if all edges in the group have data to send."""

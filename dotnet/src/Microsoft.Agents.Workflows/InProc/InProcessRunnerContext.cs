@@ -18,8 +18,8 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 {
     private StepContext _nextStep = new();
     private readonly Dictionary<string, ExecutorRegistration> _executorRegistrations;
-    private readonly Dictionary<string, Executor> _executors = new();
-    private readonly Dictionary<string, ExternalRequest> _externalRequests = new();
+    private readonly Dictionary<string, Executor> _executors = [];
+    private readonly Dictionary<string, ExternalRequest> _externalRequests = [];
 
     public InProcessRunnerContext(Workflow workflow, ILogger? logger = null)
     {
@@ -96,7 +96,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
     public bool CompleteRequest(string requestId) => this._externalRequests.Remove(requestId);
 
-    public readonly List<WorkflowEvent> QueuedEvents = new();
+    public readonly List<WorkflowEvent> QueuedEvents = [];
 
     internal StateManager StateManager { get; } = new();
 

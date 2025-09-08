@@ -179,15 +179,16 @@ public class SpecializedExecutorSmokeTests
 
         await host.TakeTurnAsync(new TurnToken(emitEvents: false), collectingContext);
 
-        collectingContext.Updates.Should().HaveCount(4);
+        // The first empty message is skipped.
+        collectingContext.Updates.Should().HaveCount(MessageStrings.Length - 1);
 
-        for (int i = 0; i < MessageStrings.Length; i++)
+        for (int i = 1; i < MessageStrings.Length; i++)
         {
             string expectedText = MessageStrings[i];
             string[] expectedSplits = splits[i];
 
             ChatMessage equivalent = expected[i];
-            List<ChatMessage> collected = collectingContext.Updates[i];
+            List<ChatMessage> collected = collectingContext.Updates[i - 1];
 
             collected.Should().HaveCount(1);
             collected[0].Text.Should().Be(expectedText);

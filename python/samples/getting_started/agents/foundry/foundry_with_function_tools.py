@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -35,7 +35,7 @@ async def tools_on_agent_level() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful assistant that can provide weather and time information.",
             tools=[get_weather, get_time],  # Tools defined at agent creation
@@ -69,7 +69,7 @@ async def tools_on_run_level() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful assistant.",
             # No tools defined here
@@ -103,7 +103,7 @@ async def mixed_tools_example() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a comprehensive assistant that can help with various information requests.",
             tools=[get_weather],  # Base tool available for all queries

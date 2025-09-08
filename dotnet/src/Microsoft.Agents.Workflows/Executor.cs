@@ -94,7 +94,7 @@ public abstract class Executor : IIdentified
 
         if (!result.IsSuccess)
         {
-            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}", result.Exception!);
+            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}", result.Exception);
         }
 
         if (result.IsVoid)

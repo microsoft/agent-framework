@@ -111,6 +111,7 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
         {
             AgentId = this.Id,
             AuthorName = this.Name,
+            MessageId = Guid.NewGuid().ToString("N"),
         };
 
         yield return response;
@@ -153,6 +154,7 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
         {
             AgentId = this.Id,
             AuthorName = this.Name,
+            MessageId = Guid.NewGuid().ToString("N"),
         };
 
         yield return result;

@@ -1,0 +1,7 @@
+type: foundry_agent
+name: ResearchCoder
+description: Demo agent for DeepResearch workflow
+model:
+  id: ${AzureAI:ModelDeployment}
+tools:
+  - type: code_interpreter

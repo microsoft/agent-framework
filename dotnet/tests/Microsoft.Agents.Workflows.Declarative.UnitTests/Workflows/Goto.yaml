@@ -1,0 +1,25 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  id: my_workflow
+  type: Message
+  actions:
+
+    - kind: GotoAction
+      id: goto_end
+      actionId: end_all
+
+    - kind: SendActivity
+      id: sendActivity_1
+      activity: NEVER 1!
+      
+    - kind: SendActivity
+      id: sendActivity_2
+      activity: NEVER 2!
+
+    - kind: SendActivity
+      id: sendActivity_3
+      activity: NEVER 3!
+
+    - kind: EndConversation
+      id: end_all
