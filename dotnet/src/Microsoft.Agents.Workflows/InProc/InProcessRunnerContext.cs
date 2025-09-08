@@ -136,8 +136,9 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         }
 
         Dictionary<ExecutorIdentity, List<ExportedState>> queuedMessages = this._nextStep.ExportMessages();
-
-        RunnerStateData result = new(queuedMessages, this._externalRequests.Values.ToList());
+        RunnerStateData result = new(instantiatedExecutors: [.. this._executors.Keys],
+                                     queuedMessages,
+                                     outstandingRequests: [.. this._externalRequests.Values]);
 
         return new(result);
     }
@@ -154,7 +155,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         }
     }
 
-    internal ValueTask ImportStateAsync(Checkpoint checkpoint)
+    internal async ValueTask ImportStateAsync(Checkpoint checkpoint)
     {
         if (this.QueuedEvents.Count > 0)
         {
@@ -162,6 +163,11 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         }
 
         RunnerStateData importedState = checkpoint.RunnerData;
+
+        Task<Executor>[] executorTasks = importedState.InstantiatedExecutors
+                                                      .Where(id => !this._executors.ContainsKey(id))
+                                                      .Select(id => this.EnsureExecutorAsync(id, tracer: null).AsTask())
+                                                      .ToArray();
 
         this._nextStep = new StepContext();
         this._nextStep.ImportMessages(importedState.QueuedMessages);
@@ -176,6 +182,6 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             this._externalRequests[request.RequestId] = request;
         }
 
-        return default;
+        await Task.WhenAll(executorTasks).ConfigureAwait(false);
     }
 }
