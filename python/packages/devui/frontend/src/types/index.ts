@@ -79,6 +79,10 @@ export interface RunAgentRequest {
   options?: Record<string, unknown>;
 }
 
+export interface RunWorkflowRequest {
+  input_data: Record<string, unknown>;
+}
+
 // Re-export from agent-framework types with proper typing
 export type {
   DebugStreamEvent,

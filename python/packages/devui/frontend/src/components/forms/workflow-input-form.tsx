@@ -35,7 +35,7 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
           <div className="space-y-2">
             <Label htmlFor={name}>{name}</Label>
             <Select
-              value={typeof value === "string" ? value : ""}
+              value={typeof value === "string" && value ? value : (defaultValue || enumValues[0])}
               onValueChange={(val) => onChange(val)}
             >
               <SelectTrigger>
@@ -231,6 +231,9 @@ export function WorkflowInputForm({
       Object.entries(inputSchema.properties).forEach(([key, fieldSchema]) => {
         if (fieldSchema.default !== undefined) {
           initialData[key] = fieldSchema.default;
+        } else if (fieldSchema.enum && fieldSchema.enum.length > 0) {
+          // Set first enum value as default for literal types
+          initialData[key] = fieldSchema.enum[0];
         }
       });
       setFormData(initialData);
@@ -240,16 +243,16 @@ export function WorkflowInputForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // For simple string input types, pass the value directly
+    // For simple string input types, wrap in object structure for backend API
     if (inputSchema.type === "string") {
-      onSubmit(formData.value || "");
+      onSubmit({ input: formData.value || "" });
     } else if (
       inputSchema.type === "object" &&
       Object.keys(inputSchema.properties || {}).length === 1
     ) {
-      // For single-field objects (enhanced from basic types), pass the field value directly
+      // For single-field objects (enhanced from basic types), wrap the field value
       const fieldName = Object.keys(inputSchema.properties || {})[0];
-      onSubmit(formData[fieldName] || "");
+      onSubmit({ [fieldName]: formData[fieldName] || "" });
     } else {
       // For complex objects, pass the entire form data
       onSubmit(formData);

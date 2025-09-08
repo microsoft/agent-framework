@@ -14,6 +14,7 @@ interface WorkflowChatViewProps {
   events: DebugStreamEvent[];
   isStreaming: boolean;
   onSendMessage?: (message: string) => void;
+  onSendWorkflowData?: (inputData: Record<string, unknown>) => void;
 }
 
 interface WorkflowExecution {
@@ -35,6 +36,7 @@ export function WorkflowChatView({
   events,
   isStreaming,
   onSendMessage,
+  onSendWorkflowData,
 }: WorkflowChatViewProps) {
   const [selectedExecutor, setSelectedExecutor] =
     useState<ExecutorNodeData | null>(null);
@@ -449,24 +451,33 @@ export function WorkflowChatView({
       </div>
 
       {/* Bottom Section: Workflow Input Form (40% height) */}
-      {onSendMessage && workflowInfo && (
+      {workflowInfo && (
         <div className="flex-shrink-0">
           <WorkflowInputForm
             inputSchema={workflowInfo.input_schema}
             inputTypeName={workflowInfo.input_type_name}
             onSubmit={(formData) => {
-              // Convert formData to string for onSendMessage
-              const message =
-                typeof formData === "string"
-                  ? formData
-                  : (() => {
-                      try {
-                        return JSON.stringify(formData);
-                      } catch {
-                        return "[Unable to serialize form data]";
-                      }
-                    })();
-              onSendMessage(message);
+              if (
+                onSendWorkflowData &&
+                typeof formData === "object" &&
+                formData !== null
+              ) {
+                // Send structured data for workflows
+                onSendWorkflowData(formData as Record<string, unknown>);
+              } else if (onSendMessage) {
+                // Fallback to string message for backwards compatibility
+                const message =
+                  typeof formData === "string"
+                    ? formData
+                    : (() => {
+                        try {
+                          return JSON.stringify(formData);
+                        } catch {
+                          return "[Unable to serialize form data]";
+                        }
+                      })();
+                onSendMessage(message);
+              }
             }}
             isSubmitting={isStreaming}
           />

@@ -59,6 +59,10 @@ class RunAgentRequest(BaseModel):
     thread_id: Optional[str] = None
     options: Optional[Dict[str, Any]] = None
 
+class RunWorkflowRequest(BaseModel):
+    """Request to execute a workflow."""
+    input_data: Dict[str, Any]  # Structured input data matching the workflow's schema
+
 class CreateThreadRequest(BaseModel):
     """Request to create a new thread."""
     pass  # No additional fields needed

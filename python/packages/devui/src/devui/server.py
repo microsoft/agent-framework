@@ -25,6 +25,7 @@ from .models import (
     DebugStreamEvent,
     HealthResponse,
     RunAgentRequest,
+    RunWorkflowRequest,
     SessionInfo,
     ThreadInfo
 )
@@ -294,7 +295,7 @@ class AgentFrameworkDebugServer:
                 raise HTTPException(status_code=500, detail=f"Execution failed: {str(e)}")
                 
         @app.post("/workflows/{workflow_id}/run")
-        async def run_workflow(workflow_id: str, request: RunAgentRequest):
+        async def run_workflow(workflow_id: str, request: RunWorkflowRequest):
             """Execute a workflow (non-streaming)."""
             workflow_obj = self.registry.get_workflow(workflow_id)
             if not workflow_obj:
@@ -305,9 +306,9 @@ class AgentFrameworkDebugServer:
                 events = []
                 async for event in self.execution_engine.execute_workflow_streaming(
                     workflow=workflow_obj,
-                    input_data=request.message,
-                    capture_traces=request.options.get('capture_traces', True) if request.options else True,
-                    tracing_manager=self.tracing_manager  # Pass tracing manager for real-time trace streaming
+                    input_data=request.input_data,
+                    capture_traces=True,
+                    tracing_manager=self.tracing_manager
                 ):
                     events.append(event)
                 
@@ -384,7 +385,7 @@ class AgentFrameworkDebugServer:
             )
             
         @app.post("/workflows/{workflow_id}/run/stream")
-        async def run_workflow_streaming(workflow_id: str, request: RunAgentRequest):
+        async def run_workflow_streaming(workflow_id: str, request: RunWorkflowRequest):
             """Execute a workflow with streaming response (SSE)."""
             workflow_obj = self.registry.get_workflow(workflow_id)
             if not workflow_obj:
@@ -395,9 +396,9 @@ class AgentFrameworkDebugServer:
                     # Execute workflow
                     async for event in self.execution_engine.execute_workflow_streaming(
                         workflow=workflow_obj,
-                        input_data=request.message,
-                        capture_traces=request.options.get('capture_traces', True) if request.options else True,
-                        tracing_manager=self.tracing_manager  # Pass tracing manager for real-time trace streaming
+                        input_data=request.input_data,
+                        capture_traces=True,
+                        tracing_manager=self.tracing_manager
                     ):
                         yield f"data: {event.model_dump_json()}\n\n"
                         

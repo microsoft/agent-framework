@@ -275,7 +275,143 @@ export default function App() {
     functionCallAccumulator.current = {};
   }, []);
 
-  // Handle message sending
+  // Handle workflow data sending (structured input)
+  const handleSendWorkflowData = useCallback(
+    async (inputData: Record<string, unknown>) => {
+      if (!appState.selectedAgent || appState.selectedAgent.type !== "workflow")
+        return;
+
+      // Add user message showing the structured input
+      const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: `Workflow Input:\n\`\`\`json\n${JSON.stringify(
+          inputData,
+          null,
+          2
+        )}\n\`\`\``,
+        timestamp: new Date().toISOString(),
+      };
+
+      setChatState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, userMessage],
+        isStreaming: true,
+        streamEvents: [], // Clear previous events for new conversation
+      }));
+
+      // Create assistant message placeholder
+      const assistantMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        streaming: true,
+      };
+
+      setChatState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, assistantMessage],
+      }));
+
+      try {
+        const request = { input_data: inputData };
+
+        // Use workflow-specific API streaming
+        const streamGenerator = apiClient.streamWorkflowExecution(
+          appState.selectedAgent.id,
+          request
+        );
+
+        for await (const event of streamGenerator) {
+          // Add event to debug stream
+          setChatState((prev) => ({
+            ...prev,
+            streamEvents: [...prev.streamEvents, event],
+          }));
+
+          // Update chat message if it's a content update
+          if (event.type === "workflow_event" && event.event) {
+            const eventData = event.event.data;
+            let contentUpdate = "";
+
+            if (typeof eventData === "string") {
+              contentUpdate = eventData;
+            } else if (eventData && typeof eventData === "object") {
+              try {
+                contentUpdate = JSON.stringify(eventData, null, 2);
+              } catch {
+                contentUpdate = "[Event data]";
+              }
+            }
+
+            if (contentUpdate) {
+              setChatState((prev) => ({
+                ...prev,
+                messages: prev.messages.map((msg) =>
+                  msg.id === assistantMessage.id
+                    ? { ...msg, content: msg.content + contentUpdate + "\n" }
+                    : msg
+                ),
+              }));
+            }
+          }
+
+          // Handle completion
+          if (event.type === "completion") {
+            setChatState((prev) => ({
+              ...prev,
+              isStreaming: false,
+              messages: prev.messages.map((msg) =>
+                msg.id === assistantMessage.id
+                  ? { ...msg, streaming: false }
+                  : msg
+              ),
+            }));
+            break;
+          }
+
+          // Handle errors
+          if (event.type === "error") {
+            setChatState((prev) => ({
+              ...prev,
+              isStreaming: false,
+              messages: prev.messages.map((msg) =>
+                msg.id === assistantMessage.id
+                  ? {
+                      ...msg,
+                      content: `Error: ${event.error}`,
+                      streaming: false,
+                    }
+                  : msg
+              ),
+            }));
+            break;
+          }
+        }
+      } catch (error) {
+        console.error("Workflow execution failed:", error);
+        setChatState((prev) => ({
+          ...prev,
+          isStreaming: false,
+          messages: prev.messages.map((msg) =>
+            msg.id === assistantMessage.id
+              ? {
+                  ...msg,
+                  content: `Error: ${
+                    error instanceof Error ? error.message : "Unknown error"
+                  }`,
+                  streaming: false,
+                }
+              : msg
+          ),
+        }));
+      }
+    },
+    [appState.selectedAgent]
+  );
+
+  // Handle message sending (for agents)
   const handleSendMessage = useCallback(
     async (message: string) => {
       if (!appState.selectedAgent) return;
@@ -321,11 +457,18 @@ export default function App() {
 
         const isWorkflow = appState.selectedAgent.type === "workflow";
 
-        // Use real API streaming
+        if (isWorkflow) {
+          // For workflows, this shouldn't be called - use handleSendWorkflowData instead
+          console.warn(
+            "handleSendMessage called for workflow - this is unexpected"
+          );
+          return;
+        }
+
+        // Use agent-specific API streaming
         const streamGenerator = apiClient.streamAgentExecution(
           appState.selectedAgent.id,
-          request,
-          isWorkflow
+          request
         );
 
         for await (const event of streamGenerator) {
@@ -570,6 +713,7 @@ export default function App() {
             messages={chatState.messages}
             debugEvents={chatState.streamEvents}
             onSendMessage={handleSendMessage}
+            onSendWorkflowData={handleSendWorkflowData}
             isStreaming={chatState.isStreaming}
           />
         </div>

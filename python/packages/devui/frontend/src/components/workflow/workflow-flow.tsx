@@ -147,7 +147,7 @@ export function WorkflowFlow({
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.4 }}
+        fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}
         maxZoom={1.5}
         defaultEdgeOptions={{
@@ -166,8 +166,17 @@ export function WorkflowFlow({
           color="#e5e7eb"
           className="dark:opacity-30"
         />
-        <Controls position="bottom-left" showInteractive={false} />
-        <MiniMap
+        <Controls
+          position="bottom-left"
+          showInteractive={false}
+          style={{
+            backgroundColor: "rgba(255, 255, 255, 0.9)",
+            border: "1px solid #e5e7eb",
+            borderRadius: "3px",
+          }}
+          className="dark:!bg-gray-800/90 dark:!border-gray-600"
+        />
+        {/* <MiniMap
           nodeColor={(node: Node) => {
             const data = node.data as ExecutorNodeData;
             const state = data?.state;
@@ -191,11 +200,10 @@ export function WorkflowFlow({
             border: "1px solid #e5e7eb",
             borderRadius: "8px",
           }}
-        />
+        /> */}
       </ReactFlow>
 
-
-      {/* CSS for custom edge animations */}
+      {/* CSS for custom edge animations and dark theme controls */}
       <style>{`
         .react-flow__edge-path {
           transition: stroke 0.3s ease, stroke-width 0.3s ease;
@@ -207,6 +215,27 @@ export function WorkflowFlow({
         @keyframes dash {
           0% { stroke-dashoffset: 0; }
           100% { stroke-dashoffset: -10; }
+        }
+        
+        /* Dark theme styles for React Flow controls */
+        .dark .react-flow__controls {
+          background-color: rgba(31, 41, 55, 0.9) !important;
+          border-color: rgb(75, 85, 99) !important;
+        }
+        .dark .react-flow__controls-button {
+          background-color: rgba(31, 41, 55, 0.9) !important;
+          border-color: rgb(75, 85, 99) !important;
+          color: rgb(229, 231, 235) !important;
+        }
+        .dark .react-flow__controls-button:hover {
+          background-color: rgba(55, 65, 81, 0.9) !important;
+          color: rgb(255, 255, 255) !important;
+        }
+        .dark .react-flow__controls-button svg {
+          fill: rgb(229, 231, 235) !important;
+        }
+        .dark .react-flow__controls-button:hover svg {
+          fill: rgb(255, 255, 255) !important;
         }
       `}</style>
     </div>

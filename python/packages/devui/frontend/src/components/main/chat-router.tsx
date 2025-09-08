@@ -14,6 +14,7 @@ interface ChatRouterProps {
   messages: ChatMessage[];
   debugEvents: DebugStreamEvent[];
   onSendMessage: (message: string) => void;
+  onSendWorkflowData?: (inputData: Record<string, unknown>) => void;
   isStreaming: boolean;
 }
 
@@ -24,6 +25,7 @@ export function ChatRouter({
   messages,
   debugEvents,
   onSendMessage,
+  onSendWorkflowData,
   isStreaming,
 }: ChatRouterProps) {
   // Route to workflow chat view for workflows
@@ -35,6 +37,7 @@ export function ChatRouter({
         events={debugEvents}
         isStreaming={isStreaming}
         onSendMessage={onSendMessage}
+        onSendWorkflowData={onSendWorkflowData}
       />
     );
   } else if (selectedItem?.type === "agent") {

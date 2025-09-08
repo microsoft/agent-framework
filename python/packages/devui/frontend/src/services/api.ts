@@ -7,6 +7,7 @@ import type {
   AgentInfo,
   HealthResponse,
   RunAgentRequest,
+  RunWorkflowRequest,
   ThreadInfo,
 } from "@/types";
 
@@ -87,12 +88,67 @@ class ApiClient {
   // Custom streaming with fetch
   async *streamAgentExecution(
     agentId: string,
-    request: RunAgentRequest,
-    isWorkflow: boolean = false
+    request: RunAgentRequest
   ): AsyncGenerator<import("@/types").DebugStreamEvent, void, unknown> {
-    const endpoint = isWorkflow
-      ? `/workflows/${agentId}/run/stream`
-      : `/agents/${agentId}/run/stream`;
+    const endpoint = `/agents/${agentId}/run/stream`;
+
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Streaming request failed: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("Response body is not readable");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const eventData = JSON.parse(line.slice(6));
+              yield eventData;
+            } catch (e) {
+              console.error("Failed to parse SSE event:", e);
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  // Workflow streaming with proper types
+  async *streamWorkflowExecution(
+    workflowId: string,
+    request: RunWorkflowRequest
+  ): AsyncGenerator<import("@/types").DebugStreamEvent, void, unknown> {
+    const endpoint = `/workflows/${workflowId}/run/stream`;
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: "POST",
@@ -162,7 +218,7 @@ class ApiClient {
 
   async runWorkflow(
     workflowId: string,
-    request: RunAgentRequest
+    request: RunWorkflowRequest
   ): Promise<{
     result: string;
     events: number;
