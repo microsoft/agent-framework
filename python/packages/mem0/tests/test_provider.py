@@ -20,6 +20,8 @@ def mock_mem0_client() -> AsyncMock:
     mock_client = AsyncMock()
     mock_client.add = AsyncMock()
     mock_client.search = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock()
     mock_client.async_client = AsyncMock()
     mock_client.async_client.aclose = AsyncMock()
     return mock_client
@@ -47,23 +49,24 @@ class TestMem0ProviderInitialization:
             thread_id="thread123",
             mem0_client=mock_mem0_client,
         )
-        assert provider._user_id == "user123"
-        assert provider._agent_id == "agent123"
-        assert provider._application_id == "app123"
-        assert provider._thread_id == "thread123"
+        assert provider.user_id == "user123"
+        assert provider.agent_id == "agent123"
+        assert provider.application_id == "app123"
+        assert provider.thread_id == "thread123"
 
-    def test_init_fails_without_required_filters(self, mock_mem0_client: AsyncMock):
-        """Test that initialization fails when no required filters are provided."""
-        with pytest.raises(ServiceInitializationError) as exc_info:
-            Mem0Provider(mem0_client=mock_mem0_client)
-
-        assert "At least one of the filters" in str(exc_info.value)
+    def test_init_without_filters_succeeds(self, mock_mem0_client: AsyncMock):
+        """Test that initialization succeeds even without filters (validation happens during invocation)."""
+        provider = Mem0Provider(mem0_client=mock_mem0_client)
+        assert provider.user_id is None
+        assert provider.agent_id is None
+        assert provider.application_id is None
+        assert provider.thread_id is None
 
     def test_init_with_custom_context_prompt(self, mock_mem0_client: AsyncMock):
         """Test initialization with custom context prompt."""
         custom_prompt = "## Custom Memories\nConsider these memories:"
         provider = Mem0Provider(user_id="user123", context_prompt=custom_prompt, mem0_client=mock_mem0_client)
-        assert provider._context_prompt == custom_prompt
+        assert provider.context_prompt == custom_prompt
 
     def test_init_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock):
         """Test initialization with scope_to_per_operation_thread_id enabled."""
@@ -72,7 +75,7 @@ class TestMem0ProviderInitialization:
             scope_to_per_operation_thread_id=True,
             mem0_client=mock_mem0_client,
         )
-        assert provider._scope_to_per_operation_thread_id is True
+        assert provider.scope_to_per_operation_thread_id is True
 
     @patch("mem0.AsyncMemoryClient")
     def test_init_creates_default_client_when_none_provided(self, mock_memory_client_class: AsyncMock):
@@ -83,7 +86,7 @@ class TestMem0ProviderInitialization:
         provider = Mem0Provider(user_id="user123", api_key="test_api_key")
 
         mock_memory_client_class.assert_called_once_with(api_key="test_api_key")
-        assert provider._mem0_client == mock_client
+        assert provider.mem0_client == mock_client
         assert provider._should_close_client is True
 
     def test_init_with_provided_client_should_not_close(self, mock_mem0_client: AsyncMock):
@@ -104,6 +107,8 @@ class TestMem0ProviderAsyncContextManager:
     async def test_async_context_manager_exit_closes_client_when_should_close(self):
         """Test that async context manager closes client when it should."""
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock()
         mock_client.async_client = AsyncMock()
         mock_client.async_client.aclose = AsyncMock()
 
@@ -114,7 +119,7 @@ class TestMem0ProviderAsyncContextManager:
             async with provider:
                 pass
 
-            mock_client.async_client.aclose.assert_called_once()
+            mock_client.__aexit__.assert_called_once()
 
     async def test_async_context_manager_exit_does_not_close_provided_client(self, mock_mem0_client: AsyncMock):
         """Test that async context manager does not close provided client."""
@@ -124,7 +129,7 @@ class TestMem0ProviderAsyncContextManager:
         async with provider:
             pass
 
-        mock_mem0_client.async_client.aclose.assert_not_called()
+        mock_mem0_client.__aexit__.assert_not_called()
 
 
 class TestMem0ProviderThreadMethods:
@@ -175,6 +180,16 @@ class TestMem0ProviderThreadMethods:
 
 class TestMem0ProviderMessagesAdding:
     """Test messages_adding method."""
+
+    async def test_messages_adding_fails_without_filters(self, mock_mem0_client: AsyncMock):
+        """Test that messages_adding fails when no filters are provided."""
+        provider = Mem0Provider(mem0_client=mock_mem0_client)
+        message = ChatMessage(role=Role.USER, text="Hello!")
+
+        with pytest.raises(ServiceInitializationError) as exc_info:
+            await provider.messages_adding("thread123", message)
+
+        assert "At least one of the filters" in str(exc_info.value)
 
     async def test_messages_adding_single_message(self, mock_mem0_client: AsyncMock):
         """Test adding a single message."""
@@ -289,6 +304,16 @@ class TestMem0ProviderMessagesAdding:
 
 class TestMem0ProviderModelInvoking:
     """Test model_invoking method."""
+
+    async def test_model_invoking_fails_without_filters(self, mock_mem0_client: AsyncMock):
+        """Test that model_invoking fails when no filters are provided."""
+        provider = Mem0Provider(mem0_client=mock_mem0_client)
+        message = ChatMessage(role=Role.USER, text="What's the weather?")
+
+        with pytest.raises(ServiceInitializationError) as exc_info:
+            await provider.model_invoking(message)
+
+        assert "At least one of the filters" in str(exc_info.value)
 
     async def test_model_invoking_single_message(self, mock_mem0_client: AsyncMock):
         """Test model_invoking with a single message."""

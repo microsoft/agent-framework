@@ -2,14 +2,11 @@
 
 import sys
 from collections.abc import MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.exceptions import ServiceInitializationError
 from pydantic import PrivateAttr
-
-if TYPE_CHECKING:
-    from mem0 import AsyncMemoryClient  # type: ignore[import-untyped]
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -17,13 +14,23 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 
-class Mem0Provider(ContextProvider):
-    DEFAULT_CONTEXT_PROMPT: str = "## Memories\nConsider the following memories when answering user questions:"
+DEFAULT_CONTEXT_PROMPT: str = "## Memories\nConsider the following memories when answering user questions:"
 
-    _mem0_client: "AsyncMemoryClient"  # type: ignore[no-any-unimported]
+
+class Mem0Provider(ContextProvider):
+    api_key: str | None = None
+    application_id: str | None = None
+    agent_id: str | None = None
+    thread_id: str | None = None
+    user_id: str | None = None
+    scope_to_per_operation_thread_id: bool = False
+    context_prompt: str = DEFAULT_CONTEXT_PROMPT
+    # Use Any to avoid forward reference issues with AsyncMemoryClient
+    mem0_client: Any = None
+
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
 
-    def __init__(  # type: ignore[no-any-unimported]
+    def __init__(
         self,
         api_key: str | None = None,
         application_id: str | None = None,
@@ -32,7 +39,8 @@ class Mem0Provider(ContextProvider):
         user_id: str | None = None,
         scope_to_per_operation_thread_id: bool = False,
         context_prompt: str = DEFAULT_CONTEXT_PROMPT,
-        mem0_client: "AsyncMemoryClient | None" = None,
+        mem0_client: Any = None,
+        **kwargs: Any,
     ) -> None:
         """Initializes a new instance of the Mem0Provider class.
 
@@ -46,38 +54,37 @@ class Mem0Provider(ContextProvider):
             scope_to_per_operation_thread_id: Whether to scope memories to per-operation thread ID.
             context_prompt: The prompt to prepend to retrieved memories.
             mem0_client: A pre-created Mem0 MemoryClient or None to create a default client.
+            **kwargs: Additional keyword arguments passed to the parent constructor.
         """
-        if not agent_id and not user_id and not application_id and not thread_id:
-            raise ServiceInitializationError(
-                "At least one of the filters: agent_id, user_id, application_id, or thread_id is required."
-            )
+        super().__init__(**kwargs)
 
-        should_close_client = False
+        self.api_key = api_key
+        self.application_id = application_id
+        self.agent_id = agent_id
+        self.thread_id = thread_id
+        self.user_id = user_id
+        self.scope_to_per_operation_thread_id = scope_to_per_operation_thread_id
+        self.context_prompt = context_prompt
+        self.mem0_client = mem0_client
 
-        if mem0_client is None:
-            from mem0 import AsyncMemoryClient  # type: ignore[import-untyped]
+        if self.mem0_client is None:
+            from mem0 import AsyncMemoryClient
 
-            mem0_client = AsyncMemoryClient(api_key=api_key)
-            should_close_client = True
+            self.mem0_client = AsyncMemoryClient(api_key=api_key)
+            self._should_close_client = True
 
-        self._mem0_client = mem0_client
-        self._application_id = application_id
-        self._agent_id = agent_id
-        self._thread_id = thread_id
-        self._user_id = user_id
-        self._scope_to_per_operation_thread_id = scope_to_per_operation_thread_id
-        self._context_prompt = context_prompt
-        self._should_close_client = should_close_client
         self._per_operation_thread_id: str | None = None
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
+        if self.mem0_client:
+            await self.mem0_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit."""
-        if self._should_close_client:
-            await self._mem0_client.async_client.aclose()
+        if self._should_close_client and self.mem0_client:
+            await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def thread_created(self, thread_id: str | None = None) -> None:
         """Called when a new thread is created.
@@ -95,6 +102,7 @@ class Mem0Provider(ContextProvider):
             thread_id: The ID of the thread or None.
             new_messages: New messages to add.
         """
+        self._validate_filters()
         self._validate_per_operation_thread_id(thread_id)
         self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
@@ -107,12 +115,12 @@ class Mem0Provider(ContextProvider):
         ]
 
         if messages:
-            await self._mem0_client.add(  # type: ignore[misc]
+            await self.mem0_client.add(  # type: ignore[misc]
                 messages=messages,
-                user_id=self._user_id,
-                agent_id=self._agent_id,
-                run_id=self._per_operation_thread_id if self._scope_to_per_operation_thread_id else self._thread_id,
-                metadata={"application_id": self._application_id},
+                user_id=self.user_id,
+                agent_id=self.agent_id,
+                run_id=self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id,
+                metadata={"application_id": self.application_id},
             )
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
@@ -124,21 +132,33 @@ class Mem0Provider(ContextProvider):
         Returns:
             Context: Context object containing instructions with memories.
         """
+        self._validate_filters()
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
-        memories = await self._mem0_client.search(  # type: ignore[misc]
+        memories = await self.mem0_client.search(  # type: ignore[misc]
             query=input_text,
-            user_id=self._user_id,
-            agent_id=self._agent_id,
-            run_id=self._per_operation_thread_id if self._scope_to_per_operation_thread_id else self._thread_id,
+            user_id=self.user_id,
+            agent_id=self.agent_id,
+            run_id=self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id,
         )
 
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
-        instructions = f"{self._context_prompt}\n{line_separated_memories}" if line_separated_memories else None
+        instructions = f"{self.context_prompt}\n{line_separated_memories}" if line_separated_memories else None
 
         return Context(instructions=instructions)
+
+    def _validate_filters(self) -> None:
+        """Validates that at least one filter is provided.
+
+        Raises:
+            ServiceInitializationError: If no filters are provided.
+        """
+        if not self.agent_id and not self.user_id and not self.application_id and not self.thread_id:
+            raise ServiceInitializationError(
+                "At least one of the filters: agent_id, user_id, application_id, or thread_id is required."
+            )
 
     def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
         """Validates that a new thread ID doesn't conflict with an existing one when scoped.
@@ -150,7 +170,7 @@ class Mem0Provider(ContextProvider):
             ValueError: If a new thread ID is provided when one already exists.
         """
         if (
-            self._scope_to_per_operation_thread_id
+            self.scope_to_per_operation_thread_id
             and thread_id
             and self._per_operation_thread_id
             and thread_id != self._per_operation_thread_id

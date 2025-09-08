@@ -255,7 +255,9 @@ class ChatAgent(BaseAgent):
         kwargs.update(additional_properties or {})
 
         aggregate_context_providers = (
-            AggregateContextProvider(context_providers) if isinstance(context_providers, list) else context_providers
+            AggregateContextProvider(context_providers)
+            if isinstance(context_providers, list)
+            else context_providers or AggregateContextProvider()
         )
 
         # We ignore the MCP Servers here and store them separately,
