@@ -1,80 +1,90 @@
 # Agent Step 11: Callback Middleware
 
-This sample demonstrates how to use the callback middleware system with Azure AI Foundry agents to implement cross-cutting concerns such as logging, timing, and custom processing.
+This sample demonstrates how to use the callback middleware system with Azure AI Foundry agents to implement cross-cutting concerns such as timing and custom processing.
 
 ## What This Sample Shows
 
 1. **Azure AI Foundry Integration**: Using Azure AI Foundry agents as the backend
-2. **Basic Agent Usage**: Creating and using an agent without middleware
-3. **Logging Middleware**: Using the built-in `LoggingCallbackMiddleware` to log agent invocations
-4. **Custom Middleware**: Creating and using custom middleware for timing measurements
-5. **Multiple Middleware**: Combining multiple middleware components in a pipeline
-6. **Streaming Support**: How middleware works with streaming agent responses
+2. **Custom Middleware**: Creating and using custom middleware for timing measurements
+3. **Fluent Configuration**: Using the `WithCallbacks` builder pattern to configure middleware
+4. **Streaming Support**: How middleware works with both regular and streaming agent responses
+5. **Response Access**: How middleware can access and process agent responses
 
 ## Key Concepts
 
 ### Callback Middleware Architecture
 
-The callback middleware system uses a dedicated processor component that manages middleware chains:
+The callback middleware system provides a clean way to intercept and process agent operations:
 
-- **`CallbackContext`**: Base class providing common context information
-- **`AgentInvokeCallbackContext`**: Specific context for agent invocation operations
-- **`ICallbackMiddleware<TContext>`**: Interface for implementing middleware
-- **`CallbackMiddlewareBase<TContext>`**: Base class with convenient hooks
-- **`CallbackMiddlewareProcessor`**: Manages and executes middleware chains
+- **`AgentInvokeCallbackContext`**: Provides context information for agent invocation operations
+- **`CallbackMiddleware<TContext>`**: Base class for implementing middleware
+- **Fluent Configuration**: Use `WithCallbacks` builder pattern to configure middleware
 
-### Middleware Execution Order
+### Middleware Execution
 
-Middleware is executed in the order it's registered:
-1. First middleware's `OnProcessAsync` (before next call)
-2. Second middleware's `OnProcessAsync` (before next call)
-3. Actual agent operation
-4. Second middleware's `OnProcessAsync` (after next call)
-5. First middleware's `OnProcessAsync` (after next call)
+Middleware receives the context and a `next` delegate:
+1. Middleware can perform operations before calling `next`
+2. Call `next(context)` to continue the pipeline
+3. Middleware can perform operations after `next` returns
+4. Access response data through the context properties
 
-### Error Handling
+### Response Access
 
-If an error occurs during agent execution, each middleware can handle it in its try/catch block before re-throwing the exception.
+Middleware can access different types of responses:
+- **Regular responses**: Access via `context.RunResponse`
+- **Streaming responses**: Access via `context.RunStreamingResponse`
+- **Error handling**: Use try/catch blocks around the `next` call
 
 ## Usage Examples
 
 ### Basic Middleware Setup
 
 ```csharp
-// Create Azure AI Foundry agent
+// Create Azure AI Foundry client
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
-var azureAgent = await persistentAgentsClient.CreateAIAgentAsync(model, name, instructions);
 
-// Create middleware
-var loggingMiddleware = new LoggingCallbackMiddleware(logger);
-var middlewareProcessor = CallbackMiddlewareExtensions.CreateProcessor(loggingMiddleware);
-
-// Create ChatClientAgent with middleware
-var agent = new ChatClientAgent(
-    azureAgent.GetChatClient(),
-    options,
-    loggerFactory,
-    middlewareProcessor);
+// Create agent with middleware using fluent configuration
+var agent = persistentAgentsClient.CreateAIAgent(model)
+    .WithCallbacks(builder =>
+    {
+        builder.AddCallback(new TimingCallbackMiddleware());
+    });
 ```
 
 ### Custom Middleware Implementation
 
 ```csharp
-public class TimingMiddleware : CallbackMiddlewareBase<AgentInvokeCallbackContext>
+internal sealed class TimingCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
 {
     public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
     {
-        context.Properties["StartTime"] = DateTime.UtcNow;
-        
+        Console.WriteLine($"[TIMING] Starting invocation for agent: {context.Agent.DisplayName}");
+        var timingStart = DateTime.UtcNow;
+
         try
         {
             await next(context).ConfigureAwait(false);
-            var duration = DateTime.UtcNow - (DateTime)context.Properties["StartTime"];
-            Console.WriteLine($"Operation took {duration.TotalMilliseconds}ms");
+
+            // Access response based on operation type
+            if (!context.IsStreaming)
+            {
+                Console.WriteLine($"Response: {context.RunResponse?.Messages[0].Text}");
+            }
+            else
+            {
+                // Process streaming response
+                await foreach (var update in context.RunStreamingResponse!)
+                {
+                    Console.WriteLine($"Streaming update: {update.Text}");
+                }
+            }
+
+            var duration = DateTime.UtcNow - timingStart;
+            Console.WriteLine($"[TIMING] Completed invocation in {duration.TotalMilliseconds:F1}ms");
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine($"[TIMING] Error: {exception.Message}");
             throw;
         }
     }
@@ -84,16 +94,13 @@ public class TimingMiddleware : CallbackMiddlewareBase<AgentInvokeCallbackContex
 ### Multiple Middleware
 
 ```csharp
-var processor = CallbackMiddlewareExtensions.CreateProcessor(
-    new LoggingCallbackMiddleware(logger),
-    new TimingCallbackMiddleware(),
-    new CustomAuthMiddleware());
-
-var agent = new ChatClientAgent(
-    azureAgent.GetChatClient(),
-    options,
-    loggerFactory,
-    processor);
+var agent = persistentAgentsClient.CreateAIAgent(model)
+    .WithCallbacks(builder =>
+    {
+        builder.AddCallback(new LoggingCallbackMiddleware());
+        builder.AddCallback(new TimingCallbackMiddleware());
+        builder.AddCallback(new CustomAuthMiddleware());
+    });
 ```
 
 ## Prerequisites
@@ -119,13 +126,13 @@ dotnet run
 ## Expected Output
 
 The sample will demonstrate:
-- Basic agent operation without middleware
-- Detailed logging of agent invocations with timing information
-- Custom timing measurements
-- Streaming responses with middleware processing
+- Custom timing measurements for agent invocations
+- Response processing for both regular and streaming operations
+- Clean middleware implementation using the fluent configuration pattern
 
 ## Next Steps
 
 - Explore creating custom middleware for authentication, caching, or rate limiting
-- Integrate middleware with dependency injection systems
+- Implement middleware that modifies requests or responses
 - Use middleware for telemetry and monitoring in production applications
+- Combine multiple middleware for complex processing pipelines
