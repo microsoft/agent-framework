@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -56,19 +55,17 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.HandoffState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
 
-        AIAgent? nextAgent = null;
-        foreach (var agent in this.Agents)
+        AIAgent nextAgent = this._handoffs.InitialAgent;
+        if (!string.IsNullOrEmpty(state.NextAgent))
         {
-            if (agent.Id == state.NextAgent)
+            foreach (var agent in this.Agents)
             {
-                nextAgent = agent;
-                break;
+                if (agent.Id == state.NextAgent)
+                {
+                    nextAgent = agent;
+                    break;
+                }
             }
-        }
-
-        if (nextAgent is null)
-        {
-            Throw.InvalidOperationException($"The next agent '{state.NextAgent}' is not defined in the orchestration.");
         }
 
         return this.ResumeAsync(nextAgent, state.AllMessages, state.OriginalMessageCount, context, cancellationToken);
