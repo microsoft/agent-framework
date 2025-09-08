@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import MutableSequence, Sequence
-from typing import Any
+from typing import Any, Final
 
 from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.exceptions import ServiceInitializationError
@@ -14,7 +14,7 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 
-DEFAULT_CONTEXT_PROMPT: str = "## Memories\nConsider the following memories when answering user questions:"
+DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
 
 
 class Mem0Provider(ContextProvider):
