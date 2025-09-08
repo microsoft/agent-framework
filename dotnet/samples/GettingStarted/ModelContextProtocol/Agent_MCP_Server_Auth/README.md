@@ -30,7 +30,7 @@ If you have set up those credentials as secrets within Secret Manager or through
 ### To set your secrets with Secret Manager
 
 ```text
-cd dotnet/samples/Demos/ModelContextProtocolPluginAuth
+cd dotnet/samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server_Auth
 
 dotnet user-secrets init
 
