@@ -3,6 +3,7 @@
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -31,8 +32,7 @@ public static class IWorkflowContextExtensions
     /// </example>
     public static async ValueTask<string> FormatTemplateAsync(this IWorkflowContext context, params string[] lines)
     {
-        DeclarativeWorkflowState state = new(RecalcEngineFactory.Create());
-        await state.RestoreAsync(context, cancellationToken: default).ConfigureAwait(false);
+        DeclarativeWorkflowState state = await GetStateAsync(context).ConfigureAwait(false); // %%% STATE: JUSTIFY
 
         StringBuilder builder = new();
         foreach (string line in lines)
@@ -51,11 +51,26 @@ public static class IWorkflowContextExtensions
     /// <returns></returns>
     public static async ValueTask<object?> EvaluateExpressionAsync(this IWorkflowContext context, string expression)
     {
-        DeclarativeWorkflowState state = new(RecalcEngineFactory.Create());
-        await state.RestoreAsync(context, cancellationToken: default).ConfigureAwait(false);
+        DeclarativeWorkflowState state = await GetStateAsync(context).ConfigureAwait(false); // %%% STATE: JUSTIFY
 
         EvaluationResult<DataValue> result = state.ExpressionEngine.GetValue(ValueExpression.Expression(expression));
 
         return result.Value.ToFormulaValue().ToObject(); // %%% HAXX
+    }
+
+    private static async Task<DeclarativeWorkflowState> GetStateAsync(IWorkflowContext context)
+    {
+        DeclarativeWorkflowState state;
+        if (context is DeclarativeWorkflowContext declarativeContext && declarativeContext.IsRestored)
+        {
+            state = new(RecalcEngineFactory.Create(), declarativeContext.Scopes);
+        }
+        else
+        {
+            state = new(RecalcEngineFactory.Create());
+            await state.RestoreAsync(context, cancellationToken: default).ConfigureAwait(false); // %%% RESTORE: FIX!
+        }
+
+        return state;
     }
 }

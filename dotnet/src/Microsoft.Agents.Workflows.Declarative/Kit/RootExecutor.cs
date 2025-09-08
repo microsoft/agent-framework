@@ -3,6 +3,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.Configuration;
 
@@ -36,7 +37,7 @@ public abstract class RootExecutor<TInput> :
     /// <inheritdoc/>
     public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        await this.ExecuteAsync(message, context, cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(message, new DeclarativeWorkflowContext(context), cancellationToken: default).ConfigureAwait(false);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

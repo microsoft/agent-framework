@@ -19,7 +19,7 @@ internal sealed class EditTableExecutor(EditTable model, DeclarativeWorkflowStat
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
-        FormulaValue table = this.State.Get(variablePath);
+        FormulaValue table = this.State.Scopes.Get(variablePath);
         if (table is not TableValue tableValue)
         {
             throw this.Exception($"Require '{variablePath.Format()}' to be a table, not: '{table.GetType().Name}'.");

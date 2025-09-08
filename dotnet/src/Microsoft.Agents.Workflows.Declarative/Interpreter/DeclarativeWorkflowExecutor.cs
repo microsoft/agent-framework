@@ -22,7 +22,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         ChatMessage input = inputTransform.Invoke(message);
-        await state.SetLastMessageAsync(context, input).ConfigureAwait(false);
+        state.SetLastMessage(input);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

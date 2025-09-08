@@ -10,7 +10,6 @@ using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
@@ -24,64 +23,66 @@ internal sealed class DeclarativeWorkflowState
             VariableScopeNames.System,
         }.ToImmutableHashSet();
 
-    private readonly RecalcEngine _engine;
-    private readonly WorkflowScopes _scopes;
-    private WorkflowExpressionEngine? _expressionEngine;
+    private readonly RecalcEngine _engine; // %%% MOVE TO SCOPES
+    private WorkflowExpressionEngine? _expressionEngine;  // %%% MOVE TO SCOPES
     private int _isInitialized;
 
     public DeclarativeWorkflowState(RecalcEngine engine, WorkflowScopes? scopes = null)
     {
-        this._scopes = scopes ?? new WorkflowScopes();
+        this.Scopes = scopes ?? new WorkflowScopes();
         this._engine = engine;
-        this._scopes.Bind(this._engine);
+
+        this.Bind();
     }
+
+    public WorkflowScopes Scopes { get; }
 
     public WorkflowExpressionEngine ExpressionEngine => this._expressionEngine ??= new WorkflowExpressionEngine(this._engine);
 
-    public void Reset(PropertyPath variablePath) =>
-        this.Reset(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
+    public void Bind() => this.Scopes.Bind(this._engine);  // %%% MOVE TO SCOPES
 
-    public void Reset(string scopeName, string? varName = null)
-    {
-        if (string.IsNullOrWhiteSpace(varName))
-        {
-            this._scopes.Clear(scopeName);
-        }
-        else
-        {
-            this._scopes.Reset(varName, scopeName);
-        }
+    //public void Reset(PropertyPath variablePath) =>
+    //    this.Reset(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
 
-        this._scopes.Bind(this._engine, scopeName);
-    }
+    //public void Reset(string scopeName, string? varName = null)
+    //{
+    //    if (string.IsNullOrWhiteSpace(varName))
+    //    {
+    //        this.Scopes.Clear(scopeName);
+    //    }
+    //    else
+    //    {
+    //        this.Scopes.Reset(varName, scopeName);
+    //    }
 
-    public FormulaValue Get(PropertyPath variablePath) =>
-        this.Get(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
+    //    this.Scopes.Bind(this._engine, scopeName);
+    //}
 
-    public FormulaValue Get(string scope, string varName) =>
-        this._scopes.Get(varName, scope);
+    //public FormulaValue Get(PropertyPath variablePath) =>
+    //    this.Get(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName));
 
-    public ValueTask SetAsync(PropertyPath variablePath, FormulaValue value, IWorkflowContext context) =>
-        this.SetAsync(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value, context);
+    //public FormulaValue Get(string scope, string varName) =>
+    //    this.Scopes.Get(varName, scope);
 
-    public async ValueTask SetAsync(string scopeName, string varName, FormulaValue value, IWorkflowContext context)
-    {
-        if (!s_mutableScopes.Contains(scopeName))
-        {
-            throw new DeclarativeModelException($"Invalid scope: {scopeName}");
-        }
+    //public void Set(PropertyPath variablePath, FormulaValue value) =>
+    //    this.Set(Throw.IfNull(variablePath.VariableScopeName), Throw.IfNull(variablePath.VariableName), value);
 
-        this._scopes.Set(varName, value, scopeName);
-        this._scopes.Bind(this._engine, scopeName);
+    //public void Set(string scopeName, string varName, FormulaValue value)
+    //{
+    //    if (!s_mutableScopes.Contains(scopeName))
+    //    {
+    //        throw new DeclarativeModelException($"Invalid scope: {scopeName}");
+    //    }
 
-        await context.QueueStateUpdateAsync(varName, value.ToObject(), scopeName).ConfigureAwait(false);
-    }
+    //    this.Scopes.Set(varName, value, scopeName);
+    //    this.Scopes.Bind(this._engine, scopeName);
+    //}
 
-    public string? Format(IEnumerable<TemplateLine> template) => this._engine.Format(template);
+    public string? Format(IEnumerable<TemplateLine> template) => this._engine.Format(template); // %%% REMOVE
 
-    public string? Format(TemplateLine? line) => this._engine.Format(line);
+    public string? Format(TemplateLine? line) => this._engine.Format(line); // %%% REMOVE
 
-    public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken) // %%% MOVE TO SCOPES
     {
         if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1)
         {
@@ -100,10 +101,10 @@ internal sealed class DeclarativeWorkflowState
                 {
                     value = FormulaValue.NewBlank();
                 }
-                this._scopes.Set(key, value.ToFormulaValue(), scopeName);
+                this.Scopes.Set(key, value.ToFormulaValue(), scopeName);
             }
 
-            this._scopes.Bind(this._engine, scopeName);
+            this.Scopes.Bind(this._engine, scopeName);
         }
     }
 }

@@ -17,7 +17,7 @@ internal sealed class ResetVariableExecutor(ResetVariable model, DeclarativeWork
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
-        this.State.Reset(this.Model.Variable);
+        this.State.Scopes.Reset(this.Model.Variable);
         Debug.WriteLine(
             $"""
             STATE: {this.GetType().Name} [{this.Id}]

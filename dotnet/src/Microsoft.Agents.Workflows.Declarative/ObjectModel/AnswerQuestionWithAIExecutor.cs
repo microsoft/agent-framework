@@ -87,7 +87,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
         AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
 
         ChatMessage response = agentResponse.Messages.Last();
-        await this.State.SetLastMessageAsync(context, response).ConfigureAwait(false);
+        this.State.SetLastMessage(response);
         if (this.Model.AutoSend)
         {
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
@@ -98,11 +98,11 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
         {
             if (this.Model.AutoSend) // ISSUE #485: Conversation implicitly managed until updated OM is available.
             {
-                await this.State.SetConversationIdAsync(context, conversationId).ConfigureAwait(false);
+                this.State.SetConversationId(conversationId);
             }
             else
             {
-                await this.State.SetInternalConversationIdAsync(context, conversationId).ConfigureAwait(false);
+                this.State.SetInternalConversationId(conversationId);
             }
         }
 

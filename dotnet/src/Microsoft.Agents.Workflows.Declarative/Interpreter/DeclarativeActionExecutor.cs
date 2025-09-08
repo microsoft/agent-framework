@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
@@ -71,7 +72,8 @@ internal abstract class WorkflowActionExecutor :
 
         try
         {
-            object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State.Scopes), cancellationToken: default).ConfigureAwait(false);
+            this.State.Bind(); // %%% SUFFICIENT ???
 
             await context.SendMessageAsync(new ActionExecutorResult(this.Id, result)).ConfigureAwait(false);
         }
@@ -91,12 +93,12 @@ internal abstract class WorkflowActionExecutor :
 
     protected async ValueTask AssignAsync(PropertyPath targetPath, FormulaValue result, IWorkflowContext context)
     {
-        if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
+        if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName))) // %%% RELOCATE ???
         {
             throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");
         }
 
-        await this.State.SetAsync(targetPath, result, context).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);
 
 #if DEBUG
         string? resultValue = result.Format();

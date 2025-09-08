@@ -2,6 +2,7 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
@@ -25,7 +26,7 @@ public abstract class ActionExecutor :
     /// <inheritdoc/>
     public async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
-        await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(new DeclarativeWorkflowContext(context), cancellationToken: default).ConfigureAwait(false);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

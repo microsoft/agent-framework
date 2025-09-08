@@ -7,6 +7,7 @@ using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
@@ -25,6 +26,8 @@ internal sealed class WorkflowScopes
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName)).ToImmutableDictionary();
     }
 
+    public FormulaValue Get(PropertyPath variablePath) => this.Get(Throw.IfNull(variablePath.VariableName), variablePath.VariableScopeName);
+
     public FormulaValue Get(string variableName, string? scopeName = null)
     {
         if (this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].TryGetValue(variableName, out FormulaValue? value))
@@ -37,7 +40,11 @@ internal sealed class WorkflowScopes
 
     public void Clear(string scopeName) => this._scopes[scopeName].Reset();
 
+    public void Reset(PropertyPath variablePath) => this.Reset(Throw.IfNull(variablePath.VariableName), variablePath.VariableScopeName);
+
     public void Reset(string variableName, string? scopeName = null) => this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].Reset(variableName);
+
+    public void Set(PropertyPath variablePath, FormulaValue value) => this.Set(Throw.IfNull(variablePath.VariableName), value, variablePath.VariableScopeName);
 
     public void Set(string variableName, FormulaValue value, string? scopeName = null) => this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName][variableName] = value;
 

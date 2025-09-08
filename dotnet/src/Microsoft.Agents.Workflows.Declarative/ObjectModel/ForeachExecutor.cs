@@ -65,11 +65,11 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         {
             FormulaValue value = this._values[this._index];
 
-            await this.State.SetAsync(Throw.IfNull(this.Model.Value), value, context).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(Throw.IfNull(this.Model.Value), value).ConfigureAwait(false);
 
             if (this.Model.Index is not null)
             {
-                await this.State.SetAsync(this.Model.Index.Path, FormulaValue.New(this._index), context).ConfigureAwait(false);
+                await context.QueueStateUpdateAsync(this.Model.Index.Path, FormulaValue.New(this._index)).ConfigureAwait(false);
             }
 
             this._index++;
@@ -78,10 +78,10 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     public async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        this.State.Reset(Throw.IfNull(this.Model.Value));
+        this.State.Scopes.Reset(Throw.IfNull(this.Model.Value));
         if (this.Model.Index is not null)
         {
-            this.State.Reset(this.Model.Index);
+            this.State.Scopes.Reset(this.Model.Index);
         }
     }
 }

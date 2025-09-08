@@ -51,7 +51,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Declara
 
         private void ClearAll(string scope)
         {
-            state.Reset(scope);
+            state.Scopes.Clear(scope);
             Debug.WriteLine(
                 $"""
                  STATE: {this.GetType().Name} [{executorId}]
