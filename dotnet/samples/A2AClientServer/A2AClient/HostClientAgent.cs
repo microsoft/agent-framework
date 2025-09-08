@@ -56,7 +56,6 @@ internal sealed class HostClientAgent
             Timeout = TimeSpan.FromSeconds(60)
         };
 
-        var client = new A2AClient(url, httpClient);
         var agentCardResolver = new A2ACardResolver(url, httpClient);
 
         return await agentCardResolver.GetAIAgentAsync();

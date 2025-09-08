@@ -21,13 +21,7 @@ public static class Program
         return await rootCommand.InvokeAsync(args);
     }
 
-    public static async System.Threading.Tasks.Task HandleCommandsAsync(InvocationContext context)
-    {
-        await RunCliAsync();
-    }
-
-    #region private
-    private static async System.Threading.Tasks.Task RunCliAsync()
+    public static async Task HandleCommandsAsync(InvocationContext context)
     {
         // Set up the logging
         using var loggerFactory = LoggerFactory.Create(builder =>
@@ -83,5 +77,4 @@ public static class Program
             return;
         }
     }
-    #endregion
 }

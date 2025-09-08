@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using A2A;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.A2A;
 
@@ -10,8 +11,10 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 /// </summary>
 internal static class A2AAgentTaskExtensions
 {
-    public static IList<ChatMessage> ToChatMessages(this AgentTask agentTask)
+    internal static IList<ChatMessage> ToChatMessages(this AgentTask agentTask)
     {
+        _ = Throw.IfNull(agentTask);
+
         List<ChatMessage> messages = [];
 
         if (agentTask.Artifacts is not null)

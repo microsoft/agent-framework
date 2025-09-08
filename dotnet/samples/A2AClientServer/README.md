@@ -4,7 +4,7 @@
 > The [A2A protocol](https://google.github.io/A2A/) is still under development and changing fast.
 > We will try to keep these samples updated as the protocol evolves.
 
-These samples are built with [SharpA2A.Core](https://www.nuget.org/packages/SharpA2A.Core) and demonstrate:
+These samples are built with [official A2A C# SDK](https://www.nuget.org/packages/A2A) and demonstrates:
 
 1. Creating an A2A Server which makes an agent available via the A2A protocol.
 2. Creating an A2A Client with a command line interface which invokes agents using the A2A protocol.
@@ -16,22 +16,16 @@ The demonstration has two components:
 
 <img src="./demo-architecture.png" alt="Demo Architecture"/>
 
-## Configuring Secrets or Environment Variables
+## Configuring Environment Variables
 
 The samples can be configured to use chat completion agents or Azure AI agents.
 
 ### Configuring for use with Chat Completion Agents
 
-Provide your OpenAI API key via .Net secrets
+Provide your OpenAI API key via an environment variable
 
-```bash
-dotnet user-secrets set "A2AClient:ApiKey" "..."
-```
-
-Optionally if you want to use chat completion agents in the server then set the OpenAI key for the server to use.
-
-```bash
-dotnet user-secrets set "A2AServer:ApiKey" "..."
+```powershell
+$env:OPENAI_API_KEY="<Your OpenAI API Key>"
 ```
 
 Use the following commands to run each A2A server:
@@ -89,8 +83,8 @@ You must create the agents in an Azure AI Foundry project and then provide the p
         Quantity: 900"
     ```
 
-```bash
-dotnet user-secrets set "A2AServer:Endpoint" "..."
+```powershell
+$env:FOUNDRY_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
 ```
 
 Use the following commands to run each A2A server
@@ -189,8 +183,8 @@ These are available at the following URL's:
 
 If you want to change which agents are using then set the agents url as a space delimited string as follows:
 
-```bash
-dotnet user-secrets set "A2AClient:AgentUrls" "http://localhost:5000/;http://localhost:5001/;http://localhost:5002/"
+```powershell
+$env:A2A_AGENT_URLS="http://localhost:5000/;http://localhost:5001/;http://localhost:5002/"
 ```
 
 ## Run the Sample
@@ -210,58 +204,31 @@ Sample output from the A2A client:
 
 ```
 A2AClient> dotnet run
-info: A2AClient[0]
-      Initializing Semantic Kernel agent with model: gpt-4o-mini
+info: HostClientAgent[0]
+      Initializing Agent Framework agent with model: gpt-4o-mini
 
 User (:q or quit to exit): Customer is disputing transaction TICKET-XYZ987 as they claim the received fewer t-shirts than ordered.
 
-Calling Agent InvoiceAgent with arguments:
-      query: TICKET-XYZ987
-      instructions: Investigate the transaction details for TICKET-XYZ987 and verify the number of t-shirts ordered versus the number received.
+Agent:
 
-Response from Agent InvoiceAgent:
-    The invoice associated with the transaction ID TICKET-XYZ987 is for the company Contoso. It was issued on June 18, 2025. The products in the invoice include 150 T-Shirts priced at $10.00 each, 200 Hats priced at $15.00 each, and 300 Glasses priced at $5.00 each. If you need more details or a copy of the invoice, please let me know!
+Agent:
 
-Calling Agent LogisticsAgent with arguments:
-      query: TICKET-XYZ987
-      instructions: Check the shipping details for TICKET-XYZ987, specifically the quantity of t-shirts dispatched to confirm if fewer t-shirts were sent.
+Agent: The transaction details for **TICKET-XYZ987** are as follows:
 
-Response from Agent LogisticsAgent:
-    Shipment number: SHPMT-SAP-001
-    Item: TSHIRT-RED-L
-    Quantity: 900
+- **Invoice ID:** INV789
+- **Company Name:** Contoso
+- **Invoice Date:** September 4, 2025
+- **Products:**
+  - **T-Shirts:** 150 units at $10.00 each
+  - **Hats:** 200 units at $15.00 each
+  - **Glasses:** 300 units at $5.00 each
 
-Calling Agent PolicyAgent with arguments:
-      query: TICKET-XYZ987
-      instructions: Review the policy regarding disputes and claims related to shipment discrepancies, especially concerning t-shirts.
+To proceed with the dispute regarding the quantity of t-shirts delivered, please specify the exact quantity issue – how many t-shirts were actually received compared to the ordered amount.
 
-Response from Agent PolicyAgent:
-    Policy: Short Shipment Dispute Handling Policy V2.1
+### Customer Service Policy for Handling Disputes
+**Short Shipment Dispute Handling Policy V2.1**
+- **Summary:** For short shipments reported by customers, first verify internal shipment records and physical logistics scan data. If a discrepancy is confirmed and the logistics data shows fewer items were packed than invoiced, a credit for the missing items will be issued.
+- **Follow-up Actions:** Document the resolution in the SAP CRM and notify the customer via email within 2 business days, referencing the original invoice and the credit memo number, using the 'Formal Credit Notification' email template.
 
-    Summary: "For short shipments reported by customers, first verify internal shipment records
-    (SAP) and physical logistics scan data (BigQuery). If discrepancy is confirmed and logistics data
-    shows fewer items packed than invoiced, issue a credit for the missing items. Document the
-    resolution in SAP CRM and notify the customer via email within 2 business days, referencing the
-    original invoice and the credit memo number. Use the 'Formal Credit Notification' email
-    template."
-
-Agent: Here's the investigation result for transaction TICKET-XYZ987:
-
-1. **Invoice Details**: The invoice for transaction TICKET-XYZ987 indicates that 150 t-shirts were ordered.
-
-2. **Shipment Details**: The logistics records show that a total of 900 t-shirts were dispatched under the shipment number SHPMT-SAP-001.
-
-There seems to be a significant discrepancy between the number of t-shirts ordered and the number shipped. According to the Short Shipment Dispute Handling Policy, the next steps are as follows:
-
-1. **Confirm Discrepancy**: Since the logistics data confirms that 900 t-shirts were packed, it is necessary to check if this aligns with the customer's claim.
-
-2. **Issue Credit**: If the customer is indeed correct and fewer items were actually received compared to what was invoiced, you would need to issue a credit for the missing items.
-
-3. **Document Resolution**: Ensure to document the resolution in SAP CRM.
-
-4. **Notify the Customer**: Notify the customer via email within 2 business days, using the 'Formal Credit Notification' email template, and reference both the original invoice and the credit memo number.
-
-Please let me know if you would like to proceed with any specific action!
-
-User (:q or quit to exit):
+Please provide me with the information regarding the specific quantity issue so I can assist you further.
 ```

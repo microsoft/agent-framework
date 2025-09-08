@@ -24,20 +24,16 @@ public static class AgentAIFunctionFactory
     {
         Throw.IfNull(agent);
 
-        async Task<AgentRunResponse> RunAgentAsync(string query, CancellationToken cancellationToken)
+        async Task<string> RunAgentAsync(string query, CancellationToken cancellationToken)
         {
-            return await agent.RunAsync(query, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var response = await agent.RunAsync(query, cancellationToken: cancellationToken).ConfigureAwait(false);
+            return response.Text;
         }
 
-        return AIFunctionFactory.Create(RunAgentAsync, options ?? CreateDefaultOption(agent));
-    }
-
-    #region private
-    private static AIFunctionFactoryOptions CreateDefaultOption(AIAgent agent) =>
-        new()
+        return AIFunctionFactory.Create(RunAgentAsync, options ?? new()
         {
             Name = agent.Name,
             Description = agent.Description,
-        };
-    #endregion
+        });
+    }
 }

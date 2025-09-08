@@ -35,9 +35,9 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
     .AddUserSecrets<Program>()
     .Build();
 
-string? apiKey = configuration["A2AServer:ApiKey"];
-string? endpoint = configuration["A2AServer:Endpoint"];
-string modelId = configuration["A2AServer:ModelId"] ?? "gpt-4o-mini";
+string? apiKey = configuration["OPENAI_API_KEY"];
+string modelId = configuration["OPENAI_MODEL_ID"] ?? "gpt-4o-mini";
+string? endpoint = configuration["FOUNDRY_PROJECT_ENDPOINT"];
 
 var invoiceQueryPlugin = new InvoiceQuery();
 IList<AITool> tools =

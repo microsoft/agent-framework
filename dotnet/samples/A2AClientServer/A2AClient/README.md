@@ -13,14 +13,14 @@ To run the sample, follow these steps:
     ```  
 2. Enter your request e.g. "Show me all invoices for Contoso?"
 
-## Set Secrets with Secret Manager
+## Set Environment Variables
 
 The agent urls are provided as a ` ` delimited list of strings
 
-```text
-cd dotnet/samples/Demos/A2AClientServer/A2AClient
+```powershell
+cd dotnet/samples/A2AClientServer/A2AClient
 
-dotnet user-secrets set "A2AClient:ModelId" "..."
-dotnet user-secrets set "A2AClient:ApiKey" "..."
-dotnet user-secrets set "A2AClient:AgentUrls" "http://localhost:5000/policy;http://localhost:5000/invoice;http://localhost:5000/logistics"
+$env:OPENAI_MODEL_ID="gpt-4o-mini"
+$env:OPENAI_API_KEY="<Your OPENAI api key>"
+$env:AGENT_URLS="http://localhost:5000/policy;http://localhost:5000/invoice;http://localhost:5000/logistics"
 ```
