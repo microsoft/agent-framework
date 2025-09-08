@@ -4,7 +4,7 @@ from typing import Any
 from pydantic import BaseModel
 from pytest import fixture
 
-from agent_framework import AITool, ChatMessage, ai_function
+from agent_framework import ChatMessage, ToolProtocol, ai_function
 from agent_framework.telemetry import ModelDiagnosticSettings
 
 
@@ -14,8 +14,8 @@ def chat_history() -> list[ChatMessage]:
 
 
 @fixture
-def ai_tool() -> AITool:
-    """Returns a generic AITool."""
+def ai_tool() -> ToolProtocol:
+    """Returns a generic ToolProtocol."""
 
     class GenericTool(BaseModel):
         name: str
@@ -32,8 +32,8 @@ def ai_tool() -> AITool:
 
 
 @fixture
-def ai_function_tool() -> AITool:
-    """Returns a executable AITool."""
+def ai_function_tool() -> ToolProtocol:
+    """Returns a executable ToolProtocol."""
 
     @ai_function
     def simple_function(x: int, y: int) -> int:

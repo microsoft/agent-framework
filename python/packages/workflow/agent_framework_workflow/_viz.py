@@ -1,15 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Workflow visualization module using graphviz."""
-
 import hashlib
 import re
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Literal
 
 from ._edge import FanInEdgeGroup
 from ._workflow import Workflow
+
+# Import of WorkflowExecutor is performed lazily inside methods to avoid cycles
+
+"""Workflow visualization module using graphviz."""
 
 
 class WorkflowViz:
@@ -35,34 +38,11 @@ class WorkflowViz:
         lines.append("  edge [color=black, arrowhead=vee];")
         lines.append("")
 
-        # Add start executor with special styling
-        start_executor_id = self._workflow.start_executor_id
-        lines.append(f'  "{start_executor_id}" [fillcolor=lightgreen, label="{start_executor_id}\\n(Start)"];')
+        # Emit the top-level workflow nodes/edges
+        self._emit_workflow_digraph(self._workflow, lines, indent="  ")
 
-        # Add all other executors
-        for executor_id in self._workflow.executors:
-            if executor_id != start_executor_id:
-                lines.append(f'  "{executor_id}" [label="{executor_id}"];')
-
-        # Build shared structures
-        fan_in_nodes = self._compute_fan_in_descriptors()  # (node_id, sources, target)
-        normal_edges = self._compute_normal_edges()  # (src, tgt, is_conditional)
-
-        if fan_in_nodes:
-            lines.append("")
-            for node_id, _, _ in fan_in_nodes:
-                lines.append(f'  "{node_id}" [shape=ellipse, fillcolor=lightgoldenrod, label="fan-in"];')
-
-        # Route fan-in via intermediate nodes
-        for node_id, sources, target in fan_in_nodes:
-            for src in sources:
-                lines.append(f'  "{src}" -> "{node_id}";')
-            lines.append(f'  "{node_id}" -> "{target}";')
-
-        # Draw normal edges
-        for src, tgt, is_cond in normal_edges:
-            edge_attr = ' [style=dashed, label="conditional"]' if is_cond else ""
-            lines.append(f'  "{src}" -> "{tgt}"{edge_attr};')
+        # Emit sub-workflows hosted by WorkflowExecutor as nested clusters
+        self._emit_sub_workflows_digraph(self._workflow, lines, indent="  ")
 
         lines.append("}")
         return "\n".join(lines)
@@ -178,46 +158,11 @@ class WorkflowViz:
 
         lines: list[str] = ["flowchart TD"]
 
-        # Nodes
-        start_executor_id = self._workflow.start_executor_id
-        start_id = _san(start_executor_id)
-        # End statements with semicolons for better compatibility and quote labels for special chars
-        lines.append(f'  {start_id}["{start_executor_id} (Start)"];')
+        # Emit top-level workflow
+        self._emit_workflow_mermaid(self._workflow, lines, indent="  ")
 
-        for executor_id in self._workflow.executors:
-            if executor_id == start_executor_id:
-                continue
-            eid = _san(executor_id)
-            lines.append(f'  {eid}["{executor_id}"];')
-
-        # Build shared structures
-        fan_in_nodes_dot = self._compute_fan_in_descriptors()  # uses DOT node ids
-        # Convert DOT-style node ids to Mermaid-safe ones
-        fan_in_nodes: list[tuple[str, list[str], str]] = []
-        for dot_node_id, sources, target in fan_in_nodes_dot:
-            digest = dot_node_id.split("::")[-1]
-            fan_node_id = f"fan_in__{_san(target)}__{digest}"
-            fan_in_nodes.append((fan_node_id, sources, target))
-
-        for fan_node_id, _, _ in fan_in_nodes:
-            # Use double parentheses to make it circular in Mermaid
-            # (Keep this line without a trailing semicolon to match existing tests.)
-            lines.append(f"  {fan_node_id}((fan-in))")
-
-        # Fan-in edges
-        for fan_node_id, sources, target in fan_in_nodes:
-            for s in sources:
-                lines.append(f"  {_san(s)} --> {fan_node_id};")
-            lines.append(f"  {fan_node_id} --> {_san(target)};")
-
-        # Normal edges
-        for src, tgt, is_cond in self._compute_normal_edges():
-            s = _san(src)
-            t = _san(tgt)
-            if is_cond:
-                lines.append(f"  {s} -. conditional .-> {t};")
-            else:
-                lines.append(f"  {s} --> {t};")
+        # Emit sub-workflows as Mermaid subgraphs
+        self._emit_sub_workflows_mermaid(self._workflow, lines, indent="  ")
 
         return "\n".join(lines)
 
@@ -227,13 +172,14 @@ class WorkflowViz:
         sources_sorted = sorted(sources)
         return hashlib.sha256((target + "|" + "|".join(sources_sorted)).encode("utf-8")).hexdigest()[:8]
 
-    def _compute_fan_in_descriptors(self) -> list[tuple[str, list[str], str]]:
+    def _compute_fan_in_descriptors(self, wf: Workflow | None = None) -> list[tuple[str, list[str], str]]:
         """Return list of (node_id, sources, target) for fan-in groups.
 
         node_id is DOT-oriented: fan_in::target::digest
         """
         result: list[tuple[str, list[str], str]] = []
-        for group in self._workflow.edge_groups:
+        workflow = wf or self._workflow
+        for group in workflow.edge_groups:
             if isinstance(group, FanInEdgeGroup):
                 target = group.target_executor_ids[0]
                 sources = list(group.source_executor_ids)
@@ -242,15 +188,155 @@ class WorkflowViz:
                 result.append((node_id, sorted(sources), target))
         return result
 
-    def _compute_normal_edges(self) -> list[tuple[str, str, bool]]:
+    def _compute_normal_edges(self, wf: Workflow | None = None) -> list[tuple[str, str, bool]]:
         """Return list of (source_id, target_id, is_conditional) for non-fan-in groups."""
         edges: list[tuple[str, str, bool]] = []
-        for group in self._workflow.edge_groups:
+        workflow = wf or self._workflow
+        for group in workflow.edge_groups:
             if isinstance(group, FanInEdgeGroup):
                 continue
             for edge in group.edges:
                 is_cond = getattr(edge, "_condition", None) is not None
                 edges.append((edge.source_id, edge.target_id, is_cond))
         return edges
+
+    # endregion
+
+    # region Internal emitters (DOT)
+
+    def _emit_workflow_digraph(self, wf: Workflow, lines: list[str], indent: str, ns: str | None = None) -> None:
+        """Emit DOT nodes/edges for the given workflow.
+
+        If ns (namespace) is provided, node ids are prefixed with f"{ns}/" for uniqueness,
+        but labels remain the original executor ids.
+        """
+
+        def map_id(x: str) -> str:
+            return f"{ns}/{x}" if ns else x
+
+        # Nodes
+        start_executor_id = wf.start_executor_id
+        lines.append(
+            f'{indent}"{map_id(start_executor_id)}" [fillcolor=lightgreen, label="{start_executor_id}\\n(Start)"];'
+        )
+        for executor_id in wf.executors:
+            if executor_id != start_executor_id:
+                lines.append(f'{indent}"{map_id(executor_id)}" [label="{executor_id}"];')
+
+        # Fan-in nodes
+        fan_in_nodes = self._compute_fan_in_descriptors(wf)
+        if fan_in_nodes:
+            lines.append("")
+            for node_id, _, _ in fan_in_nodes:
+                lines.append(f'{indent}"{map_id(node_id)}" [shape=ellipse, fillcolor=lightgoldenrod, label="fan-in"];')
+
+        # Fan-in edges
+        for node_id, sources, target in fan_in_nodes:
+            for src in sources:
+                lines.append(f'{indent}"{map_id(src)}" -> "{map_id(node_id)}";')
+            lines.append(f'{indent}"{map_id(node_id)}" -> "{map_id(target)}";')
+
+        # Normal edges
+        for src, tgt, is_cond in self._compute_normal_edges(wf):
+            edge_attr = ' [style=dashed, label="conditional"]' if is_cond else ""
+            lines.append(f'{indent}"{map_id(src)}" -> "{map_id(tgt)}"{edge_attr};')
+
+    def _emit_sub_workflows_digraph(self, wf: Workflow, lines: list[str], indent: str) -> None:
+        """Emit DOT subgraphs for any WorkflowExecutor instances found in the workflow."""
+        # Lazy import to avoid any potential import cycles
+        try:
+            from ._executor import WorkflowExecutor  # type: ignore
+        except ImportError:  # pragma: no cover - best-effort; if unavailable, skip subgraphs
+            return
+
+        for exec_id, exec_obj in wf.executors.items():
+            if isinstance(exec_obj, WorkflowExecutor) and hasattr(exec_obj, "workflow") and exec_obj.workflow:
+                subgraph_id = f"cluster_{uuid.uuid5(uuid.NAMESPACE_OID, exec_id).hex[:8]}"
+                lines.append(f"{indent}subgraph {subgraph_id} {{")
+                lines.append(f'{indent}  label="sub-workflow: {exec_id}";')
+                lines.append(f"{indent}  style=dashed;")
+
+                # Emit the nested workflow inside this cluster using a namespace
+                ns = exec_id
+                self._emit_workflow_digraph(exec_obj.workflow, lines, indent=f"{indent}  ", ns=ns)
+
+                # Recurse into deeper nested sub-workflows
+                self._emit_sub_workflows_digraph(exec_obj.workflow, lines, indent=f"{indent}  ")
+
+                lines.append(f"{indent}}}")
+
+    # endregion
+
+    # region Internal emitters (Mermaid)
+
+    def _emit_workflow_mermaid(self, wf: Workflow, lines: list[str], indent: str, ns: str | None = None) -> None:
+        def _san(s: str) -> str:
+            s2 = re.sub(r"[^0-9A-Za-z_]", "_", s)
+            if not s2 or not s2[0].isalpha():
+                s2 = f"n_{s2}"
+            return s2
+
+        def map_id(x: str) -> str:
+            if ns:
+                return f"{_san(ns)}__{_san(x)}"
+            return _san(x)
+
+        # Nodes
+        start_executor_id = wf.start_executor_id
+        lines.append(f'{indent}{map_id(start_executor_id)}["{start_executor_id} (Start)"];')
+        for executor_id in wf.executors:
+            if executor_id == start_executor_id:
+                continue
+            lines.append(f'{indent}{map_id(executor_id)}["{executor_id}"];')
+
+        # Fan-in nodes
+        fan_in_nodes_dot = self._compute_fan_in_descriptors(wf)
+        fan_in_nodes: list[tuple[str, list[str], str]] = []
+        for dot_node_id, sources, target in fan_in_nodes_dot:
+            digest = dot_node_id.split("::")[-1]
+            base = f"{target}__{digest}"
+            fan_node_id = f"fan_in__{_san(ns) + '__' if ns else ''}{_san(base)}"
+            fan_in_nodes.append((fan_node_id, sources, target))
+
+        for fan_node_id, _, _ in fan_in_nodes:
+            # Keep this line without trailing semicolon to match existing tests
+            lines.append(f"{indent}{fan_node_id}((fan-in))")
+
+        # Fan-in edges
+        for fan_node_id, sources, target in fan_in_nodes:
+            for s in sources:
+                lines.append(f"{indent}{map_id(s)} --> {fan_node_id};")
+            lines.append(f"{indent}{fan_node_id} --> {map_id(target)};")
+
+        # Normal edges
+        for src, tgt, is_cond in self._compute_normal_edges(wf):
+            s = map_id(src)
+            t = map_id(tgt)
+            if is_cond:
+                lines.append(f"{indent}{s} -. conditional .-> {t};")
+            else:
+                lines.append(f"{indent}{s} --> {t};")
+
+    def _emit_sub_workflows_mermaid(self, wf: Workflow, lines: list[str], indent: str) -> None:
+        try:
+            from ._executor import WorkflowExecutor  # type: ignore
+        except ImportError:  # pragma: no cover
+            return
+
+        def _san(s: str) -> str:
+            s2 = re.sub(r"[^0-9A-Za-z_]", "_", s)
+            if not s2 or not s2[0].isalpha():
+                s2 = f"n_{s2}"
+            return s2
+
+        for exec_id, exec_obj in wf.executors.items():
+            if isinstance(exec_obj, WorkflowExecutor) and hasattr(exec_obj, "workflow") and exec_obj.workflow:
+                sg_id = _san(exec_id)
+                lines.append(f"{indent}subgraph {sg_id}")
+                # Render nested workflow within this subgraph using namespacing
+                self._emit_workflow_mermaid(exec_obj.workflow, lines, indent=f"{indent}  ", ns=exec_id)
+                # Recurse into deeper sub-workflows
+                self._emit_sub_workflows_mermaid(exec_obj.workflow, lines, indent=f"{indent}  ")
+                lines.append(f"{indent}end")
 
     # endregion

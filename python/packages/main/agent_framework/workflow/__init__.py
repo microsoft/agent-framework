@@ -7,6 +7,8 @@ PACKAGE_NAME = "agent_framework_workflow"
 PACKAGE_EXTRA = "workflow"
 _IMPORTS = [
     "Executor",
+    "FunctionExecutor",
+    "executor",
     "WorkflowContext",
     "__version__",
     "events",
@@ -19,7 +21,7 @@ _IMPORTS = [
     "WorkflowEvent",
     "WorkflowStartedEvent",
     "AgentRunEvent",
-    "AgentRunStreamingEvent",
+    "AgentRunUpdateEvent",
     "handler",
     "AgentExecutor",
     "MagenticAgentDeltaEvent",
@@ -35,6 +37,7 @@ _IMPORTS = [
     "RequestInfoMessage",
     "WorkflowRunResult",
     "Workflow",
+    "WorkflowAgent",
     "WorkflowViz",
     "FileCheckpointStorage",
     "InMemoryCheckpointStorage",

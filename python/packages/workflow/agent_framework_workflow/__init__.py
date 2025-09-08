@@ -2,6 +2,7 @@
 
 import importlib.metadata
 
+from ._agent import WorkflowAgent
 from ._callback import (
     AgentDeltaEvent,
     AgentMessageEvent,
@@ -22,7 +23,7 @@ from ._const import (
 from ._edge import Case, Default
 from ._events import (
     AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorEvent,
     ExecutorInvokeEvent,
@@ -45,6 +46,7 @@ from ._executor import (
     handler,
     intercepts_request,
 )
+from ._function_executor import FunctionExecutor, executor
 from ._handoff import HandoffBuilder
 from ._magentic import (
     MagenticAgentDeltaEvent,
@@ -100,6 +102,7 @@ __all__ = [
     "AgentMessageEvent",
     "AgentRunEvent",
     "AgentRunStreamingEvent",
+    "AgentRunUpdateEvent",
     "CallbackEvent",
     "CallbackMode",
     "Case",
@@ -112,6 +115,7 @@ __all__ = [
     "ExecutorInvokeEvent",
     "FileCheckpointStorage",
     "FinalResultEvent",
+    "FunctionExecutor",
     "GraphConnectivityError",
     "HandoffBuilder",
     "InMemoryCheckpointStorage",
@@ -148,6 +152,7 @@ __all__ = [
     "TypeCompatibilityError",
     "ValidationTypeEnum",
     "Workflow",
+    "WorkflowAgent",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCompletedEvent",
@@ -159,6 +164,7 @@ __all__ = [
     "WorkflowValidationError",
     "WorkflowViz",
     "__version__",
+    "executor",
     "handler",
     "intercepts_request",
     "validate_workflow_graph",
@@ -171,3 +177,5 @@ import contextlib
 with contextlib.suppress(AttributeError, TypeError, ValueError):
     # Rebuild WorkflowExecutor to resolve Workflow forward reference
     WorkflowExecutor.model_rebuild()
+    # Rebuild WorkflowAgent to resolve Workflow forward reference
+    WorkflowAgent.model_rebuild()

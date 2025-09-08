@@ -10,15 +10,15 @@ from openai import BadRequestError
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
-    AITool,
-    ChatClient,
-    ChatClientAgent,
+    ChatAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     HostedWebSearchTool,
     TextContent,
+    ToolProtocol,
     ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
@@ -39,7 +39,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     open_ai_chat_completion = OpenAIChatClient()
 
     assert open_ai_chat_completion.ai_model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    assert isinstance(open_ai_chat_completion, ChatClient)
+    assert isinstance(open_ai_chat_completion, ChatClientProtocol)
 
 
 def test_init_validation_fail() -> None:
@@ -54,7 +54,7 @@ def test_init_ai_model_id_constructor(openai_unit_test_env: dict[str, str]) -> N
     open_ai_chat_completion = OpenAIChatClient(ai_model_id=ai_model_id)
 
     assert open_ai_chat_completion.ai_model_id == ai_model_id
-    assert isinstance(open_ai_chat_completion, ChatClient)
+    assert isinstance(open_ai_chat_completion, ChatClientProtocol)
 
 
 def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
@@ -66,7 +66,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
     )
 
     assert open_ai_chat_completion.ai_model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    assert isinstance(open_ai_chat_completion, ChatClient)
+    assert isinstance(open_ai_chat_completion, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
     for key, value in default_headers.items():
@@ -154,15 +154,15 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     """Test that unsupported tool types are handled correctly."""
     client = OpenAIChatClient()
 
-    # Create a mock AITool that's not an AIFunction
-    unsupported_tool = MagicMock(spec=AITool)
+    # Create a mock ToolProtocol that's not an AIFunction
+    unsupported_tool = MagicMock(spec=ToolProtocol)
     unsupported_tool.__class__.__name__ = "UnsupportedAITool"
 
-    # This should ignore the unsupported AITool and return empty list
+    # This should ignore the unsupported ToolProtocol and return empty list
     result = client._chat_to_tool_spec([unsupported_tool])  # type: ignore
     assert result == []
 
-    # Also test with a non-AITool that should be converted to dict
+    # Also test with a non-ToolProtocol that should be converted to dict
     dict_tool = {"type": "function", "name": "test"}
     result = client._chat_to_tool_spec([dict_tool])  # type: ignore
     assert result == [dict_tool]
@@ -190,7 +190,7 @@ async def test_openai_chat_completion_response() -> None:
     """Test OpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient()
 
-    assert isinstance(openai_chat_client, ChatClient)
+    assert isinstance(openai_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -217,7 +217,7 @@ async def test_openai_chat_completion_response_tools() -> None:
     """Test OpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient()
 
-    assert isinstance(openai_chat_client, ChatClient)
+    assert isinstance(openai_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
@@ -239,7 +239,7 @@ async def test_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient()
 
-    assert isinstance(openai_chat_client, ChatClient)
+    assert isinstance(openai_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -274,7 +274,7 @@ async def test_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient()
 
-    assert isinstance(openai_chat_client, ChatClient)
+    assert isinstance(openai_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
@@ -301,7 +301,7 @@ async def test_openai_chat_client_web_search() -> None:
     # Currently only a select few models support web search tool calls
     openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
 
-    assert isinstance(openai_chat_client, ChatClient)
+    assert isinstance(openai_chat_client, ChatClientProtocol)
 
     # Test that the client will use the web search tool
     response = await openai_chat_client.get_response(
@@ -340,7 +340,7 @@ async def test_openai_chat_client_web_search() -> None:
 async def test_openai_chat_client_web_search_streaming() -> None:
     openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
 
-    assert isinstance(openai_chat_client, ChatClient)
+    assert isinstance(openai_chat_client, ChatClientProtocol)
 
     # Test that the client will use the web search tool
     response = openai_chat_client.get_streaming_response(
@@ -392,7 +392,7 @@ async def test_openai_chat_client_web_search_streaming() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_basic_run():
     """Test OpenAI chat client agent basic run functionality with OpenAIChatClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     ) as agent:
         # Test basic run
@@ -407,12 +407,12 @@ async def test_openai_chat_client_agent_basic_run():
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_basic_run_streaming():
     """Test OpenAI chat client agent basic streaming functionality with OpenAIChatClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert isinstance(chunk, AgentRunResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
@@ -424,7 +424,7 @@ async def test_openai_chat_client_agent_basic_run_streaming():
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_thread_persistence():
     """Test OpenAI chat client agent thread persistence across runs with OpenAIChatClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
@@ -451,7 +451,7 @@ async def test_openai_chat_client_agent_existing_thread():
     # First conversation - capture the thread
     preserved_thread = None
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
@@ -467,7 +467,7 @@ async def test_openai_chat_client_agent_existing_thread():
 
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
-        async with ChatClientAgent(
+        async with ChatAgent(
             chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
@@ -483,7 +483,7 @@ async def test_openai_chat_client_agent_existing_thread():
 async def test_openai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Chat Client."""
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIChatClient(ai_model_id="gpt-4.1"),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
@@ -518,7 +518,7 @@ async def test_openai_chat_client_run_level_tool_isolation():
         call_count += 1
         return f"The weather in {location} is sunny and 72°F."
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIChatClient(ai_model_id="gpt-4.1"),
         instructions="You are a helpful assistant.",
     ) as agent:

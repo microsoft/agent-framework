@@ -76,10 +76,16 @@
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.1.151" />
     <PackageVersion Include="A2A" Version="0.1.0-preview.2" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.1.0-preview.2" />
+    <PackageVersion Include="ModelContextProtocol" Version="0.3.0-preview.4" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.0" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.74.1" />
+    <!-- Workflows -->
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="2025.8.2-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="2025.8.2-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="2025.8.2-1" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250625-1002" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.5.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

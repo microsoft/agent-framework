@@ -22,7 +22,7 @@ from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, create_model
 
 from ._tools import AIFunction
-from ._types import AIContents, ChatMessage, ChatRole, DataContent, TextContent, UriContent
+from ._types import ChatMessage, Contents, DataContent, Role, TextContent, UriContent
 from .exceptions import ToolException, ToolExecutionException
 
 if sys.version_info >= (3, 11):
@@ -31,7 +31,7 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
-    from ._clients import ChatClient
+    from ._clients import ChatClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,10 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
 }
 
 __all__ = [
-    "McpSseTools",
-    "McpStdioTool",
-    "McpStreamableHttpTool",
-    "McpWebsocketTool",
+    "MCPSseTools",
+    "MCPStdioTool",
+    "MCPStreamableHTTPTool",
+    "MCPWebsocketTool",
 ]
 
 
@@ -61,7 +61,7 @@ def _mcp_prompt_message_to_chat_message(
 ) -> ChatMessage:
     """Convert a MCP container type to a Agent Framework type."""
     return ChatMessage(
-        role=ChatRole(value=mcp_type.role),
+        role=Role(value=mcp_type.role),
         contents=[_mcp_type_to_ai_content(mcp_type.content)],  # type: ignore[call-arg]
         raw_representation=mcp_type,
     )
@@ -69,14 +69,14 @@ def _mcp_prompt_message_to_chat_message(
 
 def _mcp_call_tool_result_to_ai_contents(
     mcp_type: types.CallToolResult,
-) -> list[AIContents]:
+) -> list[Contents]:
     """Convert a MCP container type to a Agent Framework type."""
     return [_mcp_type_to_ai_content(item) for item in mcp_type.content]
 
 
 def _mcp_type_to_ai_content(
     mcp_type: types.ImageContent | types.TextContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink,
-) -> AIContents:
+) -> Contents:
     """Convert a MCP type to a Agent Framework type."""
     match mcp_type:
         case types.TextContent():
@@ -105,9 +105,9 @@ def _mcp_type_to_ai_content(
 
 
 def _ai_content_to_mcp_types(
-    content: AIContents,
+    content: Contents,
 ) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
-    """Convert a AIContent type to a MCP type."""
+    """Convert a BaseContent type to a MCP type."""
     match content:
         case TextContent():
             return types.TextContent(type="text", text=content.text)
@@ -223,7 +223,7 @@ def _normalize_mcp_name(name: str) -> str:
 # region: MCP Plugin
 
 
-class McpTool:
+class MCPTool:
     """Base class with the MCP logic."""
 
     def __init__(
@@ -235,7 +235,7 @@ class McpTool:
         load_prompts: bool = True,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
-        chat_client: "ChatClient | None" = None,
+        chat_client: "ChatClientProtocol | None" = None,
     ) -> None:
         """Initialize the MCP Plugin Base."""
         self.name = name
@@ -250,7 +250,7 @@ class McpTool:
         self.functions: list[AIFunction[Any, Any]] = []
 
     def __str__(self) -> str:
-        return f"McpTool(name={self.name}, description={self.description})"
+        return f"MCPTool(name={self.name}, description={self.description})"
 
     async def connect(self) -> None:
         """Connect to the MCP server."""
@@ -424,7 +424,7 @@ class McpTool:
             local_name = _normalize_mcp_name(tool.name)
             input_model = _get_input_model_from_mcp_tool(tool)
             # Create AIFunctions out of each tool
-            func: AIFunction[BaseModel, list[AIContents]] = AIFunction(
+            func: AIFunction[BaseModel, list[Contents]] = AIFunction(
                 func=partial(self.call_tool, tool.name),
                 name=local_name,
                 description=tool.description or "",
@@ -442,7 +442,7 @@ class McpTool:
         """Get an MCP client."""
         pass
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[AIContents]:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Contents]:
         """Call a tool with the given arguments."""
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
@@ -494,7 +494,7 @@ class McpTool:
 # region: MCP Plugin Implementations
 
 
-class McpStdioTool(McpTool):
+class MCPStdioTool(MCPTool):
     """MCP stdio server configuration."""
 
     def __init__(
@@ -511,7 +511,7 @@ class McpStdioTool(McpTool):
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         encoding: str | None = None,
-        chat_client: "ChatClient | None" = None,
+        chat_client: "ChatClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio plugin.
@@ -567,7 +567,7 @@ class McpStdioTool(McpTool):
         return stdio_client(server=StdioServerParameters(**args))
 
 
-class McpSseTools(McpTool):
+class MCPSseTools(MCPTool):
     """MCP sse server configuration."""
 
     def __init__(
@@ -584,7 +584,7 @@ class McpSseTools(McpTool):
         headers: dict[str, Any] | None = None,
         timeout: float | None = None,
         sse_read_timeout: float | None = None,
-        chat_client: "ChatClient | None" = None,
+        chat_client: "ChatClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP sse plugin.
@@ -643,7 +643,7 @@ class McpSseTools(McpTool):
         return sse_client(**args)
 
 
-class McpStreamableHttpTool(McpTool):
+class MCPStreamableHTTPTool(MCPTool):
     """MCP streamable http server configuration."""
 
     def __init__(
@@ -661,7 +661,7 @@ class McpStreamableHttpTool(McpTool):
         timeout: float | None = None,
         sse_read_timeout: float | None = None,
         terminate_on_close: bool | None = None,
-        chat_client: "ChatClient | None" = None,
+        chat_client: "ChatClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable http plugin.
@@ -723,7 +723,7 @@ class McpStreamableHttpTool(McpTool):
         return streamablehttp_client(**args)
 
 
-class McpWebsocketTool(McpTool):
+class MCPWebsocketTool(MCPTool):
     """MCP websocket server configuration."""
 
     def __init__(
@@ -737,7 +737,7 @@ class McpWebsocketTool(McpTool):
         session: ClientSession | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
-        chat_client: "ChatClient | None" = None,
+        chat_client: "ChatClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP websocket plugin.
