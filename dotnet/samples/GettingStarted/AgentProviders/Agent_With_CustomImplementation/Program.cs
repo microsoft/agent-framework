@@ -72,7 +72,7 @@ namespace SampleApp
 
         private static IEnumerable<ChatMessage> CloneAndToUpperCase(IReadOnlyCollection<ChatMessage> messages, string agentName) => messages.Select(x =>
             {
-                // Clone the message and update it's author to be the agent.
+                // Clone the message and update its author to be the agent.
                 var messageClone = x.Clone();
                 messageClone.Role = ChatRole.Assistant;
                 messageClone.MessageId = Guid.NewGuid().ToString();
