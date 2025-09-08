@@ -129,7 +129,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     public override AgentThread GetNewThread() => this._innerAgent.GetNewThread();
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentRunResponse> RunCoreAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -161,7 +161,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingCoreAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
