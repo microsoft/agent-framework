@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from ._clients import ChatClientProtocol
 from ._mcp import MCPTool
-from ._memory import AggregateContextProvider, Context
+from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import ToolProtocol
@@ -135,7 +135,7 @@ class BaseAgent(AFBaseModel):
        name: The name of the agent, can be None.
        description: The description of the agent.
        display_name: The display name of the agent, which is either the name or id.
-
+       context_providers: The collection of multiple context providers to include during agent invocation.
     """
 
     id: str = Field(default_factory=lambda: str(uuid4()))
@@ -213,6 +213,7 @@ class ChatAgent(BaseAgent):
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
+        context_providers: list[ContextProvider] | AggregateContextProvider | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a ChatAgent.
@@ -247,10 +248,15 @@ class ChatAgent(BaseAgent):
             additional_properties: additional properties to include in the request.
             chat_message_store_factory: factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
+            context_providers: The collection of multiple context providers to include during agent invocation.
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
         kwargs.update(additional_properties or {})
+
+        aggregate_context_providers = (
+            AggregateContextProvider(context_providers) if isinstance(context_providers, list) else context_providers
+        )
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
@@ -260,6 +266,7 @@ class ChatAgent(BaseAgent):
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_message_store_factory": chat_message_store_factory,
+            "context_providers": aggregate_context_providers,
             "chat_options": ChatOptions(
                 ai_model_id=model,
                 frequency_penalty=frequency_penalty,

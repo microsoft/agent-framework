@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import uuid
 
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.mem0 import Mem0Provider
@@ -22,21 +23,23 @@ async def main() -> None:
     """Example of memory usage with Mem0 context provider."""
     print("=== Mem0 Context Provider Example ===")
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # Each record in Mem0 should be associated with agent_id or user_id or application_id or thread_id.
+    # In this example, we associate Mem0 records with user_id.
+    user_id = str(uuid.uuid4())
+
+    # For Azure authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
+    # For Mem0 authentication, set Mem0 API key via "api_key" parameter or MEM0_API_KEY environment variable.
     async with (
         AzureCliCredential() as credential,
+        Mem0Provider(user_id=user_id) as context_provider,
         FoundryChatClient(async_credential=credential).create_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
+            context_providers=[context_provider],
         ) as agent,
-        # Set Mem0 API key via "api_key" parameter or MEM0_API_KEY environment variable.
-        Mem0Provider(agent_id=agent.id) as context_provider,
     ):
-        # Add Mem0 context provider
-        agent.context_providers.add(context_provider)
-
         # First ask the agent to retrieve a company report with no previous context.
         # The agent will not be able to invoke the tool, since it doesn't know
         # the company code or the report format, so it should ask for clarification.

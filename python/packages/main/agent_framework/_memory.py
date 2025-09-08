@@ -30,6 +30,13 @@ class Context(AFBaseModel):
 
 
 class ContextProvider(AFBaseModel, ABC):
+    """Base class for all context providers.
+
+    A context provider is a component that can be used to enhance the AI's context management.
+    It can listen to changes in the conversation and provide additional context to the AI model
+    just before invocation.
+    """
+
     async def thread_created(self, thread_id: str | None) -> None:
         """Called just after a new thread is created.
 
@@ -70,7 +77,13 @@ class ContextProvider(AFBaseModel, ABC):
 
 
 class AggregateContextProvider(ContextProvider):
+    """A ContextProvider that contains multiple context providers.
+
+    It delegates events to multiple context providers and aggregates responses from those events before returning.
+    """
+
     providers: list[ContextProvider]
+    """List of registered context providers."""
 
     def __init__(self, context_providers: Sequence[ContextProvider] | None = None) -> None:
         """Initialize AggregateContextProvider with context providers.

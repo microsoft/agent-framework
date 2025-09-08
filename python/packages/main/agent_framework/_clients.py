@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runt
 from pydantic import BaseModel
 
 from ._logging import get_logger
+from ._memory import AggregateContextProvider, ContextProvider
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import AIFunction, ToolProtocol
@@ -639,6 +640,7 @@ class BaseChatClient(AFBaseModel, ABC):
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
+        context_providers: list[ContextProvider] | AggregateContextProvider | None = None,
         **kwargs: Any,
     ) -> "ChatAgent":
         """Create an agent with the given name and instructions.
@@ -649,6 +651,7 @@ class BaseChatClient(AFBaseModel, ABC):
             tools: Optional list of tools to associate with the agent.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
+            context_providers: The collection of multiple context providers to include during agent invocation.
             **kwargs: Additional keyword arguments to pass to the agent.
                 See ChatAgent for all the available options.
 
@@ -663,6 +666,7 @@ class BaseChatClient(AFBaseModel, ABC):
             instructions=instructions,
             tools=tools,
             chat_message_store_factory=chat_message_store_factory,
+            context_providers=context_providers,
             **kwargs,
         )
 
