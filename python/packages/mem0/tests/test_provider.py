@@ -4,7 +4,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agent_framework import AIContext, ChatMessage, Role
+from agent_framework import ChatMessage, Context, Role
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.mem0 import Mem0Provider
 
@@ -308,7 +308,7 @@ class TestMem0ProviderModelInvoking:
         assert call_args.kwargs["query"] == "What's the weather?"
         assert call_args.kwargs["user_id"] == "user123"
 
-        assert isinstance(context, AIContext)
+        assert isinstance(context, Context)
         expected_instructions = (
             "## Memories\nConsider the following memories when answering user questions:\n"
             "User likes outdoor activities\nUser lives in Seattle"
@@ -369,7 +369,7 @@ class TestMem0ProviderModelInvoking:
 
         context = await provider.model_invoking(message)
 
-        assert isinstance(context, AIContext)
+        assert isinstance(context, Context)
         assert context.instructions is None
 
     async def test_model_invoking_filters_empty_message_text(self, mock_mem0_client: AsyncMock):

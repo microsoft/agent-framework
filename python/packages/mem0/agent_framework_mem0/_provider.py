@@ -4,7 +4,7 @@ import sys
 from collections.abc import MutableSequence, Sequence
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import AIContext, AIContextProvider, ChatMessage
+from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.exceptions import ServiceInitializationError
 from pydantic import PrivateAttr
 
@@ -17,7 +17,7 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 
-class Mem0Provider(AIContextProvider):
+class Mem0Provider(ContextProvider):
     DEFAULT_CONTEXT_PROMPT: str = "## Memories\nConsider the following memories when answering user questions:"
 
     _mem0_client: "AsyncMemoryClient"  # type: ignore[no-any-unimported]
@@ -115,14 +115,14 @@ class Mem0Provider(AIContextProvider):
                 metadata={"application_id": self._application_id},
             )
 
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> AIContext:
+    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called before invoking the AI model to provide context.
 
         Args:
             messages: List of new messages in the thread.
 
         Returns:
-            AIContext: Context object containing instructions with memories.
+            Context: Context object containing instructions with memories.
         """
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
@@ -138,7 +138,7 @@ class Mem0Provider(AIContextProvider):
 
         instructions = f"{self._context_prompt}\n{line_separated_memories}" if line_separated_memories else None
 
-        return AIContext(instructions=instructions)
+        return Context(instructions=instructions)
 
     def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
         """Validates that a new thread ID doesn't conflict with an existing one when scoped.

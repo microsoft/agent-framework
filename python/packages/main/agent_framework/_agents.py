@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from ._clients import ChatClientProtocol
 from ._mcp import MCPTool
-from ._memory import AggregateAIContextProvider, AIContext
+from ._memory import AggregateContextProvider, Context
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import ToolProtocol
@@ -141,7 +141,7 @@ class BaseAgent(AFBaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
-    context_providers: AggregateAIContextProvider = Field(default_factory=AggregateAIContextProvider)
+    context_providers: AggregateContextProvider = Field(default_factory=AggregateContextProvider)
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -382,9 +382,9 @@ class ChatAgent(BaseAgent):
                 will only be passed to functions that are called.
         """
         input_messages = self._normalize_messages(messages)
-        ai_context = await self.context_providers.model_invoking(input_messages)
+        context = await self.context_providers.model_invoking(input_messages)
         thread, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread, ai_context=ai_context, input_messages=input_messages
+            thread=thread, context=context, input_messages=input_messages
         )
         agent_name = self._get_agent_name()
 
@@ -509,9 +509,9 @@ class ChatAgent(BaseAgent):
 
         """
         input_messages = self._normalize_messages(messages)
-        ai_context = await self.context_providers.model_invoking(input_messages)
+        context = await self.context_providers.model_invoking(input_messages)
         thread, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread, ai_context=ai_context, input_messages=input_messages
+            thread=thread, context=context, input_messages=input_messages
         )
         agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
@@ -623,14 +623,14 @@ class ChatAgent(BaseAgent):
         self,
         *,
         thread: AgentThread | None,
-        ai_context: AIContext,
+        context: Context,
         input_messages: list[ChatMessage] | None = None,
     ) -> tuple[AgentThread, list[ChatMessage]]:
         """Prepare the messages for agent execution.
 
         Args:
             thread: The conversation thread.
-            ai_context: AI context to include in messages.
+            context: Context to include in messages.
             input_messages: Messages to process.
 
         Returns:
@@ -644,8 +644,8 @@ class ChatAgent(BaseAgent):
         messages: list[ChatMessage] = []
         if self.instructions:
             messages.append(ChatMessage(role=Role.SYSTEM, text=self.instructions))
-        if ai_context.instructions:
-            messages.append(ChatMessage(role=Role.SYSTEM, text=ai_context.instructions))
+        if context.instructions:
+            messages.append(ChatMessage(role=Role.SYSTEM, text=context.instructions))
         if thread.message_store:
             messages.extend(await thread.message_store.list_messages() or [])
         messages.extend(input_messages or [])

@@ -1,19 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, MutableSequence, Sequence
+from collections.abc import MutableSequence, Sequence
 
 from ._pydantic import AFBaseModel
 from ._types import ChatMessage
 
-# region AIContext
+# region Context
 
 
-class AIContext(AFBaseModel):
-    """A class containing any context that should be provided to the AI model as supplied by an AIContextProvider.
+class Context(AFBaseModel):
+    """A class containing any context that should be provided to the AI model as supplied by an ContextProvider.
 
-    Each AIContextProvider has the ability to provide its own context for each invocation.
-    The AIContext class contains the additional context supplied by the AIContextProvider.
+    Each ContextProvider has the ability to provide its own context for each invocation.
+    The Context class contains the additional context supplied by the ContextProvider.
     This context will be combined with context supplied by other providers before being passed to the AI model.
     This context is per invocation, and will not be stored as part of the chat history.
     """
@@ -25,10 +25,10 @@ class AIContext(AFBaseModel):
     """
 
 
-# region AIContextProvider
+# region ContextProvider
 
 
-class AIContextProvider(AFBaseModel, ABC):
+class ContextProvider(AFBaseModel, ABC):
     async def thread_created(self, thread_id: str | None) -> None:
         """Called just after a new thread is created.
 
@@ -53,7 +53,7 @@ class AIContextProvider(AFBaseModel, ABC):
         pass
 
     @abstractmethod
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> AIContext:
+    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called just before the Model/Agent/etc. is invoked.
 
         Implementers can load any additional context required at this time,
@@ -65,21 +65,24 @@ class AIContextProvider(AFBaseModel, ABC):
         pass
 
 
-class AggregateAIContextProvider(AIContextProvider):
-    def __init__(self, context_providers: Iterable[AIContextProvider] | None = None) -> None:
-        """Initialize AggregateAIContextProvider with context providers.
+# region AggregateContextProvider
+
+
+class AggregateContextProvider(ContextProvider):
+    def __init__(self, context_providers: Sequence[ContextProvider] | None = None) -> None:
+        """Initialize AggregateContextProvider with context providers.
 
         Args:
             context_providers: Context providers to add.
         """
-        self._providers: list[AIContextProvider] = list(context_providers or [])
+        self._providers: list[ContextProvider] = list(context_providers or [])
 
     @property
-    def providers(self) -> list[AIContextProvider]:
+    def providers(self) -> list[ContextProvider]:
         """Returns the list of registered context providers."""
         return self._providers
 
-    def add(self, context_provider: AIContextProvider) -> None:
+    def add(self, context_provider: ContextProvider) -> None:
         """Adds new context provider.
 
         Args:
@@ -95,10 +98,8 @@ class AggregateAIContextProvider(AIContextProvider):
         for x in self._providers:
             await x.messages_adding(thread_id, new_messages)
 
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> AIContext:
+    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         sub_contexts = [await x.model_invoking(messages) for x in self._providers]
-        combined_context = AIContext()
-        combined_context.instructions = "\n".join([
-            ctx.instructions for ctx in sub_contexts if ctx.instructions and ctx.instructions.strip()
-        ])
+        combined_context = Context()
+        combined_context.instructions = "\n".join([ctx.instructions for ctx in sub_contexts if ctx.instructions])
         return combined_context
