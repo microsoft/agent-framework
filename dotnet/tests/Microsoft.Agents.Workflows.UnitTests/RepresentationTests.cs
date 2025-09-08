@@ -64,7 +64,7 @@ public class RepresentationTests
         await RunExecutorishTest(new TestAgent());
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
-        await RunExecutorishTest(function.Configure("FunctionExecutor"));
+        await RunExecutorishTest(function.AsExecutor("FunctionExecutor"));
 
         if (Enum.GetValues(typeof(ExecutorIsh.Type)).Length > testsRun + 1)
         {

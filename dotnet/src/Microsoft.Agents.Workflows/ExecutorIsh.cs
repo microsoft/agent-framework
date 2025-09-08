@@ -30,7 +30,7 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="id">An id for the executor to be instantiated.</param>
     /// <param name="options">An optional parameter specifying the options.</param>
     /// <returns>An ExecutorIsh instance that resolves to the result of the factory call when messages get sent to it.</returns>
-    public static ExecutorIsh Configure<TExecutor, TOptions>(this Func<Config<TOptions>, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
+    public static ExecutorIsh ConfigureFactory<TExecutor, TOptions>(this Func<Config<TOptions>, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
         where TExecutor : Executor
         where TOptions : ExecutorOptions
     {
@@ -64,7 +64,7 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh Configure<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null)
+    public static ExecutorIsh AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null)
         => new FunctionExecutor<TInput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
@@ -77,7 +77,7 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh Configure<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null)
+    public static ExecutorIsh AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null)
         => new FunctionExecutor<TInput, TOutput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
 }
 
