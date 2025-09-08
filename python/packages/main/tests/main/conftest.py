@@ -1,16 +1,46 @@
 # Copyright (c) Microsoft. All rights reserved.
-from typing import Any
 
-from pydantic import BaseModel
+import asyncio
+import sys
+from collections.abc import AsyncIterable, MutableSequence
+from typing import Any
+from unittest.mock import patch
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
 from pytest import fixture
 
-from agent_framework import ChatMessage, ToolProtocol, ai_function
-from agent_framework.telemetry import OtelSettings
+from agent_framework import (
+    AgentProtocol,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
+    BaseChatClient,
+    ChatMessage,
+    ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    Role,
+    TextContent,
+    ToolProtocol,
+    ai_function,
+    use_function_invocation,
+)
+from agent_framework.telemetry import OtelSettings, setup_telemetry
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore
+else:
+    from typing_extensions import override  # type: ignore[import]
+# region Chat History
 
 
 @fixture(scope="function")
 def chat_history() -> list[ChatMessage]:
     return []
+
+
+# region Tools
 
 
 @fixture
@@ -19,7 +49,7 @@ def ai_tool() -> ToolProtocol:
 
     class GenericTool(BaseModel):
         name: str
-        description: str | None = None
+        description: str
         additional_properties: dict[str, Any] | None = None
 
         def parameters(self) -> dict[str, Any]:
@@ -44,6 +74,8 @@ def ai_function_tool() -> ToolProtocol:
 
 
 # region Otel Settings fixtures
+
+
 @fixture
 def enabled(request: Any) -> bool:
     """Fixture that returns a boolean indicating if Otel is enabled."""
@@ -60,8 +92,162 @@ def sensitive(request: Any) -> bool:
 def otel_settings(enabled: bool, sensitive: bool) -> OtelSettings:
     """Fixture to set environment variables for OtelSettings."""
 
-    from agent_framework.telemetry import OTEL_SETTINGS, setup_telemetry
+    from agent_framework.telemetry import OTEL_SETTINGS
 
     setup_telemetry(enable_otel=enabled, enable_sensitive_data=sensitive)
 
     return OTEL_SETTINGS
+
+
+# region Chat Clients
+class MockChatClient:
+    """Simple implementation of a chat client."""
+
+    def __init__(self) -> None:
+        self.additional_properties: dict[str, Any] = {}
+
+    async def get_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        # Implement the method
+
+        return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+
+    async def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        # Implement the method
+        yield ChatResponseUpdate(text=TextContent(text="test streaming response "), role="assistant")
+        yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
+
+
+class MockBaseChatClient(BaseChatClient):
+    """Mock implementation of the BaseChatClient."""
+
+    run_responses: list[ChatResponse] = Field(default_factory=list)
+    streaming_responses: list[list[ChatResponseUpdate]] = Field(default_factory=list)
+
+    @override
+    async def _inner_get_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Send a chat request to the AI service.
+
+        Args:
+            messages: The chat messages to send.
+            chat_options: The options for the request.
+            kwargs: Any additional keyword arguments.
+
+        Returns:
+            The chat response contents representing the response(s).
+        """
+        if not self.run_responses:
+            return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
+        return self.run_responses.pop(0)
+
+    @override
+    async def _inner_get_streaming_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        if not self.streaming_responses:
+            yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
+            return
+        response = self.streaming_responses.pop(0)
+        for update in response:
+            yield update
+        await asyncio.sleep(0)
+
+
+@fixture
+def enable_function_calling(request: Any) -> bool:
+    return request.param if hasattr(request, "param") else True
+
+
+@fixture
+def max_iterations(request: Any) -> int:
+    return request.param if hasattr(request, "param") else 10
+
+
+@fixture
+def chat_client(enable_function_calling: bool = True, max_iterations: int = 10) -> MockChatClient:
+    if enable_function_calling:
+        with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
+            return use_function_invocation(MockChatClient)()
+    return MockChatClient()
+
+
+@fixture
+def chat_client_base(enable_function_calling: bool, max_iterations: int) -> MockBaseChatClient:
+    if enable_function_calling:
+        with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
+            return use_function_invocation(MockBaseChatClient)()
+    return MockBaseChatClient()
+
+
+# region Agents
+class MockAgentThread(AgentThread):
+    pass
+
+
+# Mock Agent implementation for testing
+class MockAgent(AgentProtocol):
+    @property
+    def id(self) -> str:
+        return str(uuid4())
+
+    @property
+    def name(self) -> str | None:
+        """Returns the name of the agent."""
+        return "Name"
+
+    @property
+    def display_name(self) -> str:
+        """Returns the name of the agent."""
+        return "Display Name"
+
+    @property
+    def description(self) -> str | None:
+        return "Description"
+
+    async def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentRunResponse:
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Response")])])
+
+    async def run_stream(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
+        yield AgentRunResponseUpdate(contents=[TextContent("Response")])
+
+    def get_new_thread(self) -> AgentThread:
+        return MockAgentThread()
+
+
+@fixture
+def agent_thread() -> AgentThread:
+    return MockAgentThread()
+
+
+@fixture
+def agent() -> AgentProtocol:
+    return MockAgent()

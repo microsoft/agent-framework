@@ -89,7 +89,7 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
     # Mock the tracer and span
     with (
         patch("agent_framework._tools.tracer") as mock_tracer,
-        patch("agent_framework._tools._start_as_current_span") as mock_start_span,
+        patch("agent_framework._tools.start_as_current_span") as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -139,7 +139,7 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
 
     with (
         patch("agent_framework._tools.tracer") as mock_tracer,
-        patch("agent_framework._tools._start_as_current_span") as mock_start_span,
+        patch("agent_framework._tools.start_as_current_span") as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -179,7 +179,7 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
 
     with (
         patch("agent_framework._tools.tracer"),
-        patch("agent_framework._tools._start_as_current_span") as mock_start_span,
+        patch("agent_framework._tools.start_as_current_span") as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -206,7 +206,7 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
         mock_histogram.record.assert_called_once()
         call_args = mock_histogram.record.call_args
         attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.ERROR_TYPE] == str(type(ValueError()))
+        assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
 
 
 @pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
@@ -224,7 +224,7 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
 
     with (
         patch("agent_framework._tools.tracer") as mock_tracer,
-        patch("agent_framework._tools._start_as_current_span") as mock_start_span,
+        patch("agent_framework._tools.start_as_current_span") as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
