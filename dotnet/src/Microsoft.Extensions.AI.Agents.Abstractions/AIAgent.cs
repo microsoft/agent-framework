@@ -218,7 +218,7 @@ public abstract class AIAgent
             var result = await this.RunCoreAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken)
                 .ConfigureAwait(false);
 
-            ctx.Result = result;
+            ctx.SetRawResponse(result);
         }
 
         await this.CallbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
@@ -234,7 +234,7 @@ public abstract class AIAgent
             cancellationToken)
             .ConfigureAwait(false);
 
-        return roamingContext.Result as AgentRunResponse ?? throw new InvalidOperationException("The Result object provided in the agent invocation context must be a AgentRunResponse type.");
+        return roamingContext.RawResponse as AgentRunResponse ?? throw new InvalidOperationException("The Result object provided in the agent invocation context must be a AgentRunResponse type.");
     }
 
     /// <summary>
@@ -338,34 +338,31 @@ public abstract class AIAgent
     {
         _ = Throw.IfNull(messages);
 
-        // The roaming context is used to hold into the context that was passed through the middleware chain.
-        // This allows us to capture any specialized AgentInvokeCallbackContext context that may have been passed through the chain
-        AgentInvokeCallbackContext roamingContext = null!;
-
-        Task CoreLogic(AgentInvokeCallbackContext ctx)
-        {
-            // There's a possibility that the provided context was customized by a specialized AgentInvokeCallbackContext context
-            roamingContext ??= ctx;
-            var enumerable = this.RunStreamingCoreAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
-            ctx.Result = enumerable;
-
-            return Task.CompletedTask;
-        }
-
-        await this.CallbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
-            // Starting context
-            new AgentInvokeCallbackContext(
+        // The context is used through the middleware chain.
+        AgentInvokeCallbackContext roamingContext = new(
                 agent: this,
                 messages: messages,
                 thread: thread,
                 options: options,
                 isStreaming: true,
-                cancellationToken: cancellationToken),
+                cancellationToken: cancellationToken);
+
+        Task CoreLogic(AgentInvokeCallbackContext ctx)
+        {
+            var enumerable = this.RunStreamingCoreAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
+            ctx.SetRawResponse(enumerable);
+
+            return Task.CompletedTask;
+        }
+
+        await this.CallbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
+            roamingContext,
             CoreLogic,
             cancellationToken)
             .ConfigureAwait(false);
 
-        var result = roamingContext.Result as IAsyncEnumerable<AgentRunResponseUpdate> ?? throw new InvalidOperationException("The Result object provided in the agent invocation context must be a IAsyncEnumerable<AgentRunResponseUpdate> type.");
+        var result = roamingContext.RawResponse as IAsyncEnumerable<AgentRunResponseUpdate>
+            ?? throw new InvalidOperationException("The Result object provided in the agent invocation context must be a IAsyncEnumerable<AgentRunResponseUpdate> type.");
 
         await foreach (var update in result.WithCancellation(cancellationToken).ConfigureAwait(false))
         {

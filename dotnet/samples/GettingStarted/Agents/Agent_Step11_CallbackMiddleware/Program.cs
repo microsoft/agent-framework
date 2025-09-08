@@ -25,7 +25,7 @@ var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCr
 // Example 3: Agent with custom middleware
 Console.WriteLine("=== Example 3: Agent with custom middleware ===");
 
-var agent = persistentAgentsClient.GetAIAgent("asst_0NGYrFPfT6xMJUh2pW4SkcFC");
+var agent = persistentAgentsClient.GetAIAgent("asst_25P1f2Qx5Uy5eKMGW8hi7Y5P");
 agent.AddCallback(new TimingCallbackMiddleware());
 
 var customResponse = await agent.RunAsync("Tell me a joke.");
@@ -50,12 +50,12 @@ Console.WriteLine("Callback middleware demonstration completed!");
 /// <summary>
 /// A custom callback middleware that measures timing.
 /// </summary>
-internal sealed class TimingCallbackMiddleware : CallbackMiddleware<MyCustomAgentInvokeCallbackContext>
+internal sealed class TimingCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
 {
-    public override async Task OnProcessAsync(MyCustomAgentInvokeCallbackContext context, Func<MyCustomAgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
+    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
     {
         Console.WriteLine($"[TIMING] Starting invocation for agent: {context.Agent.DisplayName}");
-        context.TimingStart = DateTime.UtcNow;
+        var timingStart = DateTime.UtcNow;
 
         try
         {
@@ -63,22 +63,19 @@ internal sealed class TimingCallbackMiddleware : CallbackMiddleware<MyCustomAgen
 
             if (!context.IsStreaming)
             {
-                Console.WriteLine($"Response: {context.RunResult?.Messages[0].Text}");
+                Console.WriteLine($"Response: {context.RunResponse?.Messages[0].Text}");
             }
             else
             {
                 // Run the streaming
-                await foreach (var update in context.RunStreamResult!)
+                await foreach (var update in context.RunStreamingResponse!)
                 {
                     Console.WriteLine($"Streaming update: {update.Text}");
                 }
             }
 
-            if (context.TimingStart != default)
-            {
-                var duration = DateTime.UtcNow - context.TimingStart;
-                Console.WriteLine($"[TIMING] Completed invocation for agent: {context.Agent.DisplayName} in {duration.TotalMilliseconds:F1}ms");
-            }
+            var duration = DateTime.UtcNow - timingStart;
+            Console.WriteLine($"[TIMING] Completed invocation for agent: {context.Agent.DisplayName} in {duration.TotalMilliseconds:F1}ms");
         }
         catch (Exception exception)
         {
@@ -86,21 +83,4 @@ internal sealed class TimingCallbackMiddleware : CallbackMiddleware<MyCustomAgen
             throw;
         }
     }
-}
-
-/// <summary>
-/// Represents the context for invoking a callback in a custom AI agent, extending the base functionality of <see cref="AgentInvokeCallbackContext"/> to manage specific time properties.
-/// </summary>
-internal sealed class MyCustomAgentInvokeCallbackContext : AgentInvokeCallbackContext
-{
-    /// <summary>
-    /// Specialized contexts will created by the Agent Framework injecting the generated base context.
-    /// </summary>
-    /// <param name="context"></param>
-    public MyCustomAgentInvokeCallbackContext(AgentInvokeCallbackContext context)
-        : base(context)
-    {
-    }
-
-    public DateTimeOffset TimingStart { get; set; }
 }

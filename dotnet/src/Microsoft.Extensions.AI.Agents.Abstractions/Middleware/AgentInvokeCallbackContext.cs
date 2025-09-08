@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Provides context information for agent invocation callback middleware.
 /// </summary>
-public class AgentInvokeCallbackContext : CallbackContext
+public sealed class AgentInvokeCallbackContext : CallbackContext
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentInvokeCallbackContext"/> class.
@@ -38,24 +38,6 @@ public class AgentInvokeCallbackContext : CallbackContext
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentInvokeCallbackContext"/> class by copying the values from
-    /// another instance.
-    /// </summary>
-    /// <remarks>
-    /// This constructor sets the specializations to work as decorators of this instance.
-    /// </remarks>
-    /// <param name="other">The instance of <see cref="AgentInvokeCallbackContext"/> to copy values from. Cannot be <see langword="null"/>.</param>
-    protected AgentInvokeCallbackContext(AgentInvokeCallbackContext other)
-        : base(other)
-    {
-        this.Messages = other.Messages;
-        this.Thread = other.Thread;
-        this.Options = other.Options;
-        this.IsStreaming = other.IsStreaming;
-        this.Result = other.Result;
-    }
-
-    /// <summary>
     /// Gets the messages being passed to the agent.
     /// </summary>
     public IReadOnlyCollection<ChatMessage> Messages { get; }
@@ -76,14 +58,43 @@ public class AgentInvokeCallbackContext : CallbackContext
     public bool IsStreaming { get; }
 
     /// <summary>
-    /// Gets or sets the result of the agent invocation.
+    /// Set the streaming response of the agent invocation.
+    /// </summary>
+    /// <param name="streamingResponse">The streaming response to set.</param>
+    /// <exception cref="System.InvalidOperationException">Can't set a streaming response for a non-streaming invocation.</exception>
+    public void SetRawResponse(IAsyncEnumerable<AgentRunResponseUpdate>? streamingResponse)
+    {
+        if (this.IsStreaming is false)
+        {
+            throw new System.InvalidOperationException("Cannot set a streaming response for a non-streaming invocation.");
+        }
+
+        this.RawResponse = streamingResponse;
+    }
+
+    /// <summary>
+    /// Set the non-streaming response of the agent invocation.
+    /// </summary>
+    /// <param name="response">The <see cref="AgentRunResponse"/> to set.</param>
+    /// <exception cref="System.InvalidOperationException">Can't set a non-streaming response for a streaming invocation.</exception>
+    public void SetRawResponse(AgentRunResponse? response)
+    {
+        if (this.IsStreaming is true)
+        {
+            throw new System.InvalidOperationException("Cannot set a non-streaming response for a streaming invocation.");
+        }
+        this.RawResponse = response;
+    }
+
+    /// <summary>
+    /// Gets or sets the raw response of the agent invocation.
     /// </summary>
     /// <remarks>
-    /// When <see cref="IsStreaming"/> is <see langword="false" /> for non-streaming this property will be a <see cref="ChatResponse"/>
+    /// When <see cref="IsStreaming"/> is <see langword="false" /> for non-streaming this property will be a <see cref="AgentRunResponse"/>
     /// When <see cref="IsStreaming"/> is <see langword="true" /> this property will return a <see cref="IAsyncEnumerable{AgentRunResponseUpdate}"/>
     /// where T is a <see cref="AgentRunResponseUpdate"/>.
     /// </remarks>
-    public object? Result { get; set; }
+    public object? RawResponse { get; private set; }
 
     /// <summary>
     /// Gets the result of the agent's run as an <see cref="AgentRunResponse"/> object.
@@ -91,7 +102,7 @@ public class AgentInvokeCallbackContext : CallbackContext
     /// <remarks>
     /// This property will be non-null only if the invocation was already performed in non-streaming mode.
     /// </remarks>
-    public AgentRunResponse? RunResult => this.Result as AgentRunResponse;
+    public AgentRunResponse? RunResponse => this.RawResponse as AgentRunResponse;
 
     /// <summary>
     /// Gets the result of the agent's run as an asynchronous stream of <see cref="AgentRunResponseUpdate"/> objects.
@@ -99,5 +110,5 @@ public class AgentInvokeCallbackContext : CallbackContext
     /// <remarks>
     /// This property will be non-null only if the invocation was already performed in streaming mode.
     /// </remarks>
-    public IAsyncEnumerable<AgentRunResponseUpdate>? RunStreamResult => this.Result as IAsyncEnumerable<AgentRunResponseUpdate>;
+    public IAsyncEnumerable<AgentRunResponseUpdate>? RunStreamingResponse => this.RawResponse as IAsyncEnumerable<AgentRunResponseUpdate>;
 }
