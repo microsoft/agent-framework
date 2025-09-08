@@ -80,8 +80,21 @@ internal sealed class A2AAgent : AIAgent
                 AdditionalProperties = message.Metadata.ToAdditionalProperties(),
             };
         }
+        if (a2aResponse is AgentTask agentTask)
+        {
+            UpdateThreadConversationId(thread, agentTask);
 
-        throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
+            return new AgentRunResponse
+            {
+                AgentId = this.Id,
+                ResponseId = agentTask.Id,
+                RawRepresentation = agentTask,
+                Messages = agentTask.ToChatMessages(),
+                AdditionalProperties = agentTask.Metadata.ToAdditionalProperties(),
+            };
+        }
+
+        throw new NotSupportedException($"Only Message and AgentTask responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
     }
 
     /// <inheritdoc/>
@@ -164,5 +177,24 @@ internal sealed class A2AAgent : AIAgent
 
         // Assign a server-generated context Id to the thread if it's not already set.
         thread.ConversationId ??= message.ContextId;
+    }
+
+    private static void UpdateThreadConversationId(AgentThread? thread, AgentTask agentTask)
+    {
+        if (thread is null)
+        {
+            return;
+        }
+
+        // Surface cases where the A2A agent responds with a message that
+        // has a different context Id than the thread's conversation Id.
+        if (thread.ConversationId is not null && agentTask.ContextId is not null && thread.ConversationId != agentTask.ContextId)
+        {
+            throw new InvalidOperationException(
+                $"The {nameof(agentTask.ContextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentThread)}.");
+        }
+
+        // Assign a server-generated context Id to the thread if it's not already set.
+        thread.ConversationId ??= agentTask.ContextId;
     }
 }
