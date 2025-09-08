@@ -17,7 +17,7 @@ using Microsoft.Extensions.Configuration;
 namespace Demo.DeclarativeWorkflow;
 
 /// <summary>
-/// HOW TO: Create a workflow from a declartive (yaml based) definition.
+/// HOW TO: Create a workflow from a declarative (yaml based) definition.
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
