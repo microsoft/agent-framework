@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from agent_framework import AIContext, ChatMessage, Role
 from agent_framework.exceptions import ServiceInitializationError
-
-from agent_framework_mem0._provider import Mem0Provider
+from agent_framework.mem0 import Mem0Provider
 
 
 def test_mem0_provider_import():
