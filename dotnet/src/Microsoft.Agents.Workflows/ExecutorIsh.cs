@@ -20,7 +20,7 @@ public static class ExecutorIshConfigurationExtensions
     /// </summary>
     /// <remarks>
     /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
-    /// for it, in this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="WorkflowBuilder.Build{T}"/>,
+    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="WorkflowBuilder.Build{T}"/>,
     /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
     /// demanded <c>TInput</c>.
     /// </remarks>
