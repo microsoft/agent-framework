@@ -75,6 +75,9 @@
     <Project Path="samples/GettingStarted/Workflow/Agents/FoundryAgent/FoundryAgent.csproj" />
     <Project Path="samples/GettingStarted/Workflow/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/Checkpoint/">
+    <Project Path="samples/GettingStarted/Workflow/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
+  </Folder>
   <Folder Name="/Samples/DeclarativeWorkflow/">
     <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
   </Folder>
