@@ -339,7 +339,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         var update = (await streamingResponse.ElementAtAsync(0));
 
         // Act
-        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(RunId.FromChatResponseUpdate(update));
+        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(update.ResponseId!);
 
         // Assert
         Assert.NotNull(response);
@@ -364,7 +364,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         var update = (await streamingResponse.ElementAtAsync(0));
 
         // Act
-        ChatResponse? response = await runnableChatClient.DeleteRunAsync(RunId.FromChatResponseUpdate(update));
+        ChatResponse? response = await runnableChatClient.DeleteRunAsync(update.ResponseId!);
 
         // Assert
         Assert.NotNull(response);

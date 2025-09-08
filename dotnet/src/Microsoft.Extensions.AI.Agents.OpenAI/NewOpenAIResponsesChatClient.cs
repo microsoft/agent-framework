@@ -123,32 +123,25 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
     }
 
     /// <inheritdoc />
-    public async Task<ChatResponse?> CancelRunAsync(RunId runId, CancellationToken cancellationToken = default)
+    public async Task<ChatResponse?> CancelRunAsync(string id, ChatCancelRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(runId);
-
-        if (string.IsNullOrEmpty(runId.ResponseId))
+        if (string.IsNullOrEmpty(id))
         {
-            throw new ArgumentException("RunId.ResponseId cannot be null or empty.", nameof(runId));
+            throw new ArgumentException("Id cannot be null or empty.", nameof(id));
         }
 
-        var openAIResponse = await _responseClient.CancelResponseAsync(runId.ResponseId, cancellationToken).ConfigureAwait(false);
+        var openAIResponse = await _responseClient.CancelResponseAsync(id, cancellationToken).ConfigureAwait(false);
 
         // Convert the response to a ChatResponse.
         return FromOpenAIResponse(openAIResponse, openAIOptions: null);
     }
 
     /// <inheritdoc />
-    public async Task<ChatResponse?> DeleteRunAsync(RunId runId, CancellationToken cancellationToken = default)
+    public async Task<ChatResponse?> DeleteRunAsync(string id, ChatDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(runId);
+        _ = Throw.IfNull(id);
 
-        if (string.IsNullOrEmpty(runId.ResponseId))
-        {
-            throw new ArgumentException("RunId.ResponseId cannot be null or empty.", nameof(runId));
-        }
-
-        var openAIResponse = (await _responseClient.DeleteResponseAsync(runId.ResponseId, cancellationToken).ConfigureAwait(false)).Value;
+        var openAIResponse = (await _responseClient.DeleteResponseAsync(id, cancellationToken).ConfigureAwait(false)).Value;
 
         return new()
         {

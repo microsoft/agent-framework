@@ -268,7 +268,7 @@ public abstract class AIAgent
     /// <param name="options">Optional parameters for the long-running operation cancellation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>The <see cref="AgentRunResponse"/> representing result of the cancellation if supported; otherwise, <see langword="null"/>.</returns>
-    public virtual Task<AgentRunResponse?> CancelRunAsync(string id, AgentRunCancelOptions? options = null, CancellationToken cancellationToken = default)
+    public virtual Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         return Task.FromResult<AgentRunResponse?>(null);
     }
@@ -280,7 +280,7 @@ public abstract class AIAgent
     /// <param name="options">Optional parameters for the long-running operation deletion.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to delete the operation.</param>
     /// <returns>The <see cref="AgentRunResponse"/> representing result of the deletion if supported; otherwise, <see langword="null"/>.</returns>
-    public virtual Task<AgentRunResponse?> DeleteRunAsync(string id, AgentRunDeleteOptions? options = null, CancellationToken cancellationToken = default)
+    public virtual Task<AgentRunResponse?> DeleteRunAsync(string id, AgentDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         return Task.FromResult<AgentRunResponse?>(null);
     }

@@ -320,7 +320,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         var update = (await streamingResponse.ElementAtAsync(0));
 
         // Act
-        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(RunId.FromChatResponseUpdate(update));
+        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(update!.ResponseId!, new() { ConversationId = update.ConversationId });
 
         // Assert
         Assert.NotNull(response);
@@ -337,7 +337,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
 
         // Act
-        ChatResponse? response = await runnableChatClient.DeleteRunAsync(new RunId()); // Deletion of runs is not supported
+        ChatResponse? response = await runnableChatClient.DeleteRunAsync(""); // Deletion of runs is not supported
 
         // Assert
         Assert.Null(response);

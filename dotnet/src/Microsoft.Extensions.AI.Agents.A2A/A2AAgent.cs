@@ -175,7 +175,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse?> CancelRunAsync(string id, AgentRunCancelOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(id);
 

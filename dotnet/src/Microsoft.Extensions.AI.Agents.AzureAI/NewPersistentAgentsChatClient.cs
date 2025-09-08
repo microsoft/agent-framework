@@ -881,25 +881,16 @@ namespace Azure.AI.Agents.Persistent
             }
         }
 
-        public async Task<ChatResponse?> CancelRunAsync(RunId runId, CancellationToken cancellationToken = default)
+        public async Task<ChatResponse?> CancelRunAsync(string id, ChatCancelRunOptions? options = null, CancellationToken cancellationToken = default)
         {
-            _ = Throw.IfNull(runId);
-
-            if (string.IsNullOrWhiteSpace(runId.ResponseId))
-            {
-                throw new ArgumentException("RunId.ResponseId cannot be null or empty.", nameof(runId));
-            }
-
-            if (string.IsNullOrWhiteSpace(runId.ConversationId))
-            {
-                throw new ArgumentException("RunId.ConversationId cannot be null or empty.", nameof(runId));
-            }
+            Throw.IfNullOrEmpty(id);
+            Throw.IfNullOrEmpty(options?.ConversationId);
 
             ThreadRun run;
 
             try
             {
-                run = await _client!.Runs.CancelRunAsync(threadId: runId.ConversationId, runId: runId.ResponseId, cancellationToken).ConfigureAwait(false);
+                run = await _client!.Runs.CancelRunAsync(threadId: options.ConversationId, runId: id, cancellationToken).ConfigureAwait(false);
             }
             // Swallow the exception if the run is already completed. Original message: "Cannot cancel run with status 'completed'"
             catch (RequestFailedException ex) when (ex.Status == 400 && ex.Message.Contains("completed"))
@@ -915,7 +906,7 @@ namespace Azure.AI.Agents.Persistent
             return new[] { CreateChatResponseUpdate(run) }.NewToChatResponse();
         }
 
-        public Task<ChatResponse?> DeleteRunAsync(RunId runId, CancellationToken cancellationToken = default)
+        public Task<ChatResponse?> DeleteRunAsync(string id, ChatDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<ChatResponse?>(null);
         }

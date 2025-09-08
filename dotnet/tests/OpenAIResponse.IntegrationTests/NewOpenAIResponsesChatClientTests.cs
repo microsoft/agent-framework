@@ -257,7 +257,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
-        NewChatResponse? cancelResponse = (NewChatResponse?)await runnableChatClient.CancelRunAsync(RunId.FromChatResponse(response));
+        NewChatResponse? cancelResponse = (NewChatResponse?)await runnableChatClient.CancelRunAsync(response.ResponseId!);
 
         // Assert
         Assert.NotNull(cancelResponse);
@@ -280,7 +280,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
-        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(RunId.FromChatResponse(response));
+        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(response.ResponseId!);
 
         // Assert
         Assert.NotNull(deleteResponse);
