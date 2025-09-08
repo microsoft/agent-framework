@@ -10,7 +10,7 @@ You're getting early access to Microsoft's comprehensive multi-language framewor
 **Option 1: Run samples directly from this repository (no package installation needed)**
 - Clone this repository
 - For .NET: Run samples with `dotnet run` from any sample directory (e.g., `dotnet/samples/GettingStarted/Agents/Agent_Step01_Running`)
-- For Python: Run samples from the repository root after installing local packages with `pip install -e python/packages/main`
+- For Python: Run samples from any sample directory (e.g., [`python/samples/getting_started/minimal_sample.py`](python/samples/getting_started/minimal_sample.py)) after setting up the local dev environment following this [guide](python/DEV_SETUP.md).
 
 **Option 2: Install packages in your own project**
 - **[.NET Getting Started Guide](./user-documentation-dotnet/getting-started/README.md)** - Instructions for using nightly packages
