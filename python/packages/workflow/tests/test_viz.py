@@ -5,6 +5,8 @@
 import pytest
 from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext, WorkflowViz, handler
 
+from agent_framework_workflow import WorkflowExecutor
+
 
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
@@ -21,6 +23,41 @@ class ListStrTargetExecutor(Executor):
     @handler
     async def handle(self, message: list[str], ctx: WorkflowContext[None]) -> None:  # type: ignore[type-arg]
         pass
+
+
+@pytest.fixture
+def basic_sub_workflow():
+    """Fixture that creates a basic sub-workflow setup for testing."""
+    # Create a sub-workflow
+    sub_exec1 = MockExecutor(id="sub_exec1")
+    sub_exec2 = MockExecutor(id="sub_exec2")
+
+    sub_workflow = WorkflowBuilder().add_edge(sub_exec1, sub_exec2).set_start_executor(sub_exec1).build()
+
+    # Create a workflow executor that wraps the sub-workflow
+    workflow_executor = WorkflowExecutor(sub_workflow, id="workflow_executor_1")
+
+    # Create a main workflow that includes the workflow executor
+    main_exec = MockExecutor(id="main_executor")
+    final_exec = MockExecutor(id="final_executor")
+
+    main_workflow = (
+        WorkflowBuilder()
+        .add_edge(main_exec, workflow_executor)
+        .add_edge(workflow_executor, final_exec)
+        .set_start_executor(main_exec)
+        .build()
+    )
+
+    return {
+        "main_workflow": main_workflow,
+        "workflow_executor": workflow_executor,
+        "sub_workflow": sub_workflow,
+        "main_exec": main_exec,
+        "final_exec": final_exec,
+        "sub_exec1": sub_exec1,
+        "sub_exec2": sub_exec2,
+    }
 
 
 def test_workflow_viz_to_digraph():
@@ -283,3 +320,85 @@ def test_workflow_viz_mermaid_fan_in_edge_group():
     # Ensure direct edges to target are not present
     assert "s1 --> t" not in mermaid
     assert "s2 --> t" not in mermaid
+
+
+def test_workflow_viz_sub_workflow_digraph(basic_sub_workflow):
+    """Test that WorkflowViz can visualize sub-workflows in DOT format."""
+    main_workflow = basic_sub_workflow["main_workflow"]
+
+    viz = WorkflowViz(main_workflow)
+    dot_content = viz.to_digraph()
+
+    # Check that main workflow nodes are present
+    assert "main_executor" in dot_content
+    assert "workflow_executor_1" in dot_content
+    assert "final_executor" in dot_content
+
+    # Check that sub-workflow is rendered as a cluster
+    assert "subgraph cluster_" in dot_content
+    assert "sub-workflow: workflow_executor_1" in dot_content
+
+    # Check that sub-workflow nodes are namespaced
+    assert '"workflow_executor_1/sub_exec1"' in dot_content
+    assert '"workflow_executor_1/sub_exec2"' in dot_content
+
+    # Check that sub-workflow edges are present
+    assert '"workflow_executor_1/sub_exec1" -> "workflow_executor_1/sub_exec2"' in dot_content
+
+
+def test_workflow_viz_sub_workflow_mermaid(basic_sub_workflow):
+    """Test that WorkflowViz can visualize sub-workflows in Mermaid format."""
+    main_workflow = basic_sub_workflow["main_workflow"]
+
+    viz = WorkflowViz(main_workflow)
+    mermaid_content = viz.to_mermaid()
+
+    # Check that main workflow nodes are present
+    assert "main_executor" in mermaid_content
+    assert "workflow_executor_1" in mermaid_content
+    assert "final_executor" in mermaid_content
+
+    # Check that sub-workflow is rendered as a subgraph
+    assert "subgraph workflow_executor_1" in mermaid_content
+    assert "end" in mermaid_content
+
+    # Check that sub-workflow nodes are namespaced properly for Mermaid
+    assert "workflow_executor_1__sub_exec1" in mermaid_content
+    assert "workflow_executor_1__sub_exec2" in mermaid_content
+
+
+def test_workflow_viz_nested_sub_workflows():
+    """Test visualization of deeply nested sub-workflows."""
+    # Create innermost sub-workflow
+    inner_exec = MockExecutor(id="inner_exec")
+    inner_workflow = WorkflowBuilder().set_start_executor(inner_exec).build()
+
+    # Create middle sub-workflow that contains the inner one
+    inner_workflow_executor = WorkflowExecutor(inner_workflow, id="inner_wf_exec")
+    middle_exec = MockExecutor(id="middle_exec")
+
+    middle_workflow = (
+        WorkflowBuilder().add_edge(middle_exec, inner_workflow_executor).set_start_executor(middle_exec).build()
+    )
+
+    # Create outer workflow
+    middle_workflow_executor = WorkflowExecutor(middle_workflow, id="middle_wf_exec")
+    outer_exec = MockExecutor(id="outer_exec")
+
+    outer_workflow = (
+        WorkflowBuilder().add_edge(outer_exec, middle_workflow_executor).set_start_executor(outer_exec).build()
+    )
+
+    viz = WorkflowViz(outer_workflow)
+    dot_content = viz.to_digraph()
+
+    # Check that all levels are present
+    assert "outer_exec" in dot_content
+    assert "middle_wf_exec" in dot_content
+    assert "inner_wf_exec" in dot_content
+
+    # Check for nested clusters
+    assert "subgraph cluster_" in dot_content
+    # Should have multiple subgraphs for nested structure
+    subgraph_count = dot_content.count("subgraph cluster_")
+    assert subgraph_count >= 2  # At least one for each level of nesting

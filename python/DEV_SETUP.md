@@ -263,7 +263,7 @@ The package follows a flat import structure:
 
 - **Core**: Import directly from `agent_framework`
   ```python
-  from agent_framework import ChatClientAgent, ai_function
+  from agent_framework import ChatAgent, ai_function
   ```
 
 - **Components**: Import from `agent_framework.<component>`
@@ -319,7 +319,7 @@ uv run poe docs-check
 Use Google-style docstrings for all public APIs:
 
 ```python
-def create_agent(name: str, chat_client: ChatClient) -> Agent:
+def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
     """Create a new agent with the specified configuration.
 
     Args:

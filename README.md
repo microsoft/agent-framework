@@ -1,6 +1,18 @@
 # Microsoft Agent Framework
 
-Highlights
+## Welcome to the Private Preview of Agent Framework!
+
+You're getting early access to Microsoft's comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for both .NET and Python implementations. This framework provides everything from simple chat agents to complex multi-agent workflows with graph-based orchestration.
+
+**A few important notes:**
+- There currently are not public pypi or nuget packages for the SDKs. In order for the code and samples to work, please clone this repo and run the code here.
+- The repo is an active project so make sure to sync regularly.
+
+**We want your feedback!** 
+- For bugs, please file a [GitHub issue](https://github.com/microsoft/agent-framework/issues).
+- For feedback and suggestions for the team, please fill out [this survey](https://forms.office.com/Pages/ResponsePage.aspx?id=v4j5cvGGr0GRqy180BHbR9huAe5pW55CqgnnimXONJJUMlVMUzdCN1ZGOURXODlBSVJOSkxERVNCNS4u).
+
+**Highlights**
 - Flexible Agent Framework: build, orchestrate, and deploy AI agents and workflows
 - Multi-Agent Orchestration: group chat, sequential, concurrent, and handoff patterns
 - Graph-based Workflows: connect agents and deterministic functions using data flows with streaming, checkpointing, time-travel, and Human-in-the-loop.

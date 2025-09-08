@@ -1,0 +1,29 @@
+kind: AdaptiveDialog
+beginDialog:
+  
+  kind: OnActivity
+  id: my_workflow
+  type: Message
+  actions:
+  
+    - kind: SetVariable
+      id: setVariable_test
+      variable: Topic.TestValue
+      value: =Value(System.LastMessage.Text)
+
+    - kind: ConditionGroup
+      id: conditionGroup_test
+      conditions:
+        - id: conditionItem_odd
+          condition: =Mod(Topic.TestValue, 2) = 1
+          actions:
+            - kind: SendActivity
+              id: sendActivity_odd
+              activity: ODD
+      elseActions:
+        - kind: SendActivity
+          id: sendActivity_else
+          activity: EVEN
+
+    - kind: EndConversation
+      id: end_all

@@ -1,14 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+import importlib
 import logging
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Protocol, TypedDict, TypeVar, runtime_checkable
+from dataclasses import dataclass, fields, is_dataclass
+from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._const import DEFAULT_MAX_ITERATIONS
-from ._events import WorkflowEvent
+from ._events import AgentRunUpdateEvent, WorkflowEvent
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,176 @@ class CheckpointState(TypedDict):
     executor_states: dict[str, dict[str, Any]]
     iteration_count: int
     max_iterations: int
+
+
+# Checkpoint serialization helpers
+_PYDANTIC_MARKER = "__af_pydantic_model__"
+_DATACLASS_MARKER = "__af_dataclass__"
+
+# Guards to prevent runaway recursion while encoding arbitrary user data
+_MAX_ENCODE_DEPTH = 100
+_CYCLE_SENTINEL = "<cycle>"
+
+
+def _is_pydantic_model(obj: object) -> bool:
+    """Best-effort check for Pydantic models (e.g., AFBaseModel).
+
+    We avoid hard dependencies by duck-typing on model_dump/model_validate.
+    """
+    try:
+        obj_type: type[Any] = type(obj)
+        return hasattr(obj, "model_dump") and hasattr(obj_type, "model_validate")
+    except Exception:
+        return False
+
+
+def _encode_checkpoint_value(value: Any) -> Any:
+    """Recursively encode values into JSON-serializable structures.
+
+    - Pydantic models -> { _PYDANTIC_MARKER: "module:Class", value: model_dump(mode="json") }
+    - dataclass instances -> { _DATACLASS_MARKER: "module:Class", value: {field: encoded} }
+    - dict -> encode keys as str and values recursively
+    - list/tuple/set -> list of encoded items
+    - other -> returned as-is if already JSON-serializable
+
+    Includes cycle and depth protection to avoid infinite recursion.
+    """
+
+    def _enc(v: Any, stack: set[int], depth: int) -> Any:
+        # Depth guard
+        if depth > _MAX_ENCODE_DEPTH:
+            logger.debug(f"Max encode depth reached at depth={depth} for type={type(v)}")
+            return "<max_depth>"
+
+        # Pydantic (AFBaseModel) handling
+        if _is_pydantic_model(v):
+            cls = cast(type[Any], type(v))  # type: ignore
+            try:
+                return {
+                    _PYDANTIC_MARKER: f"{cls.__module__}:{cls.__name__}",
+                    "value": v.model_dump(mode="json"),
+                }
+            except Exception as exc:  # best-effort fallback
+                logger.debug("Pydantic model_dump failed for %s: %s", cls, exc)
+                return str(v)
+
+        # Dataclasses (instances only)
+        if is_dataclass(v) and not isinstance(v, type):
+            oid = id(v)
+            if oid in stack:
+                logger.debug("Cycle detected while encoding dataclass instance")
+                return _CYCLE_SENTINEL
+            stack.add(oid)
+            try:
+                # type(v) already narrows sufficiently; cast was redundant
+                dc_cls: type[Any] = type(v)
+                field_values: dict[str, Any] = {}
+                for f in fields(v):  # type: ignore[arg-type]
+                    field_values[f.name] = _enc(getattr(v, f.name), stack, depth + 1)
+                return {
+                    _DATACLASS_MARKER: f"{dc_cls.__module__}:{dc_cls.__name__}",
+                    "value": field_values,
+                }
+            finally:
+                stack.remove(oid)
+
+        # Collections
+        if isinstance(v, dict):
+            v_dict = cast("dict[object, object]", v)
+            oid = id(v_dict)
+            if oid in stack:
+                logger.debug("Cycle detected while encoding dict")
+                return _CYCLE_SENTINEL
+            stack.add(oid)
+            try:
+                json_dict: dict[str, Any] = {}
+                for k_any, val_any in v_dict.items():  # type: ignore[assignment]
+                    k_str: str = str(k_any)
+                    json_dict[k_str] = _enc(val_any, stack, depth + 1)
+                return json_dict
+            finally:
+                stack.remove(oid)
+
+        if isinstance(v, (list, tuple, set)):
+            iterable_v = cast("list[object] | tuple[object, ...] | set[object]", v)
+            oid = id(iterable_v)
+            if oid in stack:
+                logger.debug("Cycle detected while encoding iterable")
+                return _CYCLE_SENTINEL
+            stack.add(oid)
+            try:
+                seq: list[object] = list(iterable_v)
+                encoded_list: list[Any] = []
+                for item in seq:
+                    encoded_list.append(_enc(item, stack, depth + 1))
+                return encoded_list
+            finally:
+                stack.remove(oid)
+
+        # Primitives (or unknown objects): ensure JSON-serializable
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            return v
+        # Fallback: stringify unknown objects to avoid JSON serialization errors
+        try:
+            return str(v)
+        except Exception:
+            return f"<{type(v).__name__}>"
+
+    return _enc(value, set(), 0)
+
+
+def _decode_checkpoint_value(value: Any) -> Any:
+    """Recursively decode values previously encoded by _encode_checkpoint_value."""
+    if isinstance(value, dict):
+        value_dict = cast(dict[str, Any], value)  # encoded form always uses string keys
+        # Pydantic marker handling
+        if _PYDANTIC_MARKER in value_dict and "value" in value_dict:
+            type_key: str | None = value_dict.get(_PYDANTIC_MARKER)  # type: ignore[assignment]
+            raw: Any = value_dict.get("value")
+            if isinstance(type_key, str):
+                try:
+                    module_name, class_name = type_key.split(":", 1)
+                    module = importlib.import_module(module_name)
+                    cls: Any = getattr(module, class_name)
+                    if hasattr(cls, "model_validate"):
+                        return cls.model_validate(raw)
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to decode pydantic model %s: %s; returning raw value",
+                        type_key,
+                        exc,
+                    )
+        # Dataclass marker handling
+        if _DATACLASS_MARKER in value_dict and "value" in value_dict:
+            type_key_dc: str | None = value_dict.get(_DATACLASS_MARKER)  # type: ignore[assignment]
+            raw_dc: Any = value_dict.get("value")
+            if isinstance(type_key_dc, str):
+                try:
+                    module_name, class_name = type_key_dc.split(":", 1)
+                    module = importlib.import_module(module_name)
+                    cls_dc: Any = getattr(module, class_name)
+                    decoded_raw = _decode_checkpoint_value(raw_dc)
+                    if isinstance(decoded_raw, dict):
+                        return cls_dc(**decoded_raw)
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to decode dataclass %s: %s; returning raw value",
+                        type_key_dc,
+                        exc,
+                    )
+            # Fallback to decoded raw value
+            return _decode_checkpoint_value(raw_dc)
+
+        # Regular dict: decode recursively
+        decoded: dict[str, Any] = {}
+        for k_any, v_any in value_dict.items():
+            decoded[k_any] = _decode_checkpoint_value(v_any)
+        return decoded
+    if isinstance(value, list):
+        # After isinstance check, treat value as list[Any] for decoding
+        value_list: list[Any] = value  # type: ignore[assignment]
+        return [_decode_checkpoint_value(v_any) for v_any in value_list]
+    return value
 
 
 @runtime_checkable
@@ -103,6 +275,10 @@ class RunnerContext(Protocol):
         Returns:
             True if there are events, False otherwise.
         """
+        ...
+
+    async def next_event(self) -> WorkflowEvent:  # pragma: no cover - interface only
+        """Wait for and return the next event emitted by the workflow run."""
         ...
 
     async def set_state(self, executor_id: str, state: dict[str, Any]) -> None:
@@ -185,7 +361,8 @@ class InProcRunnerContext:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
         self._messages: defaultdict[str, list[Message]] = defaultdict(list)
-        self._events: list[WorkflowEvent] = []
+        # Event queue for immediate streaming of events (e.g., AgentRunUpdateEvent)
+        self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
 
         # Checkpointing configuration/state
         self._checkpoint_storage = checkpoint_storage
@@ -207,15 +384,54 @@ class InProcRunnerContext:
         return bool(self._messages)
 
     async def add_event(self, event: WorkflowEvent) -> None:
-        self._events.append(event)
+        """Add an event to the context immediately.
+
+        Events are enqueued so runners can stream them in real time instead of
+        waiting for superstep boundaries.
+        """
+        # Filter out empty AgentRunUpdateEvent updates to avoid emitting None/empty chunks
+        try:
+            if isinstance(event, AgentRunUpdateEvent):
+                update = getattr(event, "data", None)
+                # Skip if no update payload
+                if not update:
+                    return
+                # Robust emptiness check: allow either top-level text or any text-bearing content
+                text_val = getattr(update, "text", None)
+                contents = getattr(update, "contents", None)
+                has_text_content = False
+                if contents:
+                    for c in contents:
+                        if getattr(c, "text", None):
+                            has_text_content = True
+                            break
+                if not (text_val or has_text_content):
+                    return
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            # Best-effort filtering only; never block event delivery on filtering errors
+            logger.debug("Error while filtering event %r: %s", event, exc, exc_info=True)
+
+        await self._event_queue.put(event)
 
     async def drain_events(self) -> list[WorkflowEvent]:
-        events = self._events.copy()
-        self._events.clear()
+        """Drain all currently queued events without blocking for new ones."""
+        events: list[WorkflowEvent] = []
+        while True:
+            try:
+                events.append(self._event_queue.get_nowait())
+            except asyncio.QueueEmpty:  # type: ignore[attr-defined]
+                break
         return events
 
     async def has_events(self) -> bool:
-        return bool(self._events)
+        return not self._event_queue.empty()
+
+    async def next_event(self) -> WorkflowEvent:
+        """Wait for and return the next event.
+
+        Used by the runner to interleave event emission with ongoing iteration work.
+        """
+        return await self._event_queue.get()
 
     async def set_state(self, executor_id: str, state: dict[str, Any]) -> None:
         self._executor_states[executor_id] = state
@@ -229,9 +445,10 @@ class InProcRunnerContext:
     def set_workflow_id(self, workflow_id: str) -> None:
         self._workflow_id = workflow_id
 
-    def reset_for_new_run(self, workflow_shared_state: "SharedState | None" = None) -> None:
+    def reset_for_new_run(self, workflow_shared_state: SharedState | None = None) -> None:
         self._messages.clear()
-        self._events.clear()
+        # Clear any pending events (best-effort) by recreating the queue
+        self._event_queue = asyncio.Queue()
         self._shared_state.clear()
         self._executor_states.clear()
         self._iteration_count = 0
@@ -285,7 +502,7 @@ class InProcRunnerContext:
         for source_id, message_list in self._messages.items():
             serializable_messages[source_id] = [
                 {
-                    "data": msg.data,
+                    "data": _encode_checkpoint_value(msg.data),
                     "source_id": msg.source_id,
                     "target_id": msg.target_id,
                     "trace_contexts": msg.trace_contexts,
@@ -295,8 +512,8 @@ class InProcRunnerContext:
             ]
         return {
             "messages": serializable_messages,
-            "shared_state": self._shared_state,
-            "executor_states": self._executor_states,
+            "shared_state": _encode_checkpoint_value(self._shared_state),
+            "executor_states": _encode_checkpoint_value(self._executor_states),
             "iteration_count": self._iteration_count,
             "max_iterations": self._max_iterations,
         }
@@ -307,7 +524,7 @@ class InProcRunnerContext:
         for source_id, message_list in messages_data.items():
             self._messages[source_id] = [
                 Message(
-                    data=msg.get("data"),
+                    data=_decode_checkpoint_value(msg.get("data")),
                     source_id=msg.get("source_id", ""),
                     target_id=msg.get("target_id"),
                     trace_contexts=msg.get("trace_contexts"),
@@ -315,7 +532,28 @@ class InProcRunnerContext:
                 )
                 for msg in message_list
             ]
-        self._shared_state = state.get("shared_state", {})
-        self._executor_states = state.get("executor_states", {})
+        # Restore shared_state
+        decoded_shared_raw = _decode_checkpoint_value(state.get("shared_state", {}))
+        if isinstance(decoded_shared_raw, dict):
+            self._shared_state = cast(dict[str, Any], decoded_shared_raw)
+        else:  # fallback to empty dict if corrupted
+            self._shared_state = {}
+
+        # Restore executor_states ensuring value types are dicts
+        decoded_exec_raw = _decode_checkpoint_value(state.get("executor_states", {}))
+        if isinstance(decoded_exec_raw, dict):
+            typed_exec: dict[str, dict[str, Any]] = {}
+            for k_raw, v_raw in decoded_exec_raw.items():  # type: ignore[assignment]
+                if isinstance(k_raw, str) and isinstance(v_raw, dict):
+                    # Filter inner dict to string keys only (best-effort)
+                    inner: dict[str, Any] = {}
+                    for inner_k, inner_v in v_raw.items():  # type: ignore[assignment]
+                        if isinstance(inner_k, str):
+                            inner[inner_k] = inner_v
+                    typed_exec[k_raw] = inner
+            self._executor_states = typed_exec
+        else:
+            self._executor_states = {}
+
         self._iteration_count = state.get("iteration_count", 0)
         self._max_iterations = state.get("max_iterations", 100)
