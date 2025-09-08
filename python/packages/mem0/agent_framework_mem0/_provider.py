@@ -106,7 +106,7 @@ class Mem0Provider(AIContextProvider):
             if message.role.value in {"user", "assistant", "system"} and message.text and message.text.strip()
         ]
 
-        if len(messages) > 0:
+        if messages:
             await self._mem0_client.add(  # type: ignore[misc]
                 messages=messages,
                 user_id=self._user_id,
