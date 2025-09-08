@@ -16,3 +16,12 @@ documentation:
   - any-glob-to-any-file:
     - docs/**
     - '**/*.md'
+
+# Add 'workflows' label to any change within the dotnet or python workflows src or samples
+workflows:
+- changed-files:
+  - any-glob-to-any-file:
+    - dotnet/src/Microsoft.Agents.Workflows/**
+    - dotnet/samples/GettingStarted/Workflow/**
+    - python/packages/workflows/**
+    - python/samples/getting_started/workflow/**
