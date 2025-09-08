@@ -47,8 +47,8 @@ public static class Program
 
             if (evt is SuperStepCompletedEvent superStepCompletedEvt)
             {
-                // Checkpoints are automatically created at the end of each super step.
-                // You can store the checkpoint info for later use.
+                // Checkpoints are automatically created at the end of each super step when a
+                // checkpoint manager is provided. You can store the checkpoint info for later use.
                 CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
                 if (checkpoint != null)
                 {

@@ -77,6 +77,10 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflow/Checkpoint/">
     <Project Path="samples/GettingStarted/Workflow/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/Checkpoint/CheckpointWithHumanInTheLoop/CheckpointWithHumanInTheLoop.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/HumanInTheLoop/">
+    <Project Path="samples/GettingStarted/Workflow/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
   </Folder>
   <Folder Name="/Samples/DeclarativeWorkflow/">
     <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />

@@ -59,3 +59,9 @@ Once completed, please proceed to other samples listed below.
 | Sample | Concepts |
 |--------|----------|
 | [Checkpoint and Resume](./Checkpoint/CheckpointAndResume) | Introduces checkpoints for saving and restoring workflow state for time travel purposes |
+
+### Human-in-the-Loop
+
+| Sample | Concepts |
+|--------|----------|
+| [Basic Human-in-the-Loop](./HumanInTheLoop/HumanIntheLoopBasic) | Introduces human-in-the-loop interaction using input ports and external requests |
