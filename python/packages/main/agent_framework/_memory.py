@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import MutableSequence, Sequence
 
@@ -69,18 +70,15 @@ class ContextProvider(AFBaseModel, ABC):
 
 
 class AggregateContextProvider(ContextProvider):
+    providers: list[ContextProvider]
+
     def __init__(self, context_providers: Sequence[ContextProvider] | None = None) -> None:
         """Initialize AggregateContextProvider with context providers.
 
         Args:
             context_providers: Context providers to add.
         """
-        self._providers: list[ContextProvider] = list(context_providers or [])
-
-    @property
-    def providers(self) -> list[ContextProvider]:
-        """Returns the list of registered context providers."""
-        return self._providers
+        super().__init__(providers=list(context_providers or []))  # type: ignore
 
     def add(self, context_provider: ContextProvider) -> None:
         """Adds new context provider.
@@ -88,18 +86,16 @@ class AggregateContextProvider(ContextProvider):
         Args:
             context_provider: Context provider to add.
         """
-        self._providers.append(context_provider)
+        self.providers.append(context_provider)
 
     async def thread_created(self, thread_id: str | None = None) -> None:
-        for x in self._providers:
-            await x.thread_created(thread_id)
+        await asyncio.gather(*[x.thread_created(thread_id) for x in self.providers])
 
     async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        for x in self._providers:
-            await x.messages_adding(thread_id, new_messages)
+        await asyncio.gather(*[x.messages_adding(thread_id, new_messages) for x in self.providers])
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
-        sub_contexts = [await x.model_invoking(messages) for x in self._providers]
+        sub_contexts = await asyncio.gather(*[x.model_invoking(messages) for x in self.providers])
         combined_context = Context()
         combined_context.instructions = "\n".join([ctx.instructions for ctx in sub_contexts if ctx.instructions])
         return combined_context
