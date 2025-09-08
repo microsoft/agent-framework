@@ -73,14 +73,14 @@ async def test_ai_function_decorator_with_async():
     assert (await async_test_tool(1, 2)) == 3
 
 
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
-async def test_ai_function_invoke_telemetry_enabled(model_diagnostic_settings):
+@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
+async def test_ai_function_invoke_telemetry_enabled(otel_settings):
     """Test the ai_function invoke method with telemetry enabled."""
 
     @ai_function(
         name="telemetry_test_tool",
         description="A test tool for telemetry",
-        additional_properties={"model_diagnostic_settings": model_diagnostic_settings},
+        additional_properties={"otel_settings": otel_settings},
     )
     def telemetry_test_tool(x: int, y: int) -> int:
         """A function that adds two numbers for telemetry testing."""
@@ -121,14 +121,14 @@ async def test_ai_function_invoke_telemetry_enabled(model_diagnostic_settings):
         assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
-async def test_ai_function_invoke_telemetry_with_pydantic_args(model_diagnostic_settings):
+@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
+async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
     """Test the ai_function invoke method with Pydantic model arguments."""
 
     @ai_function(
         name="pydantic_test_tool",
         description="A test tool with Pydantic args",
-        additional_properties={"model_diagnostic_settings": model_diagnostic_settings},
+        additional_properties={"otel_settings": otel_settings},
     )
     def pydantic_test_tool(x: int, y: int) -> int:
         """A function that adds two numbers using Pydantic args."""
@@ -164,14 +164,14 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(model_diagnostic_
         )
 
 
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
-async def test_ai_function_invoke_telemetry_with_exception(model_diagnostic_settings):
+@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
+async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
     """Test the ai_function invoke method with telemetry when an exception occurs."""
 
     @ai_function(
         name="exception_test_tool",
         description="A test tool that raises an exception",
-        additional_properties={"model_diagnostic_settings": model_diagnostic_settings},
+        additional_properties={"otel_settings": otel_settings},
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
@@ -209,14 +209,14 @@ async def test_ai_function_invoke_telemetry_with_exception(model_diagnostic_sett
         assert attributes[OtelAttr.ERROR_TYPE] == str(type(ValueError()))
 
 
-@pytest.mark.parametrize("model_diagnostic_settings", [(True, True)], indirect=True)
-async def test_ai_function_invoke_telemetry_async_function(model_diagnostic_settings):
+@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
+async def test_ai_function_invoke_telemetry_async_function(otel_settings):
     """Test the ai_function invoke method with telemetry on async function."""
 
     @ai_function(
         name="async_telemetry_test",
         description="An async test tool for telemetry",
-        additional_properties={"model_diagnostic_settings": model_diagnostic_settings},
+        additional_properties={"otel_settings": otel_settings},
     )
     async def async_telemetry_test(x: int, y: int) -> int:
         """An async function for telemetry testing."""

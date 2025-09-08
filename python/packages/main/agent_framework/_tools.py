@@ -5,10 +5,12 @@ import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from functools import wraps
 from time import perf_counter, time_ns
+from types import CoroutineType
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Final,
     Generic,
     Protocol,
     TypeVar,
@@ -17,13 +19,20 @@ from typing import (
     runtime_checkable,
 )
 
-from opentelemetry import metrics, trace
+from opentelemetry import metrics
 from pydantic import BaseModel, Field, PrivateAttr, create_model
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from .exceptions import ChatClientInitializationError
-from .telemetry import OtelAttr, OtelSettings, _capture_exception, _start_as_current_span
+from .telemetry import (
+    OPERATION_DURATION_BUCKET_BOUNDARIES,
+    OtelAttr,
+    _capture_exception,  # type: ignore
+    meter,
+    start_as_current_span,
+    tracer,
+)
 
 if TYPE_CHECKING:
     from ._clients import ChatClient
@@ -39,19 +48,18 @@ __all__ = [
     "FUNCTION_INVOKING_CHAT_CLIENT_MARKER",
     "AIFunction",
     "AITool",
-    "FunctionInvokingChatClient",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
     "HostedWebSearchTool",
     "ai_function",
+    "use_function_invocation",
 ]
 
 
-tracer: trace.Tracer = trace.get_tracer("agent_framework")
-meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
 logger = get_logger()
-FUNCTION_INVOKING_CHAT_CLIENT_MARKER = "__function_invoking_chat_client__"
-
+FUNCTION_INVOKING_CHAT_CLIENT_MARKER: Final[str] = "__function_invoking_chat_client__"
+DEFAULT_MAX_ITERATIONS: Final[int] = 10
+TChatClient = TypeVar("TChatClient", bound="ChatClient")
 # region Helpers
 
 
@@ -287,9 +295,10 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
     input_model: type[ArgsT]
     _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
         default_factory=lambda: meter.create_histogram(
-            OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
-            unit="s",
+            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+            unit=OtelAttr.DURATION_UNIT,
             description="Measures the duration of a function's execution",
+            explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
         )
     )
 
@@ -301,25 +310,24 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
         self,
         *,
         arguments: ArgsT | None = None,
-        model_diagnostic_settings: OtelSettings | None = None,
         **kwargs: Any,
     ) -> ReturnT:
         """Run the AI function with the provided arguments as a Pydantic model.
 
         Args:
             arguments: A Pydantic model instance containing the arguments for the function.
-            model_diagnostic_settings: Optional model diagnostics settings to override the default settings.
+            otel_settings: Optional model diagnostics settings to override the default settings.
             kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
         """
+        global OTEL_SETTINGS
+        from .telemetry import OTEL_SETTINGS, setup_telemetry
+
         tool_call_id = kwargs.pop("tool_call_id", None)
         if arguments is not None:
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
-
-        if not model_diagnostic_settings and self.additional_properties:
-            model_diagnostic_settings = self.additional_properties.get("model_diagnostic_settings")
-        if not model_diagnostic_settings or not model_diagnostic_settings.ENABLED:
+        if not OTEL_SETTINGS.ENABLED:  # type: ignore
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -327,35 +335,40 @@ class AIFunction(AIToolBase, Generic[ArgsT, ReturnT]):
             logger.info(f"Function {self.name} succeeded.")
             logger.debug(f"Function result: {result or 'None'}")
             return result  # type: ignore[reportReturnType]
-        with _start_as_current_span(
+
+        setup_telemetry()
+        with start_as_current_span(
             tracer=tracer,
             function=self,
             tool_call_id=tool_call_id,
-        ) as current_span:
+        ) as span:
             hist_attributes: dict[str, Any] = {
                 OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
                 OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
             }
             logger.info(f"Function name: {self.name}")
-            if model_diagnostic_settings and model_diagnostic_settings.SENSITIVE_DATA_ENABLED:
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore
                 logger.debug(f"Function arguments: {kwargs}")
-            starting_time_stamp = perf_counter()
+            start_time_stamp = perf_counter()
+            end_time_stamp: float | None = None
             try:
                 res = self.__call__(**kwargs)
                 result = await res if inspect.isawaitable(res) else res
+                end_time_stamp = perf_counter()
             except Exception as exception:
-                _capture_exception(current_span, exception, time_ns())
+                end_time_stamp = perf_counter()
+                hist_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                _capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
-                hist_attributes[OtelAttr.ERROR_TYPE] = str(type(exception))
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if model_diagnostic_settings.SENSITIVE_DATA_ENABLED:
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore
                     logger.debug(f"Function result: {result or 'None'}")
                 return result  # type: ignore[reportReturnType]
             finally:
-                duration = perf_counter() - starting_time_stamp
-                current_span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
+                duration = (end_time_stamp or perf_counter()) - start_time_stamp
+                span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
                 self._invocation_duration_histogram.record(duration, attributes=hist_attributes)
                 logger.info("Function duration: %fs", duration)
 
@@ -467,7 +480,6 @@ async def _auto_invoke_function(
     tool_map: dict[str, AIFunction[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
-    model_diagnostic_settings: OtelSettings | None = None,
 ) -> "AIContents":
     """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
     from ._types import FunctionResultContent
@@ -486,7 +498,6 @@ async def _auto_invoke_function(
         function_result = await tool.invoke(
             arguments=args,
             tool_call_id=function_call_content.call_id,
-            model_diagnostic_settings=model_diagnostic_settings,
         )  # type: ignore[arg-type]
     except Exception as ex:
         exception = ex
@@ -523,7 +534,6 @@ async def execute_function_calls(
     attempt_idx: int,
     function_calls: Sequence["FunctionCallContent"],
     tools: "AITool | list[AITool] | Callable[..., Any] | list[Callable[..., Any]] | MutableMapping[str, Any] | list[MutableMapping[str, Any]]",  # noqa: E501
-    model_diagnostic_settings: OtelSettings | None = None,
 ) -> list["AIContents"]:
     tool_map = _get_tool_map(tools)
     # Run all function calls concurrently
@@ -534,210 +544,229 @@ async def execute_function_calls(
             tool_map=tool_map,
             sequence_index=seq_idx,
             request_index=attempt_idx,
-            model_diagnostic_settings=model_diagnostic_settings,
         )
         for seq_idx, function_call in enumerate(function_calls)
     ])
 
 
+def update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
+    """Update kwargs with conversation id."""
+    if conversation_id is None:
+        return
+    if "chat_options" in kwargs:
+        kwargs["chat_options"].conversation_id = conversation_id
+    else:
+        kwargs["conversation_id"] = conversation_id
+
+
 def _handle_function_calls_response(
-    get_response_func: Callable[..., Awaitable["ChatResponse"]],
+    func: Callable[..., CoroutineType[Any, Any, "ChatResponse"]],
+    *,
     max_iterations: int = 10,
-    model_diagnostic_settings: OtelSettings | None = None,
-) -> Callable[..., Awaitable["ChatResponse"]]:
+) -> Callable[..., CoroutineType[Any, Any, "ChatResponse"]]:
     """Decorate the get_response method to enable function calls.
 
     Args:
-        get_response_func: The get_response method to decorate.
+        func: The get_response method to decorate.
         max_iterations: The maximum number of function call iterations to perform.
-        model_diagnostic_settings: Optional model diagnostics settings to apply to function invocations.
 
     """
 
-    @wraps(get_response_func)
-    async def wrap_get_response(
-        messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-        **kwargs: Any,
-    ) -> "ChatResponse":
-        from ._clients import _prepare_messages
-        from ._types import ChatMessage, ChatOptions, FunctionCallContent, FunctionResultContent
+    def decorator(
+        func: Callable[..., CoroutineType[Any, Any, "ChatResponse"]],
+    ) -> Callable[..., CoroutineType[Any, Any, "ChatResponse"]]:
+        """Inner decorator."""
 
-        prepped_messages = _prepare_messages(messages)
-        response: "ChatResponse | None" = None
-        fcc_messages: "list[ChatMessage]" = []
-        for attempt_idx in range(max_iterations):
-            response = await get_response_func(messages=prepped_messages, **kwargs)
-            # if there are function calls, we will handle them first
-            function_results = {
-                it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
-            }
-            function_calls = [
-                it
-                for it in response.messages[0].contents
-                if isinstance(it, FunctionCallContent) and it.call_id not in function_results
-            ]
+        @wraps(func)
+        async def function_invocation_wrapper(
+            self: "ChatClient",
+            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            **kwargs: Any,
+        ) -> "ChatResponse":
+            from ._clients import prepare_messages
+            from ._types import ChatMessage, ChatOptions, FunctionCallContent, FunctionResultContent
 
-            tools = kwargs.get("tools")
-            if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
-                tools = chat_options.tools
-            if function_calls and tools:
-                function_results = await execute_function_calls(
-                    custom_args=kwargs,
-                    attempt_idx=attempt_idx,
-                    function_calls=function_calls,
-                    tools=tools,  # type: ignore
-                    model_diagnostic_settings=model_diagnostic_settings,
-                )
-                # add a single ChatMessage to the response with the results
-                result_message = ChatMessage(role="tool", contents=function_results)  # type: ignore[call-overload]
-                response.messages.append(result_message)
-                # response should contain 2 messages after this,
-                # one with function call contents
-                # and one with function result contents
-                # the amount and call_id's should match
-                # this runs in every but the first run
-                # we need to keep track of all function call messages
-                fcc_messages.extend(response.messages)
-                # and add them as additional context to the messages
-                if kwargs.get("store"):
-                    prepped_messages.clear()
-                    prepped_messages.append(result_message)
-                else:
-                    prepped_messages.extend(response.messages)
-                continue
-            # If we reach this point, it means there were no function calls to handle,
-            # we'll add the previous function call and responses
-            # to the front of the list, so that the final response is the last one
-            # TODO (eavanvalkenburg): control this behavior?
+            prepped_messages = prepare_messages(messages)
+            response: "ChatResponse | None" = None
+            fcc_messages: "list[ChatMessage]" = []
+            for attempt_idx in range(max_iterations):
+                response = await func(self, messages=prepped_messages, **kwargs)
+                # if there are function calls, we will handle them first
+                function_results = {
+                    it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
+                }
+                function_calls = [
+                    it
+                    for it in response.messages[0].contents
+                    if isinstance(it, FunctionCallContent) and it.call_id not in function_results
+                ]
+
+                if response.conversation_id is not None:
+                    update_conversation_id(kwargs, response.conversation_id)
+                    prepped_messages = []
+
+                tools = kwargs.get("tools")
+                if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
+                    tools = chat_options.tools
+                if function_calls and tools:
+                    function_results = await execute_function_calls(
+                        custom_args=kwargs,
+                        attempt_idx=attempt_idx,
+                        function_calls=function_calls,
+                        tools=tools,  # type: ignore
+                    )
+                    # add a single ChatMessage to the response with the results
+                    result_message = ChatMessage(role="tool", contents=function_results)  # type: ignore[call-overload]
+                    response.messages.append(result_message)
+                    # response should contain 2 messages after this,
+                    # one with function call contents
+                    # and one with function result contents
+                    # the amount and call_id's should match
+                    # this runs in every but the first run
+                    # we need to keep track of all function call messages
+                    fcc_messages.extend(response.messages)
+                    # and add them as additional context to the messages
+                    if kwargs.get("store"):
+                        prepped_messages.clear()
+                        prepped_messages.append(result_message)
+                    else:
+                        prepped_messages.extend(response.messages)
+                    continue
+                # If we reach this point, it means there were no function calls to handle,
+                # we'll add the previous function call and responses
+                # to the front of the list, so that the final response is the last one
+                # TODO (eavanvalkenburg): control this behavior?
+                if fcc_messages:
+                    for msg in reversed(fcc_messages):
+                        response.messages.insert(0, msg)
+                return response
+
+            # Failsafe: give up on tools, ask model for plain answer
+            kwargs["tool_choice"] = "none"
+            response = await func(self, messages=prepped_messages, **kwargs)
             if fcc_messages:
                 for msg in reversed(fcc_messages):
                     response.messages.insert(0, msg)
             return response
 
-        # Failsafe: give up on tools, ask model for plain answer
-        kwargs["tool_choice"] = "none"
-        response = await get_response_func(messages=prepped_messages, **kwargs)
-        if fcc_messages:
-            for msg in reversed(fcc_messages):
-                response.messages.insert(0, msg)
-        return response
+        return function_invocation_wrapper  # type: ignore
 
-    return wrap_get_response
+    return decorator(func)
 
 
 def _handle_function_calls_streaming_response(
-    get_streaming_response_func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+    func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+    *,
     max_iterations: int = 10,
-    model_diagnostic_settings: OtelSettings | None = None,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the get_streaming_response method to handle function calls.
 
     Args:
-        get_streaming_response_func: The get_streaming_response method to decorate.
+        func: The get_streaming_response method to decorate.
         max_iterations: The maximum number of function call iterations to perform.
-        model_diagnostic_settings: Optional model diagnostics settings to apply to function invocations.
 
     """
 
-    @wraps(get_streaming_response_func)
-    async def wrap_get_streaming_response(
-        messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-        **kwargs: Any,
-    ) -> AsyncIterable["ChatResponseUpdate"]:
-        """Wrap the inner get streaming response method to handle tool calls."""
-        from ._clients import _prepare_messages
-        from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, FunctionCallContent
+    def decorator(
+        func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
+    ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
+        """Inner decorator."""
 
-        prepped_messages = _prepare_messages(messages)
-        for attempt_idx in range(max_iterations):
-            all_updates: list["ChatResponseUpdate"] = []
-            async for update in get_streaming_response_func(messages=prepped_messages, **kwargs):
-                all_updates.append(update)
+        @wraps(func)
+        async def streaming_function_invocation_wrapper(
+            self: "ChatClient",
+            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            **kwargs: Any,
+        ) -> AsyncIterable["ChatResponseUpdate"]:
+            """Wrap the inner get streaming response method to handle tool calls."""
+            from ._clients import prepare_messages
+            from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, FunctionCallContent
+
+            prepped_messages = prepare_messages(messages)
+            for attempt_idx in range(max_iterations):
+                all_updates: list["ChatResponseUpdate"] = []
+                async for update in func(self, messages=prepped_messages, **kwargs):
+                    all_updates.append(update)
+                    yield update
+
+                # efficient check for FunctionCallContent in the updates
+                # if there is at least one, this stops and continuous
+                # if there are no FCC's then it returns
+                if not any(isinstance(item, FunctionCallContent) for upd in all_updates for item in upd.contents):
+                    return
+
+                # Now combining the updates to create the full response.
+                # Depending on the prompt, the message may contain both function call
+                # content and others
+
+                response: "ChatResponse" = ChatResponse.from_chat_response_updates(all_updates)
+                # add the response message to the previous messages
+                prepped_messages.append(response.messages[0])
+                # get the fccs
+                function_calls = [
+                    item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)
+                ]
+
+                # When conversation id is present, it means that messages are hosted on the server.
+                # In this case, we need to update kwargs with conversation id and also clear messages
+                if response.conversation_id is not None:
+                    update_conversation_id(kwargs, response.conversation_id)
+                    prepped_messages = []
+
+                tools = kwargs.get("tools")
+                if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
+                    tools = chat_options.tools
+
+                if function_calls and tools:
+                    function_results = await execute_function_calls(
+                        custom_args=kwargs,
+                        attempt_idx=attempt_idx,
+                        function_calls=function_calls,
+                        tools=tools,  # type: ignore[reportArgumentType]
+                    )
+                    function_result_msg = ChatMessage(role="tool", contents=function_results)
+                    yield ChatResponseUpdate(contents=function_results, role="tool")
+                    response.messages.append(function_result_msg)
+                    prepped_messages.append(function_result_msg)
+                    continue
+
+            # Failsafe: give up on tools, ask model for plain answer
+            kwargs["tool_choice"] = "none"
+            async for update in func(self, messages=prepped_messages, **kwargs):
                 yield update
 
-            # efficient check for FunctionCallContent in the updates
-            # if there is at least one, this stops and continuous
-            # if there are no FCC's then it returns
-            if not any(isinstance(item, FunctionCallContent) for upd in all_updates for item in upd.contents):
-                return
+        return streaming_function_invocation_wrapper
 
-            # Now combining the updates to create the full response.
-            # Depending on the prompt, the message may contain both function call
-            # content and others
-
-            response: "ChatResponse" = ChatResponse.from_chat_response_updates(all_updates)
-            # add the response message to the previous messages
-            prepped_messages.append(response.messages[0])
-            # get the fccs
-            function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
-
-            # When conversation id is present, it means that messages are hosted on the server.
-            # In this case, we need to update kwargs with conversation id and also clear messages
-            if response.conversation_id is not None:
-                kwargs["conversation_id"] = response.conversation_id
-                prepped_messages = []
-
-            tools = kwargs.get("tools")
-            if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
-                tools = chat_options.tools
-
-            if function_calls and tools:
-                function_results = await execute_function_calls(
-                    custom_args=kwargs,
-                    attempt_idx=attempt_idx,
-                    function_calls=function_calls,
-                    tools=tools,  # type: ignore[reportArgumentType]
-                    model_diagnostic_settings=model_diagnostic_settings,
-                )
-                function_result_msg = ChatMessage(role="tool", contents=function_results)
-                yield ChatResponseUpdate(contents=function_results, role="tool")
-                response.messages.append(function_result_msg)
-                prepped_messages.append(function_result_msg)
-                continue
-
-        # Failsafe: give up on tools, ask model for plain answer
-        kwargs["tool_choice"] = "none"
-        async for update in get_streaming_response_func(messages=prepped_messages, **kwargs):
-            yield update
-
-    return wrap_get_streaming_response
+    return decorator(func)
 
 
-def FunctionInvokingChatClient(
-    chat_client: "ChatClient",
-    *,
-    max_iterations: int | None = 10,
-) -> "ChatClient":
+def use_function_invocation(
+    chat_client: type[TChatClient],
+) -> type[TChatClient]:
     """Class decorator that enables tool calling for a chat client."""
-    if max_iterations is None:
-        max_iterations = 10
-    model_diagnostics = getattr(chat_client, "_model_diagnostic_settings", None)
+    if getattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, False):
+        return chat_client
+
+    max_iterations = DEFAULT_MAX_ITERATIONS
+
     try:
-        object.__setattr__(
-            chat_client,
-            "get_response",
-            _handle_function_calls_response(
-                get_response_func=chat_client.get_response,
-                max_iterations=max_iterations,
-                model_diagnostic_settings=model_diagnostics,
-            ),
-        )
-    except AttributeError as ex:
-        raise ChatClientInitializationError("Chat client does not have a 'get_response' method.", ex) from ex
-    try:
-        object.__setattr__(
-            chat_client,
-            "get_streaming_response",
-            _handle_function_calls_streaming_response(
-                get_streaming_response_func=chat_client.get_streaming_response,
-                max_iterations=max_iterations,
-                model_diagnostic_settings=model_diagnostics,
-            ),
+        chat_client.get_response = _handle_function_calls_response(  # type: ignore
+            func=chat_client.get_response,  # type: ignore
+            max_iterations=max_iterations,
         )
     except AttributeError as ex:
         raise ChatClientInitializationError(
-            "Chat client does not have a 'get_streaming_response' method.",
-            ex,
+            f"Chat client {chat_client.__name__} does not have a get_response method, cannot apply function invocation."
+        ) from ex
+    try:
+        chat_client.get_streaming_response = _handle_function_calls_streaming_response(  # type: ignore
+            func=chat_client.get_streaming_response,
+            max_iterations=max_iterations,
+        )
+    except AttributeError as ex:
+        raise ChatClientInitializationError(
+            f"Chat client {chat_client.__name__} does not have a get_streaming_response method, "
+            "cannot apply function invocation."
         ) from ex
     setattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, True)
     return chat_client

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, ChatClientBuilder, McpStreamableHttpTool
+from agent_framework import ChatClientAgent, McpStreamableHttpTool
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -16,7 +16,7 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatClientAgent(
-        chat_client=ChatClientBuilder(OpenAIResponsesClient).function_calling_with(max_iterations=5).open_telemetry,
+        chat_client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=McpStreamableHttpTool(  # Tools defined at agent creation

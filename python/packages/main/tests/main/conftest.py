@@ -43,17 +43,25 @@ def ai_function_tool() -> AITool:
     return simple_function
 
 
+# region Otel Settings fixtures
 @fixture
-def model_diagnostic_settings(monkeypatch, request) -> OtelSettings:
+def enabled(request: Any) -> bool:
+    """Fixture that returns a boolean indicating if Otel is enabled."""
+    return request.param if hasattr(request, "param") else True
+
+
+@fixture
+def sensitive(request: Any) -> bool:
+    """Fixture that returns a boolean indicating if sensitive data is enabled."""
+    return request.param if hasattr(request, "param") else False
+
+
+@fixture
+def otel_settings(enabled: bool, sensitive: bool) -> OtelSettings:
     """Fixture to set environment variables for OtelSettings."""
-    enabled = getattr(request, "param", (None, None))[0]
-    sensitive = getattr(request, "param", (None, None))[1]
-    if enabled is None:
-        monkeypatch.delenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL", raising=False)
-    else:
-        monkeypatch.setenv("AGENT_FRAMEWORK_GENAI_ENABLE_OTEL", str(enabled).lower())
-    if sensitive is None:
-        monkeypatch.delenv("AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA", raising=False)
-    else:
-        monkeypatch.setenv("AGENT_FRAMEWORK_GENAI_ENABLE_SENSITIVE_DATA", str(sensitive).lower())
-    return OtelSettings(env_file_path="test.env")
+
+    from agent_framework.telemetry import OTEL_SETTINGS, setup_telemetry
+
+    setup_telemetry(enable_otel=enabled, enable_sensitive_data=sensitive)
+
+    return OTEL_SETTINGS

@@ -18,11 +18,11 @@ from agent_framework import (
     ChatRole,
     EmbeddingGenerator,
     FunctionCallContent,
-    FunctionInvokingChatClient,
     FunctionResultContent,
     GeneratedEmbeddings,
     TextContent,
     ai_function,
+    use_function_invocation,
 )
 
 if sys.version_info >= (3, 12):
@@ -175,7 +175,7 @@ async def test_base_client_get_streaming_response(chat_client_base: MockChatClie
 
 async def test_base_client_with_function_calling(chat_client_base: MockChatClientBase):
     exec_counter = 0
-    chat_client = FunctionInvokingChatClient(chat_client_base)
+    chat_client = use_function_invocation(chat_client_base)
 
     @ai_function(name="test_function")
     def ai_func(arg1: str) -> str:
@@ -234,7 +234,7 @@ async def test_base_client_with_function_calling_disabled(chat_client_base: Mock
 
 
 async def test_base_client_with_streaming_function_calling(chat_client_base: MockChatClientBase):
-    chat_client = FunctionInvokingChatClient(chat_client_base)
+    chat_client = use_function_invocation(chat_client_base)
     exec_counter = 0
 
     @ai_function(name="test_function")

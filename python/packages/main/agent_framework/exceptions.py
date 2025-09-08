@@ -41,6 +41,12 @@ class AgentExecutionException(AgentException):
     pass
 
 
+class AgentInitializationError(AgentException):
+    """An error occurred while initializing the agent."""
+
+    pass
+
+
 class ChatClientException(AgentFrameworkException):
     """An error occurred while dealing with a chat client."""
 

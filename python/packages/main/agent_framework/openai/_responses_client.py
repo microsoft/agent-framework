@@ -31,11 +31,16 @@ from openai.types.responses.web_search_tool_param import UserLocation as WebSear
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from agent_framework import DataContent, TextReasoningContent, UriContent, UsageContent
-
 from .._clients import ChatClientBase
 from .._logging import get_logger
-from .._tools import AIFunction, AITool, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool
+from .._tools import (
+    AIFunction,
+    AITool,
+    HostedCodeInterpreterTool,
+    HostedFileSearchTool,
+    HostedWebSearchTool,
+    use_function_invocation,
+)
 from .._types import (
     AIContents,
     ChatMessage,
@@ -44,12 +49,16 @@ from .._types import (
     ChatResponseUpdate,
     ChatRole,
     CitationAnnotation,
+    DataContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
     HostedVectorStoreContent,
     TextContent,
+    TextReasoningContent,
     TextSpanRegion,
+    UriContent,
+    UsageContent,
     UsageDetails,
 )
 from ..exceptions import (
@@ -57,6 +66,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
+from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIConfigBase, OpenAIHandler, OpenAISettings, prepare_function_call_results
 
@@ -426,7 +436,7 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
                         )
                         response_tools.append(
                             WebSearchToolParam(
-                                type="web_search_preview",
+                                type="web_search",
                                 user_location=WebSearchUserLocation(
                                     type="approximate",
                                     city=location.get("city", None),
@@ -814,6 +824,8 @@ class OpenAIResponsesClientBase(OpenAIHandler, ChatClientBase):
 TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponsesClient")
 
 
+@use_function_invocation
+@use_telemetry
 class OpenAIResponsesClient(OpenAIConfigBase, OpenAIResponsesClientBase):
     """OpenAI Responses client class."""
 

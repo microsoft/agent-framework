@@ -23,9 +23,11 @@ from agent_framework import (
     UriContent,
     UsageContent,
     UsageDetails,
+    use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.telemetry import use_telemetry
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -93,10 +95,12 @@ class FoundrySettings(AFBaseSettings):
 TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 
 
+@use_function_invocation
+@use_telemetry
 class FoundryChatClient(ChatClientBase):
     """Azure AI Foundry Chat client."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_ai_foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
     client: AIProjectClient = Field(...)
     credential: AsyncTokenCredential | None = Field(...)
     agent_id: str | None = Field(default=None)
@@ -105,6 +109,7 @@ class FoundryChatClient(ChatClientBase):
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
+    _should_setup_tracing: bool = PrivateAttr(default=True)  # Track whether we should setup tracing
 
     def __init__(
         self,
@@ -133,6 +138,7 @@ class FoundryChatClient(ChatClientBase):
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
             async_credential: Azure async credential to use for authentication.
+            setup_tracing: Whether to setup tracing for the client. Defaults to True.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
@@ -179,6 +185,19 @@ class FoundryChatClient(ChatClientBase):
             **kwargs,
         )
         self._should_close_client = should_close_client
+
+    async def setup_foundry_telemetry(self, enable_live_metrics: bool = False) -> None:
+        """Call this method to setup tracing for Foundry.
+
+        This will take the connection string from the project client.
+        It will disable any OTLP endpoint that might have been set.
+        """
+        from agent_framework.telemetry import setup_telemetry
+
+        setup_telemetry(
+            monitor_connection_string=await self.client.telemetry.get_application_insights_connection_string(),
+            enable_live_metrics=enable_live_metrics,
+        )
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -393,6 +412,7 @@ class FoundryChatClient(ChatClientBase):
                     raw_representation=event_data,
                     response_id=response_id,
                     role=ChatRole.ASSISTANT,
+                    ai_model_id=event_data.model,
                 )
             elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
                 response_id = event_data.run_id

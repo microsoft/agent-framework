@@ -127,7 +127,7 @@ class OpenAIHandler(AFBaseModel):
 class OpenAIConfigBase(OpenAIHandler):
     """Internal class for configuring a connection to an OpenAI service."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(

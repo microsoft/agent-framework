@@ -21,7 +21,7 @@ from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
 from .._clients import ChatClientBase
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool
+from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, use_function_invocation
 from .._types import (
     AIContents,
     ChatMessage,
@@ -38,6 +38,7 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError
+from ..telemetry import use_telemetry
 from ._shared import OpenAIConfigBase, OpenAISettings
 
 if sys.version_info >= (3, 11):
@@ -49,6 +50,8 @@ else:
 __all__ = ["OpenAIAssistantsClient"]
 
 
+@use_function_invocation
+@use_telemetry
 class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
     """OpenAI Assistants client."""
 

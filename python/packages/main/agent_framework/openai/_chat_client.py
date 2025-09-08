@@ -17,10 +17,11 @@ from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompl
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from agent_framework import AIFunction, AITool, UsageContent
+from agent_framework.telemetry import use_telemetry
 
 from .._clients import ChatClientBase
 from .._logging import get_logger
-from .._tools import HostedWebSearchTool
+from .._tools import HostedWebSearchTool, use_function_invocation
 from .._types import (
     AIContents,
     ChatFinishReason,
@@ -396,6 +397,8 @@ class OpenAIChatClientBase(OpenAIHandler, ChatClientBase):
 TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
 
+@use_function_invocation
+@use_telemetry
 class OpenAIChatClient(OpenAIConfigBase, OpenAIChatClientBase):
     """OpenAI Chat completion class."""
 

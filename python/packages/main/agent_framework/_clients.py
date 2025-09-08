@@ -4,16 +4,14 @@ import asyncio
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
-from functools import partial
-from inspect import isclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
-from ._tools import AITool, FunctionInvokingChatClient
+from ._tools import AITool
 from ._types import (
     ChatMessage,
     ChatOptions,
@@ -22,15 +20,14 @@ from ._types import (
     ChatToolMode,
     GeneratedEmbeddings,
 )
-from .telemetry import OpenTelemetryChatClient
 
 if TYPE_CHECKING:
     from ._agents import ChatClientAgent
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    pass  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    pass  # pragma: no cover
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
@@ -41,7 +38,6 @@ logger = get_logger()
 __all__ = [
     "ChatClient",
     "ChatClientBase",
-    "ChatClientBuilder",
     "EmbeddingGenerator",
 ]
 
@@ -52,6 +48,11 @@ __all__ = [
 @runtime_checkable
 class ChatClient(Protocol):
     """A protocol for a chat client that can generate responses."""
+
+    @property
+    def additional_properties(self) -> dict[str, Any]:
+        """Get additional properties associated with the client."""
+        ...
 
     async def get_response(
         self,
@@ -176,7 +177,7 @@ class ChatClient(Protocol):
 # region ChatClientBase
 
 
-def _prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
+def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
     """Turn the allowed input into a list of chat messages."""
     if isinstance(messages, str):
         return [ChatMessage(role="user", text=messages)]
@@ -193,14 +194,15 @@ def _prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage
 class ChatClientBase(AFBaseModel, ABC):
     """Base class for chat clients."""
 
-    MODEL_PROVIDER_NAME: str = "unknown"
+    additional_properties: dict[str, Any] = Field(default_factory=dict)
+    OTEL_PROVIDER_NAME: str = "unknown"
     # This is used for OTel setup, should be overridden in subclasses
 
-    def _prepare_messages(
+    def prepare_messages(
         self, messages: str | ChatMessage | list[str] | list[ChatMessage]
     ) -> MutableSequence[ChatMessage]:
         """Turn the allowed input into a list of chat messages."""
-        return _prepare_messages(messages)
+        return prepare_messages(messages)
 
     # region Internal methods to be implemented by the derived classes
 
@@ -330,7 +332,7 @@ class ChatClientBase(AFBaseModel, ABC):
                 user=user,
                 additional_properties=additional_properties or {},
             )
-        prepped_messages = self._prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
         return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
 
@@ -412,7 +414,7 @@ class ChatClientBase(AFBaseModel, ABC):
                 additional_properties=additional_properties or {},
                 **kwargs,
             )
-        prepped_messages = self._prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(
             messages=prepped_messages, chat_options=chat_options, **kwargs
@@ -482,155 +484,6 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory=chat_message_store_factory,
             **kwargs,
         )
-
-    def with_function_calling(self, *, max_iterations: int | None = None) -> Self:
-        """Create a new chat client with function calling capabilities.
-
-        Args:
-            max_iterations: The maximum number of function calling iterations to perform.
-                If not provided, the default is determined by the FunctionInvokingChatClient.
-
-        Returns:
-            The chat client with function calling enabled.
-        """
-        return FunctionInvokingChatClient(self, max_iterations=max_iterations)  # type: ignore
-
-    def with_open_telemetry(
-        self, *, enable_sensitive_data: bool | None = None, model_provider_name: str | None = None
-    ) -> Self:
-        """Create a new chat client with OpenTelemetry capabilities.
-
-        Args:
-            enable_sensitive_data: Whether to enable sensitive data in telemetry.
-                If not provided, the default is False.
-            model_provider_name: The name of the model provider to use in telemetry.
-                If not provided, the default is the MODEL_PROVIDER_NAME of the base client.
-
-        Returns:
-            The chat client with OpenTelemetry enabled.
-        """
-        return OpenTelemetryChatClient(
-            self,
-            model_provider_name=model_provider_name,
-        )  # type: ignore
-
-
-# region ChatClientBuilder
-
-TChatClientBuilder = TypeVar("TChatClientBuilder", bound="ChatClientBuilder")
-
-
-class ChatClientBuilder:
-    """A builder class for creating ChatClient instances."""
-
-    def __init__(self, chat_client: type[ChatClient] | ChatClient | None = None) -> None:
-        """Create a chat client builder.
-
-        Args:
-            chat_client: a chat client or a instance of one.
-        """
-        self.chat_client = self._chat_client  # type: ignore[method-assign]
-        self._base_chat_client: type[ChatClient] | ChatClient | None = chat_client
-        self._decorators: list[Callable[[ChatClient], ChatClient]] = []
-
-    @classmethod
-    def chat_client(cls: type[TChatClientBuilder], chat_client: type[ChatClient] | ChatClient) -> TChatClientBuilder:
-        """Create a new ChatClientBuilder instance with the specified chat client."""
-        return cls(chat_client=chat_client)
-
-    def _chat_client(self, chat_client: type[ChatClient] | ChatClient) -> Self:
-        """Add a base chat client to the builder.
-
-        Args:
-            chat_client: The base chat client to add.
-
-        Returns:
-            The builder instance.
-        """
-        self._base_chat_client = chat_client
-        return self
-
-    def add_decorator(self, decorator: Callable[[ChatClient], ChatClient]) -> Self:
-        """Add a decorator to the builder.
-
-        Args:
-            decorator: A callable that takes a ChatClient instance and returns a modified instance.
-
-        Returns:
-            The builder instance.
-        """
-        self._decorators.append(decorator)
-        return self
-
-    @property
-    def function_calling(self) -> Self:
-        self.function_calling_with()
-        return self
-
-    def function_calling_with(self, *, max_iterations: int | None = None) -> Self:
-        """Add function calling capabilities to the chat client.
-
-        Returns:
-            The builder instance.
-        """
-        if max_iterations is not None:
-            self.add_decorator(partial(FunctionInvokingChatClient, max_iterations=max_iterations))
-        else:
-            self.add_decorator(FunctionInvokingChatClient)
-        return self
-
-    @property
-    def open_telemetry(self) -> Self:
-        """Add OpenTelemetry capabilities to the chat client.
-
-        Returns:
-            The builder instance.
-        """
-        self.open_telemetry_with()
-        return self
-
-    def open_telemetry_with(
-        self,
-        *,
-        enable_sensitive_data: bool | None = None,
-        model_provider_name: str | None = None,
-    ) -> Self:
-        """Add OpenTelemetry tracing to the chat client.
-
-        Returns:
-            The builder instance.
-        """
-        self.add_decorator(
-            partial(
-                OpenTelemetryChatClient,
-                model_provider_name=model_provider_name,
-            )
-        )
-        return self
-
-    def build(self) -> ChatClient:
-        """Build the final chat client instance.
-
-        Returns:
-            The constructed chat client instance.
-        """
-        if self._base_chat_client is None:
-            raise ValueError("Base chat client must be set before building.")
-        chat_client = self._base_chat_client() if isclass(self._base_chat_client) else self._base_chat_client
-        for decorator in self._decorators:
-            chat_client = decorator(chat_client)  # type: ignore[arg-type]
-        return chat_client  # type: ignore[return-value]
-
-    async def __aenter__(self) -> ChatClient:
-        return self.build()
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: Any,
-    ) -> None:
-        pass
 
 
 # region Embedding Client
