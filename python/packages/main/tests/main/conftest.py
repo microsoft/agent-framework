@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import logging
 import sys
 from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
@@ -33,6 +34,8 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import]
 # region Chat History
+
+logger = logging.getLogger(__name__)
 
 
 @fixture(scope="function")
@@ -111,8 +114,7 @@ class MockChatClient:
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         **kwargs: Any,
     ) -> ChatResponse:
-        # Implement the method
-
+        logger.debug(f"Running custom chat client, with: {messages=}, {kwargs=}")
         return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
 
     async def get_streaming_response(
@@ -120,7 +122,7 @@ class MockChatClient:
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        # Implement the method
+        logger.debug(f"Running custom chat client stream, with: {messages=}, {kwargs=}")
         yield ChatResponseUpdate(text=TextContent(text="test streaming response "), role="assistant")
         yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
 
@@ -149,6 +151,7 @@ class MockBaseChatClient(BaseChatClient):
         Returns:
             The chat response contents representing the response(s).
         """
+        logger.debug(f"Running base chat client inner, with: {messages=}, {chat_options=}, {kwargs=}")
         if not self.run_responses:
             return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
         return self.run_responses.pop(0)
@@ -161,6 +164,7 @@ class MockBaseChatClient(BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
+        logger.debug(f"Running base chat client inner stream, with: {messages=}, {chat_options=}, {kwargs=}")
         if not self.streaming_responses:
             yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
             return
@@ -228,6 +232,7 @@ class MockAgent(AgentProtocol):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
+        logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
         return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Response")])])
 
     async def run_stream(
@@ -237,6 +242,7 @@ class MockAgent(AgentProtocol):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
+        logger.debug(f"Running mock agent stream, with: {messages=}, {thread=}, {kwargs=}")
         yield AgentRunResponseUpdate(contents=[TextContent("Response")])
 
     def get_new_thread(self) -> AgentThread:

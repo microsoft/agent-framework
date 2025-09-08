@@ -126,8 +126,10 @@ async def test_base_client_with_function_calling(chat_client_base: ChatClientPro
     assert response.messages[2].text == "done"
 
 
-@mark.parametrize("max_iterations", [0], indirect=True)
-async def test_base_client_with_function_calling_disabled(chat_client_base: ChatClientProtocol, max_iterations: int):
+@mark.parametrize("enable_function_calling", [False], indirect=True)
+async def test_base_client_with_function_calling_disabled(
+    chat_client_base: ChatClientProtocol, enable_function_calling: bool
+):
     exec_counter = 0
 
     @ai_function(name="test_function")
