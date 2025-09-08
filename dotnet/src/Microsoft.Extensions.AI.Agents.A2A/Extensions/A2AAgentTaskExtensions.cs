@@ -12,7 +12,7 @@ internal static class A2AAgentTaskExtensions
 {
     public static IList<ChatMessage> ToChatMessages(this AgentTask agentTask)
     {
-        List<ChatMessage>? messages = [];
+        List<ChatMessage> messages = [];
 
         if (agentTask.Artifacts is not null)
         {

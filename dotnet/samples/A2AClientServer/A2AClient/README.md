@@ -21,6 +21,6 @@ The agent urls are provided as a ` ` delimited list of strings
 cd dotnet/samples/Demos/A2AClientServer/A2AClient
 
 dotnet user-secrets set "A2AClient:ModelId" "..."
-dotnet user-secrets set "A2AClient":ApiKey" "..."
+dotnet user-secrets set "A2AClient:ApiKey" "..."
 dotnet user-secrets set "A2AClient:AgentUrls" "http://localhost:5000/policy;http://localhost:5000/invoice;http://localhost:5000/logistics"
 ```

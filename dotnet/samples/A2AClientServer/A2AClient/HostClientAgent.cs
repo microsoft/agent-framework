@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System.ClientModel;
-using System.ClientModel.Primitives;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.A2A;
@@ -28,20 +27,8 @@ internal sealed class HostClientAgent
             var agents = await Task.WhenAll(createAgentTasks);
             var tools = agents.Select(agent => (AITool)AgentAIFunctionFactory.CreateFromAgent(agent)).ToList();
 
-            // Enable logging
-            var options = new OpenAIClientOptions
-            {
-                MessageLoggingPolicy = new MessageLoggingPolicy(new()
-                {
-                    EnableLogging = true,
-                    EnableMessageLogging = true,
-                    EnableMessageContentLogging = true,
-                    LoggerFactory = this._loggerFactory
-                })
-            };
-
             // Create the agent that uses the remote agents as tools
-            this.Agent = new OpenAIClient(new ApiKeyCredential(apiKey), options)
+            this.Agent = new OpenAIClient(new ApiKeyCredential(apiKey))
              .GetChatClient(modelId)
              .CreateAIAgent(instructions: "You specialize in handling queries for users and using your tools to provide answers.", name: "HostClient", tools: tools);
         }

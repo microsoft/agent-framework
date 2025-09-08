@@ -69,7 +69,7 @@ internal sealed class A2AAgent : AIAgent
 
         if (a2aResponse is Message message)
         {
-            UpdateThreadConversationId(thread, message);
+            UpdateThreadConversationId(thread, message.ContextId);
 
             return new AgentRunResponse
             {
@@ -82,7 +82,7 @@ internal sealed class A2AAgent : AIAgent
         }
         if (a2aResponse is AgentTask agentTask)
         {
-            UpdateThreadConversationId(thread, agentTask);
+            UpdateThreadConversationId(thread, agentTask.ContextId);
 
             return new AgentRunResponse
             {
@@ -120,7 +120,7 @@ internal sealed class A2AAgent : AIAgent
                 throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
             }
 
-            UpdateThreadConversationId(thread, message);
+            UpdateThreadConversationId(thread, message.ContextId);
 
             yield return new AgentRunResponseUpdate
             {
@@ -160,41 +160,22 @@ internal sealed class A2AAgent : AIAgent
         }
     }
 
-    private static void UpdateThreadConversationId(AgentThread? thread, Message message)
+    private static void UpdateThreadConversationId(AgentThread? thread, string? contextId)
     {
         if (thread is null)
         {
             return;
         }
 
-        // Surface cases where the A2A agent responds with a message that
+        // Surface cases where the A2A agent responds with a response that
         // has a different context Id than the thread's conversation Id.
-        if (thread.ConversationId is not null && message.ContextId is not null && thread.ConversationId != message.ContextId)
+        if (thread.ConversationId is not null && contextId is not null && thread.ConversationId != contextId)
         {
             throw new InvalidOperationException(
-                $"The {nameof(message.ContextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentThread)}.");
+                $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentThread)}.");
         }
 
         // Assign a server-generated context Id to the thread if it's not already set.
-        thread.ConversationId ??= message.ContextId;
-    }
-
-    private static void UpdateThreadConversationId(AgentThread? thread, AgentTask agentTask)
-    {
-        if (thread is null)
-        {
-            return;
-        }
-
-        // Surface cases where the A2A agent responds with a message that
-        // has a different context Id than the thread's conversation Id.
-        if (thread.ConversationId is not null && agentTask.ContextId is not null && thread.ConversationId != agentTask.ContextId)
-        {
-            throw new InvalidOperationException(
-                $"The {nameof(agentTask.ContextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentThread)}.");
-        }
-
-        // Assign a server-generated context Id to the thread if it's not already set.
-        thread.ConversationId ??= agentTask.ContextId;
+        thread.ConversationId ??= contextId;
     }
 }

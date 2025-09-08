@@ -121,9 +121,9 @@ internal static class HostAgentFactory
             PushNotifications = false,
         };
 
-        var invoiceQuery = new AgentSkill()
+        var logisticsQuery = new AgentSkill()
         {
-            Id = "id_invoice_agent",
+            Id = "id_logistics_agent",
             Name = "LogisticsQuery",
             Description = "Handles requests relating to logistics.",
             Tags = ["logistics", "semantic-kernel"],
@@ -141,7 +141,7 @@ internal static class HostAgentFactory
             DefaultInputModes = ["text"],
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
-            Skills = [invoiceQuery],
+            Skills = [logisticsQuery],
         };
     }
     #endregion
