@@ -435,7 +435,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     #endregion
 
     private void ContinueWith(
-        WorkflowActionExecutor executor,
+        DeclarativeActionExecutor executor,
         Func<object?, bool>? condition = null,
         Action? completionHandler = null)
     {

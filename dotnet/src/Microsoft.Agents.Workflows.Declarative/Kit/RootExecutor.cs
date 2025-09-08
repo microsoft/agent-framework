@@ -4,7 +4,6 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.Configuration;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
@@ -13,10 +12,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// Base class for an entry-point workflow executor that receives the initial trigger message.
 /// </summary>
 /// <typeparam name="TInput">The type of the initial message that starts the workflow.</typeparam>
-public abstract class RootExecutor<TInput> :
-    ReflectingExecutor<RootExecutor<TInput>>,
-    IMessageHandler<TInput>
-    where TInput : notnull
+public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : notnull
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="RootExecutor{TInput}"/> class.
@@ -35,7 +31,7 @@ public abstract class RootExecutor<TInput> :
     private IConfiguration? Configuration { get; }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         await this.ExecuteAsync(message, new DeclarativeWorkflowContext(context), cancellationToken: default).ConfigureAwait(false);
 

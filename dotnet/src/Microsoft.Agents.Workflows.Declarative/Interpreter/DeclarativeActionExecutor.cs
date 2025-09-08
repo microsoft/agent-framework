@@ -8,7 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,15 +17,13 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 internal abstract class DeclarativeActionExecutor<TAction>(TAction model, DeclarativeWorkflowState state) :
-    WorkflowActionExecutor(model, state)
+    DeclarativeActionExecutor(model, state)
     where TAction : DialogAction
 {
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class WorkflowActionExecutor :
-    ReflectingExecutor<WorkflowActionExecutor>,
-    IMessageHandler<ActionExecutorResult>
+internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>
 {
     public const string RootActionId = "(root)";
 
@@ -39,7 +36,7 @@ internal abstract class WorkflowActionExecutor :
 
     private string? _parentId;
 
-    protected WorkflowActionExecutor(DialogAction model, DeclarativeWorkflowState state)
+    protected DeclarativeActionExecutor(DialogAction model, DeclarativeWorkflowState state)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
@@ -55,12 +52,12 @@ internal abstract class WorkflowActionExecutor :
 
     public string ParentId => this._parentId ??= this.Model.GetParentId() ?? RootActionId;
 
-    internal ILogger Logger { get; set; } = NullLogger<WorkflowActionExecutor>.Instance;
+    internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
     protected DeclarativeWorkflowState State { get; }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {

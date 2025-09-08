@@ -3,16 +3,13 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 /// <summary>
 /// Base class for an action executor that receives the initial trigger message.
 /// </summary>
-public abstract class ActionExecutor :
-    ReflectingExecutor<ActionExecutor>,
-    IMessageHandler<ActionExecutorResult>
+public abstract class ActionExecutor : Executor<ActionExecutorResult>
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="ActionExecutor"/> class.
@@ -24,7 +21,7 @@ public abstract class ActionExecutor :
     }
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
         await this.ExecuteAsync(new DeclarativeWorkflowContext(context), cancellationToken: default).ConfigureAwait(false);
 

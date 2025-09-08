@@ -3,7 +3,6 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
@@ -15,11 +14,10 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     string workflowId,
     DeclarativeWorkflowState state,
     Func<TInput, ChatMessage> inputTransform) :
-    ReflectingExecutor<DeclarativeWorkflowExecutor<TInput>>(workflowId),
-    IMessageHandler<TInput>
+    Executor<TInput>(workflowId)
     where TInput : notnull
 {
-    public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         ChatMessage input = inputTransform.Invoke(message);
         state.SetLastMessage(input);

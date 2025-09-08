@@ -67,8 +67,6 @@
   <Folder Name="/Samples/GettingStarted/Workflow/SharedStates/">
     <Project Path="samples/GettingStarted/Workflow/SharedStates/SharedStates.csproj" />
   </Folder>
-  <Folder Name="/Samples/DeclarativeWorkflow/">
-    <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
   <Folder Name="/Samples/GettingStarted/Workflows/">
     <Project Path="samples/GettingStarted/Workflows/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
     <Project Path="samples/GettingStarted/Workflows/DeclarativeEject/DeclarativeEject.csproj" />
