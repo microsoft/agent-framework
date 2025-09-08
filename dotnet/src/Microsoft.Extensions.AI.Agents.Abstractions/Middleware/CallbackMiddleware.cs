@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -11,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// Base class for callback middleware implementations that provides common functionality.
 /// </summary>
 /// <typeparam name="TContext">The type of context that this middleware operates on.</typeparam>
-public abstract class CallbackMiddleware<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TContext> : ICallbackMiddleware<TContext>
+public abstract class CallbackMiddleware<TContext> : ICallbackMiddleware<TContext>
     where TContext : CallbackContext
 {
     /// <inheritdoc/>

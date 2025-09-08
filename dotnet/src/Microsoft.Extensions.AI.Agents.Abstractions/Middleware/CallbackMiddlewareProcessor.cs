@@ -37,8 +37,19 @@ public sealed class CallbackMiddlewareProcessor
     /// Adds a middleware to the processor.
     /// </summary>
     /// <param name="middleware">The middleware to add.</param>
-    internal void AddCallback(ICallbackMiddleware middleware)
-        => this._agentCallbacks.Add(middleware);
+    internal CallbackMiddlewareProcessor AddCallback(ICallbackMiddleware middleware)
+    {
+        switch (middleware)
+        {
+            case CallbackMiddleware<AgentInvokeCallbackContext>:
+                this._agentCallbacks.Add(middleware);
+                break;
+            default:
+                throw new ArgumentException($"The middleware type '{middleware.GetType().FullName}' is not supported.", nameof(middleware));
+        }
+
+        return this;
+    }
 
     /// <summary>
     /// Gets the middleware that can process the specified context type.

@@ -25,8 +25,11 @@ var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCr
 // Example 3: Agent with custom middleware
 Console.WriteLine("=== Example 3: Agent with custom middleware ===");
 
-var agent = persistentAgentsClient.GetAIAgent("asst_25P1f2Qx5Uy5eKMGW8hi7Y5P");
-agent.AddCallback(new TimingCallbackMiddleware());
+var agent = persistentAgentsClient.CreateAIAgent(model)
+    .WithCallbacks(builder =>
+    {
+        builder.AddCallback(new TimingCallbackMiddleware());
+    });
 
 var customResponse = await agent.RunAsync("Tell me a joke.");
 

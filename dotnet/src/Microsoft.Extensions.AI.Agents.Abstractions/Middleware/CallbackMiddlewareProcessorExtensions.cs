@@ -52,7 +52,7 @@ public static class CallbackMiddlewareProcessorExtensions
     /// <param name="processor">The <see cref="CallbackMiddlewareProcessor"/> to which the middleware will be added. Cannot be <see
     /// langword="null"/>.</param>
     /// <param name="middleware">The callback middleware to add. Cannot be <see langword="null"/>.</param>
-    public static void AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<AgentInvokeCallbackContext> middleware)
+    public static CallbackMiddlewareProcessor AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<AgentInvokeCallbackContext> middleware)
         => processor.AddCallback(Throw.IfNull(middleware));
 
     /// <summary>
@@ -61,6 +61,6 @@ public static class CallbackMiddlewareProcessorExtensions
     /// <param name="processor">The <see cref="CallbackMiddlewareProcessor"/> to which the middleware will be added. Cannot be <see
     /// langword="null"/>.</param>
     /// <param name="middleware">The callback middleware to add. Cannot be <see langword="null"/>.</param>
-    public static void AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<OtherCallbackContext> middleware)
+    public static CallbackMiddlewareProcessor AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<OtherCallbackContext> middleware)
         => processor.AddCallback(Throw.IfNull(middleware));
 }

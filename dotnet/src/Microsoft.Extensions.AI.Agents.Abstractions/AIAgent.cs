@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,22 +15,6 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 public abstract class AIAgent
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AIAgent"/> class with default settings.
-    /// </summary>
-    protected AIAgent() : this(null)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AIAgent"/> class.
-    /// </summary>
-    /// <param name="callbackMiddlewareProcessor">Optional callback middleware processor for handling middleware chains.</param>
-    protected AIAgent(CallbackMiddlewareProcessor? callbackMiddlewareProcessor)
-    {
-        this.CallbacksProcessor = callbackMiddlewareProcessor ?? new();
-    }
-
     /// <summary>
     /// Gets the identifier of the agent.
     /// </summary>
@@ -54,15 +37,6 @@ public abstract class AIAgent
     /// Gets the description of the agent (optional).
     /// </summary>
     public virtual string? Description { get; }
-
-    /// <summary>
-    /// Gets the callback middleware processor for this agent.
-    /// </summary>
-    /// <remarks>
-    /// This processor manages the execution of callback middleware chains for agent operations.
-    /// If null, no middleware processing will occur.
-    /// </remarks>
-    protected CallbackMiddlewareProcessor CallbacksProcessor { get; }
 
     /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
@@ -199,56 +173,7 @@ public abstract class AIAgent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public async virtual Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
-        AgentThread? thread = null,
-        AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        _ = Throw.IfNull(messages);
-
-        // The roaming context is used to hold into the context that was passed through the middleware chain.
-        // This allows us to capture any specialized AgentInvokeCallbackContext context that may have been passed through the chain
-        AgentInvokeCallbackContext roamingContext = null!;
-
-        async Task CoreLogic(AgentInvokeCallbackContext ctx)
-        {
-            // There's a possibility that the provided context was customized by a specialized AgentInvokeCallbackContext context 
-            roamingContext ??= ctx;
-            var result = await this.RunCoreAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken)
-                .ConfigureAwait(false);
-
-            ctx.SetRawResponse(result);
-        }
-
-        await this.CallbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
-            // Starting context
-            new AgentInvokeCallbackContext(
-                agent: this,
-                messages: messages,
-                thread,
-                options,
-                isStreaming: false,
-                cancellationToken),
-            CoreLogic,
-            cancellationToken)
-            .ConfigureAwait(false);
-
-        return roamingContext.RawResponse as AgentRunResponse ?? throw new InvalidOperationException("The Result object provided in the agent invocation context must be a AgentRunResponse type.");
-    }
-
-    /// <summary>
-    /// Run the agent with the provided message and arguments.
-    /// </summary>
-    /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
-    /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public abstract Task<AgentRunResponse> RunCoreAsync(
+    public abstract Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -330,65 +255,14 @@ public abstract class AIAgent
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
-    public async virtual IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
-        AgentThread? thread = null,
-        AgentRunOptions? options = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        _ = Throw.IfNull(messages);
-
-        // The context is used through the middleware chain.
-        AgentInvokeCallbackContext roamingContext = new(
-                agent: this,
-                messages: messages,
-                thread: thread,
-                options: options,
-                isStreaming: true,
-                cancellationToken: cancellationToken);
-
-        Task CoreLogic(AgentInvokeCallbackContext ctx)
-        {
-            var enumerable = this.RunStreamingCoreAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
-            ctx.SetRawResponse(enumerable);
-
-            return Task.CompletedTask;
-        }
-
-        await this.CallbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
-            roamingContext,
-            CoreLogic,
-            cancellationToken)
-            .ConfigureAwait(false);
-
-        var result = roamingContext.RawResponse as IAsyncEnumerable<AgentRunResponseUpdate>
-            ?? throw new InvalidOperationException("The Result object provided in the agent invocation context must be a IAsyncEnumerable<AgentRunResponseUpdate> type.");
-
-        await foreach (var update in result.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            yield return update;
-        }
-    }
-
-    /// <summary>
-    /// Run the agent with the provided message and arguments.
-    /// </summary>
-    /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
-    /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingCoreAsync(
+    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Notify the given thread that new messages are available.
+    /// Notfiy the given thread that new messages are available.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -421,11 +295,4 @@ public abstract class AIAgent
             await thread.OnNewMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
         }
     }
-
-    /// <summary>
-    /// Add a <see cref="ICallbackMiddleware"/> to the agent.
-    /// </summary>
-    /// <param name="callback">A callback implementation that the agent will be aware of.</param>
-    public void AddCallback(ICallbackMiddleware callback)
-        => this.CallbacksProcessor.AddCallback(callback);
 }
