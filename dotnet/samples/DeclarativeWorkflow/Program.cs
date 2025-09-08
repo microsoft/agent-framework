@@ -92,13 +92,13 @@ internal sealed class Program
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorInvokeEvent executorInvoked)
+            if (evt is ExecutorInvokedEvent executorInvoked)
             {
                 Debug.WriteLine($"STEP ENTER #{executorInvoked.ExecutorId}");
             }
-            else if (evt is ExecutorCompleteEvent executorComplete)
+            else if (evt is ExecutorCompletedEvent executorCompleted)
             {
-                Debug.WriteLine($"STEP EXIT #{executorComplete.ExecutorId}");
+                Debug.WriteLine($"STEP EXIT #{executorCompleted.ExecutorId}");
             }
             else if (evt is ExecutorFailureEvent executorFailure)
             {
