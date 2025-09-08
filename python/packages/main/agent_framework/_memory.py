@@ -66,26 +66,26 @@ class AIContextProvider(AFBaseModel, ABC):
 
 
 class AggregateAIContextProvider(AIContextProvider):
-    def __init__(self, ai_context_providers: Iterable[AIContextProvider] | None = None) -> None:
+    def __init__(self, context_providers: Iterable[AIContextProvider] | None = None) -> None:
         """Initialize AggregateAIContextProvider with context providers.
 
         Args:
-            ai_context_providers: Context providers to add.
+            context_providers: Context providers to add.
         """
-        self._providers: list[AIContextProvider] = list(ai_context_providers or [])
+        self._providers: list[AIContextProvider] = list(context_providers or [])
 
     @property
     def providers(self) -> list[AIContextProvider]:
         """Returns the list of registered context providers."""
         return self._providers
 
-    def add(self, ai_context_provider: AIContextProvider) -> None:
+    def add(self, context_provider: AIContextProvider) -> None:
         """Adds new context provider.
 
         Args:
-            ai_context_provider: Context provider to add.
+            context_provider: Context provider to add.
         """
-        self._providers.append(ai_context_provider)
+        self._providers.append(context_provider)
 
     async def thread_created(self, thread_id: str | None = None) -> None:
         for x in self._providers:

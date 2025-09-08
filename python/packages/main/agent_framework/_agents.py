@@ -141,7 +141,7 @@ class BaseAgent(AFBaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
-    ai_context_providers: AggregateAIContextProvider = Field(default_factory=AggregateAIContextProvider)
+    context_providers: AggregateAIContextProvider = Field(default_factory=AggregateAIContextProvider)
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -149,7 +149,6 @@ class BaseAgent(AFBaseModel):
         """Notify the thread of new messages."""
         if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
             await thread_on_new_messages(thread, new_messages)
-            await self.ai_context_providers.messages_adding(thread.service_thread_id, new_messages)
 
     @property
     def display_name(self) -> str:
@@ -383,7 +382,7 @@ class ChatAgent(BaseAgent):
                 will only be passed to functions that are called.
         """
         input_messages = self._normalize_messages(messages)
-        ai_context = await self.ai_context_providers.model_invoking(input_messages)
+        ai_context = await self.context_providers.model_invoking(input_messages)
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, ai_context=ai_context, input_messages=input_messages
         )
@@ -428,7 +427,7 @@ class ChatAgent(BaseAgent):
         )
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self.ai_context_providers.thread_created(response.conversation_id)
+        await self.context_providers.thread_created(response.conversation_id)
 
         # Ensure that the author name is set for each message in the response.
         for message in response.messages:
@@ -439,6 +438,8 @@ class ChatAgent(BaseAgent):
         # to avoid inconsistent messages state in the thread.
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
+
+        await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
 
         return AgentRunResponse(
             messages=response.messages,
@@ -508,7 +509,7 @@ class ChatAgent(BaseAgent):
 
         """
         input_messages = self._normalize_messages(messages)
-        ai_context = await self.ai_context_providers.model_invoking(input_messages)
+        ai_context = await self.context_providers.model_invoking(input_messages)
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, ai_context=ai_context, input_messages=input_messages
         )
@@ -571,12 +572,14 @@ class ChatAgent(BaseAgent):
         response = ChatResponse.from_chat_response_updates(response_updates)
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self.ai_context_providers.thread_created(response.conversation_id)
+        await self.context_providers.thread_created(response.conversation_id)
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
+
+        await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
 
     def get_new_thread(self) -> AgentThread:
         message_store: ChatMessageStore | None = None
