@@ -22,6 +22,7 @@ workflows:
 - changed-files:
   - any-glob-to-any-file:
     - dotnet/src/Microsoft.Agents.Workflows/**
+    - dotnet/src/Microsoft.Agents.Workflows.Declarative/**
     - dotnet/samples/GettingStarted/Workflow/**
     - python/packages/workflows/**
     - python/samples/getting_started/workflow/**
