@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from ._clients import ChatClientProtocol
 from ._mcp import MCPTool
+from ._memory import AggregateAIContextProvider, AIContext
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import ToolProtocol
@@ -140,6 +141,7 @@ class BaseAgent(AFBaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
+    ai_context_providers: AggregateAIContextProvider = Field(default_factory=AggregateAIContextProvider)
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -147,6 +149,7 @@ class BaseAgent(AFBaseModel):
         """Notify the thread of new messages."""
         if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
             await thread_on_new_messages(thread, new_messages)
+            await self.ai_context_providers.messages_adding(thread.service_thread_id, new_messages)
 
     @property
     def display_name(self) -> str:
@@ -380,7 +383,10 @@ class ChatAgent(BaseAgent):
                 will only be passed to functions that are called.
         """
         input_messages = self._normalize_messages(messages)
-        thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        ai_context = await self.ai_context_providers.model_invoking(input_messages)
+        thread, thread_messages = await self._prepare_thread_and_messages(
+            thread=thread, ai_context=ai_context, input_messages=input_messages
+        )
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -422,6 +428,7 @@ class ChatAgent(BaseAgent):
         )
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
+        await self.ai_context_providers.thread_created(response.conversation_id)
 
         # Ensure that the author name is set for each message in the response.
         for message in response.messages:
@@ -501,7 +508,10 @@ class ChatAgent(BaseAgent):
 
         """
         input_messages = self._normalize_messages(messages)
-        thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        ai_context = await self.ai_context_providers.model_invoking(input_messages)
+        thread, thread_messages = await self._prepare_thread_and_messages(
+            thread=thread, ai_context=ai_context, input_messages=input_messages
+        )
         agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
 
@@ -561,6 +571,7 @@ class ChatAgent(BaseAgent):
         response = ChatResponse.from_chat_response_updates(response_updates)
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
+        await self.ai_context_providers.thread_created(response.conversation_id)
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
@@ -609,12 +620,14 @@ class ChatAgent(BaseAgent):
         self,
         *,
         thread: AgentThread | None,
+        ai_context: AIContext,
         input_messages: list[ChatMessage] | None = None,
     ) -> tuple[AgentThread, list[ChatMessage]]:
         """Prepare the messages for agent execution.
 
         Args:
             thread: The conversation thread.
+            ai_context: AI context to include in messages.
             input_messages: Messages to process.
 
         Returns:
@@ -628,6 +641,8 @@ class ChatAgent(BaseAgent):
         messages: list[ChatMessage] = []
         if self.instructions:
             messages.append(ChatMessage(role=Role.SYSTEM, text=self.instructions))
+        if ai_context.instructions:
+            messages.append(ChatMessage(role=Role.SYSTEM, text=ai_context.instructions))
         if thread.message_store:
             messages.extend(await thread.message_store.list_messages() or [])
         messages.extend(input_messages or [])
