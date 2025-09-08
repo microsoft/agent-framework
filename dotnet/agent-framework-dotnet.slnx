@@ -40,6 +40,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step07_3rdPartyThreadStorage/Agent_Step07_3rdPartyThreadStorage.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step08_Telemetry/Agent_Step08_Telemetry.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
@@ -47,12 +48,33 @@
   <Folder Name="/Samples/GettingStarted/Telemetry/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/">
+    <File Path="samples/GettingStarted/Workflow/README.md" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/Concurrent/">
+    <Project Path="samples/GettingStarted/Workflow/Concurrent/Concurrent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/ConditionalEdges/">
+    <Project Path="samples/GettingStarted/Workflow/ConditionalEdges/01_EdgeCondition/01_EdgeCondition.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/ConditionalEdges/02_SwitchCase/02_SwitchCase.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/ConditionalEdges/03_MultiSelection/03_MultiSelection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/Foundational/">
+    <Project Path="samples/GettingStarted/Workflow/Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/Foundational/02_Streaming/02_Streaming.csproj" />
+    <Project Path="samples/GettingStarted/Workflow/Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflow/SharedStates/">
+    <Project Path="samples/GettingStarted/Workflow/SharedStates/SharedStates.csproj" />
+  </Folder>
+  <Folder Name="/Samples/DeclarativeWorkflow/">
+    <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
   <Folder Name="/Samples/GettingStarted/Workflows/">
     <Project Path="samples/GettingStarted/Workflows/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
     <Project Path="samples/GettingStarted/Workflows/DeclarativeEject/DeclarativeEject.csproj" />
     <Project Path="samples/GettingStarted/Workflows/DeclarativeCode/DeclarativeCode.csproj" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Example/">
+  <Folder Name="/Samples/DeclarativeWorkflow/Example/">
     <File Path="../workflows/DeepResearch.yaml" />
     <File Path="../workflows/HelloWorld.yaml" />
     <File Path="../workflows/MathChat.yaml" />

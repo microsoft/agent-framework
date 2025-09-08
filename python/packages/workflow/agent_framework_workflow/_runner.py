@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowEvent
+from ._events import WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
@@ -74,19 +74,17 @@ class Runner:
         if max_iterations is not None:
             self._max_iterations = max_iterations
 
-    async def run_until_convergence(self) -> AsyncIterable[WorkflowEvent]:
+    async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
         if self._running:
             raise RuntimeError("Runner is already running.")
 
         self._running = True
         try:
-            # Process any events from initial execution before checkpointing
+            # Emit any events already produced prior to entering loop
             if await self._ctx.has_events():
-                logger.info("Processing events from initial execution")
-                events = await self._ctx.drain_events()
-                for event in events:
-                    logger.info(f"Yielding initial event: {event}")
+                logger.info("Yielding pre-loop events")
+                for event in await self._ctx.drain_events():
                     yield event
 
             # Create first checkpoint if there are messages from initial execution
@@ -102,21 +100,32 @@ class Runner:
 
             while self._iteration < self._max_iterations:
                 logger.info(f"Starting superstep {self._iteration + 1}")
-                await self._run_iteration()
+
+                # Run iteration concurrently with live event streaming: we poll
+                # for new events while the iteration coroutine progresses.
+                iteration_task = asyncio.create_task(self._run_iteration())
+                while not iteration_task.done():
+                    try:
+                        # Wait briefly for any new event; timeout allows progress checks
+                        event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
+                        yield event
+                    except asyncio.TimeoutError:
+                        # Periodically continue to let iteration advance
+                        continue
+
+                # Propagate errors from iteration
+                await iteration_task
                 self._iteration += 1
+
+                # Drain any straggler events emitted at tail end
+                if await self._ctx.has_events():
+                    for event in await self._ctx.drain_events():
+                        yield event
 
                 # Update context with current iteration state immediately
                 await self._update_context_with_shared_state()
 
                 logger.info(f"Completed superstep {self._iteration}")
-
-                # Process events first before any checkpointing
-                if await self._ctx.has_events():
-                    logger.info("Processing events before checkpointing")
-                    events = await self._ctx.drain_events()
-                    for event in events:
-                        logger.debug(f"Yielding event: {event}")
-                        yield event
 
                 # Create checkpoint after each superstep iteration
                 await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
@@ -142,7 +151,7 @@ class Runner:
                 from ._executor import SubWorkflowRequestInfo
 
                 # Handle SubWorkflowRequestInfo messages - only process those not already targeted
-                sub_workflow_messages = []
+                sub_workflow_messages: list[Message] = []
                 for msg in messages:
                     # Skip messages sent directly to RequestInfoExecutor - they are already forwarded
                     if self._is_message_to_request_info_executor(msg):
@@ -152,14 +161,15 @@ class Runner:
                         sub_workflow_messages.append(msg)
 
                 for message in sub_workflow_messages:
-                    sub_request = message.data
+                    # message.data is guaranteed to be SubWorkflowRequestInfo via filtering above
+                    sub_request = message.data  # type: ignore[assignment]
 
                     # Find executor that can intercept the wrapped type
                     interceptor_found = False
                     for executor in self._executors.values():
-                        if hasattr(executor, "_request_interceptors") and executor.id != message.source_id:
-                            # Check if any registered interceptor can handle this request type
-                            for registered_type in executor._request_interceptors:
+                        interceptors = getattr(executor, "_request_interceptors", [])
+                        if interceptors and executor.id != message.source_id:
+                            for registered_type in interceptors:  # type: ignore[assignment]
                                 # Check type matching - handle both type and string cases
                                 matched = False
                                 if (
@@ -234,7 +244,7 @@ class Runner:
             # since they were handled specially
             from ._executor import SubWorkflowRequestInfo
 
-            non_sub_workflow_messages = []
+            non_sub_workflow_messages: list[Message] = []
             for msg in messages:
                 # Keep messages sent directly to RequestInfoExecutor (forwarded messages)
                 if self._is_message_to_request_info_executor(msg):
@@ -251,8 +261,43 @@ class Runner:
             for message in non_sub_workflow_messages:
                 # Deliver a message through all edge runners associated with the source executor concurrently.
                 tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
+                if not tasks:
+                    # No outgoing edges. If this is an AgentExecutorResponse, treat it as an
+                    # intentional terminal emission and emit a WorkflowCompletedEvent here.
+                    # (Previously this relied on the executor to emit, but AgentExecutor only
+                    # sends an AgentExecutorResponse message; centralized completion keeps the
+                    # contract consistent with other executors.)
+                    try:  # Local import to avoid circular dependencies at module import time.
+                        from ._executor import AgentExecutorResponse  # type: ignore
+
+                        if isinstance(message.data, AgentExecutorResponse):
+                            final_messages = message.data.agent_run_response.messages
+                            final_text = final_messages[-1].text if final_messages else "(no content)"
+                            await self._ctx.add_event(WorkflowCompletedEvent(final_text))
+                            continue  # Terminal handled
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Suppressed exception during terminal message type check: %s", exc)
+                    # Otherwise keep prior behavior (emit warning for unexpected undelivered message).
+                    logger.warning(
+                        f"Message {message} could not be delivered (no outgoing edges). "
+                        "Add a downstream executor or remove the send if this is unexpected."
+                    )
+                    continue
                 results = await asyncio.gather(*tasks)
                 if not any(results):
+                    # Outgoing edges exist but none accepted the message. If this is an
+                    # AgentExecutorResponse, treat as natural terminal and emit completion.
+                    try:
+                        from ._executor import AgentExecutorResponse  # type: ignore
+
+                        if isinstance(message.data, AgentExecutorResponse):
+                            # Emit a single completion event with final text (best-effort extraction)
+                            final_messages = message.data.agent_run_response.messages
+                            final_text = final_messages[-1].text if final_messages else "(no content)"
+                            await self._ctx.add_event(WorkflowCompletedEvent(final_text))
+                            continue
+                    except Exception as exc:  # pragma: no cover
+                        logger.debug("Terminal completion emission failed: %s", exc)
                     logger.warning(
                         f"Message {message} could not be delivered. "
                         "This may be due to type incompatibility or no matching targets."
@@ -389,7 +434,8 @@ class Runner:
         """
         parsed: defaultdict[str, list[EdgeRunner]] = defaultdict(list)
         for runner in edge_runners:
-            for source_executor_id in runner._edge_group.source_executor_ids:
+            # Accessing protected attribute (_edge_group) intentionally for internal wiring.
+            for source_executor_id in runner._edge_group.source_executor_ids:  # type: ignore[attr-defined]
                 parsed[source_executor_id].append(runner)
 
         return parsed

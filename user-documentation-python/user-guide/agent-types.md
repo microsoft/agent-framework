@@ -2,7 +2,7 @@
 
 The Microsoft Agent Framework provides support for several types of agents to accommodate different use cases and requirements.
 
-All agents implement a common protocol, `AIAgent`, which provides a consistent interface for all agent types. This allows for building common, agent agnostic, higher level functionality such as multi-agent orchestrations.
+All agents implement a common protocol, `AgentProtocol`, which provides a consistent interface for all agent types. This allows for building common, agent agnostic, higher level functionality such as multi-agent orchestrations.
 
 Let's dive into each agent type in more detail.
 
@@ -19,16 +19,16 @@ These agents support a wide range of functionality out of the box:
 1. Structured output
 1. Streaming responses
 
-To create one of these agents, simply construct a `ChatClientAgent` using the chat client implementation of your choice.
+To create one of these agents, simply construct a `ChatAgent` using the chat client implementation of your choice.
 
 ```python
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 async with (
     AzureCliCredential() as credential,
-    ChatClientAgent(
+    ChatAgent(
         chat_client=FoundryChatClient(async_credential=credential),
         instructions="You are a helpful assistant"
     ) as agent
@@ -89,7 +89,7 @@ response = await agent.run("What's the weather like in Seattle?")
 print(response.text)
 
 # Streaming response (get results as they are generated)
-async for chunk in agent.run_streaming("What's the weather like in Portland?"):
+async for chunk in agent.run_stream("What's the weather like in Portland?"):
     if chunk.text:
         print(chunk.text, end="", flush=True)
 ```
@@ -102,13 +102,13 @@ For streaming examples, see:
 Foundry agents support hosted code interpreter tools for executing Python code:
 
 ```python
-from agent_framework import ChatClientAgent, HostedCodeInterpreterTool
+from agent_framework import ChatAgent, HostedCodeInterpreterTool
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 async with (
     AzureCliCredential() as credential,
-    ChatClientAgent(
+    ChatAgent(
         chat_client=FoundryChatClient(async_credential=credential),
         instructions="You are a helpful assistant that can execute Python code.",
         tools=HostedCodeInterpreterTool()
@@ -123,13 +123,13 @@ For code interpreter examples, see:
 ## Custom agents
 
 It is also possible to create fully custom agents that are not just wrappers around a chat client.
-Agent Framework provides the `AIAgent` protocol and `AgentBase` base class, which when implemented/subclassed allows for complete control over the agent's behavior and capabilities.
+Agent Framework provides the `AgentProtocol` protocol and `BaseAgent` base class, which when implemented/subclassed allows for complete control over the agent's behavior and capabilities.
 
 ```python
-from agent_framework import AgentBase, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
+from agent_framework import BaseAgent, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
 from collections.abc import AsyncIterable
 
-class CustomAgent(AgentBase):
+class CustomAgent(BaseAgent):
     async def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
@@ -139,8 +139,8 @@ class CustomAgent(AgentBase):
     ) -> AgentRunResponse:
         # Custom agent implementation
         pass
-    
-    def run_streaming(
+
+    def run_stream(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
