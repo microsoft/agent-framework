@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
@@ -11,7 +10,7 @@ from pydantic import BaseModel, Field
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
-from ._tools import AITool
+from ._tools import ToolProtocol
 from ._types import (
     ChatMessage,
     ChatOptions,
@@ -22,31 +21,27 @@ from ._types import (
 )
 
 if TYPE_CHECKING:
-    from ._agents import ChatClientAgent
+    from ._agents import ChatAgent
 
-if sys.version_info >= (3, 11):
-    pass  # pragma: no cover
-else:
-    pass  # pragma: no cover
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
-TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
+TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
 
 logger = get_logger()
 
 __all__ = [
-    "ChatClient",
-    "ChatClientBase",
+    "BaseChatClient",
+    "ChatClientProtocol",
     "EmbeddingGenerator",
 ]
 
 
-# region ChatClient Protocol
+# region ChatClientProtocol Protocol
 
 
 @runtime_checkable
-class ChatClient(Protocol):
+class ChatClientProtocol(Protocol):
     """A protocol for a chat client that can generate responses."""
 
     @property
@@ -70,12 +65,10 @@ class ChatClient(Protocol):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -129,12 +122,10 @@ class ChatClient(Protocol):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -191,7 +182,7 @@ def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]
     return return_messages
 
 
-class ChatClientBase(AFBaseModel, ABC):
+class BaseChatClient(AFBaseModel, ABC):
     """Base class for chat clients."""
 
     additional_properties: dict[str, Any] = Field(default_factory=dict)
@@ -270,12 +261,10 @@ class ChatClientBase(AFBaseModel, ABC):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -352,12 +341,10 @@ class ChatClientBase(AFBaseModel, ABC):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -450,16 +437,14 @@ class ChatClientBase(AFBaseModel, ABC):
         *,
         name: str | None = None,
         instructions: str | None = None,
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         **kwargs: Any,
-    ) -> "ChatClientAgent":
+    ) -> "ChatAgent":
         """Create an agent with the given name and instructions.
 
         Args:
@@ -469,14 +454,14 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
             **kwargs: Additional keyword arguments to pass to the agent.
-                See ChatClientAgent for all the available options.
+                See ChatAgent for all the available options.
 
         Returns:
-            An instance of ChatClientAgent.
+            An instance of ChatAgent.
         """
-        from ._agents import ChatClientAgent
+        from ._agents import ChatAgent
 
-        return ChatClientAgent(
+        return ChatAgent(
             chat_client=self,
             name=name,
             instructions=instructions,

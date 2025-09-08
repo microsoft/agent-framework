@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.telemetry import setup_telemetry
 from opentelemetry import trace
@@ -37,7 +37,7 @@ async def main():
     with tracer.start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT):
         print("Running scenario: Agent Chat")
         print("Welcome to the chat, type 'exit' to quit.")
-        agent = ChatClientAgent(
+        agent = ChatAgent(
             chat_client=OpenAIChatClient(),
             tools=get_weather,
             name="WeatherAgent",

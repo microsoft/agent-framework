@@ -18,7 +18,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
+    Role,
     UsageDetails,
 )
 from agent_framework.exceptions import AgentInitializationError, ChatClientInitializationError
@@ -252,7 +252,7 @@ def test_start_span_without_description():
 
 
 def test_decorator_with_valid_class():
-    """Test that decorator works with a valid ChatClientBase-like class."""
+    """Test that decorator works with a valid BaseChatClient-like class."""
 
     # Create a mock class with the required methods
     class MockChatClient:
@@ -309,7 +309,7 @@ def mock_chat_client():
             self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
         ):
             return ChatResponse(
-                messages=[ChatMessage(role=ChatRole.ASSISTANT, text="Test response")],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
                 usage_details=UsageDetails(input_token_count=10, output_token_count=20),
                 finish_reason=None,
             )
@@ -317,8 +317,8 @@ def mock_chat_client():
         async def _inner_get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
         ):
-            yield ChatResponseUpdate(text="Hello", role=ChatRole.ASSISTANT)
-            yield ChatResponseUpdate(text=" world", role=ChatRole.ASSISTANT)
+            yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT)
 
     return MockChatClient
 
@@ -328,7 +328,7 @@ async def test_instrumentation_enabled(mock_chat_client, otel_settings):
     """Test that when diagnostics are enabled, telemetry is applied."""
     client = use_telemetry(mock_chat_client)()
 
-    messages = [ChatMessage(role=ChatRole.USER, text="Test message")]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     chat_options = ChatOptions()
 
     with (
@@ -347,7 +347,7 @@ async def test_instrumentation_enabled(mock_chat_client, otel_settings):
 async def test_streaming_response_with_otel(mock_chat_client, otel_settings):
     """Test streaming telemetry through the use_telemetry decorator."""
     client = use_telemetry(mock_chat_client)()
-    messages = [ChatMessage(role=ChatRole.USER, text="Test")]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     chat_options = ChatOptions()
 
     with (
@@ -421,7 +421,7 @@ def test_agent_decorator_with_valid_class():
         async def run(self, messages=None, *, thread=None, **kwargs):
             return Mock()
 
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
+        async def run_stream(self, messages=None, *, thread=None, **kwargs):
             async def gen():
                 yield Mock()
 
@@ -484,17 +484,17 @@ def mock_chat_client_agent():
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentRunResponse(
-                messages=[ChatMessage(role=ChatRole.ASSISTANT, text="Agent response")],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
                 raw_representation=Mock(finish_reason=Mock(value="stop")),
             )
 
-        async def run_streaming(self, messages=None, *, thread=None, **kwargs):
+        async def run_stream(self, messages=None, *, thread=None, **kwargs):
             from agent_framework import AgentRunResponseUpdate
 
-            yield AgentRunResponseUpdate(text="Hello", role=ChatRole.ASSISTANT)
-            yield AgentRunResponseUpdate(text=" from agent", role=ChatRole.ASSISTANT)
+            yield AgentRunResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield AgentRunResponseUpdate(text=" from agent", role=Role.ASSISTANT)
 
     return MockChatClientAgent
 
@@ -530,7 +530,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     ):
         # Collect all yielded updates
         updates = []
-        async for update in agent.run_streaming("Test message"):
+        async for update in agent.run_stream("Test message"):
             updates.append(update)
 
         # Verify we got the expected updates

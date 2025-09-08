@@ -1,0 +1,7 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  type: Message
+  actions:
+    - kind: EndConversation
+      id: end_all

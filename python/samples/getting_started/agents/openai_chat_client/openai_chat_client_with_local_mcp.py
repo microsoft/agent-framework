@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatClientAgent, McpStreamableHttpTool
+from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIChatClient
 
 
@@ -14,11 +14,11 @@ async def mcp_tools_on_run_level() -> None:
     # This means we have to ensure we connect to the MCP server before running the agent
     # and pass the tools to the run method.
     async with (
-        McpStreamableHttpTool(
+        MCPStreamableHTTPTool(
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
         ) as mcp_server,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=OpenAIChatClient(),
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
@@ -47,7 +47,7 @@ async def mcp_tools_on_agent_level() -> None:
     async with OpenAIChatClient().create_agent(
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=McpStreamableHttpTool(  # Tools defined at agent creation
+        tools=MCPStreamableHTTPTool(  # Tools defined at agent creation
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
         ),

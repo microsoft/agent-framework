@@ -7,14 +7,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from agent_framework import (
-    AgentBase,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
+    BaseAgent,
     ChatMessage,
-    ChatRole,
     FunctionCallContent,
     FunctionResultContent,
+    Role,
     TextContent,
     UsageDetails,
 )
@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WorkflowAgent(AgentBase):
-    """An `AIAgent` subclass that wraps a workflow and exposes it as an agent."""
+class WorkflowAgent(BaseAgent):
+    """An `Agent` subclass that wraps a workflow and exposes it as an agent."""
 
     # Class variable for the request info function name
     REQUEST_INFO_FUNCTION_NAME: ClassVar[str] = "request_info"
@@ -65,11 +65,11 @@ class WorkflowAgent(AgentBase):
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
-            **kwargs: Additional keyword arguments passed to AgentBase.
+            **kwargs: Additional keyword arguments passed to BaseAgent.
         """
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
-        # Initialize with standard AgentBase parameters first
+        # Initialize with standard BaseAgent parameters first
         kwargs["workflow"] = workflow
 
         # Validate the workflow's start executor can handle agent-facing message inputs
@@ -107,7 +107,7 @@ class WorkflowAgent(AgentBase):
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
 
-        async for update in self._run_streaming_impl(input_messages, response_id):
+        async for update in self._run_stream_impl(input_messages, response_id):
             response_updates.append(update)
 
         # Convert updates to final response.
@@ -119,7 +119,7 @@ class WorkflowAgent(AgentBase):
 
         return response
 
-    async def run_streaming(
+    async def run_stream(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -141,7 +141,7 @@ class WorkflowAgent(AgentBase):
         response_updates: list[AgentRunResponseUpdate] = []
         response_id = str(uuid.uuid4())
 
-        async for update in self._run_streaming_impl(input_messages, response_id):
+        async for update in self._run_stream_impl(input_messages, response_id):
             response_updates.append(update)
             yield update
 
@@ -152,7 +152,7 @@ class WorkflowAgent(AgentBase):
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
-    async def _run_streaming_impl(
+    async def _run_stream_impl(
         self,
         input_messages: list[ChatMessage],
         response_id: str,
@@ -188,7 +188,7 @@ class WorkflowAgent(AgentBase):
         else:
             # Execute workflow with streaming (initial run or no function responses)
             # Pass the new input messages directly to the workflow
-            event_stream = self.workflow.run_streaming(input_messages)
+            event_stream = self.workflow.run_stream(input_messages)
 
         # Process events from the stream
         async for event in event_stream:
@@ -206,7 +206,7 @@ class WorkflowAgent(AgentBase):
             return []
 
         if isinstance(messages, str):
-            return [ChatMessage(role=ChatRole.USER, contents=[TextContent(text=messages)])]
+            return [ChatMessage(role=Role.USER, contents=[TextContent(text=messages)])]
 
         if isinstance(messages, ChatMessage):
             return [messages]
@@ -214,7 +214,7 @@ class WorkflowAgent(AgentBase):
         normalized = []
         for msg in messages:
             if isinstance(msg, str):
-                normalized.append(ChatMessage(role=ChatRole.USER, contents=[TextContent(text=msg)]))
+                normalized.append(ChatMessage(role=Role.USER, contents=[TextContent(text=msg)]))
             elif isinstance(msg, ChatMessage):
                 normalized.append(msg)
         return normalized
@@ -250,7 +250,7 @@ class WorkflowAgent(AgentBase):
                 )
                 return AgentRunResponseUpdate(
                     contents=[function_call],
-                    role=ChatRole.ASSISTANT,
+                    role=Role.ASSISTANT,
                     author_name=self.name,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),

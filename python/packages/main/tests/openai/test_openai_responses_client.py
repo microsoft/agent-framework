@@ -13,12 +13,11 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
-    ChatClient,
-    ChatClientAgent,
+    ChatAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
@@ -26,6 +25,7 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
+    Role,
     TextContent,
     TextReasoningContent,
     UriContent,
@@ -87,7 +87,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     openai_responses_client = OpenAIResponsesClient()
 
     assert openai_responses_client.ai_model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
 
 def test_init_validation_fail() -> None:
@@ -102,7 +102,7 @@ def test_init_ai_model_id_constructor(openai_unit_test_env: dict[str, str]) -> N
     openai_responses_client = OpenAIResponsesClient(ai_model_id=ai_model_id)
 
     assert openai_responses_client.ai_model_id == ai_model_id
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
 
 def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
@@ -114,7 +114,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
     )
 
     assert openai_responses_client.ai_model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
     for key, value in default_headers.items():
@@ -731,7 +731,7 @@ def test_streaming_response_basic_structure() -> None:
 
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
-    assert response.role == ChatRole.ASSISTANT
+    assert response.role == Role.ASSISTANT
     assert response.ai_model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
@@ -742,7 +742,7 @@ async def test_openai_responses_client_response() -> None:
     """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -785,7 +785,7 @@ async def test_openai_responses_client_response_tools() -> None:
     """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
@@ -824,7 +824,7 @@ async def test_openai_responses_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -877,7 +877,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
     """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = [ChatMessage(role="user", text="What is the weather in Seattle?")]
 
@@ -923,7 +923,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
 async def test_openai_responses_client_web_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Test that the client will use the web search tool
     response = await openai_responses_client.get_response(
@@ -962,7 +962,7 @@ async def test_openai_responses_client_web_search() -> None:
 async def test_openai_responses_client_web_search_streaming() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Test that the client will use the web search tool
     response = openai_responses_client.get_streaming_response(
@@ -1015,7 +1015,7 @@ async def test_openai_responses_client_web_search_streaming() -> None:
 async def test_openai_responses_client_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Test that the client will use the web search tool
@@ -1039,7 +1039,7 @@ async def test_openai_responses_client_file_search() -> None:
 async def test_openai_responses_client_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Test that the client will use the web search tool
@@ -1088,12 +1088,12 @@ async def test_openai_responses_client_agent_basic_run():
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_basic_run_streaming():
     """Test OpenAI Responses Client agent basic streaming functionality with OpenAIResponsesClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert isinstance(chunk, AgentRunResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
@@ -1105,7 +1105,7 @@ async def test_openai_responses_client_agent_basic_run_streaming():
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_thread_persistence():
     """Test OpenAI Responses Client agent thread persistence across runs with OpenAIResponsesClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
@@ -1128,7 +1128,7 @@ async def test_openai_responses_client_agent_thread_persistence():
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_thread_storage_with_store_true():
     """Test OpenAI Responses Client agent with store=True to verify service_thread_id is returned."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant.",
     ) as agent:
@@ -1162,7 +1162,7 @@ async def test_openai_responses_client_agent_existing_thread():
     # First conversation - capture the thread
     preserved_thread = None
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
@@ -1178,7 +1178,7 @@ async def test_openai_responses_client_agent_existing_thread():
 
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
-        async with ChatClientAgent(
+        async with ChatAgent(
             chat_client=OpenAIResponsesClient(),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
@@ -1193,7 +1193,7 @@ async def test_openai_responses_client_agent_existing_thread():
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
     """Test OpenAI Responses Client agent with HostedCodeInterpreterTool through OpenAIResponsesClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can execute Python code.",
         tools=[HostedCodeInterpreterTool()],
@@ -1215,7 +1215,7 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
 async def test_openai_responses_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Responses Client."""
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
@@ -1250,7 +1250,7 @@ async def test_openai_responses_client_run_level_tool_isolation():
         call_count += 1
         return f"The weather in {location} is sunny and 72°F."
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant.",
     ) as agent:

@@ -26,22 +26,22 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
 
-    from ._agents import AIAgent, ChatClientAgent
-    from ._clients import ChatClient
+    from ._agents import AgentProtocol
+    from ._clients import ChatClientProtocol
     from ._threads import AgentThread
     from ._tools import AIFunction
     from ._types import (
         AgentRunResponse,
         AgentRunResponseUpdate,
-        AIContents,
-        ChatFinishReason,
         ChatMessage,
         ChatResponse,
         ChatResponseUpdate,
+        Contents,
+        FinishReason,
     )
 
-TAgent = TypeVar("TAgent", bound="AIAgent")
-TChatClientAgent = TypeVar("TChatClientAgent", bound="ChatClientAgent")
+TAgent = TypeVar("TAgent", bound="AgentProtocol")
+TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
 
 logger = get_logger()
 
@@ -495,6 +495,9 @@ def _get_token_usage_histogram() -> "Histogram":
     )
 
 
+# region ChatClientProtocol
+
+
 def _trace_get_response(
     func: Callable[..., Awaitable["ChatResponse"]],
     *,
@@ -512,7 +515,7 @@ def _trace_get_response(
 
         @wraps(func)
         async def trace_get_response(
-            self: "ChatClient",
+            self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
             **kwargs: Any,
         ) -> "ChatResponse":
@@ -597,7 +600,7 @@ def _trace_get_streaming_response(
 
         @wraps(func)
         async def trace_get_streaming_response(
-            self: "ChatClient", messages: "str | ChatMessage | list[str] | list[ChatMessage]", **kwargs: Any
+            self: "ChatClientProtocol", messages: "str | ChatMessage | list[str] | list[ChatMessage]", **kwargs: Any
         ) -> AsyncIterable["ChatResponseUpdate"]:
             global OTEL_SETTINGS
             if not OTEL_SETTINGS.ENABLED:
@@ -670,12 +673,9 @@ def _trace_get_streaming_response(
     return decorator(func)
 
 
-TBaseChatClient = TypeVar("TBaseChatClient", bound="ChatClient")
-
-
 def use_telemetry(
-    chat_client: type[TBaseChatClient],
-) -> type[TBaseChatClient]:
+    chat_client: type[TChatClient],
+) -> type[TChatClient]:
     """Class decorator that enables telemetry for a chat client.
 
     This needs to be applied on the class itself, not a instance of it.
@@ -731,7 +731,7 @@ def _trace_agent_run(
 
     @wraps(run_func)
     async def trace_run(
-        self: "AIAgent",
+        self: "AgentProtocol",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,
@@ -780,7 +780,7 @@ def _trace_agent_run(
     return trace_run
 
 
-def _trace_agent_run_streaming(
+def _trace_agent_run_stream(
     run_streaming_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
     provider_name: str,
 ) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
@@ -794,7 +794,7 @@ def _trace_agent_run_streaming(
 
     @wraps(run_streaming_func)
     async def trace_run_streaming(
-        self: "AIAgent",
+        self: "AgentProtocol",
         messages: "str | ChatMessage | list[str] | list[ChatMessage] | None" = None,
         *,
         thread: "AgentThread | None" = None,
@@ -862,11 +862,9 @@ def use_agent_telemetry(
     except AttributeError as exc:
         raise AgentInitializationError(f"The agent {agent.__name__} does not have a run method.", exc) from exc
     try:
-        agent.run_streaming = _trace_agent_run_streaming(agent.run_streaming, provider_name)  # type: ignore
+        agent.run_stream = _trace_agent_run_stream(agent.run_stream, provider_name)  # type: ignore
     except AttributeError as exc:
-        raise AgentInitializationError(
-            f"The agent {agent.__name__} does not have a run_streaming method.", exc
-        ) from exc
+        raise AgentInitializationError(f"The agent {agent.__name__} does not have a run_stream method.", exc) from exc
     setattr(agent, OPEN_TELEMETRY_AGENT_MARKER, True)
     return agent
 
@@ -989,7 +987,7 @@ def _capture_messages(
     messages: "str | ChatMessage | list[str] | list[ChatMessage]",
     system_instructions: str | list[str] | None = None,
     output: bool = False,
-    finish_reason: "ChatFinishReason | None" = None,
+    finish_reason: "FinishReason | None" = None,
 ) -> None:
     """Log messages with extra information."""
     from ._clients import prepare_messages
@@ -1020,7 +1018,7 @@ def _to_otel_message(message: "ChatMessage") -> dict[str, Any]:
     return {"role": message.role.value, "parts": [_to_otel_part(content) for content in message.contents]}
 
 
-def _to_otel_part(content: "AIContents") -> dict[str, Any] | None:
+def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
     """Create a otel representation of a Content."""
     match content.type:
         case "text":

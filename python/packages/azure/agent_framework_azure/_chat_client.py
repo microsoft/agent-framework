@@ -13,7 +13,7 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai._chat_client import OpenAIChatClientBase
+from agent_framework.openai._chat_client import OpenAIBaseChatClient
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
@@ -22,7 +22,7 @@ from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
 from ._shared import (
-    AzureOpenAIConfigBase,
+    AzureOpenAIConfigMixin,
     AzureOpenAISettings,
 )
 
@@ -37,7 +37,7 @@ TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
 TAzureChatClient = TypeVar("TAzureChatClient", bound="AzureChatClient")
 
 
-class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
+class AzureChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
     """Azure Chat completion class."""
 
     def __init__(
@@ -143,7 +143,7 @@ class AzureChatClient(AzureOpenAIConfigBase, OpenAIChatClientBase):
     def _parse_text_from_choice(self, choice: Choice | ChunkChoice) -> TextContent | None:
         """Parse the choice into a TextContent object.
 
-        Overwritten from OpenAIChatClientBase to deal with Azure On Your Data function.
+        Overwritten from OpenAIBaseChatClient to deal with Azure On Your Data function.
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
