@@ -5,7 +5,6 @@ import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from functools import wraps
 from time import perf_counter, time_ns
-from types import CoroutineType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -559,10 +558,10 @@ def update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) 
 
 
 def _handle_function_calls_response(
-    func: Callable[..., CoroutineType[Any, Any, "ChatResponse"]],
+    func: Callable[..., Awaitable["ChatResponse"]],
     *,
     max_iterations: int = 10,
-) -> Callable[..., CoroutineType[Any, Any, "ChatResponse"]]:
+) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the get_response method to enable function calls.
 
     Args:
@@ -572,8 +571,8 @@ def _handle_function_calls_response(
     """
 
     def decorator(
-        func: Callable[..., CoroutineType[Any, Any, "ChatResponse"]],
-    ) -> Callable[..., CoroutineType[Any, Any, "ChatResponse"]]:
+        func: Callable[..., Awaitable["ChatResponse"]],
+    ) -> Callable[..., Awaitable["ChatResponse"]]:
         """Inner decorator."""
 
         @wraps(func)
