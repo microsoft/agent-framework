@@ -2,9 +2,8 @@
 
 """Agent registry supporting both directory-based and in-memory agents."""
 
-import inspect
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent_framework import AgentProtocol
@@ -108,10 +107,10 @@ class AgentRegistry:
         # Add directory-discovered agents
         if self.directory_scanner:
             try:
-                directory_items = self.directory_scanner.discover_agents()
-                # Filter to only agents
+                directory_items = self.directory_scanner.discover_entities()
+                # Filter to only agents (now properly typed as Union)
                 for item in directory_items:
-                    if item.type == "agent":
+                    if isinstance(item, AgentInfo):  # More explicit type checking
                         agents.append(item)
             except Exception as e:
                 logger.error(f"Error discovering directory agents: {e}")
@@ -139,35 +138,11 @@ class AgentRegistry:
         # Add directory-discovered workflows
         if self.directory_scanner:
             try:
-                directory_items = self.directory_scanner.discover_agents()
-                # Filter to only workflows and convert to WorkflowInfo
+                directory_items = self.directory_scanner.discover_entities()
+                # Filter to only workflows (now properly typed as Union)
                 for item in directory_items:
-                    if item.type == "workflow":
-                        # Check if item is already a WorkflowInfo object
-                        if isinstance(item, WorkflowInfo):
-                            workflows.append(item)
-                        else:
-                            # Get the actual workflow object to extract input info
-                            workflow_obj = self.get_workflow(item.id)
-                            if workflow_obj:
-                                input_info = extract_workflow_input_info(workflow_obj)
-                                # Use executors instead of tools for WorkflowInfo
-                                executors = getattr(item, 'executors', getattr(item, 'tools', []))
-                                workflow_info = WorkflowInfo(
-                                    id=item.id,
-                                    name=item.name,
-                                    description=item.description,
-                                    source="directory",
-                                    executors=executors,
-                                    has_env=item.has_env,
-                                    module_path=item.module_path,
-                                    workflow_dump=workflow_obj.model_dump(),
-                                    mermaid_diagram=generate_mermaid_diagram(workflow_obj),
-                                    input_schema=input_info["input_schema"],
-                                    input_type_name=input_info["input_type_name"],
-                                    start_executor_id=input_info["start_executor_id"]
-                                )
-                                workflows.append(workflow_info)
+                    if isinstance(item, WorkflowInfo):  # More explicit type checking
+                        workflows.append(item)
             except Exception as e:
                 logger.error(f"Error discovering directory workflows: {e}")
         

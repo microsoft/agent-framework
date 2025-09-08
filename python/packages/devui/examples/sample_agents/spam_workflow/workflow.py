@@ -42,7 +42,12 @@ class SpamDetector(Executor):
     @handler
     async def handle_email(self, email: str, ctx: WorkflowContext[SpamDetectorResponse]) -> None:
         """Determine if the input string is spam."""
+        # Simulate analysis time
+        print(f"Analyzing message for spam: {email}")
+        await asyncio.sleep(2)  # Add realistic processing delay
+        
         result = any(keyword in email.lower() for keyword in self._spam_keywords)
+        print(f"Spam detection result: {result}")
 
         await ctx.send_message(SpamDetectorResponse(email=email, is_spam=result))
 

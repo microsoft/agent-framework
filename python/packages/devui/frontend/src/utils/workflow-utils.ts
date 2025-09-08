@@ -33,6 +33,13 @@ export interface NodeUpdate {
   timestamp: string;
 }
 
+export interface EdgeTraversal {
+  sourceId: string;
+  targetId: string;
+  timestamp: string;
+  status: "traversed" | "active" | "completed" | "failed";
+}
+
 /**
  * Convert workflow dump data to React Flow nodes
  */
@@ -309,7 +316,159 @@ export function updateNodesWithEvents(
 }
 
 /**
- * Update edges with animation based on execution state
+ * Detect edge traversals from event sequence
+ */
+export function detectEdgeTraversals(events: DebugStreamEvent[]): EdgeTraversal[] {
+  const traversals: EdgeTraversal[] = [];
+  
+  // Filter and sort workflow events by timestamp
+  const executorEvents = events
+    .filter(e => e.type === "workflow_event" && e.event?.executor_id)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  console.log("Processing executor events for edge traversal detection:", executorEvents.length);
+  
+  // Detect edge traversals from event sequence
+  for (let i = 0; i < executorEvents.length - 1; i++) {
+    const current = executorEvents[i];
+    const next = executorEvents[i + 1];
+    
+    const currentEvent = current.event;
+    const nextEvent = next.event;
+    
+    // Detect edge traversal: A completed → B invoked
+    if (currentEvent?.type === "ExecutorCompletedEvent" && 
+        nextEvent?.type === "ExecutorInvokeEvent" &&
+        currentEvent.executor_id !== nextEvent.executor_id) {
+      
+      const traversal: EdgeTraversal = {
+        sourceId: currentEvent.executor_id,
+        targetId: nextEvent.executor_id,
+        timestamp: next.timestamp,
+        status: "traversed"
+      };
+      
+      traversals.push(traversal);
+      console.log("Detected edge traversal:", `${traversal.sourceId} -> ${traversal.targetId}`);
+    }
+  }
+  
+  return traversals;
+}
+
+
+/**
+ * Get executors that are currently in execution (invoked but not yet completed)
+ */
+export function getCurrentlyExecutingExecutors(events: DebugStreamEvent[]): string[] {
+  const executorTimeline: Record<string, { lastEvent: string; timestamp: string }> = {};
+  
+  // Process events to find the most recent event for each executor
+  events.forEach(event => {
+    if (event.type === "workflow_event" && event.event?.executor_id) {
+      const executorId = event.event.executor_id;
+      const eventType = event.event.type;
+      
+      if (eventType === "ExecutorInvokeEvent" || eventType === "ExecutorCompletedEvent") {
+        executorTimeline[executorId] = {
+          lastEvent: eventType,
+          timestamp: event.timestamp
+        };
+      }
+    }
+  });
+  
+  // Find executors that were invoked but haven't completed yet
+  const currentlyExecuting = Object.entries(executorTimeline)
+    .filter(([, timeline]) => timeline.lastEvent === "ExecutorInvokeEvent")
+    .map(([executorId]) => executorId);
+  
+  console.log("⚡ Currently executing executors:", currentlyExecuting);
+  console.log("📋 Executor timeline:", executorTimeline);
+  return currentlyExecuting;
+}
+
+/**
+ * Update edges with sequence-based animation
+ */
+export function updateEdgesWithSequenceAnalysis(
+  edges: Edge[],
+  events: DebugStreamEvent[]
+): Edge[] {
+  const traversals = detectEdgeTraversals(events);
+  const currentlyExecuting = getCurrentlyExecutingExecutors(events);
+  
+  console.log("🔄 Updating edges with sequence analysis:", {
+    totalEdges: edges.length,
+    traversals: traversals.length,
+    currentlyExecuting: currentlyExecuting.length
+  });
+
+  return edges.map(edge => {
+    const traversal = traversals.find(t => 
+      t.sourceId === edge.source && t.targetId === edge.target
+    );
+    
+    const targetIsExecuting = currentlyExecuting.includes(edge.target);
+    
+    let style = { ...edge.style };
+    let animated = false;
+    
+    // Priority 1: Currently active edge (traversed and target is executing)
+    if (traversal && targetIsExecuting) {
+      style = {
+        stroke: "#3b82f6", // Blue
+        strokeWidth: 3,
+        strokeDasharray: "5,5"
+      };
+      animated = true;
+      console.log(`🔥 Edge ${edge.id}: ACTIVE`, { 
+        traversal: !!traversal, 
+        targetIsExecuting,
+        sourceId: edge.source,
+        targetId: edge.target
+      });
+    }
+    // Priority 2: Completed traversal (traversed and target no longer executing)
+    else if (traversal && !targetIsExecuting) {
+      style = {
+        stroke: "#10b981", // Green
+        strokeWidth: 2,
+      };
+      console.log(`✅ Edge ${edge.id}: COMPLETED (traversed + finished)`);
+    }
+    // Priority 3: Failed edge (target failed)
+    else if (traversal && events.some(e => 
+      e.type === "workflow_event" && 
+      e.event?.executor_id === edge.target &&
+      e.event?.type?.includes("Error")
+    )) {
+      style = {
+        stroke: "#ef4444", // Red
+        strokeWidth: 2,
+        strokeDasharray: "3,3",
+      };
+      console.log(`❌ Edge ${edge.id}: FAILED`);
+    }
+    // Default: Not traversed
+    else {
+      style = {
+        stroke: "#6b7280", // Gray
+        strokeWidth: 2,
+      };
+      console.log(`⚪ Edge ${edge.id}: NOT_TRAVERSED`);
+    }
+    
+    return {
+      ...edge,
+      style,
+      animated,
+    };
+  });
+}
+
+/**
+ * Update edges with animation based on execution state (DEPRECATED - use updateEdgesWithSequenceAnalysis)
  */
 export function updateEdgesWithAnimation(
   edges: Edge[],

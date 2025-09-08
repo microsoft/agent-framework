@@ -189,7 +189,7 @@ def main():
     # Quick discovery check to provide feedback
     from .discovery import DirectoryScanner
     scanner = DirectoryScanner(agents_dir)
-    discovered = scanner.discover_agents()
+    discovered = scanner.discover_entities()
     
     if discovered:
         print(f"📋 Found {len(discovered)} agents/workflows:")

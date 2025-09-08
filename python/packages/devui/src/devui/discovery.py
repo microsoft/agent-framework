@@ -7,7 +7,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 from dotenv import load_dotenv
 
@@ -31,7 +31,7 @@ class DirectoryScanner:
         self.agents_dir = Path(agents_dir).resolve()
         self._agent_cache: Dict[str, Any] = {}
         
-    def discover_agents(self) -> List[AgentInfo]:
+    def discover_entities(self) -> List[Union[AgentInfo, WorkflowInfo]]:
         """Discover all agents and workflows in the agents directory."""
         if not self.agents_dir.exists():
             logger.warning(f"Agents directory does not exist: {self.agents_dir}")
@@ -45,7 +45,7 @@ class DirectoryScanner:
                         f"Install it with: pip install agent-framework")
             return []
             
-        discovered: List[AgentInfo] = []
+        discovered: List[Union[AgentInfo, WorkflowInfo]] = []
         
         # Scan all subdirectories
         for item in self.agents_dir.iterdir():
@@ -62,7 +62,7 @@ class DirectoryScanner:
                     logger.debug(f"No valid module found for {agent_id}")
                     continue
                     
-                agent_info = self._extract_agent_info(module, agent_id, str(item))
+                agent_info = self._extract_entity_info(module, agent_id, str(item))
                 if agent_info:
                     discovered.append(agent_info)
                     # Cache the module for later use
@@ -179,8 +179,9 @@ class DirectoryScanner:
         # Import here to avoid circular imports
         try:
             from agent_framework import AgentProtocol
+            agent_protocol_class = AgentProtocol
         except ImportError:
-            AgentProtocol = None
+            agent_protocol_class = None
         
         # Look for explicit variable names
         candidates = [
@@ -195,9 +196,9 @@ class DirectoryScanner:
             # Use proper type checking
             if obj_type == 'agent':
                 # Check if it's an Agent Framework agent using isinstance if available
-                if AgentProtocol and hasattr(AgentProtocol, '__instancecheck__'):
+                if agent_protocol_class is not None and hasattr(agent_protocol_class, '__instancecheck__'):
                     try:
-                        if isinstance(obj, AgentProtocol):
+                        if isinstance(obj, agent_protocol_class):
                             return obj
                     except (TypeError, AttributeError):
                         pass
@@ -212,8 +213,8 @@ class DirectoryScanner:
         
         return None
     
-    def _extract_agent_info(self, module: Any, agent_id: str, module_path: str) -> Optional[AgentInfo]:
-        """Extract metadata from a loaded module."""
+    def _extract_entity_info(self, module: Any, agent_id: str, module_path: str) -> Optional[Union[AgentInfo, WorkflowInfo]]:
+        """Extract metadata from a loaded module for agents or workflows."""
         obj = self._find_agent_in_module(module)
         if not obj:
             return None

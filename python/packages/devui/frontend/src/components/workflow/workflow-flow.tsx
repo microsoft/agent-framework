@@ -18,7 +18,7 @@ import {
   applyDagreLayout,
   processWorkflowEvents,
   updateNodesWithEvents,
-  updateEdgesWithAnimation,
+  updateEdgesWithSequenceAnalysis,
 } from "@/utils/workflow-utils";
 import type { DebugStreamEvent } from "@/types/agent-framework";
 
@@ -75,11 +75,17 @@ export function WorkflowFlow({
       setNodes((currentNodes) =>
         updateNodesWithEvents(currentNodes, nodeUpdates)
       );
+    }
+  }, [nodeUpdates, setNodes]);
+
+  // Update edges with sequence-based analysis (separate from nodeUpdates)
+  useMemo(() => {
+    if (events.length > 0) {
       setEdges((currentEdges) =>
-        updateEdgesWithAnimation(currentEdges, nodeUpdates)
+        updateEdgesWithSequenceAnalysis(currentEdges, events)
       );
     }
-  }, [nodeUpdates, setNodes, setEdges]);
+  }, [events, setEdges]);
 
   // Initialize nodes only when workflow structure changes (not on state updates)
   useEffect(() => {
@@ -188,13 +194,6 @@ export function WorkflowFlow({
         />
       </ReactFlow>
 
-      {/* Streaming indicator overlay */}
-      {isStreaming && (
-        <div className="absolute top-4 right-4 bg-blue-500 dark:bg-blue-600 text-white dark:text-blue-50 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2 shadow-lg">
-          <div className="w-2 h-2 bg-white dark:bg-blue-100 rounded-full animate-pulse" />
-          Workflow Running
-        </div>
-      )}
 
       {/* CSS for custom edge animations */}
       <style>{`
@@ -202,12 +201,12 @@ export function WorkflowFlow({
           transition: stroke 0.3s ease, stroke-width 0.3s ease;
         }
         .react-flow__edge.animated .react-flow__edge-path {
+          stroke-dasharray: 5 5;
           animation: dash 1s linear infinite;
         }
         @keyframes dash {
-          to {
-            stroke-dashoffset: -10;
-          }
+          0% { stroke-dashoffset: 0; }
+          100% { stroke-dashoffset: -10; }
         }
       `}</style>
     </div>

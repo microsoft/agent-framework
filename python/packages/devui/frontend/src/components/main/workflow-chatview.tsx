@@ -203,7 +203,7 @@ export function WorkflowChatView({
       <div className="flex-1 min-h-0 space-y-6 p-4 overflow-auto">
         {/* Workflow Diagram Section */}
         {workflowInfo?.workflow_dump && (
-          <div className="border border-border rounded-lg bg-card shadow-sm">
+          <div className="border border-border rounded bg-card shadow-sm">
             <div className="border-b border-border px-4 py-3 bg-muted rounded-t-lg">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-foreground">

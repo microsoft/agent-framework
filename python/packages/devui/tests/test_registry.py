@@ -227,7 +227,7 @@ async def test_mixed_sources():
     with patch('devui.discovery.DirectoryScanner') as mock_scanner_class:
         # Setup mock directory scanner
         mock_scanner = Mock()
-        mock_scanner.discover_agents.return_value = [
+        mock_scanner.discover_entities.return_value = [
             AgentInfo(
                 id="dir_agent",
                 name="DirectoryAgent", 
