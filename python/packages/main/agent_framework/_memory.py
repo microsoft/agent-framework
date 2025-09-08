@@ -37,7 +37,7 @@ class AIContextProvider(AFBaseModel, ABC):
         to the current session based on the input text.
 
         Args:
-            thread_id: The ID of the new thread, if the thread has an ID.
+            thread_id: The ID of the new thread.
         """
         pass
 
@@ -47,7 +47,7 @@ class AIContextProvider(AFBaseModel, ABC):
         Inheritors can use this method to update their context based on new messages.
 
         Args:
-            thread_id: The ID of the thread for the new message, if the thread has an ID.
+            thread_id: The ID of the thread for the new message.
             new_messages: New messages to add.
         """
         pass
@@ -57,10 +57,10 @@ class AIContextProvider(AFBaseModel, ABC):
         """Called just before the Model/Agent/etc. is invoked.
 
         Implementers can load any additional context required at this time,
-        and they should return any context that should be passed to the Model/Agent/etc.
+        and they should return any context that should be passed to the agent.
 
         Args:
-            messages: The most recent messages that the Model/Agent/etc. is being invoked with.
+            messages: The most recent messages that the agent is being invoked with.
         """
         pass
 
