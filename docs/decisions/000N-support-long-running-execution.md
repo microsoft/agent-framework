@@ -931,12 +931,12 @@ TBD
 
 All analyzed APIs that support long-running executions also support streaming. 
 
-Some of them allow resuming streaming from a specific point in the stream, while others don't:
+Some of them natively support resuming streaming from a specific point in the stream, while for others, are either implementation-dependent or need to be emulated:
 
 | API                     | Can Resume Streaming                 | Model                                                                                                      |
 |-------------------------|--------------------------------------|------------------------------------------------------------------------------------------------------------|
 | OpenAI Responses        | Yes                                  | StreamingResponseUpdate.**SequenceNumber** + GetResponseStreamingAsync(responseId, **startingAfter**, ct)  |
-| Azure AI Foundry Agents | Yes<sup>2</sup>                      | RunStep.**Id** + custom pseudo code: client.Runs.GetRunStepsAsync(...).AllStepsAfter(**stepId**)           |
+| Azure AI Foundry Agents | Emulated<sup>2</sup>                 | RunStep.**Id** + custom pseudo code: client.Runs.GetRunStepsAsync(...).AllStepsAfter(**stepId**)           |
 | A2A                     | Implementation dependent<sup>1</sup> |          																				                  |
 
 <sup>1</sup> The [A2A specification](https://github.com/a2aproject/A2A/blob/main/docs/topics/streaming-and-async.md#1-streaming-with-server-sent-events-sse)
@@ -956,9 +956,6 @@ To support streaming resumption, the following model changes are required:
 
 All the chat clients supporting the streaming resumption will need to return the `SequenceNumber` property as part of the `ChatResponseUpdate` class and 
 honor the `StartAfter` property of the `ChatOptions` class.
-
-TBD: Explore options to abstract the streaming resumption model to support different resumption identifiers used by different APIs. For example, A2A can resume streaming of a task
-identified by its id rather than a sequence number.
 
 ### Function Calling
 
@@ -1023,7 +1020,6 @@ public abstract class AIAgent
     public virtual Task<AgentRunResponse> RunAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken ct = default) {...}
 
     // New methods for long-running executions    
-    public virtual Task<AgentRunResponse> GetAsyncRunResultAsync(string runId, AgentThread? thread = null, CancellationToken ct = default) {...};
     public virtual Task<AgentRunResponse> UpdateAsyncRunAsync(string runId, AgentThread? thread = null, IList<ChatMessage> chatMessages, CancellationToken ct = default) {...};
     public virtual Task<AgentRunResponse> CancelAsyncRunAsync(string runId, AgentThread? thread = null, CancellationToken ct = default) {...};
     public virtual Task<AgentRunResponse> DeleteAsyncRunAsync(string runId, AgentThread? thread = null, CancellationToken ct = default) {...};
