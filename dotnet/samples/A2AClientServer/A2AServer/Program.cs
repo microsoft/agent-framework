@@ -39,7 +39,7 @@ string? apiKey = configuration["A2AServer:ApiKey"];
 string? endpoint = configuration["A2AServer:Endpoint"];
 string modelId = configuration["A2AServer:ModelId"] ?? "gpt-4o-mini";
 
-var invoiceQueryPlugin = new InvoiceQueryPlugin();
+var invoiceQueryPlugin = new InvoiceQuery();
 IList<AITool> tools =
     [
     AIFunctionFactory.Create(invoiceQueryPlugin.QueryInvoices),

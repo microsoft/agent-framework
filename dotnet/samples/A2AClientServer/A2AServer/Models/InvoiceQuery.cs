@@ -3,6 +3,7 @@
 using System.ComponentModel;
 
 namespace A2A;
+
 /// <summary>
 /// A simple invoice plugin that returns mock data.
 /// </summary>
@@ -48,12 +49,12 @@ public class Invoice
     }
 }
 
-public class InvoiceQueryPlugin
+public class InvoiceQuery
 {
     private readonly List<Invoice> _invoices;
     private static readonly Random s_random = new();
 
-    public InvoiceQueryPlugin()
+    public InvoiceQuery()
     {
         // Extended mock data with quantities and prices  
         this._invoices =

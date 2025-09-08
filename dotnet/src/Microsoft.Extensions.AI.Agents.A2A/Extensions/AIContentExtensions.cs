@@ -16,7 +16,7 @@ internal static class AIContentExtensions
     /// </summary>
     /// <param name="contents">The collection of AI contents to convert.</param>"
     /// <returns>The list of A2A <see cref="Part"/> objects.</returns>
-    public static List<Part>? ToA2AParts(this IEnumerable<AIContent> contents)
+    internal static List<Part>? ToA2AParts(this IEnumerable<AIContent> contents)
     {
         List<Part>? parts = null;
 
@@ -33,7 +33,7 @@ internal static class AIContentExtensions
     /// </summary>
     /// <param name="content">AI content to convert.</param>
     /// <returns>The corresponding A2A <see cref="Part"/> object.</returns>
-    public static Part ToA2APart(this AIContent content)
+    internal static Part ToA2APart(this AIContent content)
     {
         return content switch
         {
