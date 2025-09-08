@@ -125,22 +125,21 @@ For directory-based discovery, organize agents like this:
 
 ```
 agents/
-├── weather_agent/                     # Agent directory
-│   ├── __init__.py                    # Must expose: agent = ChatAgent(...)
-│   ├── agent.py                       # Agent implementation
-│   └── .env                           # Agent-specific environment (optional)
-├── spam_workflow/                     # Workflow directory
-│   ├── __init__.py                    # Must expose: workflow = WorkflowBuilder()...
-│   ├── workflow.py                    # Workflow implementation
-│   └── .env                           # Workflow-specific environment (optional)
-└── .env                               # Global environment (optional)
+├── weather_agent/
+│   ├── __init__.py                    # Must export: agent = ChatAgent(...)
+│   ├── agent.py                       # Implementation
+│   └── .env                           # Optional environment vars
+├── my_workflow/
+│   ├── __init__.py                    # Must export: workflow = WorkflowBuilder()...
+│   └── workflow.py                    # Implementation
+└── .env                               # Optional global environment
 ```
 
-**Key Requirements:**
+**Requirements:**
 
-- Each directory must have `__init__.py` that exports `agent` or `workflow`
-- Agent/workflow name is automatically derived from the directory name
-- Environment files are loaded automatically if present in `.env` files.
+- Each agent/workflow in its own subdirectory
+- `__init__.py` must export `agent` or `workflow` variable
+- Names derived from directory names
 
 ## Examples
 
