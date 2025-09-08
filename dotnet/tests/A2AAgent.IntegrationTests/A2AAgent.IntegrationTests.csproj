@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <IsTestProject>false</IsTestProject>
+    <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.A2A\Microsoft.Extensions.AI.Agents.A2A.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
+    
+  </ItemGroup>
+
+</Project>

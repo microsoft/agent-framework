@@ -122,6 +122,11 @@ public class AgentRunResponse
     /// <summary>Gets or sets any additional properties associated with the run response.</summary>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 
+    /// <summary>
+    /// Specifies the status of the response.
+    /// </summary>
+    public NewResponseStatus? Status { get; set; }
+
     /// <inheritdoc />
     public override string ToString() => this.Text;
 
@@ -157,6 +162,7 @@ public class AgentRunResponse
                 Contents = message.Contents,
                 RawRepresentation = message.RawRepresentation,
                 Role = message.Role,
+                Status = this.Status,
 
                 AgentId = this.AgentId,
                 ResponseId = this.ResponseId,

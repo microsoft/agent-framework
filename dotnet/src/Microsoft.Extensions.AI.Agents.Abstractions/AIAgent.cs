@@ -262,6 +262,30 @@ public abstract class AIAgent
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Cancels a long-running operation or an entity representing a long-running operation.
+    /// </summary>
+    /// <param name="id">The unique identifier of a long-running operation or an entity representing the long-running operation to cancel.</param>
+    /// <param name="options">Optional parameters for the long-running operation cancellation.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+    /// <returns>The <see cref="AgentRunResponse"/> representing result of the cancellation if supported; otherwise, <see langword="null"/>.</returns>
+    public virtual Task<AgentRunResponse?> CancelRunAsync(string id, AgentRunCancelOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<AgentRunResponse?>(null);
+    }
+
+    /// <summary>
+    /// Deletes a long-running operation.
+    /// </summary>
+    /// <param name="id">The unique identifier of the long-running operation to delete.</param>
+    /// <param name="options">Optional parameters for the long-running operation deletion.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to delete the operation.</param>
+    /// <returns>The <see cref="AgentRunResponse"/> representing result of the deletion if supported; otherwise, <see langword="null"/>.</returns>
+    public virtual Task<AgentRunResponse?> DeleteRunAsync(string id, AgentRunDeleteOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<AgentRunResponse?>(null);
+    }
+
+    /// <summary>
     /// Notfiy the given thread that new messages are available.
     /// </summary>
     /// <remarks>

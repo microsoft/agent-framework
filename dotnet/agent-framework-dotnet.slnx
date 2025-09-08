@@ -213,6 +213,7 @@
     <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj" />
   </Folder>
   <Folder Name="/Tests/IntegrationTests/">
+    <Project Path="tests/A2AAgent.IntegrationTests/A2AAgent.IntegrationTests.csproj" />
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
     <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />

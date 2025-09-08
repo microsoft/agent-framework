@@ -74,6 +74,8 @@ public class AgentRunResponseUpdate
         this.RawRepresentation = chatResponseUpdate;
         this.ResponseId = chatResponseUpdate.ResponseId;
         this.Role = chatResponseUpdate.Role;
+        this.Status = chatResponseUpdate is NewChatResponseUpdate newChatResponseUpdate ? newChatResponseUpdate.Status : null;
+        this.SequenceNumber = chatResponseUpdate is NewChatResponseUpdate newChatResponseUpdate2 ? newChatResponseUpdate2.SequenceNumber : null;
     }
 
     /// <summary>Gets or sets the name of the author of the response update.</summary>
@@ -143,6 +145,16 @@ public class AgentRunResponseUpdate
 
     /// <summary>Gets or sets a timestamp for the response update.</summary>
     public DateTimeOffset? CreatedAt { get; set; }
+
+    /// <summary>
+    /// Specifies the status of the update.
+    /// </summary>
+    public NewResponseStatus? Status { get; set; }
+
+    /// <summary>
+    /// Specifies the sequence number of an update within a conversation.
+    /// </summary>
+    public string? SequenceNumber { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;

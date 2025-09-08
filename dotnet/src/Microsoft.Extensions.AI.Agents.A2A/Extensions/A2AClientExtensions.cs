@@ -33,10 +33,11 @@ public static class A2AClientExtensions
     /// <param name="name">The the name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="displayName">The display name of the agent.</param>
+    /// <param name="awaitRunCompletion">Specifies whether the agent should await tasks completions or not.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent GetAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null)
+    public static AIAgent GetAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, string? displayName = null, bool? awaitRunCompletion = null, ILoggerFactory? loggerFactory = null)
     {
-        return new A2AAgent(client, id, name, description, displayName, loggerFactory);
+        return new A2AAgent(client, id, name, description, displayName, awaitRunCompletion, loggerFactory);
     }
 }

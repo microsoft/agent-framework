@@ -12,6 +12,11 @@ namespace Microsoft.Extensions.AI;
 public readonly struct NewResponseStatus : IEquatable<NewResponseStatus>
 {
     /// <summary>
+    /// Gets the <see cref="NewResponseStatus"/> that represents an operation which has been received but not yet started.
+    /// </summary>
+    public static NewResponseStatus Submitted { get; } = new("Submitted");
+
+    /// <summary>
     /// Gets the <see cref="NewResponseStatus"/> that represents an operation which has been queued.
     /// </summary>
     public static NewResponseStatus Queued { get; } = new("Queued");
