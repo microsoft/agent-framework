@@ -16,22 +16,16 @@ The demonstration has two components:
 
 <img src="./demo-architecture.png" alt="Demo Architecture"/>
 
-## Configuring Secrets or Environment Variables
+## Configuring Environment Variables
 
 The samples can be configured to use chat completion agents or Azure AI agents.
 
 ### Configuring for use with Chat Completion Agents
 
-Provide your OpenAI API key via .Net secrets
+Provide your OpenAI API key via an environment variable
 
-```bash
-dotnet user-secrets set "A2AClient:ApiKey" "..."
-```
-
-Optionally if you want to use chat completion agents in the server then set the OpenAI key for the server to use.
-
-```bash
-dotnet user-secrets set "A2AServer:ApiKey" "..."
+```powershell
+$env:OPENAI_API_KEY="<Your OpenAI API Key>"
 ```
 
 Use the following commands to run each A2A server:
@@ -89,8 +83,8 @@ You must create the agents in an Azure AI Foundry project and then provide the p
         Quantity: 900"
     ```
 
-```bash
-dotnet user-secrets set "A2AServer:Endpoint" "..."
+```powershell
+$env:FOUNDRY_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
 ```
 
 Use the following commands to run each A2A server
@@ -189,8 +183,8 @@ These are available at the following URL's:
 
 If you want to change which agents are using then set the agents url as a space delimited string as follows:
 
-```bash
-dotnet user-secrets set "A2AClient:AgentUrls" "http://localhost:5000/;http://localhost:5001/;http://localhost:5002/"
+```powershell
+$env:A2A_AGENT_URLS="http://localhost:5000/;http://localhost:5001/;http://localhost:5002/"
 ```
 
 ## Run the Sample
