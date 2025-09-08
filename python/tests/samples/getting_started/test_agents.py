@@ -381,6 +381,7 @@ agent_samples = [
         marks=[
             pytest.mark.openai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+            pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue"),
         ],
     ),
     param(
@@ -500,6 +501,7 @@ agent_samples = [
         marks=[
             pytest.mark.openai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+            pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue"),
         ],
     ),
     param(
