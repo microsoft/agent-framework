@@ -47,7 +47,7 @@ async def main():
         for question in questions:
             print(f"User: {question}")
             print(f"{agent.display_name}: ", end="")
-            async for update in agent.run_streaming(
+            async for update in agent.run_stream(
                 question,
                 thread=thread,
             ):

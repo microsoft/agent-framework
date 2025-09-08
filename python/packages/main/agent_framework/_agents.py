@@ -738,14 +738,14 @@ def agent(
                 class StreamingRunFunctionAgent:
                     def __init__(
                         self,
-                        run_streaming: Callable[..., AsyncIterable[AgentRunResponseUpdate]],
+                        run_stream: Callable[..., AsyncIterable[AgentRunResponseUpdate]],
                         id: str | None,
                         name: str | None,
                         description: str | None,
                         instructions: str | None,
                         **kwargs: Any,
                     ):
-                        self._func = run_streaming
+                        self._func = run_stream
                         self.id = id or str(uuid4())
                         self.name = name
                         self.description = description
@@ -778,7 +778,7 @@ def agent(
                         return AgentThread()
 
                 return StreamingRunFunctionAgent(
-                    run_streaming=f,
+                    run_stream=f,
                     id=id,
                     name=agent_name,
                     description=agent_description,

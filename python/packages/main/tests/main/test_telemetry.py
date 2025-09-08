@@ -10,10 +10,10 @@ from opentelemetry.semconv_ai import SpanAttributes
 from opentelemetry.trace import StatusCode
 
 from agent_framework import (
+    AgentProtocol,
     AgentRunResponse,
     AgentThread,
-    AIAgent,
-    ChatClientBase,
+    BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -301,7 +301,7 @@ def test_decorator_with_partial_methods():
 def mock_chat_client():
     """Create a mock chat client for testing."""
 
-    class MockChatClient(ChatClientBase):
+    class MockChatClient(BaseChatClient):
         def service_url(self):
             return "https://test.example.com"
 
@@ -406,7 +406,7 @@ def test_prepend_user_agent_with_none_value():
 
 
 def test_agent_decorator_with_valid_class():
-    """Test that agent decorator works with a valid ChatClientAgent-like class."""
+    """Test that agent decorator works with a valid ChatAgent-like class."""
 
     # Create a mock class with the required methods
     class MockChatClientAgent:
@@ -500,7 +500,7 @@ def mock_chat_client_agent():
 
 
 @pytest.mark.parametrize("sensitive", [True, False], indirect=True)
-async def test_agent_instrumentation_enabled(mock_chat_client_agent: AIAgent, otel_settings):
+async def test_agent_instrumentation_enabled(mock_chat_client_agent: AgentProtocol, otel_settings):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
     agent = use_agent_telemetry(mock_chat_client_agent)()
@@ -518,7 +518,7 @@ async def test_agent_instrumentation_enabled(mock_chat_client_agent: AIAgent, ot
 
 @pytest.mark.parametrize("sensitive", [True, False], indirect=True)
 async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
-    mock_chat_client_agent: AIAgent, otel_settings
+    mock_chat_client_agent: AgentProtocol, otel_settings
 ):
     """Test agent streaming telemetry through the use_agent_telemetry decorator."""
     agent = use_agent_telemetry(mock_chat_client_agent)()
@@ -545,7 +545,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
             mock_capture_messages.assert_not_called()
 
 
-async def test_agent_run_with_exception_handling(mock_chat_client_agent: AIAgent):
+async def test_agent_run_with_exception_handling(mock_chat_client_agent: AgentProtocol):
     """Test agent run with exception handling."""
 
     async def run_with_error(self, messages=None, *, thread=None, **kwargs):
