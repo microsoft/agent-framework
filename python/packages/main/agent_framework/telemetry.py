@@ -689,7 +689,7 @@ def use_telemetry(
 
     provider_name = str(getattr(chat_client, "OTEL_PROVIDER_NAME", "unknown"))
 
-    if provider_name not in GenAISystem:
+    if provider_name not in GenAISystem.__members__:
         # that list is not complete, so just logging, no consequences.
         logger.debug(
             f"The provider name '{provider_name}' is not recognized. "
