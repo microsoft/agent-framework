@@ -15,6 +15,7 @@ from agent_framework import (
     ChatMessage,
     ChatMessageList,
     ChatResponse,
+    HostedCodeInterpreterTool,
     Role,
     TextContent,
 )
@@ -113,7 +114,10 @@ async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientPr
         conversation_id="123",
     )
     chat_client_base.run_responses = [mock_response]
-    agent = ChatAgent(chat_client=chat_client_base)
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=HostedCodeInterpreterTool(),
+    )
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
@@ -175,7 +179,7 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
         )
     ]
 
-    agent = ChatAgent(chat_client=chat_client_base)
+    agent = ChatAgent(chat_client=chat_client_base, tools=HostedCodeInterpreterTool())
 
     result = await agent.run("Hello")
     assert result.text == "test response"

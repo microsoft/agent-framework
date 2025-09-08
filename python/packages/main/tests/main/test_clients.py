@@ -4,7 +4,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-from pytest import fixture, mark
+from pytest import fixture
 
 from agent_framework import (
     BaseChatClient,
@@ -126,10 +126,7 @@ async def test_base_client_with_function_calling(chat_client_base: ChatClientPro
     assert response.messages[2].text == "done"
 
 
-@mark.parametrize("enable_function_calling", [False], indirect=True)
-async def test_base_client_with_function_calling_disabled(
-    chat_client_base: ChatClientProtocol, enable_function_calling: bool
-):
+async def test_base_client_with_function_calling_resets(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -145,13 +142,29 @@ async def test_base_client_with_function_calling_disabled(
                 contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1": "value1"}')],
             )
         ),
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="2", name="test_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
         ChatResponse(messages=ChatMessage(role="assistant", text="done")),
     ]
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[ai_func])
-    assert exec_counter == 0
-    assert len(response.messages) == 1
-    assert len(response.messages[0].contents) == 1
+    assert exec_counter == 2
+    assert len(response.messages) == 5
+    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[1].role == Role.TOOL
+    assert response.messages[2].role == Role.ASSISTANT
+    assert response.messages[3].role == Role.TOOL
+    assert response.messages[4].role == Role.ASSISTANT
     assert isinstance(response.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(response.messages[1].contents[0], FunctionResultContent)
+    assert isinstance(response.messages[2].contents[0], FunctionCallContent)
+    assert isinstance(response.messages[3].contents[0], FunctionResultContent)
+    # after these two responses, it would try another regular call, but since max_iterations is 1, it stops and calls
+    assert isinstance(response.messages[4].contents[0], TextContent)
+    assert response.text == "I broke out of the function invocation loop..."
 
 
 async def test_base_client_with_streaming_function_calling(chat_client_base: ChatClientProtocol):

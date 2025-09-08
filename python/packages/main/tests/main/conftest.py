@@ -154,6 +154,10 @@ class MockBaseChatClient(BaseChatClient):
         logger.debug(f"Running base chat client inner, with: {messages=}, {chat_options=}, {kwargs=}")
         if not self.run_responses:
             return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
+        if chat_options.tool_choice == "none":
+            return ChatResponse(
+                messages=ChatMessage(role="assistant", text="I broke out of the function invocation loop...")
+            )
         return self.run_responses.pop(0)
 
     @override
@@ -168,6 +172,9 @@ class MockBaseChatClient(BaseChatClient):
         if not self.streaming_responses:
             yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
             return
+        if chat_options.tool_choice == "none":
+            yield ChatResponseUpdate(text="I broke out of the function invocation loop...", role="assistant")
+            return
         response = self.streaming_responses.pop(0)
         for update in response:
             yield update
@@ -181,11 +188,11 @@ def enable_function_calling(request: Any) -> bool:
 
 @fixture
 def max_iterations(request: Any) -> int:
-    return request.param if hasattr(request, "param") else 10
+    return request.param if hasattr(request, "param") else 2
 
 
 @fixture
-def chat_client(enable_function_calling: bool = True, max_iterations: int = 10) -> MockChatClient:
+def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatClient:
     if enable_function_calling:
         with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
             return use_function_invocation(MockChatClient)()
