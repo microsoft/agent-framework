@@ -1049,6 +1049,7 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_assistants_client_file_search() -> None:
     """Test OpenAI Assistants Client response."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
@@ -1071,6 +1072,7 @@ async def test_openai_assistants_client_file_search() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_assistants_client_file_search_streaming() -> None:
     """Test OpenAI Assistants Client response."""
     async with OpenAIAssistantsClient() as openai_assistants_client:
