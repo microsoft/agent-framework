@@ -18,6 +18,7 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    MCPStreamableHTTPTool,
     Role,
     TextContent,
     UriContent,
@@ -878,6 +879,27 @@ async def test_foundry_chat_client_agent_code_interpreter():
         assert response.text is not None
         # Factorial of 5 is 120
         assert "120" in response.text or "factorial" in response.text.lower()
+
+
+@skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_with_mcp_tools() -> None:
+    """Test MCP tools defined at agent creation with FoundryChatClient."""
+    async with ChatAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+        name="DocsAgent",
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=MCPStreamableHTTPTool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+        ),
+    ) as agent:
+        # Test that the agent can use MCP tools to answer questions
+        response = await agent.run("What is Azure App Service?")
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        # Verify the response contains relevant information about Azure App Service
+        assert any(term in response.text.lower() for term in ["app service", "azure", "web", "application"])
 
 
 @skip_if_foundry_integration_tests_disabled
