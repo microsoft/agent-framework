@@ -9,7 +9,6 @@ from uuid import uuid4
 from agent_framework import ChatMessage, Role
 from agent_framework.azure import AzureChatClient
 from agent_framework.workflow import (
-    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
     WorkflowBuilder,
@@ -158,26 +157,22 @@ async def main() -> None:
     # Create chat client and agents. response_format enforces structured JSON from each agent.
     chat_client = AzureChatClient(credential=AzureCliCredential())
 
-    spam_detection_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are a spam detection assistant that identifies spam emails. "
-                "Always return JSON with fields is_spam (bool) and reason (string)."
-            ),
-            response_format=DetectionResultAgent,
+    spam_detection_agent = chat_client.create_agent(
+        instructions=(
+            "You are a spam detection assistant that identifies spam emails. "
+            "Always return JSON with fields is_spam (bool) and reason (string)."
         ),
-        id="spam_detection_agent",
+        response_format=DetectionResultAgent,
+        name="spam_detection_agent",
     )
 
-    email_assistant_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are an email assistant that helps users draft responses to emails with professionalism. "
-                "Return JSON with a single field 'response' containing the drafted reply."
-            ),
-            response_format=EmailResponse,
+    email_assistant_agent = chat_client.create_agent(
+        instructions=(
+            "You are an email assistant that helps users draft responses to emails with professionalism. "
+            "Return JSON with a single field 'response' containing the drafted reply."
         ),
-        id="email_assistant_agent",
+        response_format=EmailResponse,
+        name="email_assistant_agent",
     )
 
     # Build the workflow graph with conditional edges.
@@ -198,17 +193,22 @@ async def main() -> None:
     )
 
     # Read an email from resources/spam.txt if available; otherwise use a default sample.
-    resources_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "resources", "spam.txt")
+    resources_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+        "resources",
+        "spam.txt",
+    )
     if os.path.exists(resources_path):
         with open(resources_path, encoding="utf-8") as f:  # noqa: ASYNC230
             email = f.read()
     else:
+        print("Unable to find resource file, using default text.")
         email = "You are a WINNER! Click here for a free lottery offer!!!"
 
     # Run and print the terminal result. Streaming surfaces intermediate execution events as well.
     async for event in workflow.run_stream(email):
         if isinstance(event, WorkflowCompletedEvent):
-            print(f"{event}")
+            print(event)
 
     """
     Sample Output:

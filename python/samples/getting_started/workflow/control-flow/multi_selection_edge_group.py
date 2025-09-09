@@ -250,11 +250,16 @@ async def main() -> None:
     )
 
     # Read an email sample
-    resources_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "resources", "email.txt")
+    resources_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+        "resources",
+        "email.txt",
+    )
     if os.path.exists(resources_path):
         with open(resources_path, encoding="utf-8") as f:  # noqa: ASYNC230
             email = f.read()
     else:
+        print("Unable to find resource file, using default text.")
         email = "Hello team, here are the updates for this week..."
 
     async for event in workflow.run_stream(email):
