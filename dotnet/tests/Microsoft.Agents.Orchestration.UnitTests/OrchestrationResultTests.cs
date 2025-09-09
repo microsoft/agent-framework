@@ -83,7 +83,7 @@ public class OrchestrationResultTests
         protected override Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 
