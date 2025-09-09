@@ -8,7 +8,7 @@
 internal sealed class <#= this.TypeName #>Executor<TInput>(
     DeclarativeWorkflowOptions options,
     Func<TInput, ChatMessage>? inputTransform = null) :
-    RootExecutor<TInput>("<#= this.Id #>", configuration)
+    RootExecutor<TInput>("<#= this.Id #>", options)
     where TInput : notnull
 {
     protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)

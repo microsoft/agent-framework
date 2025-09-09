@@ -21,7 +21,6 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges = [];
         this.Executors = [new RootTemplate(workflowId, typeInfo).TransformText()];
         this.Instances = [];
-        this.WorkflowId = workflowId;
     }
 
     public bool HasUnsupportedActions { get; private set; }
@@ -29,7 +28,6 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     public List<string> Edges { get; }
     public List<string> Executors { get; }
     public List<string> Instances { get; }
-    public string WorkflowId { get; }
 
     protected override void Visit(ActionScope item)
     {
@@ -122,7 +120,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         this.Executors.Add(new EmptyTemplate(item).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate(this.WorkflowId, item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
         this.Edges.Add(new EdgeTemplate(item.ActionId.Value, item.GetId()).TransformText()); // %%% RESTART
     }
 
@@ -182,7 +180,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         this.Executors.Add(new EmptyTemplate(item).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate(this.WorkflowId, item.GetId()).TransformText()); // %%% CONTINUE WITH AND RESTART
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH AND RESTART
     }
 
     protected override void Visit(AnswerQuestionWithAI item)
@@ -198,7 +196,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         this.Executors.Add(new SetVariableTemplate(item).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate(this.WorkflowId, item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(SetTextVariable item)
@@ -221,7 +219,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         this.Executors.Add(new ResetVariableTemplate(item).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate(this.WorkflowId, item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(EditTable item)
@@ -251,7 +249,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         this.Executors.Add(new SendActivityTemplate(item).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate(this.WorkflowId, item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     #region Not supported

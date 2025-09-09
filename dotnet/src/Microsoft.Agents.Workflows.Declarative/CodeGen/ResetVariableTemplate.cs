@@ -25,37 +25,38 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         /// </summary>
         public virtual string TransformText()
         {
-            this.Write("internal sealed class ");
+            this.Write("\n");
+            this.Write("\ninternal sealed class ");
             
-            #line 3 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
-            this.Write("Executor() : ActionExecutor(id: \"");
+            this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 3 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write("\")\r\n{\r\n    protected override async ValueTask ExecuteAsync(IWorkflowContext conte" +
-                    "xt, CancellationToken cancellationToken)\r\n    {\n        await context.ResetState" +
-                    "Async(\"");
+            this.Write("\", session)\n{\n    protected override async ValueTask ExecuteAsync(IWorkflowContex" +
+                    "t context, CancellationToken cancellationToken)\n    {\n        await context.Rese" +
+                    "tStateAsync(\"");
             
-            #line 6 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.VariableName));
             
             #line default
             #line hidden
             this.Write("\", \"");
             
-            #line 6 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.TopicName));
             
             #line default
             #line hidden
-            this.Write("\").ConfigureAwait(false);\r\n    }\r\n}");
+            this.Write("\").ConfigureAwait(false);\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
     }

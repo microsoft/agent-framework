@@ -15,7 +15,6 @@ using Microsoft.Agents.Workflows.Declarative;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.Configuration;
 
 namespace Demo.DeclarativeCode;
 
@@ -46,17 +45,17 @@ public static class SampleWorkflowProvider
         }
     }
 
-    internal sealed class SetCountExecutor(ExpressionContext context) : ActionExecutor(id: "set_count", context)
+    internal sealed class SetCountExecutor(FormulaSession session) : ActionExecutor(id: "set_count", session)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? value = await context.EvaluateExpressionAsync("Global.RunCount + 1", cancellationToken).ConfigureAwait(false);
+            object? value = await context.EvaluateExpressionAsync("Global.RunCount + 1").ConfigureAwait(false);
 
             await context.QueueStateUpdateAsync("RunCount", value, "Global").ConfigureAwait(false);
         }
     }
 
-    internal sealed class SetUserInputExecutor(ExpressionContext context) : ActionExecutor(id: "set_user_input", context)
+    internal sealed class SetUserInputExecutor(FormulaSession session) : ActionExecutor(id: "set_user_input", session)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
@@ -66,7 +65,7 @@ public static class SampleWorkflowProvider
         }
     }
 
-    internal sealed class SetUserNameExecutor(ExpressionContext context) : ActionExecutor(id: "set_user_name", context)
+    internal sealed class SetUserNameExecutor(FormulaSession session) : ActionExecutor(id: "set_user_name", session)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
@@ -76,7 +75,7 @@ public static class SampleWorkflowProvider
         }
     }
 
-    internal sealed class SendResultExecutor(ExpressionContext context) : ActionExecutor(id: "send_result", context)
+    internal sealed class SendResultExecutor(FormulaSession session) : ActionExecutor(id: "send_result", session)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
@@ -100,10 +99,10 @@ public static class SampleWorkflowProvider
     {
         // Create executor instances
         RootWorkflowDemoExecutor<TInput> root = new(options, inputTransform);
-        SetCountExecutor setCount = new(root.Context);
-        SetUserInputExecutor setUserInput = new(root.Context);
-        SetUserNameExecutor setUserName = new(root.Context);
-        SendResultExecutor sendResult = new(root.Context);
+        SetCountExecutor setCount = new(root.Session);
+        SetUserInputExecutor setUserInput = new(root.Session);
+        SetUserNameExecutor setUserName = new(root.Session);
+        SendResultExecutor sendResult = new(root.Session);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(root);

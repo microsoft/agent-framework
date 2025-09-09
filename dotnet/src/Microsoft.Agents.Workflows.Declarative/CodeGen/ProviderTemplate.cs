@@ -102,15 +102,10 @@ foreach (string executor in ByLine(this.Executors, formatGroup: true))
             
             #line default
             #line hidden
-            this.Write(@"
-    public static Workflow<TInput> CreateWorkflow<TInput>(
-        DeclarativeWorkflowOptions options,
-        Func<TInput, ChatMessage>? inputTransform = null) 
-        where TInput : notnull
-    {
-        // Create executor instances
-        inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
-        ");
+            this.Write("\n    public static Workflow<TInput> CreateWorkflow<TInput>(\n        DeclarativeWo" +
+                    "rkflowOptions options,\n        Func<TInput, ChatMessage>? inputTransform = null)" +
+                    " \n        where TInput : notnull\n    {\n        // Create executor instances\n    " +
+                    "    ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.RootExecutorType));

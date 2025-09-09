@@ -17,6 +17,14 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// <typeparam name="TInput">The type of the initial message that starts the workflow.</typeparam>
 public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : notnull
 {
+    private IConfiguration? Configuration { get; }
+    private WorkflowFormulaState State { get; }
+
+    /// <summary>
+    /// Get the shared formula session to provide to workflow <see cref="ActionExecutor"/> instances.
+    /// </summary>
+    public FormulaSession Session { get; }
+
     /// <summary>
     /// Initializes a new instance of the <see cref="RootExecutor{TInput}"/> class.
     /// </summary>
@@ -27,16 +35,8 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     {
         this.Configuration = options.Configuration;
         this.State = new WorkflowFormulaState(options.CreateRecalcEngine());
-        this.Context = new ExpressionContext(this.State);
+        this.Session = new RootFormulaSession(this.State);
     }
-
-    private IConfiguration? Configuration { get; }
-    private WorkflowFormulaState State { get; }
-
-    /// <summary>
-    /// %%% TODO
-    /// </summary>
-    public ExpressionContext Context { get; }
 
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
@@ -76,11 +76,21 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     /// </summary>
     /// <param name="message">The original input object.</param>
     /// <returns>A <see cref="ChatMessage"/> derived from the input.</returns>
-    internal protected static ChatMessage DefaultInputTransform(TInput message) =>
+    protected internal static ChatMessage DefaultInputTransform(TInput message) =>
         message switch
         {
             ChatMessage chatMessage => chatMessage,
             string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
             _ => new(ChatRole.User, $"{message}")
         };
+
+    private sealed class RootFormulaSession : FormulaSession
+    {
+        internal RootFormulaSession(WorkflowFormulaState state)
+        {
+            this.State = state;
+        }
+
+        internal override WorkflowFormulaState State { get; }
+    }
 }

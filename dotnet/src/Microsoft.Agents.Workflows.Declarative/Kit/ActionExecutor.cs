@@ -2,6 +2,7 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
@@ -10,21 +11,23 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// </summary>
 public abstract class ActionExecutor : Executor<ActionExecutorResult>
 {
+    private readonly FormulaSession _context;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ActionExecutor"/> class.
     /// </summary>
     /// <param name="id">The executor id</param>
-    /// <param name="context">// %%% TODO</param>
-    protected ActionExecutor(string id, ExpressionContext context)
+    /// <param name="session">Session to support formula expressions.</param>
+    protected ActionExecutor(string id, FormulaSession session)
         : base(id)
     {
-        // %%% TODO: Context
+        this._context = session;
     }
 
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
-        await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._context.State), cancellationToken: default).ConfigureAwait(false);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

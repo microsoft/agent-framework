@@ -1,6 +1,6 @@
 ﻿<#@ template language="C#" visibility="internal" #>
 <#@ assembly name="System.Core" #>
-internal sealed class <#= this.Name #>Executor() : ActionExecutor(id: "<#= this.Id #>")
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {

@@ -25,16 +25,17 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         /// </summary>
         public virtual string TransformText()
         {
+            this.Write("\n");
             this.Write("\nbuilder.AddEdge(");
             
-            #line 2 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.SourceId ?? "builder.Root"));
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.SourceId));
             
             #line default
             #line hidden
             this.Write(", ");
             
-            #line 2 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.TargetId));
             
             #line default

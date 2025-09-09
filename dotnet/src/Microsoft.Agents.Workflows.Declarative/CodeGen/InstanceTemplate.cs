@@ -26,20 +26,21 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         public virtual string TransformText()
         {
             this.Write("\n");
+            this.Write("\n");
             
-            #line 2 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InstanceTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InstanceTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.ExecutorType));
             
             #line default
             #line hidden
             this.Write("Executor ");
             
-            #line 2 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InstanceTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InstanceTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.InstanceVariable));
             
             #line default
             #line hidden
-            this.Write(" = new();");
+            this.Write(" = new(root.Session);");
             return this.GenerationEnvironment.ToString();
         }
     }
