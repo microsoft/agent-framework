@@ -1,10 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from functools import wraps
-from inspect import isasyncgenfunction
 from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
@@ -39,7 +37,7 @@ logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
-__all__ = ["AgentProtocol", "BaseAgent", "ChatAgent", "agent"]
+__all__ = ["AgentProtocol", "BaseAgent", "ChatAgent"]
 
 
 # region Agent Protocol
@@ -660,133 +658,3 @@ class ChatAgent(BaseAgent):
 
     def _get_agent_name(self) -> str:
         return self.name or "UnnamedAgent"
-
-
-def agent(
-    func: Callable[..., Awaitable[AgentRunResponse]]
-    | Callable[..., AsyncIterable[AgentRunResponseUpdate]]
-    | None = None,
-    *,
-    id: str | None = None,
-    name: str | None = None,
-    description: str | None = None,
-    instructions: str | None = None,
-    **kwargs: Any,
-) -> "AgentProtocol":
-    """Create a simple agent out of a function."""
-
-    def decorator(
-        func: Callable[..., Awaitable[AgentRunResponse]] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
-    ) -> "AgentProtocol":
-        @wraps(func)
-        def wrapper(
-            f: Callable[..., Awaitable[AgentRunResponse]] | Callable[..., AsyncIterable[AgentRunResponseUpdate]],
-        ) -> "AgentProtocol":
-            agent_name = name or f.__name__
-            agent_description = description or f.__doc__
-            agent_instructions = instructions or "You are a agent."
-            if not isasyncgenfunction(f):
-
-                class RunFunctionAgent:
-                    def __init__(
-                        self,
-                        run: Callable[..., Awaitable[AgentRunResponse]],
-                        id: str | None,
-                        name: str | None,
-                        description: str | None,
-                        instructions: str | None,
-                        **kwargs: Any,
-                    ):
-                        self._func = run
-                        self.id = id or str(uuid4())
-                        self.name = name
-                        self.description = description
-                        self.instructions = instructions
-                        self.additional_properties = kwargs
-                        self.display_name = name or self.id
-
-                    async def run(
-                        self,
-                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-                        *,
-                        thread: AgentThread | None = None,
-                        **kwargs: Any,
-                    ) -> AgentRunResponse:
-                        return await self._func(messages=messages, thread=thread, **kwargs)
-
-                    def run_stream(
-                        self,
-                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-                        *,
-                        thread: AgentThread | None = None,
-                        **kwargs: Any,
-                    ) -> AsyncIterable[AgentRunResponseUpdate]:
-                        raise NotImplementedError("Streaming is not supported for this agent.")
-
-                    def get_new_thread(self) -> AgentThread:
-                        return AgentThread()
-
-                return RunFunctionAgent(
-                    run=f,  # type: ignore[reportArgumentType, arg-type]
-                    id=id,
-                    name=agent_name,
-                    description=agent_description,
-                    instructions=agent_instructions,
-                )
-            if isasyncgenfunction(f):
-
-                class StreamingRunFunctionAgent:
-                    def __init__(
-                        self,
-                        run_stream: Callable[..., AsyncIterable[AgentRunResponseUpdate]],
-                        id: str | None,
-                        name: str | None,
-                        description: str | None,
-                        instructions: str | None,
-                        **kwargs: Any,
-                    ):
-                        self._func = run_stream
-                        self.id = id or str(uuid4())
-                        self.name = name
-                        self.description = description
-                        self.instructions = instructions
-                        self.additional_properties = kwargs
-                        self.display_name = name or self.id
-
-                    async def run(
-                        self,
-                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-                        *,
-                        thread: AgentThread | None = None,
-                        **kwargs: Any,
-                    ) -> AgentRunResponse:
-                        """Run function of the agent."""
-                        raise NotImplementedError("Streaming is not supported for this agent.")
-
-                    async def run_stream(
-                        self,
-                        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-                        *,
-                        thread: AgentThread | None = None,
-                        **kwargs: Any,
-                    ) -> AsyncIterable[AgentRunResponseUpdate]:
-                        """Streaming run function of the agent."""
-                        async for update in self._func(messages=messages, thread=thread, **kwargs):
-                            yield update
-
-                    def get_new_thread(self) -> AgentThread:
-                        return AgentThread()
-
-                return StreamingRunFunctionAgent(
-                    run_stream=f,
-                    id=id,
-                    name=agent_name,
-                    description=agent_description,
-                    instructions=agent_instructions,
-                )
-
-            raise ValueError("Invalid function type.")
-
-        return wrapper(func)
-
-    return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
