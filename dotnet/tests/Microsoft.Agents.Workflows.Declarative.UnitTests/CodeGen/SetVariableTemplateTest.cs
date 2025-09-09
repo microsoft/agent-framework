@@ -56,7 +56,7 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         string workflowCode = template.TransformText();
 
         // Assert
-        Assert.Contains(workflowCode, variableName);
+        Assert.Contains(variableName, workflowCode);
     }
 
     private SetVariable CreateModel(string variablePath, ValueExpression.Builder valueExpression, string displayName)
