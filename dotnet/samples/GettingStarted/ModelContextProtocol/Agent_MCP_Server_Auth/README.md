@@ -1,6 +1,6 @@
 # Model Context Protocol Sample
 
-This example demonstrates how to use tools from a protected Model Context Protocol server with Semantic Kernel.
+This example demonstrates how to use tools from a protected Model Context Protocol server with Agent Framework.
 
 MCP is an open protocol that standardizes how applications provide context to LLMs.
 
@@ -11,8 +11,8 @@ The sample shows:
 1. How to connect to a protected MCP Server using  OAuth 2.0 authentication
 1. How to implement a custom OAuth authorization flow with browser-based authentication
 1. Retrieve the list of tools the MCP Server makes available
-1. Convert the MCP tools to Semantic Kernel functions so they can be added to a Kernel instance
-1. Invoke the tools from Semantic Kernel using function calling
+1. Convert the MCP tools to `AIFunction`'s so they can be added to an agent
+1. Invoke the tools from an agent using function calling
 
 ## Installing Prerequisites
 
