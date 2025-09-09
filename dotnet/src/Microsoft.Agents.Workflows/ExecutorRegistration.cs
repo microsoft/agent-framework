@@ -1,9 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
-using ExecutorFactoryF = System.Func<Microsoft.Agents.Workflows.Executor>;
+using ExecutorFactoryF = System.Func<System.Threading.Tasks.ValueTask<Microsoft.Agents.Workflows.Executor>>;
 
 namespace Microsoft.Agents.Workflows;
 
@@ -11,7 +12,7 @@ internal class ExecutorRegistration(string id, Type executorType, ExecutorFactor
 {
     public string Id { get; } = Throw.IfNullOrEmpty(id);
     public Type ExecutorType { get; } = Throw.IfNull(executorType);
-    public ExecutorFactoryF Provider { get; } = Throw.IfNull(provider);
+    public ExecutorFactoryF ProviderAsync { get; } = Throw.IfNull(provider);
 
     internal object? RawExecutorishData { get; } = rawData;
 
@@ -28,5 +29,5 @@ internal class ExecutorRegistration(string id, Type executorType, ExecutorFactor
         return executor;
     }
 
-    public Executor CreateInstance() => this.CheckId(this.Provider());
+    public async ValueTask<Executor> CreateInstanceAsync() => this.CheckId(await this.ProviderAsync().ConfigureAwait(false));
 }

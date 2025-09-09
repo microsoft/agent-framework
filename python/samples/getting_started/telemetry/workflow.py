@@ -217,7 +217,7 @@ async def run_sequential_workflow() -> None:
             print(f"Starting workflow with input: '{input_text}'")
 
             completion_event = None
-            async for event in workflow.run_streaming(input_text):
+            async for event in workflow.run_stream(input_text):
                 print(f"Event: {event}")
                 if isinstance(event, WorkflowCompletedEvent):
                     # The WorkflowCompletedEvent contains the final result.
