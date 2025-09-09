@@ -78,8 +78,8 @@ Once comfortable with these, explore the rest of the samples below.
 ### orchestration
 | Sample | File | Concepts |
 |---|---|---|
-| Handoff (Multi-hop) | [orchestration/handoff_multi_hop.py] | Orchestrate multiple agents using the handoff orchestration pattern and streaming |
-| Handoff (Human-in-the-loop) | [orchestration/handoff_human_in_the_loop.py] | Orchestrate multiple agents using the handoff orchestration pattern and and allow for human input during processing |
+| Handoff (Multi-hop) | [orchestration/handoff_multi_hop.py](./orchestration/handoff_multi_hop.py) | Orchestrate multiple agents using the handoff orchestration pattern and streaming |
+| Handoff (Human-in-the-loop) | [orchestration/handoff_human_in_the_loop.py](./orchestration/handoff_with_human_in_the_loop.py) | Orchestrate multiple agents using the handoff orchestration pattern, streaming, and and allow for human input during processing |
 | Magentic Workflow (Multi-Agent) | [orchestration/magentic.py](./orchestration/magentic.py) | Orchestrate multiple agents with Magentic manager and streaming |
 | Magentic + Human Plan Review | [orchestration/magentic_human_plan_update.py](./orchestration/magentic_human_plan_update.py) | Human reviews/updates the plan before execution |
 
