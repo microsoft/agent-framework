@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.IO;
 using System.Threading.Tasks;
 using Xunit.Abstractions;
@@ -35,9 +36,19 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     private async Task EjectWorkflow(string workflowPath)
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-
+        string expectedCode = File.ReadAllText(Path.Combine("Workflows", Path.ChangeExtension(workflowPath, ".cs")));
         string workflowCode = DeclarativeWorkflowBuilder.Eject(yamlReader, "Test.Workflow");
 
-        Assert.Equal("builder.AddEdge(invokeAgent2, setVariable1);", workflowCode.Trim());
+        Console.WriteLine(workflowCode);
+
+        string[] expectedLines = expectedCode.Trim().Split('\n');
+        string[] workflowLines = workflowCode.Trim().Split('\n');
+
+        Assert.Equal(expectedLines.Length, workflowLines.Length);
+
+        for (int index = 0; index < workflowLines.Length; ++index)
+        {
+            Assert.Equal(expectedLines[index].Trim(), workflowLines[index].Trim());
+        }
     }
 }

@@ -6,6 +6,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Workflows\Single.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Workflows\Single.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.Workflows.Declarative\Microsoft.Agents.Workflows.Declarative.csproj" />
   </ItemGroup>
 
@@ -15,6 +23,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Workflows\*.cs" />
+    <None Include="Workflows\*.cs">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="Workflows\*.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
