@@ -65,6 +65,8 @@ Once completed, please proceed to other samples listed below.
 | Sample | Concepts |
 |--------|----------|
 | [Checkpoint and Resume](./Checkpoint/CheckpointAndResume) | Introduces checkpoints for saving and restoring workflow state for time travel purposes |
+| [Checkpoint and Rehydrate](./Checkpoint/CheckpointAndRehydrate) | Demonstrates hydrating a new workflow instance from a saved checkpoint |
+| [Checkpoint with Human-in-the-Loop](./Checkpoint/CheckpointWithHumanInTheLoop) | Combines checkpointing with human-in-the-loop interactions |
 
 ### Human-in-the-Loop
 
