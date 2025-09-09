@@ -37,12 +37,12 @@ public readonly struct NewResponseStatus : IEquatable<NewResponseStatus>
     public static NewResponseStatus Incomplete { get; } = new("Incomplete");
 
     /// <summary>
-    /// Gets the <see cref="NewResponseStatus"/> that represents an operation that is currently being cancelled.
+    /// Gets the <see cref="NewResponseStatus"/> that represents an operation that is currently being canceled.
     /// </summary>
-    public static NewResponseStatus Cancelling { get; } = new("Cancelling");
+    public static NewResponseStatus Canceling { get; } = new("Cancelling");
 
     /// <summary>
-    ///  Gets the <see cref="NewResponseStatus"/> that represents an operation that has cancelled before completion.
+    ///  Gets the <see cref="NewResponseStatus"/> that represents an operation that has canceled before completion.
     /// </summary>
     public static NewResponseStatus Canceled { get; } = new("Canceled");
 

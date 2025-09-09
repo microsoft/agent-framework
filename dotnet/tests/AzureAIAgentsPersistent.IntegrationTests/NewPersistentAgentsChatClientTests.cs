@@ -258,7 +258,7 @@ public sealed class NewPersistentAgentsChatClientTests
         // Assert
         Assert.NotNull(cancelResponse);
 
-        Assert.True(cancelResponse.Status == NewResponseStatus.Cancelling || cancelResponse.Status == NewResponseStatus.Canceled);
+        Assert.True(cancelResponse.Status == NewResponseStatus.Canceling || cancelResponse.Status == NewResponseStatus.Canceled);
     }
 
     [Fact]

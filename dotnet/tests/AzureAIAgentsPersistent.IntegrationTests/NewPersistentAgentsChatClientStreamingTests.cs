@@ -336,7 +336,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Assert
         Assert.NotNull(response);
 
-        Assert.True(response.Status == NewResponseStatus.Cancelling || response.Status == NewResponseStatus.Canceled);
+        Assert.True(response.Status == NewResponseStatus.Canceling || response.Status == NewResponseStatus.Canceled);
     }
 
     [Fact]

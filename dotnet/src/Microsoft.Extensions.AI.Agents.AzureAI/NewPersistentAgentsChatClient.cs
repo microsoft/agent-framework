@@ -674,7 +674,7 @@ namespace Azure.AI.Agents.Persistent
 
             if (status == RunStatus.Cancelling)
             {
-                return NewResponseStatus.Cancelling;
+                return NewResponseStatus.Canceling;
             }
 
             if (status == RunStatus.Cancelled)
