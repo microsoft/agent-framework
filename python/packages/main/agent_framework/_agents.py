@@ -141,7 +141,7 @@ class BaseAgent(AFBaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
-    context_providers: AggregateContextProvider = Field(default_factory=AggregateContextProvider)
+    context_providers: AggregateContextProvider | None = None
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -213,7 +213,7 @@ class ChatAgent(BaseAgent):
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
-        context_providers: list[ContextProvider] | AggregateContextProvider | None = None,
+        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a ChatAgent.
@@ -254,11 +254,7 @@ class ChatAgent(BaseAgent):
         """
         kwargs.update(additional_properties or {})
 
-        aggregate_context_providers = (
-            AggregateContextProvider(context_providers)
-            if isinstance(context_providers, list)
-            else context_providers or AggregateContextProvider()
-        )
+        aggregate_context_providers = self._prepare_context_providers(context_providers)
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
@@ -391,7 +387,7 @@ class ChatAgent(BaseAgent):
                 will only be passed to functions that are called.
         """
         input_messages = self._normalize_messages(messages)
-        context = await self.context_providers.model_invoking(input_messages)
+        context = await self.context_providers.model_invoking(input_messages) if self.context_providers else None
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, context=context, input_messages=input_messages
         )
@@ -436,7 +432,6 @@ class ChatAgent(BaseAgent):
         )
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self.context_providers.thread_created(response.conversation_id)
 
         # Ensure that the author name is set for each message in the response.
         for message in response.messages:
@@ -448,7 +443,9 @@ class ChatAgent(BaseAgent):
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
-        await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
+        if self.context_providers:
+            await self.context_providers.thread_created(response.conversation_id)
+            await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
 
         return AgentRunResponse(
             messages=response.messages,
@@ -518,7 +515,7 @@ class ChatAgent(BaseAgent):
 
         """
         input_messages = self._normalize_messages(messages)
-        context = await self.context_providers.model_invoking(input_messages)
+        context = await self.context_providers.model_invoking(input_messages) if self.context_providers else None
         thread, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, context=context, input_messages=input_messages
         )
@@ -581,14 +578,15 @@ class ChatAgent(BaseAgent):
         response = ChatResponse.from_chat_response_updates(response_updates)
 
         self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self.context_providers.thread_created(response.conversation_id)
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
-        await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
+        if self.context_providers:
+            await self.context_providers.thread_created(response.conversation_id)
+            await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
 
     def get_new_thread(self) -> AgentThread:
         message_store: ChatMessageStore | None = None
@@ -632,7 +630,7 @@ class ChatAgent(BaseAgent):
         self,
         *,
         thread: AgentThread | None,
-        context: Context,
+        context: Context | None,
         input_messages: list[ChatMessage] | None = None,
     ) -> tuple[AgentThread, list[ChatMessage]]:
         """Prepare the messages for agent execution.
@@ -653,7 +651,7 @@ class ChatAgent(BaseAgent):
         messages: list[ChatMessage] = []
         if self.instructions:
             messages.append(ChatMessage(role=Role.SYSTEM, text=self.instructions))
-        if context.instructions:
+        if context and context.instructions:
             messages.append(ChatMessage(role=Role.SYSTEM, text=context.instructions))
         if thread.message_store:
             messages.extend(await thread.message_store.list_messages() or [])
@@ -677,3 +675,18 @@ class ChatAgent(BaseAgent):
 
     def _get_agent_name(self) -> str:
         return self.name or "UnnamedAgent"
+
+    def _prepare_context_providers(
+        self,
+        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
+    ) -> AggregateContextProvider | None:
+        if not context_providers:
+            return None
+
+        if isinstance(context_providers, AggregateContextProvider):
+            return context_providers
+
+        if isinstance(context_providers, ContextProvider):
+            return AggregateContextProvider([context_providers])
+
+        return AggregateContextProvider(context_providers)

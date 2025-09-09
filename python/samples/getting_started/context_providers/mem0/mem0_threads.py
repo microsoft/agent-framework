@@ -36,7 +36,7 @@ async def example_global_thread_scope() -> None:
             name="GlobalMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
-            context_providers=[global_context_provider],
+            context_providers=global_context_provider,
         ) as global_agent,
     ):
         # Store some preferences in the global scope
@@ -74,7 +74,7 @@ async def example_per_operation_thread_scope() -> None:
             name="ScopedMemoryAssistant",
             instructions="You are an assistant with thread-scoped memory.",
             tools=get_user_preferences,
-            context_providers=[scoped_context_provider],
+            context_providers=scoped_context_provider,
         ) as scoped_agent,
     ):
         # Create a specific thread for this scoped provider
@@ -124,12 +124,12 @@ async def example_multiple_agents() -> None:
         FoundryChatClient(async_credential=credential).create_agent(
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
-            context_providers=[personal_context_provider],
+            context_providers=personal_context_provider,
         ) as personal_agent,
         FoundryChatClient(async_credential=credential).create_agent(
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
-            context_providers=[work_context_provider],
+            context_providers=work_context_provider,
         ) as work_agent,
     ):
         # Store personal information
