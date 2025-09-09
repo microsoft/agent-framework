@@ -339,6 +339,7 @@ export function detectEdgeTraversals(events: DebugStreamEvent[]): EdgeTraversal[
     // Detect edge traversal: A completed → B invoked
     if (currentEvent?.type === "ExecutorCompletedEvent" && 
         nextEvent?.type === "ExecutorInvokeEvent" &&
+        currentEvent.executor_id && nextEvent.executor_id &&
         currentEvent.executor_id !== nextEvent.executor_id) {
       
       const traversal: EdgeTraversal = {

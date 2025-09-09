@@ -35,7 +35,7 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
           <div className="space-y-2">
             <Label htmlFor={name}>{name}</Label>
             <Select
-              value={typeof value === "string" && value ? value : (defaultValue || enumValues[0])}
+              value={typeof value === "string" && value ? value : (typeof defaultValue === "string" ? defaultValue : enumValues[0])}
               onValueChange={(val) => onChange(val)}
             >
               <SelectTrigger>
