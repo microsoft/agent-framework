@@ -30,6 +30,7 @@ dependencies = [
     "opentelemetry-api ~= 1.24",
     "opentelemetry-sdk ~= 1.24",
     "mcp>=1.12",
+    "websockets>=15.0.1",
 ]
 
 [project.optional-dependencies]
