@@ -20,13 +20,13 @@ To export visualization images you also need to [install GraphViz](https://graph
 
 ## Foundational Concepts - Start Here
 
-Begin with the `!start-here` folder in order. These three samples introduce the core ideas of executors, edges, agents in workflows, and streaming.
+Begin with the `_start-here` folder in order. These three samples introduce the core ideas of executors, edges, agents in workflows, and streaming.
 
 | Sample | File | Concepts |
 |--------|------|----------|
-| Executors and Edges | [!start-here/step1_executors_and_edges.py](./%21start-here/step1_executors_and_edges.py) | Minimal workflow with basic executors and edges |
-| Agents in a Workflow | [!start-here/step2_agents_in_a_workflow.py](./%21start-here/step2_agents_in_a_workflow.py) | Introduces AgentExecutor; calling agents inside a workflow |
-| Streaming (Basics) | [!start-here/step3_streaming.py](./%21start-here/step3_streaming.py) | Extends workflows with event streaming |
+| Executors and Edges | [_start-here/step1_executors_and_edges.py](./_start-here/step1_executors_and_edges.py) | Minimal workflow with basic executors and edges |
+| Agents in a Workflow | [_start-here/step2_agents_in_a_workflow.py](./_start-here/step2_agents_in_a_workflow.py) | Introduces adding Agents as nodes; calling agents inside a workflow |
+| Streaming (Basics) | [_start-here/step3_streaming.py](./_start-here/step3_streaming.py) | Extends workflows with event streaming |
 
 Once comfortable with these, explore the rest of the samples below.
 
@@ -90,7 +90,7 @@ Once comfortable with these, explore the rest of the samples below.
 ### state-management
 | Sample | File | Concepts |
 |---|---|---|
-| Shared States | [state-management/shared-states-with-agents.py](./state-management/shared-states-with-agents.py) | Store in shared state once and later reuse across agents |
+| Shared States | [state-management/shared_states_with_agents.py](./state-management/shared_states_with_agents.py) | Store in shared state once and later reuse across agents |
 
 ### visualization
 | Sample | File | Concepts |

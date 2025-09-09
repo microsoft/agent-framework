@@ -902,6 +902,14 @@ class AgentExecutor(Executor):
                 )
                 await ctx.add_event(AgentRunEvent(self.id, response))
 
+            full_conversation: list[ChatMessage] | None = None
+            if self._cache:
+                full_conversation = list(self._cache) + list(response.messages)
+
+            agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
+            await ctx.send_message(agent_response)
+            self._cache.clear()
+
     @handler
     async def from_response(self, prior: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
         """Enable seamless chaining: accept a prior AgentExecutorResponse as input.
