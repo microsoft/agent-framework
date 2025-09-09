@@ -5,11 +5,13 @@ import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from agent_framework import AgentProtocol
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
 
+from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
@@ -24,7 +26,7 @@ from ._edge import (
     SwitchCaseEdgeGroupDefault,
 )
 from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
-from ._executor import Executor, RequestInfoExecutor
+from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import CheckpointState, InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
@@ -38,9 +40,6 @@ else:
 
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:  # Avoid runtime import cycles; enables proper type checking of as_agent return type
-    from ._agent import WorkflowAgent
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
@@ -368,8 +367,48 @@ class Workflow(AFBaseModel):
         Returns:
             A WorkflowRunResult instance containing a list of events generated during the workflow execution.
         """
-        events = [event async for event in self.run_stream(message)]
-        return WorkflowRunResult(events)
+        from agent_framework import AgentRunResponse, AgentRunResponseUpdate
+
+        from ._events import AgentRunEvent, AgentRunUpdateEvent  # Local import to avoid cycles
+
+        raw_events = [event async for event in self.run_stream(message)]
+
+        # Coalesce streaming update events into a single AgentRunEvent per executor sequence.
+        coalesced: list[WorkflowEvent] = []  # type: ignore[name-defined]
+        pending_updates: list[AgentRunResponseUpdate] = []
+        pending_executor: str | None = None
+
+        def _flush_pending() -> None:
+            nonlocal pending_updates, pending_executor
+            if pending_executor is None or not pending_updates:
+                return
+            # Aggregate updates into a final AgentRunResponse using existing helper
+            aggregated = AgentRunResponse.from_agent_run_response_updates(pending_updates)
+            coalesced.append(AgentRunEvent(pending_executor, aggregated))
+            pending_updates = []
+            pending_executor = None
+
+        for ev in raw_events:
+            if isinstance(ev, AgentRunUpdateEvent):
+                # Start new grouping or continue existing if same executor
+                if pending_executor is None:
+                    pending_executor = ev.executor_id
+                if ev.executor_id != pending_executor:
+                    # Different executor encountered; flush previous first
+                    _flush_pending()
+                    pending_executor = ev.executor_id
+                if ev.data is not None:
+                    pending_updates.append(ev.data)
+                # Do NOT append update event itself (non-streaming contract)
+                continue
+            # Flush before adding any non-update event
+            _flush_pending()
+            coalesced.append(ev)
+
+        # Flush any trailing updates
+        _flush_pending()
+
+        return WorkflowRunResult(coalesced)
 
     async def run_from_checkpoint(
         self,
@@ -423,7 +462,7 @@ class Workflow(AFBaseModel):
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self.executors[executor_id]
 
-    def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
+    def _find_request_info_executor(self) -> RequestInfoExecutor | None:
         """Find the RequestInfoExecutor instance in this workflow.
 
         Returns:
@@ -537,7 +576,7 @@ class Workflow(AFBaseModel):
                     )
                 )
 
-    def as_agent(self, name: str | None = None) -> "WorkflowAgent":
+    def as_agent(self, name: str | None = None) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
         Args:
@@ -568,18 +607,57 @@ class WorkflowBuilder:
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = max_iterations
+        # Maps underlying AgentProtocol object id -> wrapped Executor so we reuse the same wrapper
+        # across set_start_executor / add_edge calls. Without this, unnamed agents (which receive
+        # random UUID based executor ids) end up wrapped multiple times, giving different ids for
+        # the start node vs edge nodes and triggering a GraphConnectivityError during validation.
+        self._agent_wrappers: dict[int, Executor] = {}
+
+    # Agents auto-wrapped by builder now always stream incremental updates.
 
     def _add_executor(self, executor: Executor) -> str:
         """Add an executor to the map and return its ID."""
         self._executors[executor.id] = executor
         return executor.id
 
+    def _maybe_wrap_agent(self, candidate: Executor | AgentProtocol) -> Executor:
+        """If the provided object implements AgentProtocol, wrap it in an AgentExecutor.
+
+        This allows fluent builder APIs to directly accept agents instead of
+        requiring callers to manually instantiate AgentExecutor.
+        """
+        try:  # Local import to avoid hard dependency at import time
+            from agent_framework import AgentProtocol  # type: ignore
+        except Exception:  # pragma: no cover - defensive
+            AgentProtocol = object  # type: ignore
+
+        if isinstance(candidate, Executor):  # Already an executor
+            return candidate
+        if isinstance(candidate, AgentProtocol):  # type: ignore[arg-type]
+            # Reuse existing wrapper for the same agent instance if present
+            existing = self._agent_wrappers.get(id(candidate))
+            if existing is not None:
+                return existing
+            # Use agent name if available and unique among current executors
+            name = getattr(candidate, "name", None)
+            proposed_id: str | None = None
+            if name:
+                proposed_id = str(name)
+                if proposed_id in self._executors:
+                    proposed_id = f"{proposed_id}-{uuid.uuid4().hex[:8]}"
+            wrapper = AgentExecutor(candidate, id=proposed_id, streaming=True)
+            self._agent_wrappers[id(candidate)] = wrapper
+            return wrapper
+        raise TypeError(
+            f"WorkflowBuilder expected an Executor or AgentProtocol instance; got {type(candidate).__name__}."
+        )
+
     def add_edge(
         self,
-        source: Executor,
-        target: Executor,
+        source: Executor | AgentProtocol,
+        target: Executor | AgentProtocol,
         condition: Callable[[Any], bool] | None = None,
-    ) -> "Self":
+    ) -> Self:
         """Add a directed edge between two executors.
 
         The output types of the source and the input types of the target must be compatible.
@@ -591,12 +669,18 @@ class WorkflowBuilder:
                        should be traversed based on the message type.
         """
         # TODO(@taochen): Support executor factories for lazy initialization
-        source_id = self._add_executor(source)
-        target_id = self._add_executor(target)
+        source_exec = self._maybe_wrap_agent(source)
+        target_exec = self._maybe_wrap_agent(target)
+        source_id = self._add_executor(source_exec)
+        target_id = self._add_executor(target_exec)
         self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))
         return self
 
-    def add_fan_out_edges(self, source: Executor, targets: Sequence[Executor]) -> "Self":
+    def add_fan_out_edges(
+        self,
+        source: Executor | AgentProtocol,
+        targets: Sequence[Executor | AgentProtocol],
+    ) -> Self:
         """Add multiple edges to the workflow where messages from the source will be sent to all target.
 
         The output types of the source and the input types of the targets must be compatible.
@@ -605,13 +689,19 @@ class WorkflowBuilder:
             source: The source executor of the edges.
             targets: A list of target executors for the edges.
         """
-        source_id = self._add_executor(source)
-        target_ids = [self._add_executor(target) for target in targets]
+        source_exec = self._maybe_wrap_agent(source)
+        target_execs = [self._maybe_wrap_agent(t) for t in targets]
+        source_id = self._add_executor(source_exec)
+        target_ids = [self._add_executor(t) for t in target_execs]
         self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))
 
         return self
 
-    def add_switch_case_edge_group(self, source: Executor, cases: Sequence[Case | Default]) -> "Self":
+    def add_switch_case_edge_group(
+        self,
+        source: Executor | AgentProtocol,
+        cases: Sequence[Case | Default],
+    ) -> Self:
         """Add an edge group that represents a switch-case statement.
 
         The output types of the source and the input types of the targets must be compatible.
@@ -629,10 +719,13 @@ class WorkflowBuilder:
             source: The source executor of the edges.
             cases: A list of case objects that determine the target executor for each message.
         """
-        source_id = self._add_executor(source)
+        source_exec = self._maybe_wrap_agent(source)
+        source_id = self._add_executor(source_exec)
         # Convert case data types to internal types that only uses target_id.
         internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
         for case in cases:
+            # Allow case targets to be agents
+            case.target = self._maybe_wrap_agent(case.target)  # type: ignore[attr-defined]
             self._add_executor(case.target)
             if isinstance(case, Default):
                 internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
@@ -644,10 +737,10 @@ class WorkflowBuilder:
 
     def add_multi_selection_edge_group(
         self,
-        source: Executor,
-        targets: Sequence[Executor],
+        source: Executor | AgentProtocol,
+        targets: Sequence[Executor | AgentProtocol],
         selection_func: Callable[[Any, list[str]], list[str]],
-    ) -> "Self":
+    ) -> Self:
         """Add an edge group that represents a multi-selection execution model.
 
         The output types of the source and the input types of the targets must be compatible.
@@ -662,13 +755,19 @@ class WorkflowBuilder:
             targets: A list of target executors for the edges.
             selection_func: A function that selects target executors for messages.
         """
-        source_id = self._add_executor(source)
-        target_ids = [self._add_executor(target) for target in targets]
+        source_exec = self._maybe_wrap_agent(source)
+        target_execs = [self._maybe_wrap_agent(t) for t in targets]
+        source_id = self._add_executor(source_exec)
+        target_ids = [self._add_executor(t) for t in target_execs]
         self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))
 
         return self
 
-    def add_fan_in_edges(self, sources: Sequence[Executor], target: Executor) -> "Self":
+    def add_fan_in_edges(
+        self,
+        sources: Sequence[Executor | AgentProtocol],
+        target: Executor | AgentProtocol,
+    ) -> Self:
         """Add multiple edges from sources to a single target executor.
 
         The edges will be grouped together for synchronized processing, meaning
@@ -702,13 +801,15 @@ class WorkflowBuilder:
             sources: A list of source executors for the edges.
             target: The target executor for the edges.
         """
-        source_ids = [self._add_executor(source) for source in sources]
-        target_id = self._add_executor(target)
+        source_execs = [self._maybe_wrap_agent(s) for s in sources]
+        target_exec = self._maybe_wrap_agent(target)
+        source_ids = [self._add_executor(s) for s in source_execs]
+        target_id = self._add_executor(target_exec)
         self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))
 
         return self
 
-    def add_chain(self, executors: Sequence[Executor]) -> "Self":
+    def add_chain(self, executors: Sequence[Executor | AgentProtocol]) -> Self:
         """Add a chain of executors to the workflow.
 
         The output of each executor in the chain will be sent to the next executor in the chain.
@@ -719,20 +820,30 @@ class WorkflowBuilder:
         Args:
             executors: A list of executors to be added to the chain.
         """
-        for i in range(len(executors) - 1):
-            self.add_edge(executors[i], executors[i + 1])
+        # Wrap each candidate first to ensure stable IDs before adding edges
+        wrapped: list[Executor] = [self._maybe_wrap_agent(e) for e in executors]
+        for i in range(len(wrapped) - 1):
+            self.add_edge(wrapped[i], wrapped[i + 1])
         return self
 
-    def set_start_executor(self, executor: Executor | str) -> "Self":
+    def set_start_executor(self, executor: Executor | AgentProtocol | str) -> Self:
         """Set the starting executor for the workflow.
 
         Args:
             executor: The starting executor, which can be an Executor instance or its ID.
         """
-        self._start_executor = executor
+        if isinstance(executor, str):
+            self._start_executor = executor
+        else:
+            wrapped = self._maybe_wrap_agent(executor)  # type: ignore[arg-type]
+            self._start_executor = wrapped
+            # Ensure the start executor is present in the executor map so validation succeeds
+            # even if no edges are added yet, or before edges wrap the same agent again.
+            if wrapped.id not in self._executors:
+                self._executors[wrapped.id] = wrapped
         return self
 
-    def set_max_iterations(self, max_iterations: int) -> "Self":
+    def set_max_iterations(self, max_iterations: int) -> Self:
         """Set the maximum number of iterations for the workflow.
 
         Args:
@@ -741,7 +852,9 @@ class WorkflowBuilder:
         self._max_iterations = max_iterations
         return self
 
-    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "Self":
+    # Removed explicit set_agent_streaming() API; agents always stream updates.
+
+    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> Self:
         """Enable checkpointing with the specified storage.
 
         Args:

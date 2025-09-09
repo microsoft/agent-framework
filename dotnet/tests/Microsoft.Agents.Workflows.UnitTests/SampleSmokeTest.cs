@@ -104,6 +104,25 @@ public class SampleSmokeTest
     }
 
     [Fact]
+    public async Task Test_RunSample_Step5aAsync()
+    {
+        using StringWriter writer = new();
+
+        VerifyingPlaybackResponder<string, int> responder = new(
+            // Iteration 1
+            ("Guess the number.", 50),
+            ("Your guess was too high. Try again.", 23),
+
+            // Iteration 2
+            ("Your guess was too high. Try again.", 23),
+            ("Your guess was too low. Try again.", 42)
+         );
+
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, rehydrateToRestore: true);
+        Assert.Equal("You guessed correctly! You Win!", guessResult);
+    }
+
+    [Fact]
     public async Task Test_RunSample_Step6Async()
     {
         using StringWriter writer = new();
