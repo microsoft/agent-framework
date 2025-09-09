@@ -9,6 +9,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore;
+using Microsoft.Extensions.AI.Agents.Hosting.Discovery;
 using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,11 +37,14 @@ builder.AddAzureCosmosClient("agent-web-chat-cosmosdb", null, CosmosClientOption
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.AddAIAgent(
+var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model");
+
+// discovery configuration
+pirateAgentBuilder.WithDiscovery(new());
 
 builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
@@ -107,6 +111,9 @@ app.AttachA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", 
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");
+
+// Map the agents HTTP discovery endpoint
+app.EnableDiscovery();
 
 app.MapDefaultEndpoints();
 app.Run();
