@@ -19,6 +19,12 @@ AIAgent agent = new UpperCaseParrotAgent();
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 
+// Invoke the agent with streaming support.
+await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
+{
+    Console.WriteLine(update);
+}
+
 namespace SampleApp
 {
     // Custom agent that parrot's the user input back in upper case.
