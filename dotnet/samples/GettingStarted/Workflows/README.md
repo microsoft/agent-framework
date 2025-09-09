@@ -54,6 +54,12 @@ Once completed, please proceed to other samples listed below.
 
 > These 3 samples build upon each other. It's recommended to explore them in sequence to fully grasp the concepts.
 
+### Declarative Workflows
+
+| Sample | Concepts |
+|--------|----------|
+| [DeclarativeWorkflow](./DeclarativeWorkflow) | Demonstrates execution of declartive workflows. |
+
 ### Checkpointing
 
 | Sample | Concepts |

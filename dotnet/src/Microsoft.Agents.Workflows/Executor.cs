@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows;
 
@@ -21,20 +22,17 @@ public abstract class Executor : IIdentified
     /// </summary>
     public string Id { get; }
 
+    private readonly ExecutorOptions _options;
+
     /// <summary>
     /// Initialize the executor with a unique identifier
     /// </summary>
-    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged
-    /// UUID will be generated.</param>
-    protected Executor(string? id = null) : this(ExecutorOptions.Default, id)
-    {
-    }
-
-    private readonly ExecutorOptions _options;
-    internal Executor(ExecutorOptions options, string? id = null)
+    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    protected Executor(string? id = null, ExecutorOptions? options = null)
     {
         this.Id = id ?? $"{this.GetType().Name}/{Guid.NewGuid():N}";
-        this._options = options;
+        this._options = options ?? ExecutorOptions.Default;
     }
 
     /// <summary>
@@ -143,4 +141,44 @@ public abstract class Executor : IIdentified
     /// <param name="messageType"></param>
     /// <returns></returns>
     public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
+}
+
+/// <summary>
+/// Provides a simple executor implementation that uses a single message handler function to process incoming messages.
+/// </summary>
+/// <typeparam name="TInput">The type of input message.</typeparam>
+/// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+/// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+public abstract class Executor<TInput>(string? id = null, ExecutorOptions? options = null)
+    : Executor(id, options), IMessageHandler<TInput>
+{
+    /// <inheritdoc/>
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        return routeBuilder.AddHandler<TInput>(this.HandleAsync);
+    }
+
+    /// <inheritdoc/>
+    public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context);
+}
+
+/// <summary>
+/// Provides a simple executor implementation that uses a single message handler function to process incoming messages.
+/// </summary>
+/// <typeparam name="TInput">The type of input message.</typeparam>
+/// <typeparam name="TOutput">The type of output message.</typeparam>
+/// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+/// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+public abstract class Executor<TInput, TOutput>(string? id = null, ExecutorOptions? options = null)
+    : Executor(id, options ?? ExecutorOptions.Default),
+      IMessageHandler<TInput, TOutput>
+{
+    /// <inheritdoc/>
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        return routeBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
+    }
+
+    /// <inheritdoc/>
+    public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context);
 }
