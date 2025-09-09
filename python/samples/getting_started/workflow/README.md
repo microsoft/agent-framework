@@ -2,13 +2,13 @@
 
 ## Installation
 
-To install the base `agent_framework.workflow` package, please run:
+To install the base `agent_framework.workflow` package, run:
 
 ```bash
 pip install agent-framework-workflow
 ```
 
-You can install the workflow package with visualization dependency:
+To install with visualization support:
 
 ```bash
 pip install agent-framework-workflow[viz]
@@ -20,15 +20,15 @@ To export visualization images you also need to [install GraphViz](https://graph
 
 ## Foundational Concepts - Start Here
 
-Begin with the `foundational` folder in order. These three samples introduce the core ideas of executors, edges, agents in workflows, and streaming.
+Begin with the `_start-here` folder in order. These three samples introduce the core ideas of executors, edges, agents in workflows, and streaming.
 
 | Sample | File | Concepts |
 |--------|------|----------|
-| Executors and Edges | [foundational/step1_executors_and_edges.py](./foundational/step1_executors_and_edges.py) | Minimal workflow with basic executors and edges |
-| Agents in a Workflow | [foundational/step2_agents_in_a_workflow.py](./foundational/step2_agents_in_a_workflow.py) | Introduces `AgentExecutor`; calling agents inside a workflow |
-| Streaming | [foundational/step3_streaming.py](./foundational/step3_streaming.py) | Extends workflows with event streaming |
+| Executors and Edges | [_start-here/step1_executors_and_edges.py](./_start-here/step1_executors_and_edges.py) | Minimal workflow with basic executors and edges |
+| Agents in a Workflow | [_start-here/step2_agents_in_a_workflow.py](./_start-here/step2_agents_in_a_workflow.py) | Introduces adding Agents as nodes; calling agents inside a workflow |
+| Streaming (Basics) | [_start-here/step3_streaming.py](./_start-here/step3_streaming.py) | Extends workflows with event streaming |
 
-Once comfortable with these, explore the rest of the samples.
+Once comfortable with these, explore the rest of the samples below.
 
 ---
 
@@ -37,39 +37,43 @@ Once comfortable with these, explore the rest of the samples.
 ### agents
 | Sample | File | Concepts |
 |---|---|---|
-| Azure Chat Agents Streaming | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py) | Directly adds Azure agents as edges and handling streaming events |
+| Azure Chat Agents (Streaming) | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py) | Add Azure agents as edges and handle streaming events |
 | Custom Agent Executors | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py) | Create executors to handle agent run methods |
-| Foundry Chat Agents Streaming | [agents/foundry_chat_agents_streaming.py](./agents/foundry_chat_agents_streaming.py) | Directly adds Foundry agents as edges and handling streaming events |
-| Workflow as Agent | [ai_agent/workflow_as_agent.py](./agents/workflow_as_agent.py) | Wrap a workflow so it can behave like an agent |
-| Workflow as Agent + HITL | [ai_agent/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py) | Extend workflow-as-agent with human-in-the-loop capability |
+| Foundry Chat Agents (Streaming) | [agents/foundry_chat_agents_streaming.py](./agents/foundry_chat_agents_streaming.py) | Add Foundry agents as edges and handle streaming events |
+| Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py) | Wrap a workflow so it can behave like an agent (reflection pattern) |
+| Workflow as Agent + HITL | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py) | Extend workflow-as-agent with human-in-the-loop capability |
 
 ### checkpoint
 | Sample | File | Concepts |
 |---|---|---|
 | Checkpoint & Resume | [checkpoint/checkpoint_with_resume.py](./checkpoint/checkpoint_with_resume.py) | Create checkpoints, inspect them, and resume execution |
 
-### conditional_edges
+### composition
 | Sample | File | Concepts |
 |---|---|---|
-| Edge Condition | [conditional_edges/edge_condition.py](./conditional_edges/edge_condition.py) | Conditional routing based on agent classification |
-| Switch-Case Edge Group | [conditional_edges/switch_case_edge_group.py](./conditional_edges/switch_case_edge_group.py) | Switch-case branching using classifier outputs |
-| Multi-Selection Edge Group | [conditional_edges/multi_selection_edge_group.py](./conditional_edges/multi_selection_edge_group.py) | Select one or many targets dynamically (subset fan-out) |
+| Sub-Workflow (Basics) | [composition/sub_workflow_basics.py](./composition/sub_workflow_basics.py) | Wrap a workflow as an executor and orchestrate sub-workflows |
+| Sub-Workflow: Request Interception | [composition/sub_workflow_request_interception.py](./composition/sub_workflow_request_interception.py) | Intercept and forward requests with decorators and request handling |
+| Sub-Workflow: Parallel Requests | [composition/sub_workflow_parallel_requests.py](./composition/sub_workflow_parallel_requests.py) | Multi-type interception and external forwarding patterns |
 
-### fan_out_fan_in
+### control-flow
 | Sample | File | Concepts |
 |---|---|---|
-| Concurrent (Fan-out/Fan-in) | [fan_out_fan_in/fan_out_fan_in_edges.py](./fan_out_fan_in/fan_out_fan_in_edges.py) | Dispatch to multiple executors and aggregate results |
-| Map-Reduce with Visualization | [fan_out_fan_in/map_reduce_and_visualization.py](./fan_out_fan_in/map_reduce_and_visualization.py) | Fan-out/fan-in pattern with GraphViz/diagram export |
+| Sequential Executors | [control-flow/sequential_executors.py](./control-flow/sequential_executors.py) | Sequential workflow with explicit executor setup |
+| Sequential (Streaming) | [control-flow/sequential_streaming.py](./control-flow/sequential_streaming.py) | Stream events from a simple sequential run |
+| Edge Condition | [control-flow/edge_condition.py](./control-flow/edge_condition.py) | Conditional routing based on agent classification |
+| Switch-Case Edge Group | [control-flow/switch_case_edge_group.py](./control-flow/switch_case_edge_group.py) | Switch-case branching using classifier outputs |
+| Multi-Selection Edge Group | [control-flow/multi_selection_edge_group.py](./control-flow/multi_selection_edge_group.py) | Select one or many targets dynamically (subset fan-out) |
+| Simple Loop | [control-flow/simple_loop.py](./control-flow/simple_loop.py) | Feedback loop where an agent judges ABOVE/BELOW/MATCHED |
 
-### human_in_the_loop
+### human-in-the-loop
 | Sample | File | Concepts |
 |---|---|---|
-| Human-In-The-Loop (Guessing Game) | [human_in_the_loop/guessing_game_with_human_input.py](./human_in_the_loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human |
+| Human-In-The-Loop (Guessing Game) | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human |
 
-### loop
+### observability
 | Sample | File | Concepts |
 |---|---|---|
-| Simple Loop | [loop/simple_loop.py](./loop/simple_loop.py) | Feedback loop where an agent judges ABOVE/BELOW/MATCHED |
+| Tracing (Basics) | [observability/tracing_basics.py](./observability/tracing_basics.py) | Use basic tracing for workflow telemetry |
 
 ### orchestration
 | Sample | File | Concepts |
@@ -77,36 +81,31 @@ Once comfortable with these, explore the rest of the samples.
 | Magentic Workflow (Multi-Agent) | [orchestration/magentic.py](./orchestration/magentic.py) | Orchestrate multiple agents with Magentic manager and streaming |
 | Magentic + Human Plan Review | [orchestration/magentic_human_plan_update.py](./orchestration/magentic_human_plan_update.py) | Human reviews/updates the plan before execution |
 
-### sequential
+### parallelism
 | Sample | File | Concepts |
 |---|---|---|
-| Sequential Executors | [sequential/sequential_executors.py](./sequential/sequential_executors.py) | Sequential workflow with explicit executor setup |
-| Sequential (Streaming) | [sequential/sequential_streaming.py](./sequential/sequential_streaming.py) | Stream events from a simple sequential run |
+| Concurrent (Fan-out/Fan-in) | [parallelism/fan_out_fan_in_edges.py](./parallelism/fan_out_fan_in_edges.py) | Dispatch to multiple executors and aggregate results |
+| Map-Reduce with Visualization | [parallelism/map_reduce_and_visualization.py](./parallelism/map_reduce_and_visualization.py) | Fan-out/fan-in pattern with diagram export |
 
-### shared_states
+### state-management
 | Sample | File | Concepts |
 |---|---|---|
-| Shared States | [shared_states/shared_states_with_agents.py](./shared_states/shared_states_with_agents.py) | Store in shared state once and later reuse across agents |
-
-### sub_workflow
-| Sample | File | Concepts |
-|---|---|---|
-| Sub-Workflow (Basics) | [sub_workflow/sub_workflow_basics.py](./sub_workflow/sub_workflow.py) | Wrap a workflow as an executor and orchestrate sub-workflows |
-| Sub-Workflow: Request Interception | [sub_workflow/sub_workflow_request_interception.py](./sub_workflow/sub_workflow_request_interception.py) | Intercept/forward requests with decorators and request handling |
-| Sub-Workflow: Parallel Requests | [sub_workflow/sub_workflow_parallel_requests.py](./sub_workflow/sub_workflow_parallel_requests.py) | Multi-type interception and external forwarding patterns |
-
-### tracing
-| Sample | File | Concepts |
-|---|---|---|
-| Tracing (Basics) | [tracing/tracing_basics.py](./tracing/tracing_basics.py) | Use basic tracing for workflow telemetry |
+| Shared States | [state-management/shared_states_with_agents.py](./state-management/shared_states_with_agents.py) | Store in shared state once and later reuse across agents |
 
 ### visualization
 | Sample | File | Concepts |
 |---|---|---|
 | Concurrent with Visualization | [visualization/concurrent_with_visualization.py](./visualization/concurrent_with_visualization.py) | Fan-out/fan-in workflow with diagram export |
 
+### resources
+- Sample text inputs used by certain workflows:
+  - [resources/long_text.txt](./resources/long_text.txt)
+  - [resources/email.txt](./resources/email.txt)
+  - [resources/spam.txt](./resources/spam.txt)
+  - [resources/ambiguous_email.txt](./resources/ambiguous_email.txt)
+
 Notes
-- Agent‑based samples use provider SDKs (Azure/OpenAI, etc.). Ensure credentials are configured, or adapt agents accordingly.
+- Agent-based samples use provider SDKs (Azure/OpenAI, etc.). Ensure credentials are configured, or adapt agents accordingly.
 
 ### Environment Variables
 
