@@ -8,6 +8,7 @@ using System.Dynamic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
@@ -24,6 +25,7 @@ internal static class FormulaValueExtensions
         value switch
         {
             null => FormulaValue.NewBlank(),
+            UnassignedValue => FormulaValue.NewBlank(),
             FormulaValue formulaValue => formulaValue,
             bool booleanValue => FormulaValue.New(booleanValue),
             int decimalValue => FormulaValue.New(decimalValue),

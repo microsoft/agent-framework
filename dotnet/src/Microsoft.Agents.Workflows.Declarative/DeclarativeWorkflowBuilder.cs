@@ -22,7 +22,7 @@ public static class DeclarativeWorkflowBuilder
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="workflowFile">The path to the workflow.</param>
-    /// <param name="options">The execution context for the workflow.</param>
+    /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns></returns>
     public static Workflow<TInput> Build<TInput>(
@@ -40,7 +40,7 @@ public static class DeclarativeWorkflowBuilder
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
-    /// <param name="options">The execution context for the workflow.</param>
+    /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
     public static Workflow<TInput> Build<TInput>(
@@ -59,13 +59,9 @@ public static class DeclarativeWorkflowBuilder
 
         string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
 
-        WorkflowScopes scopes = new();
-        scopes.Initialize(workflowElement.WrapWithBot(), options.Configuration);
-        DeclarativeWorkflowState state = new(options.CreateRecalcEngine(), scopes);
-        DeclarativeWorkflowExecutor<TInput> rootExecutor =
-            new(rootId,
-                state,
-                message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
+        WorkflowScopes state = new(options.CreateRecalcEngine());
+        state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
+        DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId, state, inputTransform);
 
         WorkflowActionVisitor visitor = new(rootExecutor, state, options);
         WorkflowElementWalker walker = new(visitor);
@@ -119,7 +115,7 @@ public static class DeclarativeWorkflowBuilder
         walker.Visit(rootElement);
 
         ProviderTemplate template =
-            new(visitor.Executors, visitor.Instances, visitor.Edges)
+            new(rootId, visitor.Executors, visitor.Instances, visitor.Edges)
             {
                 Namespace = workflowNamespace,
                 Prefix = workflowPrefix,
@@ -127,17 +123,4 @@ public static class DeclarativeWorkflowBuilder
 
         return template.TransformText();
     }
-
-    /// <summary>
-    /// Provides a default conversion of an input object into a <see cref="ChatMessage"/>.
-    /// </summary>
-    /// <param name="message">The original input object.</param>
-    /// <returns>A <see cref="ChatMessage"/> derived from the input.</returns>
-    public static ChatMessage DefaultTransform(object message) =>
-        message switch
-        {
-            ChatMessage chatMessage => chatMessage,
-            string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
-            _ => new(ChatRole.User, $"{message}")
-        };
 }

@@ -25,14 +25,14 @@ public static class SampleWorkflowProvider
     /// The root executor for a declarative workflow.
     /// </summary>
     internal sealed class RootWorkflowDemoExecutor<TInput>(
-        Func<TInput, ChatMessage> inputTransform,
-        IConfiguration? configuration) :
-        RootExecutor<TInput>("root_workflow_demo", configuration)
+        DeclarativeWorkflowOptions options,
+        Func<TInput, ChatMessage>? inputTransform = null) :
+        RootExecutor<TInput>("root_workflow_demo", options)
         where TInput : notnull
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            ChatMessage input = inputTransform.Invoke(message);
+            ChatMessage input = (inputTransform ?? DefaultInputTransform).Invoke(message);
             //await context.SetLastMessageAsync(input).ConfigureAwait(false); // %%% SYSTEM VARS
             await context.QueueStateUpdateAsync("LastMessageText", input.Text, "System").ConfigureAwait(false);
 
@@ -46,17 +46,17 @@ public static class SampleWorkflowProvider
         }
     }
 
-    internal sealed class SetCountExecutor() : ActionExecutor(id: "set_count")
+    internal sealed class SetCountExecutor(ExpressionContext context) : ActionExecutor(id: "set_count", context)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? value = await context.EvaluateExpressionAsync("Global.RunCount + 1").ConfigureAwait(false);
+            object? value = await context.EvaluateExpressionAsync("Global.RunCount + 1", cancellationToken).ConfigureAwait(false);
 
             await context.QueueStateUpdateAsync("RunCount", value, "Global").ConfigureAwait(false);
         }
     }
 
-    internal sealed class SetUserInputExecutor() : ActionExecutor(id: "set_user_input")
+    internal sealed class SetUserInputExecutor(ExpressionContext context) : ActionExecutor(id: "set_user_input", context)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
@@ -66,7 +66,7 @@ public static class SampleWorkflowProvider
         }
     }
 
-    internal sealed class SetUserNameExecutor() : ActionExecutor(id: "set_user_name")
+    internal sealed class SetUserNameExecutor(ExpressionContext context) : ActionExecutor(id: "set_user_name", context)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
@@ -76,7 +76,7 @@ public static class SampleWorkflowProvider
         }
     }
 
-    internal sealed class SendResultExecutor() : ActionExecutor(id: "send_result")
+    internal sealed class SendResultExecutor(ExpressionContext context) : ActionExecutor(id: "send_result", context)
     {
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
@@ -99,12 +99,11 @@ public static class SampleWorkflowProvider
         where TInput : notnull
     {
         // Create executor instances
-        inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
-        RootWorkflowDemoExecutor<TInput> root = new(inputTransform, options.Configuration);
-        SetCountExecutor setCount = new();
-        SetUserInputExecutor setUserInput = new();
-        SetUserNameExecutor setUserName = new();
-        SendResultExecutor sendResult = new();
+        RootWorkflowDemoExecutor<TInput> root = new(options, inputTransform);
+        SetCountExecutor setCount = new(root.Context);
+        SetUserInputExecutor setUserInput = new(root.Context);
+        SetUserNameExecutor setUserName = new(root.Context);
+        SendResultExecutor sendResult = new(root.Context);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(root);

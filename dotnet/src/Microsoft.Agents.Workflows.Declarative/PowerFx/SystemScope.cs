@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.SystemVariables;
 using Microsoft.Extensions.AI;
@@ -96,27 +95,27 @@ internal static class SystemScope
         }
     }
 
-    public static FormulaValue GetConversationId(this DeclarativeWorkflowState state) =>
-        state.Scopes.Get(Names.ConversationId, VariableScopeNames.System);
+    public static FormulaValue GetConversationId(this WorkflowScopes state) =>
+        state.Get(Names.ConversationId, VariableScopeNames.System);
 
-    public static void SetConversationId(this DeclarativeWorkflowState state, string conversationId)
+    public static void SetConversationId(this WorkflowScopes state, string conversationId)
     {
-        RecordValue conversation = (RecordValue)state.Scopes.Get(Names.Conversation, VariableScopeNames.System);
+        RecordValue conversation = (RecordValue)state.Get(Names.Conversation, VariableScopeNames.System);
         conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        state.Scopes.Set(Names.Conversation, conversation, VariableScopeNames.System);
-        state.Scopes.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
+        state.Set(Names.Conversation, conversation, VariableScopeNames.System);
+        state.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
     }
 
-    public static FormulaValue GetInternalConversationId(this DeclarativeWorkflowState state) =>
-        state.Scopes.Get(Names.InternalId, VariableScopeNames.System);
+    public static FormulaValue GetInternalConversationId(this WorkflowScopes state) =>
+        state.Get(Names.InternalId, VariableScopeNames.System);
 
-    public static void SetInternalConversationId(this DeclarativeWorkflowState state, string conversationId) =>
-        state.Scopes.Set(Names.InternalId, FormulaValue.New(conversationId), VariableScopeNames.System);
+    public static void SetInternalConversationId(this WorkflowScopes state, string conversationId) =>
+        state.Set(Names.InternalId, FormulaValue.New(conversationId), VariableScopeNames.System);
 
-    public static void SetLastMessage(this DeclarativeWorkflowState state, ChatMessage message)
+    public static void SetLastMessage(this WorkflowScopes state, ChatMessage message)
     {
-        state.Scopes.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
-        state.Scopes.Set(Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), VariableScopeNames.System);
-        state.Scopes.Set(Names.LastMessageText, FormulaValue.New(message.Text), VariableScopeNames.System);
+        state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
+        state.Set(Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), VariableScopeNames.System);
+        state.Set(Names.LastMessageText, FormulaValue.New(message.Text), VariableScopeNames.System);
     }
 }

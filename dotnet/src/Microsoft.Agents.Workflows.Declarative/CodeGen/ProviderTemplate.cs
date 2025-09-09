@@ -117,7 +117,7 @@ foreach (string executor in ByLine(this.Executors, formatGroup: true))
             
             #line default
             #line hidden
-            this.Write("Executor<TInput> root = new(inputTransform, options.Configuration);");
+            this.Write("Executor<TInput> root = new(options, inputTransform);");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 

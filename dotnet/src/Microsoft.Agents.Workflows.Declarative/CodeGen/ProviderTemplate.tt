@@ -39,7 +39,7 @@ foreach (string executor in ByLine(this.Executors, formatGroup: true))
     {
         // Create executor instances
         inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
-        <#= this.RootExecutorType #>Executor<TInput> root = new(inputTransform, options.Configuration);<#
+        <#= this.RootExecutorType #>Executor<TInput> root = new(options, inputTransform);<#
 foreach (string instance in ByLine(this.Instances))
 { #>
         <#= instance #><#

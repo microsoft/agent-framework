@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -24,7 +25,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     private int _index;
     private FormulaValue[] _values;
 
-    public ForeachExecutor(Foreach model, DeclarativeWorkflowState state)
+    public ForeachExecutor(Foreach model, WorkflowScopes state)
         : base(model, state)
     {
         this._values = [];
@@ -43,7 +44,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
         else
         {
-            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Items);
+            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(this.Model.Items);
             if (expressionResult.Value is TableDataValue tableValue)
             {
                 this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];
@@ -78,10 +79,10 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     public async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        this.State.Scopes.Reset(Throw.IfNull(this.Model.Value));
+        this.State.Reset(Throw.IfNull(this.Model.Value));
         if (this.Model.Index is not null)
         {
-            this.State.Scopes.Reset(this.Model.Index);
+            this.State.Reset(this.Model.Index);
         }
     }
 }

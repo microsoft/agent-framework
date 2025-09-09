@@ -12,16 +12,14 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 {
-    public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowScopes? scopes = null)
+    public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowScopes state)
     {
         this.Source = source;
-        this.Scopes = scopes ?? new WorkflowScopes();
-        this.IsRestored = scopes is not null;
+        this.State = state;
     }
 
     private IWorkflowContext Source { get; }
-    public WorkflowScopes Scopes { get; } // %%% SCOPE (private)
-    public bool IsRestored { get; private set; }
+    public WorkflowScopes State { get; }
 
     /// <inheritdoc/>
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => this.Source.AddEventAsync(workflowEvent);
@@ -29,7 +27,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     /// <inheritdoc/>
     public ValueTask QueueClearScopeAsync(string? scopeName = null)
     {
-        // %%% UPDATE SCOPES
+        this.State.ResetAll(scopeName);
         return this.Source.QueueClearScopeAsync(scopeName);
     }
 
@@ -41,35 +39,35 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             null => QueueEmptyStateAsync(),
             FormulaValue formulaValue => QueueFormulaStateAsync(formulaValue),
             DataValue dataValue => QueueDataValueStateAsync(dataValue),
-            _ => QueueNativeStateAsync(),
+            _ => QueueNativeStateAsync(value),
         };
 
         await task.ConfigureAwait(false);
 
         ValueTask QueueEmptyStateAsync()
         {
-            this.Scopes.Set(key, FormulaValue.NewBlank(), scopeName);
+            this.State.Set(key, FormulaValue.NewBlank(), scopeName);
             return this.Source.QueueStateUpdateAsync(key, UnassignedValue.Instance, scopeName);
         }
 
         ValueTask QueueFormulaStateAsync(FormulaValue formulaValue)
         {
-            this.Scopes.Set(key, formulaValue, scopeName);
+            this.State.Set(key, formulaValue, scopeName);
             return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
         }
 
         ValueTask QueueDataValueStateAsync(DataValue dataValue)
         {
             FormulaValue formulaValue = dataValue.ToFormulaValue();
-            this.Scopes.Set(key, formulaValue, scopeName);
+            this.State.Set(key, formulaValue, scopeName);
             return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
         }
 
-        ValueTask QueueNativeStateAsync()
+        ValueTask QueueNativeStateAsync(object? rawValue)
         {
-            // %%% UPDATE SCOPES
-            // value.ToFormulaValue();
-            return this.Source.QueueStateUpdateAsync(key, value, scopeName);
+            FormulaValue formulaValue = rawValue.ToFormulaValue();
+            this.State.Set(key, formulaValue, scopeName);
+            return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName);
         }
     }
 

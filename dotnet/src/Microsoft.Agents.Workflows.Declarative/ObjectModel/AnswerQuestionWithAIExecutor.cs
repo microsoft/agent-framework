@@ -16,14 +16,14 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, WorkflowAgentProvider agentProvider, DeclarativeWorkflowState state)
+internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, WorkflowAgentProvider agentProvider, WorkflowScopes state)
     : DeclarativeActionExecutor<AnswerQuestionWithAI>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         StringExpression userInputExpression = Throw.IfNull(this.Model.UserInput, $"{nameof(this.Model)}.{nameof(this.Model.UserInput)}");
 
-        string agentInstructions = this.State.Format(this.Model.AdditionalInstructions) ?? string.Empty;
+        string agentInstructions = this.State.Engine.Format(this.Model.AdditionalInstructions) ?? string.Empty;
         // ISSUE #485 - Agent identifier embedded in instructions until updated OM is available.
         string agentId;
         string? additionalInstructions = null;
@@ -43,7 +43,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
         string? userInput = null;
         if (this.Model.UserInput is not null)
         {
-            EvaluationResult<string> expressionResult = this.State.ExpressionEngine.GetValue(userInputExpression);
+            EvaluationResult<string> expressionResult = this.State.Evaluator.GetValue(userInputExpression);
             userInput = expressionResult.Value;
         }
 

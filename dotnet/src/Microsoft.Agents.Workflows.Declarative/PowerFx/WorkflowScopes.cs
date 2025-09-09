@@ -3,7 +3,10 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -14,23 +17,39 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 /// <summary>
 /// Contains all action scopes for a process.
 /// </summary>
-internal sealed class WorkflowScopes
+internal sealed class WorkflowScopes // %%% NAMING
 {
     // ISSUE #488 - Update default scope for workflows to `Workflow` (instead of `Topic`)
     public const string DefaultScopeName = VariableScopeNames.Topic;
 
-    private readonly ImmutableDictionary<string, WorkflowScope> _scopes;
+    private static readonly ImmutableHashSet<string> s_mutableScopes =
+        new HashSet<string>
+        {
+            VariableScopeNames.Topic,
+            VariableScopeNames.Global,
+            VariableScopeNames.System,
+        }.ToImmutableHashSet();
 
-    public WorkflowScopes()
+    private readonly ImmutableDictionary<string, WorkflowScope> _scopes;
+    private int _isInitialized;
+
+    public RecalcEngine Engine { get; }
+
+    public WorkflowExpressionEngine Evaluator { get; }
+
+    public WorkflowScopes(RecalcEngine engine)
     {
+        this.Engine = engine;
+        this.Evaluator = new WorkflowExpressionEngine(engine);
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName)).ToImmutableDictionary();
+        this.Bind();
     }
 
     public FormulaValue Get(PropertyPath variablePath) => this.Get(Throw.IfNull(variablePath.VariableName), variablePath.VariableScopeName);
 
     public FormulaValue Get(string variableName, string? scopeName = null)
     {
-        if (this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].TryGetValue(variableName, out FormulaValue? value))
+        if (this.GetScope(scopeName).TryGetValue(variableName, out FormulaValue? value))
         {
             return value;
         }
@@ -38,36 +57,74 @@ internal sealed class WorkflowScopes
         return FormulaValue.NewBlank();
     }
 
-    public void Clear(string scopeName) => this._scopes[scopeName].Reset();
+    public void ResetAll(string? scopeName = null)
+    {
+        if (scopeName is not null)
+        {
+            this.GetScope(scopeName).ResetAll();
+        }
+        else
+        {
+            foreach (string targetScope in VariableScopeNames.AllScopes)
+            {
+                this.GetScope(targetScope).ResetAll();
+            }
+        }
+
+        this.Bind();
+    }
 
     public void Reset(PropertyPath variablePath) => this.Reset(Throw.IfNull(variablePath.VariableName), variablePath.VariableScopeName);
 
-    public void Reset(string variableName, string? scopeName = null) => this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName].Reset(variableName);
+    public void Reset(string variableName, string? scopeName = null)
+    {
+        this.GetScope(scopeName).Reset(variableName);
+        this.Bind();
+    }
 
     public void Set(PropertyPath variablePath, FormulaValue value) => this.Set(Throw.IfNull(variablePath.VariableName), value, variablePath.VariableScopeName);
 
-    public void Set(string variableName, FormulaValue value, string? scopeName = null) => this._scopes[scopeName ?? WorkflowScopes.DefaultScopeName][variableName] = value;
-
-    public RecordValue BuildRecord(string scopeName) => this._scopes[scopeName].BuildRecord();
-
-    public RecordDataValue BuildState()
+    public void Set(string variableName, FormulaValue value, string? scopeName = null)
     {
-        return DataValue.RecordFromFields(BuildStateFields());
+        this.GetScope(scopeName)[variableName] = value;
+        this.Bind();
+    }
 
-        IEnumerable<KeyValuePair<string, DataValue>> BuildStateFields()
+    public bool Initialize() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
+
+    public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        if (!this.Initialize())
         {
-            foreach (KeyValuePair<string, WorkflowScope> kvp in this._scopes)
+            return;
+        }
+
+        await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
+
+        async ValueTask ReadScopeAsync(string scopeName)
+        {
+            HashSet<string> keys = await context.ReadStateKeysAsync(scopeName).ConfigureAwait(false);
+            foreach (string key in keys)
             {
-                yield return new(kvp.Key, kvp.Value.BuildState());
+                object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
+                if (value is null || value is UnassignedValue)
+                {
+                    value = FormulaValue.NewBlank();
+                }
+                this.Set(key, value.ToFormulaValue(), scopeName);
             }
+
+            this.Bind(scopeName);
         }
     }
 
-    public void Bind(RecalcEngine engine, string? type = null)
+    public RecordValue BuildRecord(string scopeName) => this.GetScope(scopeName).BuildRecord();
+
+    public void Bind(string? targetScope = null)
     {
-        if (type is not null)
+        if (targetScope is not null)
         {
-            Bind(type);
+            Bind(targetScope);
         }
         else
         {
@@ -80,9 +137,21 @@ internal sealed class WorkflowScopes
         void Bind(string scopeName)
         {
             RecordValue scopeRecord = this.BuildRecord(scopeName);
-            engine.DeleteFormula(scopeName);
-            engine.UpdateVariable(scopeName, scopeRecord);
+            this.Engine.DeleteFormula(scopeName);
+            this.Engine.UpdateVariable(scopeName, scopeRecord);
         }
+    }
+
+    private WorkflowScope GetScope(string? scopeName)
+    {
+        scopeName ??= WorkflowScopes.DefaultScopeName;
+
+        if (!VariableScopeNames.IsValidName(scopeName))
+        {
+            throw new DeclarativeActionException($"Invalid variable scope name: '{scopeName}'.");
+        }
+
+        return this._scopes[scopeName];
     }
 
     /// <summary>
@@ -92,7 +161,7 @@ internal sealed class WorkflowScopes
     {
         public string Name => scopeName;
 
-        public void Reset()
+        public void ResetAll()
         {
             foreach (string variableName in this.Keys.ToArray())
             {
@@ -119,18 +188,6 @@ internal sealed class WorkflowScopes
                     yield return new NamedValue(kvp.Key, kvp.Value);
                 }
             }
-        }
-
-        public RecordDataValue BuildState()
-        {
-            RecordDataValue.Builder recordBuilder = new();
-
-            foreach (KeyValuePair<string, FormulaValue> kvp in this)
-            {
-                recordBuilder.Properties.Add(kvp.Key, kvp.Value.ToDataValue());
-            }
-
-            return recordBuilder.Build();
         }
     }
 }

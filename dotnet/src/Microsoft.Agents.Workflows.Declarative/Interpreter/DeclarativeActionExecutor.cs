@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,7 +17,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
-internal abstract class DeclarativeActionExecutor<TAction>(TAction model, DeclarativeWorkflowState state) :
+internal abstract class DeclarativeActionExecutor<TAction>(TAction model, WorkflowScopes state) :
     DeclarativeActionExecutor(model, state)
     where TAction : DialogAction
 {
@@ -25,7 +26,7 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Declar
 
 internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>
 {
-    public const string RootActionId = "(root)";
+    public const string RootActionId = "workflow_root";
 
     private static readonly ImmutableHashSet<string> s_mutableScopes =
         new HashSet<string>
@@ -36,7 +37,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     private string? _parentId;
 
-    protected DeclarativeActionExecutor(DialogAction model, DeclarativeWorkflowState state)
+    protected DeclarativeActionExecutor(DialogAction model, WorkflowScopes state)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
@@ -54,7 +55,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
-    protected DeclarativeWorkflowState State { get; }
+    protected WorkflowScopes State { get; }
 
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
@@ -65,12 +66,12 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             return;
         }
 
-        await this.State.RestoreAsync(context, default).ConfigureAwait(false);
+        // Restore state from context if not already initialized.
+        await this.State.RestoreAsync(context, cancellationToken: default).ConfigureAwait(false);
 
         try
         {
-            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State.Scopes), cancellationToken: default).ConfigureAwait(false);
-            this.State.Bind(); // %%% SUFFICIENT ???
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State), cancellationToken: default).ConfigureAwait(false);
 
             await context.SendMessageAsync(new ActionExecutorResult(this.Id, result)).ConfigureAwait(false);
         }
@@ -90,7 +91,8 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     protected async ValueTask AssignAsync(PropertyPath targetPath, FormulaValue result, IWorkflowContext context)
     {
-        if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName))) // %%% RELOCATE ???
+        // Only allow assignments to TOPIC and GLOBAL scope.
+        if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
         {
             throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");
         }
@@ -103,7 +105,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         Debug.WriteLine(
             $"""
             STATE: {this.GetType().Name} [{this.Id}]
-             NAME: {targetPath.Format()}
+             NAME: {targetPath}
             VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
             """);
 #endif

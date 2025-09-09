@@ -17,9 +17,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class WorkflowTemplate : WorkflowTemplateBase
+    internal partial class RootTemplate : RootTemplateBase
     {
 #line hidden
         /// <summary>
@@ -29,18 +29,19 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         {
             this.Write("\n");
             this.Write("\n");
-            this.Write("/// <summary>\r\n/// The root executor for a declarative workflow.\r\n/// </summary>\r" +
-                    "\ninternal sealed class ");
+            this.Write("\n");
+            this.Write("\n/// <summary>\n/// The root executor for a declarative workflow.\n/// </summary>\ni" +
+                    "nternal sealed class ");
             
-            #line 6 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.TypeName));
             
             #line default
             #line hidden
-            this.Write("Executor<TInput>(\n    Func<TInput, ChatMessage> inputTransform,\n    IConfiguratio" +
-                    "n? configuration) :\r\n    RootExecutor<TInput>(\"");
+            this.Write("Executor<TInput>(\n    DeclarativeWorkflowOptions options,\n    Func<TInput, ChatMe" +
+                    "ssage>? inputTransform = null) :\n    RootExecutor<TInput>(\"");
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
@@ -50,13 +51,13 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 {
     protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        ChatMessage input = inputTransform.Invoke(message);
+        ChatMessage input = (inputTransform ?? DefaultInputTransform).Invoke(message);
         //await context.SetLastMessageAsync(input).ConfigureAwait(false); // %%% SYSTEM VARS
         await context.QueueStateUpdateAsync(""LastMessageText"", input.Text, ""System"").ConfigureAwait(false);
 
         // Set environment variables");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
         foreach (string variableName in this.TypeInfo.EnvironmentVariables)
         { 
@@ -65,21 +66,21 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line hidden
             this.Write("\n        await context.QueueStateUpdateAsync(\"");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(variableName));
             
             #line default
             #line hidden
             this.Write("\", this.GetEnvironmentVariable(\"");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(variableName));
             
             #line default
             #line hidden
             this.Write("\"), \"Env\").ConfigureAwait(false); ");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
         }
         
@@ -88,7 +89,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line hidden
             this.Write("\n\n        // Set user variables to default values");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
         foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
         {
@@ -97,28 +98,28 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line hidden
             this.Write("\n        await context.QueueStateUpdateAsync(\"");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(variableInfo.Path.VariableName));
             
             #line default
             #line hidden
             this.Write("\", UnassignedValue.Instance, \"");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(variableInfo.Path.VariableScopeName));
             
             #line default
             #line hidden
             this.Write("\").ConfigureAwait(false);");
             
-            #line 10 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\WorkflowTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
         }
         
             
             #line default
             #line hidden
-            this.Write("\n    }\n}\r\n");
+            this.Write("\n    }\n}\n");
             return this.GenerationEnvironment.ToString();
         }
     }
@@ -130,7 +131,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Base class for this transformation
     /// </summary>
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal class WorkflowTemplateBase
+    internal class RootTemplateBase
     {
         #region Fields
         private global::System.Text.StringBuilder generationEnvironmentField;

@@ -12,15 +12,18 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// </summary>
 internal sealed class DeclarativeWorkflowExecutor<TInput>(
     string workflowId,
-    DeclarativeWorkflowState state,
-    Func<TInput, ChatMessage> inputTransform) :
+    WorkflowScopes state,
+    Func<TInput, ChatMessage>? inputTransform) :
     Executor<TInput>(workflowId)
     where TInput : notnull
 {
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        ChatMessage input = inputTransform.Invoke(message);
-        state.SetLastMessage(input);
+        // No state to restore
+        state.Initialize();
+
+        ChatMessage input = (inputTransform ?? RootExecutor<TInput>.DefaultInputTransform).Invoke(message);
+        state.SetLastMessage(input); // %%% SYSTEM VARS
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

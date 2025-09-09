@@ -6,7 +6,7 @@ internal sealed class <#= this.Name #>Executor() : ActionExecutor(id: "<#= this.
     {<# 
 if (this.Model.Value is null)
 { 
-    throw new InvalidOperationException("Undefined value type."); // %%% EXCEPTION TYPE
+    throw new DeclarativeModelException($"Undefined value type: {this.Id}.");
 }
 else if (this.Model.Value.IsLiteral)
 { #>
@@ -22,7 +22,7 @@ else if (this.Model.Value.IsExpression)
 <# }
 else
 {
-    throw new InvalidOperationException("Unsupported value type."); // %%% EXCEPTION TYPE
+    throw new DeclarativeModelException($"Unsupported value type: {this.Id}.");
 } #>
         await context.QueueStateUpdateAsync("<#= this.VariableName #>", value, "<#= this.TopicName #>").ConfigureAwait(false);
     }

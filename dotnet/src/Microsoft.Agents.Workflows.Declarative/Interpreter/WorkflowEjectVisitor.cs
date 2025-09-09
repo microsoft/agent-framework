@@ -19,7 +19,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         //this._workflowModel = new DeclarativeWorkflowModel(rootAction);
         this.Edges = [];
-        this.Executors = [new WorkflowTemplate(workflowId, typeInfo).TransformText()];
+        this.Executors = [new RootTemplate(workflowId, typeInfo).TransformText()];
         this.Instances = [];
         this.WorkflowId = workflowId;
     }

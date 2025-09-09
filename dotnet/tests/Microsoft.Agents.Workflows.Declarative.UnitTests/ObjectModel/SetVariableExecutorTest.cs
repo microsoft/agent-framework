@@ -17,7 +17,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     public void InvalidModel()
     {
         // Arrange, Act, Assert
-        Assert.Throws<DeclarativeModelException>(() => new SetVariableExecutor(new SetVariable(), this.GetState()));
+        Assert.Throws<DeclarativeModelException>(() => new SetVariableExecutor(new SetVariable(), this.State));
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     public async Task SetBooleanVariable()
     {
         // Arrange
-        this.Scopes.Set("Source", FormulaValue.New(true));
+        this.State.Set("Source", FormulaValue.New(true));
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
@@ -114,7 +114,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     public async Task SetNumberVariable()
     {
         // Arrange
-        this.Scopes.Set("Source", FormulaValue.New(321));
+        this.State.Set("Source", FormulaValue.New(321));
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
@@ -129,7 +129,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     public async Task SetStringVariable()
     {
         // Arrange
-        this.Scopes.Set("Source", FormulaValue.New("Test"));
+        this.State.Set("Source", FormulaValue.New("Test"));
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
@@ -144,7 +144,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     public async Task UpdateExistingValue()
     {
         // Arrange
-        this.Scopes.Set("VarA", FormulaValue.New(33));
+        this.State.Set("VarA", FormulaValue.New(33));
 
         // Act, Assert
         await this.ExecuteTest(
@@ -180,10 +180,10 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
                 FormatVariablePath(variableName),
                 valueExpression);
 
-        this.Scopes.Set(variableName, FormulaValue.New(33));
+        this.State.Set(variableName, FormulaValue.New(33));
 
         // Act
-        SetVariableExecutor action = new(model, this.GetState());
+        SetVariableExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert

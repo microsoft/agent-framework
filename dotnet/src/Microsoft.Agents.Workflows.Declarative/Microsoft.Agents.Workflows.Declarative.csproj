@@ -57,6 +57,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Update="CodeGen\RootTemplate.cs">
+      <DependentUpon>RootTemplate.tt</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="CodeGen\EdgeTemplate.tt">
       <LastGenOutput>EdgeTemplate.cs</LastGenOutput>
     </None>
@@ -75,8 +81,8 @@
     <None Update="CodeGen\SetVariableTemplate.tt">
       <LastGenOutput>SetVariableTemplate.cs</LastGenOutput>
     </None>
-    <None Update="CodeGen\WorkflowTemplate.tt">
-      <LastGenOutput>WorkflowTemplate.cs</LastGenOutput>
+    <None Update="CodeGen\RootTemplate.tt">
+      <LastGenOutput>RootTemplate.cs</LastGenOutput>
     </None>
   </ItemGroup>
 

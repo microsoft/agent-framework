@@ -2,7 +2,6 @@
 
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
@@ -23,7 +22,7 @@ internal sealed class DelegateActionExecutor : ReflectingExecutor<DelegateAction
     {
         if (this._action is not null)
         {
-            await this._action.Invoke(new DeclarativeWorkflowContext(context), default).ConfigureAwait(false); // %%% NEEDED??? DeclarativeWorkflowContext
+            await this._action.Invoke(context, default).ConfigureAwait(false);
         }
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);

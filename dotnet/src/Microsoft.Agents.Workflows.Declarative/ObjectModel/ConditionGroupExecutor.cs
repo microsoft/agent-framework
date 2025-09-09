@@ -4,6 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
@@ -26,7 +27,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         public static string Else(ConditionGroup model) => model.ElseActions.Id.Value ?? $"{model.Id}_Else";
     }
 
-    public ConditionGroupExecutor(ConditionGroup model, DeclarativeWorkflowState state)
+    public ConditionGroupExecutor(ConditionGroup model, WorkflowScopes state)
         : base(model, state)
     {
     }
@@ -63,7 +64,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
                 continue; // Skip if no condition is defined
             }
 
-            EvaluationResult<bool> expressionResult = this.State.ExpressionEngine.GetValue(conditionItem.Condition);
+            EvaluationResult<bool> expressionResult = this.State.Evaluator.GetValue(conditionItem.Condition);
             if (expressionResult.Value)
             {
                 return Steps.Item(this.Model, conditionItem);

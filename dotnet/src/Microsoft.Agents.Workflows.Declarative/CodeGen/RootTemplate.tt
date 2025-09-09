@@ -6,14 +6,14 @@
 /// The root executor for a declarative workflow.
 /// </summary>
 internal sealed class <#= this.TypeName #>Executor<TInput>(
-    Func<TInput, ChatMessage> inputTransform,
-    IConfiguration? configuration) :
+    DeclarativeWorkflowOptions options,
+    Func<TInput, ChatMessage>? inputTransform = null) :
     RootExecutor<TInput>("<#= this.Id #>", configuration)
     where TInput : notnull
 {
     protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        ChatMessage input = inputTransform.Invoke(message);
+        ChatMessage input = (inputTransform ?? DefaultInputTransform).Invoke(message);
         //await context.SetLastMessageAsync(input).ConfigureAwait(false); // %%% SYSTEM VARS
         await context.QueueStateUpdateAsync("LastMessageText", input.Text, "System").ConfigureAwait(false);
 

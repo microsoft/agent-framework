@@ -2,7 +2,6 @@
 
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
@@ -15,15 +14,17 @@ public abstract class ActionExecutor : Executor<ActionExecutorResult>
     /// Initializes a new instance of the <see cref="ActionExecutor"/> class.
     /// </summary>
     /// <param name="id">The executor id</param>
-    protected ActionExecutor(string id)
+    /// <param name="context">// %%% TODO</param>
+    protected ActionExecutor(string id, ExpressionContext context)
         : base(id)
     {
+        // %%% TODO: Context
     }
 
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
-        await this.ExecuteAsync(new DeclarativeWorkflowContext(context), cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

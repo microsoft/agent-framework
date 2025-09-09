@@ -10,19 +10,19 @@ using Microsoft.Bot.ObjectModel.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, DeclarativeWorkflowState state)
+internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, WorkflowScopes state)
     : DeclarativeActionExecutor<ClearAllVariables>(model, state)
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables);
+        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.Evaluator.GetValue<VariablesToClearWrapper>(this.Model.Variables);
 
         variablesResult.Value.Handle(new ScopeHandler(this.Id, this.State));
 
         return default;
     }
 
-    private sealed class ScopeHandler(string executorId, DeclarativeWorkflowState state) : IEnumVariablesToClearHandler
+    private sealed class ScopeHandler(string executorId, WorkflowScopes state) : IEnumVariablesToClearHandler
     {
         public void HandleAllGlobalVariables()
         {
@@ -51,7 +51,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Declara
 
         private void ClearAll(string scope)
         {
-            state.Scopes.Clear(scope);
+            state.ResetAll(scope);
             Debug.WriteLine(
                 $"""
                  STATE: {this.GetType().Name} [{executorId}]

@@ -5,9 +5,9 @@ using Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal partial class WorkflowTemplate
+internal partial class RootTemplate
 {
-    internal WorkflowTemplate(
+    internal RootTemplate(
         string workflowId,
         WorkflowTypeInfo typeInfo)
     {
