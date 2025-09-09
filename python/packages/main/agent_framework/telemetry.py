@@ -175,7 +175,7 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None)
         The modified headers dictionary with "agent-framework-python/{version}" prepended to the User-Agent.
     """
     if not headers:
-        headers = {}
+        return {USER_AGENT_KEY: AGENT_FRAMEWORK_USER_AGENT}
     headers[USER_AGENT_KEY] = (
         f"{AGENT_FRAMEWORK_USER_AGENT} {headers[USER_AGENT_KEY]}"
         if USER_AGENT_KEY in headers
