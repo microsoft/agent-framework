@@ -165,6 +165,21 @@ async def main() -> None:
         .participants([triage, refund, order, support, delivery])  # Register all agents that can participate
         .start_with("triage")  # Set entry point agent
         .on_event(on_event, mode=CallbackMode.STREAMING)  # Register callback for events
+        # Human-in-the-loop (HITL) escalation configuration:
+        # - executor_id: The workflow executor that will receive human clarification prompts.
+        # - ask: Condition controlling when an assistant reply should be routed to a human instead of
+        #        immediately finalizing. Options:
+        #     * 'always'      : Every qualifying assistant response triggers a human prompt.
+        #     * 'if_question' : Only when the assistant's text ends with a question mark.
+        #     * 'heuristic'   : Ends with a question mark OR the (lowercased, trimmed) text starts with
+        #                       one of the polite cue phrases (e.g., "could you", "can you", etc.).
+        #     * 'relaxed'     : Any question mark anywhere in the text OR first sentence begins with a
+        #                       common interrogative/modal (who/what/when/where/why/how/could/can/would/
+        #                       should/may/do/does/did/are/is/will). More forgiving for multi-sentence
+        #                       clarifications ending with a period.
+        #     * HITLAskCondition enum members (ALWAYS, IF_QUESTION, HEURISTIC, RELAXED) are synonyms for the
+        #       corresponding string literals.
+        #     * A custom callable (agent_name: str, text: str) -> bool may be supplied for bespoke logic.
         .enable_human_in_the_loop(
             executor_id="request_info",  # Executor responsible for human feedback
             ask="relaxed",  # Options: 'always', 'if_question', 'heuristic', 'relaxed'
