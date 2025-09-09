@@ -95,7 +95,7 @@ async def test_workflow_run_streaming():
     )
 
     result: int | None = None
-    async for event in workflow.run_streaming(NumberMessage(data=0)):
+    async for event in workflow.run_stream(NumberMessage(data=0)):
         assert isinstance(event, WorkflowEvent)
         if isinstance(event, WorkflowCompletedEvent):
             result = event.data
@@ -118,7 +118,7 @@ async def test_workflow_run_stream_not_completed():
     )
 
     with pytest.raises(RuntimeError):
-        async for _ in workflow.run_streaming(NumberMessage(data=0)):
+        async for _ in workflow.run_stream(NumberMessage(data=0)):
             pass
 
 
@@ -176,7 +176,7 @@ async def test_workflow_send_responses_streaming():
     )
 
     request_info_event: RequestInfoEvent | None = None
-    async for event in workflow.run_streaming(NumberMessage(data=0)):
+    async for event in workflow.run_stream(NumberMessage(data=0)):
         if isinstance(event, RequestInfoEvent):
             request_info_event = event
 
@@ -326,7 +326,7 @@ async def test_workflow_checkpointing_not_enabled_for_external_restore(simple_ex
 
     # Attempt to restore from checkpoint without providing external storage should fail
     try:
-        [event async for event in workflow.run_streaming_from_checkpoint("fake-checkpoint-id")]
+        [event async for event in workflow.run_stream_from_checkpoint("fake-checkpoint-id")]
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
         assert "Cannot restore from checkpoint" in str(e)
@@ -344,7 +344,7 @@ async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(simp
 
     # Attempt to run from checkpoint should fail
     try:
-        async for _ in workflow.run_streaming_from_checkpoint("fake_checkpoint_id"):
+        async for _ in workflow.run_stream_from_checkpoint("fake_checkpoint_id"):
             pass
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
@@ -368,7 +368,7 @@ async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(simple_exe
 
         # Attempt to run from non-existent checkpoint should fail
         try:
-            async for _ in workflow.run_streaming_from_checkpoint("nonexistent_checkpoint_id"):
+            async for _ in workflow.run_stream_from_checkpoint("nonexistent_checkpoint_id"):
                 pass
             raise AssertionError("Expected RuntimeError to be raised")
         except RuntimeError as e:
@@ -401,7 +401,7 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
         # Resume from checkpoint using external storage parameter
         try:
             events: list[WorkflowEvent] = []
-            async for event in workflow_without_checkpointing.run_streaming_from_checkpoint(
+            async for event in workflow_without_checkpointing.run_stream_from_checkpoint(
                 checkpoint_id, checkpoint_storage=storage
             ):
                 events.append(event)
@@ -446,7 +446,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
 
 
 async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executor: Executor):
-    """Test that run_streaming_from_checkpoint accepts responses parameter."""
+    """Test that run_stream_from_checkpoint accepts responses parameter."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
@@ -477,7 +477,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
 
         try:
             events: list[WorkflowEvent] = []
-            async for event in workflow.run_streaming_from_checkpoint(checkpoint_id, responses=responses):
+            async for event in workflow.run_stream_from_checkpoint(checkpoint_id, responses=responses):
                 events.append(event)
                 if len(events) >= 2:  # Limit to avoid infinite loops
                     break

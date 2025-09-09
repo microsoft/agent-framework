@@ -6,9 +6,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Final
 
-from agent_framework._pydantic import AFBaseSettings, HttpsUrl
+from agent_framework._pydantic import AFBaseSettings, HTTPsUrl
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai._shared import OpenAIHandler
+from agent_framework.openai._shared import OpenAIBase
 from agent_framework.telemetry import USER_AGENT_KEY
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureOpenAI
@@ -126,8 +126,8 @@ class AzureOpenAISettings(AFBaseSettings):
     audio_to_text_deployment_name: str | None = None
     text_to_audio_deployment_name: str | None = None
     realtime_deployment_name: str | None = None
-    endpoint: HttpsUrl | None = None
-    base_url: HttpsUrl | None = None
+    endpoint: HTTPsUrl | None = None
+    base_url: HTTPsUrl | None = None
     api_key: SecretStr | None = None
     api_version: str | None = None
     token_endpoint: str | None = None
@@ -165,7 +165,7 @@ class AzureOpenAISettings(AFBaseSettings):
         return self
 
 
-class AzureOpenAIConfigBase(OpenAIHandler):
+class AzureOpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
     MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -174,8 +174,8 @@ class AzureOpenAIConfigBase(OpenAIHandler):
     def __init__(
         self,
         deployment_name: str,
-        endpoint: HttpsUrl | None = None,
-        base_url: HttpsUrl | None = None,
+        endpoint: HTTPsUrl | None = None,
+        base_url: HTTPsUrl | None = None,
         api_version: str = DEFAULT_AZURE_API_VERSION,
         api_key: str | None = None,
         ad_token: str | None = None,
@@ -190,7 +190,7 @@ class AzureOpenAIConfigBase(OpenAIHandler):
         """Internal class for configuring a connection to an Azure OpenAI service.
 
         The `validate_call` decorator is used with a configuration that allows arbitrary types.
-        This is necessary for types like `HttpsUrl` and `OpenAIModelTypes`.
+        This is necessary for types like `HTTPsUrl` and `OpenAIModelTypes`.
 
         Args:
             deployment_name: Name of the deployment.

@@ -10,9 +10,9 @@ import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
-    ChatClient,
-    ChatClientAgent,
-    ChatClientBase,
+    BaseChatClient,
+    ChatAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -55,7 +55,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, ChatClientBase)
+    assert isinstance(azure_chat_client, BaseChatClient)
 
 
 def test_init_client(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -78,7 +78,7 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, ChatClientBase)
+    assert isinstance(azure_chat_client, BaseChatClient)
     for key, value in default_headers.items():
         assert key in azure_chat_client.client.default_headers
         assert azure_chat_client.client.default_headers[key] == value
@@ -91,7 +91,7 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, ChatClientBase)
+    assert isinstance(azure_chat_client, BaseChatClient)
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
@@ -614,7 +614,7 @@ def get_weather(location: str) -> str:
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(credential=AzureCliCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -643,7 +643,7 @@ async def test_azure_openai_chat_client_response() -> None:
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(credential=AzureCliCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
@@ -664,7 +664,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(credential=AzureCliCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -698,7 +698,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureChatClient(credential=AzureCliCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
@@ -723,7 +723,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_basic_run():
     """Test Azure OpenAI chat client agent basic run functionality with AzureChatClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=AzureChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test basic run
@@ -738,12 +738,12 @@ async def test_azure_openai_chat_client_agent_basic_run():
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_basic_run_streaming():
     """Test Azure OpenAI chat client agent basic streaming functionality with AzureChatClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=AzureChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run_streaming("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert isinstance(chunk, AgentRunResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
@@ -755,7 +755,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_thread_persistence():
     """Test Azure OpenAI chat client agent thread persistence across runs with AzureChatClient."""
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
@@ -782,7 +782,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
     # First conversation - capture the thread
     preserved_thread = None
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
@@ -798,7 +798,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
 
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
-        async with ChatClientAgent(
+        async with ChatAgent(
             chat_client=AzureChatClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
@@ -814,7 +814,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
 async def test_azure_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Chat Client."""
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
@@ -849,7 +849,7 @@ async def test_azure_chat_client_run_level_tool_isolation():
         call_count += 1
         return f"The weather in {location} is sunny and 72°F."
 
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=AzureChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:

@@ -9,17 +9,17 @@ from pydantic import Field
 from pytest import fixture
 
 from agent_framework import (
-    ChatClient,
-    ChatClientBase,
+    BaseChatClient,
+    ChatClientProtocol,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     EmbeddingGenerator,
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
+    Role,
     TextContent,
     ai_function,
     use_tool_calling,
@@ -54,8 +54,8 @@ class MockChatClient:
 
 
 @use_tool_calling
-class MockChatClientBase(ChatClientBase):
-    """Mock implementation of the ChatClientBase."""
+class MockBaseChatClient(BaseChatClient):
+    """Mock implementation of the BaseChatClient."""
 
     run_responses: list[ChatResponse] = Field(default_factory=list)
     streaming_responses: list[list[ChatResponseUpdate]] = Field(default_factory=list)
@@ -120,8 +120,8 @@ def chat_client() -> MockChatClient:
 
 
 @fixture
-def chat_client_base() -> MockChatClientBase:
-    return MockChatClientBase()
+def chat_client_base() -> MockBaseChatClient:
+    return MockBaseChatClient()
 
 
 @fixture
@@ -131,19 +131,19 @@ def embedding_generator() -> MockEmbeddingGenerator:
 
 
 def test_chat_client_type(chat_client: MockChatClient):
-    assert isinstance(chat_client, ChatClient)
+    assert isinstance(chat_client, ChatClientProtocol)
 
 
 async def test_chat_client_get_response(chat_client: MockChatClient):
     response = await chat_client.get_response(ChatMessage(role="user", text="Hello"))
     assert response.text == "test response"
-    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].role == Role.ASSISTANT
 
 
 async def test_chat_client_get_streaming_response(chat_client: MockChatClient):
     async for update in chat_client.get_streaming_response(ChatMessage(role="user", text="Hello")):
         assert update.text == "test streaming response" or update.text == "another update"
-        assert update.role == ChatRole.ASSISTANT
+        assert update.role == Role.ASSISTANT
 
 
 def test_embedding_generator_type(embedding_generator: MockEmbeddingGenerator):
@@ -158,23 +158,23 @@ async def test_embedding_generator_generate(embedding_generator: MockEmbeddingGe
         assert len(emb) == 5
 
 
-def test_base_client(chat_client_base: MockChatClientBase):
-    assert isinstance(chat_client_base, ChatClientBase)
-    assert isinstance(chat_client_base, ChatClient)
+def test_base_client(chat_client_base: MockBaseChatClient):
+    assert isinstance(chat_client_base, BaseChatClient)
+    assert isinstance(chat_client_base, ChatClientProtocol)
 
 
-async def test_base_client_get_response(chat_client_base: MockChatClientBase):
+async def test_base_client_get_response(chat_client_base: MockBaseChatClient):
     response = await chat_client_base.get_response(ChatMessage(role="user", text="Hello"))
-    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == "test response - Hello"
 
 
-async def test_base_client_get_streaming_response(chat_client_base: MockChatClientBase):
+async def test_base_client_get_streaming_response(chat_client_base: MockBaseChatClient):
     async for update in chat_client_base.get_streaming_response(ChatMessage(role="user", text="Hello")):
         assert update.text == "update - Hello" or update.text == "another update"
 
 
-async def test_base_client_with_function_calling(chat_client_base: MockChatClientBase):
+async def test_base_client_with_function_calling(chat_client_base: MockBaseChatClient):
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -195,20 +195,20 @@ async def test_base_client_with_function_calling(chat_client_base: MockChatClien
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[ai_func])
     assert exec_counter == 1
     assert len(response.messages) == 3
-    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].role == Role.ASSISTANT
     assert isinstance(response.messages[0].contents[0], FunctionCallContent)
     assert response.messages[0].contents[0].name == "test_function"
     assert response.messages[0].contents[0].arguments == '{"arg1": "value1"}'
     assert response.messages[0].contents[0].call_id == "1"
-    assert response.messages[1].role == ChatRole.TOOL
+    assert response.messages[1].role == Role.TOOL
     assert isinstance(response.messages[1].contents[0], FunctionResultContent)
     assert response.messages[1].contents[0].call_id == "1"
     assert response.messages[1].contents[0].result == "Processed value1"
-    assert response.messages[2].role == ChatRole.ASSISTANT
+    assert response.messages[2].role == Role.ASSISTANT
     assert response.messages[2].text == "done"
 
 
-async def test_base_client_with_function_calling_disabled(chat_client_base: MockChatClientBase):
+async def test_base_client_with_function_calling_disabled(chat_client_base: MockBaseChatClient):
     chat_client_base.__maximum_iterations_per_request = 0
     exec_counter = 0
 
@@ -230,11 +230,11 @@ async def test_base_client_with_function_calling_disabled(chat_client_base: Mock
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[ai_func])
     assert exec_counter == 0
     assert len(response.messages) == 1
-    assert response.messages[0].role == ChatRole.ASSISTANT
+    assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == "test response - hello"
 
 
-async def test_base_client_with_streaming_function_calling(chat_client_base: MockChatClientBase):
+async def test_base_client_with_streaming_function_calling(chat_client_base: MockBaseChatClient):
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -272,7 +272,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Moc
     assert exec_counter == 1
 
 
-async def test_base_client_with_streaming_function_calling_disabled(chat_client_base: MockChatClientBase):
+async def test_base_client_with_streaming_function_calling_disabled(chat_client_base: MockBaseChatClient):
     chat_client_base.__maximum_iterations_per_request = 0
     exec_counter = 0
 
