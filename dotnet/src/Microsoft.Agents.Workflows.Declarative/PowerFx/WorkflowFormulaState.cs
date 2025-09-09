@@ -15,9 +15,9 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 /// <summary>
-/// Contains all action scopes for a process.
+/// Contains all variables scopes for a workflow.
 /// </summary>
-internal sealed class WorkflowScopes // %%% NAMING
+internal sealed class WorkflowFormulaState
 {
     // ISSUE #488 - Update default scope for workflows to `Workflow` (instead of `Topic`)
     public const string DefaultScopeName = VariableScopeNames.Topic;
@@ -37,7 +37,7 @@ internal sealed class WorkflowScopes // %%% NAMING
 
     public WorkflowExpressionEngine Evaluator { get; }
 
-    public WorkflowScopes(RecalcEngine engine)
+    public WorkflowFormulaState(RecalcEngine engine)
     {
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
@@ -144,7 +144,7 @@ internal sealed class WorkflowScopes // %%% NAMING
 
     private WorkflowScope GetScope(string? scopeName)
     {
-        scopeName ??= WorkflowScopes.DefaultScopeName;
+        scopeName ??= WorkflowFormulaState.DefaultScopeName;
 
         if (!VariableScopeNames.IsValidName(scopeName))
         {

@@ -16,7 +16,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, WorkflowAgentProvider agentProvider, WorkflowScopes state)
+internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state)
     : DeclarativeActionExecutor<AnswerQuestionWithAI>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

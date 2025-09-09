@@ -10,7 +10,7 @@ if (this.Model.Value is null)
 }
 else if (this.Model.Value.IsLiteral)
 { #>
-        object? value = <#= this.Model.Value.LiteralValue #>; // %%% FORMAT
+        object? value = <#= Format(this.Model.Value.LiteralValue) #>;
 <# }
 else if (this.Model.Value.IsVariableReference)
 { #>

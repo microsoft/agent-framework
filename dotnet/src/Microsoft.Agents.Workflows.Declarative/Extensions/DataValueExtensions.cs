@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Dynamic;
 using System.Linq;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -68,6 +69,37 @@ internal static class DataValueExtensions
             recordType = recordType.Add(property.Key, property.Value.Type.ToFormulaType());
         }
         return recordType;
+    }
+
+    public static object? ToObject(this DataValue? value) =>
+        value switch
+        {
+            null => null,
+            BlankDataValue => null,
+            BooleanDataValue boolValue => boolValue.Value,
+            NumberDataValue numberValue => numberValue.Value,
+            FloatDataValue floatValue => floatValue.Value,
+            StringDataValue stringValue => stringValue.Value,
+            DateTimeDataValue dateTimeValue => dateTimeValue.Value.DateTime,
+            DateDataValue dateValue => dateValue.Value,
+            TimeDataValue timeValue => timeValue.Value,
+            TableDataValue tableValue => tableValue.Values.Select(value => value.ToObject()).ToArray(),
+            RecordDataValue recordValue => recordValue.ToObject(),
+            OptionDataValue optionValue => optionValue.Value.Value,
+            _ => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unknown literal type: {value.GetType().Name}" }),
+        };
+
+    public static ExpandoObject ToObject(this RecordDataValue recordDataValue)
+    {
+        ExpandoObject expandoObject = new();
+
+        IDictionary<string, object?> dictionary = expandoObject;
+        foreach (KeyValuePair<string, DataValue> field in recordDataValue.Properties)
+        {
+            dictionary[field.Key] = field.Value?.ToObject();
+        }
+
+        return expandoObject;
     }
 
     private static RecordType ParseRecordType(this RecordDataValue record)

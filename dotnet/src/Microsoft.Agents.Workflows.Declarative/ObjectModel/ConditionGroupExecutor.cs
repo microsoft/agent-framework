@@ -27,7 +27,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         public static string Else(ConditionGroup model) => model.ElseActions.Id.Value ?? $"{model.Id}_Else";
     }
 
-    public ConditionGroupExecutor(ConditionGroup model, WorkflowScopes state)
+    public ConditionGroupExecutor(ConditionGroup model, WorkflowFormulaState state)
         : base(model, state)
     {
     }

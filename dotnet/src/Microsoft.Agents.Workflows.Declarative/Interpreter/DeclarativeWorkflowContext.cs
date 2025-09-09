@@ -12,14 +12,14 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 {
-    public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowScopes state)
+    public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state)
     {
         this.Source = source;
         this.State = state;
     }
 
     private IWorkflowContext Source { get; }
-    public WorkflowScopes State { get; }
+    public WorkflowFormulaState State { get; }
 
     /// <inheritdoc/>
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => this.Source.AddEventAsync(workflowEvent);

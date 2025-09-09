@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.PowerFx;
 
 public class WorkflowScopesTests
 {
-    internal WorkflowScopes State { get; } = new(RecalcEngineFactory.Create());
+    internal WorkflowFormulaState State { get; } = new(RecalcEngineFactory.Create());
 
     [Fact]
     public void ConstructorInitializesAllScopes()

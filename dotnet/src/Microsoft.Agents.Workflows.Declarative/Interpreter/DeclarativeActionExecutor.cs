@@ -17,7 +17,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
-internal abstract class DeclarativeActionExecutor<TAction>(TAction model, WorkflowScopes state) :
+internal abstract class DeclarativeActionExecutor<TAction>(TAction model, WorkflowFormulaState state) :
     DeclarativeActionExecutor(model, state)
     where TAction : DialogAction
 {
@@ -37,7 +37,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     private string? _parentId;
 
-    protected DeclarativeActionExecutor(DialogAction model, WorkflowScopes state)
+    protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
@@ -55,7 +55,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
-    protected WorkflowScopes State { get; }
+    protected WorkflowFormulaState State { get; }
 
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)

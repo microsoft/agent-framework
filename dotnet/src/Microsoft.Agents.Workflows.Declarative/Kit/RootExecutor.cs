@@ -26,12 +26,12 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
         : base(id)
     {
         this.Configuration = options.Configuration;
-        this.State = new WorkflowScopes(options.CreateRecalcEngine());
+        this.State = new WorkflowFormulaState(options.CreateRecalcEngine());
         this.Context = new ExpressionContext(this.State);
     }
 
     private IConfiguration? Configuration { get; }
-    private WorkflowScopes State { get; }
+    private WorkflowFormulaState State { get; }
 
     /// <summary>
     /// %%% TODO

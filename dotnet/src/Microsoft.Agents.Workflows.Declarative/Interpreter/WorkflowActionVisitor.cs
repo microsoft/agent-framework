@@ -15,11 +15,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly DeclarativeWorkflowModel _workflowModel;
     private readonly DeclarativeWorkflowOptions _workflowOptions;
-    private readonly WorkflowScopes _workflowState;
+    private readonly WorkflowFormulaState _workflowState;
 
     public WorkflowActionVisitor(
         Executor rootAction,
-        WorkflowScopes state,
+        WorkflowFormulaState state,
         DeclarativeWorkflowOptions options)
     {
         this._workflowBuilder = new WorkflowBuilder(rootAction);

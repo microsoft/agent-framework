@@ -48,7 +48,7 @@ internal static class SystemScope
         yield return Names.UserLanguage;
     }
 
-    public static void InitializeSystem(this WorkflowScopes scopes)
+    public static void InitializeSystem(this WorkflowFormulaState scopes)
     {
         scopes.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
         scopes.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
@@ -95,10 +95,10 @@ internal static class SystemScope
         }
     }
 
-    public static FormulaValue GetConversationId(this WorkflowScopes state) =>
+    public static FormulaValue GetConversationId(this WorkflowFormulaState state) =>
         state.Get(Names.ConversationId, VariableScopeNames.System);
 
-    public static void SetConversationId(this WorkflowScopes state, string conversationId)
+    public static void SetConversationId(this WorkflowFormulaState state, string conversationId)
     {
         RecordValue conversation = (RecordValue)state.Get(Names.Conversation, VariableScopeNames.System);
         conversation.UpdateField("Id", FormulaValue.New(conversationId));
@@ -106,13 +106,13 @@ internal static class SystemScope
         state.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
     }
 
-    public static FormulaValue GetInternalConversationId(this WorkflowScopes state) =>
+    public static FormulaValue GetInternalConversationId(this WorkflowFormulaState state) =>
         state.Get(Names.InternalId, VariableScopeNames.System);
 
-    public static void SetInternalConversationId(this WorkflowScopes state, string conversationId) =>
+    public static void SetInternalConversationId(this WorkflowFormulaState state, string conversationId) =>
         state.Set(Names.InternalId, FormulaValue.New(conversationId), VariableScopeNames.System);
 
-    public static void SetLastMessage(this WorkflowScopes state, ChatMessage message)
+    public static void SetLastMessage(this WorkflowFormulaState state, ChatMessage message)
     {
         state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
         state.Set(Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), VariableScopeNames.System);

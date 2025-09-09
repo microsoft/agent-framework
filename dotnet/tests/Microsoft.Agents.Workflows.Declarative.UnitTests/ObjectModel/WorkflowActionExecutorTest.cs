@@ -18,7 +18,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 /// </summary>
 public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : WorkflowTest(output)
 {
-    internal WorkflowScopes State { get; } = new(RecalcEngineFactory.Create());
+    internal WorkflowFormulaState State { get; } = new(RecalcEngineFactory.Create());
 
     protected ActionId CreateActionId() => new($"{this.GetType().Name}_{Guid.NewGuid():N}");
 
@@ -29,7 +29,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
         workflowBuilder.AddEdge(workflowExecutor, executor);
-        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<WorkflowScopes>(), this.State);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<WorkflowFormulaState>(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
         return events;
     }
@@ -72,9 +72,9 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal sealed class TestWorkflowExecutor() :
         ReflectingExecutor<TestWorkflowExecutor>(nameof(TestWorkflowExecutor)),
-        IMessageHandler<WorkflowScopes>
+        IMessageHandler<WorkflowFormulaState>
     {
-        public async ValueTask HandleAsync(WorkflowScopes message, IWorkflowContext context)
+        public async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context)
         {
             await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
         }

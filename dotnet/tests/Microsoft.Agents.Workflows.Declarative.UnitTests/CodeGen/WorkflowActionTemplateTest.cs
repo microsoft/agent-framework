@@ -13,7 +13,7 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
 {
     private int ActionIndex { get; set; } = 1;
 
-#pragma warning disable CA1308 // Normalize strings to uppercase // %%% PRAGMA
+#pragma warning disable CA1308 // Normalize strings to uppercase
     protected ActionId CreateActionId(string seed) => new($"{seed.ToLowerInvariant()}_{this.ActionIndex++}");
 #pragma warning restore CA1308 // Normalize strings to uppercase
 

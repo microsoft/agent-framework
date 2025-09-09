@@ -10,7 +10,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ResetVariableExecutor(ResetVariable model, WorkflowScopes state) :
+internal sealed class ResetVariableExecutor(ResetVariable model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<ResetVariable>(model, state)
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

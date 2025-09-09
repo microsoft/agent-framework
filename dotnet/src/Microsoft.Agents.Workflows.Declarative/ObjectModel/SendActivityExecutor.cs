@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class SendActivityExecutor(SendActivity model, WorkflowScopes state) :
+internal sealed class SendActivityExecutor(SendActivity model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<SendActivity>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

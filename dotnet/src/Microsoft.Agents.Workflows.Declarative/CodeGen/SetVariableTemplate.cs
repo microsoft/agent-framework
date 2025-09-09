@@ -57,11 +57,11 @@ else if (this.Model.Value.IsLiteral)
             this.Write("\n        object? value = ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Value.LiteralValue));
+            this.Write(this.ToStringHelper.ToStringWithCulture(Format(this.Model.Value.LiteralValue)));
             
             #line default
             #line hidden
-            this.Write("; // %%% FORMAT\n");
+            this.Write(";\n");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
  }

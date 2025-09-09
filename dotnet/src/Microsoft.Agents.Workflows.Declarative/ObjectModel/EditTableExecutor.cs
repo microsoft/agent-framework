@@ -14,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class EditTableExecutor(EditTable model, WorkflowScopes state) : DeclarativeActionExecutor<EditTable>(model, state)
+internal sealed class EditTableExecutor(EditTable model, WorkflowFormulaState state) : DeclarativeActionExecutor<EditTable>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {

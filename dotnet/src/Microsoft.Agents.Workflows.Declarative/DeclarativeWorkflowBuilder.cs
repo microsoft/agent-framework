@@ -59,7 +59,7 @@ public static class DeclarativeWorkflowBuilder
 
         string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
 
-        WorkflowScopes state = new(options.CreateRecalcEngine());
+        WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
         DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId, state, inputTransform);
 

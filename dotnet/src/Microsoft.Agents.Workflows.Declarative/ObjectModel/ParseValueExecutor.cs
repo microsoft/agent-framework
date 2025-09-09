@@ -15,7 +15,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ParseValueExecutor(ParseValue model, WorkflowScopes state) :
+internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<ParseValue>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

@@ -12,7 +12,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// </summary>
 internal sealed class DeclarativeWorkflowExecutor<TInput>(
     string workflowId,
-    WorkflowScopes state,
+    WorkflowFormulaState state,
     Func<TInput, ChatMessage>? inputTransform) :
     Executor<TInput>(workflowId)
     where TInput : notnull

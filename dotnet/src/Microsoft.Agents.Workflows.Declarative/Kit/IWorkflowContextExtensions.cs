@@ -53,7 +53,7 @@ public static class IWorkflowContextExtensions
     /// </example>
     public static async ValueTask<string> FormatTemplateAsync(this IWorkflowContext context, IEnumerable<string> lines, CancellationToken cancellationToken = default)
     {
-        WorkflowScopes state = await GetStateAsync(context, cancellationToken: default).ConfigureAwait(false);
+        WorkflowFormulaState state = await GetStateAsync(context, cancellationToken: default).ConfigureAwait(false);
 
         StringBuilder builder = new();
         foreach (string line in lines)
@@ -73,21 +73,21 @@ public static class IWorkflowContextExtensions
     /// <returns>The evaluated expression value</returns>
     public static async ValueTask<object?> EvaluateExpressionAsync(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
     {
-        WorkflowScopes state = await GetStateAsync(context, cancellationToken).ConfigureAwait(false);
+        WorkflowFormulaState state = await GetStateAsync(context, cancellationToken).ConfigureAwait(false);
 
         EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
 
-        return result.Value.ToFormulaValue().ToObject(); // %%% HAXX
+        return result.Value.ToObject();
     }
 
-    private static async Task<WorkflowScopes> GetStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    private static async Task<WorkflowFormulaState> GetStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (context is DeclarativeWorkflowContext declarativeContext)
         {
             return declarativeContext.State;
         }
 
-        WorkflowScopes scopes = new(RecalcEngineFactory.Create());
+        WorkflowFormulaState scopes = new(RecalcEngineFactory.Create());
 
         await scopes.RestoreAsync(context, cancellationToken).ConfigureAwait(false);
 

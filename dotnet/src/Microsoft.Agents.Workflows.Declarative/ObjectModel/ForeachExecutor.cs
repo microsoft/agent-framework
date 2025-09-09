@@ -25,7 +25,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     private int _index;
     private FormulaValue[] _values;
 
-    public ForeachExecutor(Foreach model, WorkflowScopes state)
+    public ForeachExecutor(Foreach model, WorkflowFormulaState state)
         : base(model, state)
     {
         this._values = [];

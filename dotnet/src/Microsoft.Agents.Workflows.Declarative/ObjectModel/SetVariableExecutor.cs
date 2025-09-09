@@ -12,7 +12,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class SetVariableExecutor(SetVariable model, WorkflowScopes state)
+internal sealed class SetVariableExecutor(SetVariable model, WorkflowFormulaState state)
     : DeclarativeActionExecutor<SetVariable>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

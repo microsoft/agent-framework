@@ -9,10 +9,10 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// </summary>
 public sealed class ExpressionContext
 {
-    internal ExpressionContext(WorkflowScopes state)
+    internal ExpressionContext(WorkflowFormulaState state)
     {
         this.State = state;
     }
 
-    internal WorkflowScopes State { get; }
+    internal WorkflowFormulaState State { get; }
 }
