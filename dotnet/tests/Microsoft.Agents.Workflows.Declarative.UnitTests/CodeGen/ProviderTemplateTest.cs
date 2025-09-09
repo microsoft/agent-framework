@@ -80,15 +80,35 @@ public class ProviderTemplateTest(ITestOutputHelper output) : WorkflowActionTemp
         string[] executors,
         string[] instances,
         string[] edges,
-        string? @namespace = null)
+        string? workflowNamespace = null)
     {
         // Arrange
-        ProviderTemplate template = new("worflow-id", executors, instances, edges) { Namespace = @namespace };
+        ProviderTemplate template = new("worflow-id", executors, instances, edges) { Namespace = workflowNamespace };
 
         // Act
-        string text = this.Execute(() => template.TransformText());
+        string workflowCode = template.TransformText();
 
         // Assert
-        this.Output.WriteLine(text); // %%% TODO: VALIDATE
+        this.Output.WriteLine(workflowCode);
+
+        Assert.True(Contains(executors));
+        Assert.True(Contains(instances));
+        Assert.True(Contains(edges));
+
+        bool Contains(string[] code)
+        {
+            foreach (string block in code)
+            {
+                foreach (string line in block.Split('\n'))
+                {
+                    if (!workflowCode.Contains(line.Trim()))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
     }
 }

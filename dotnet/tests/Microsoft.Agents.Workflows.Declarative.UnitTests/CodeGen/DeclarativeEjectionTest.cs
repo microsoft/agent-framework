@@ -38,6 +38,6 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
 
         string workflowCode = DeclarativeWorkflowBuilder.Eject(yamlReader, "Test.Workflow");
 
-        this.Output.WriteLine(workflowCode); // %%% TODO: VALIDATE
+        Assert.Equal("builder.AddEdge(invokeAgent2, setVariable1);", workflowCode.Trim());
     }
 }

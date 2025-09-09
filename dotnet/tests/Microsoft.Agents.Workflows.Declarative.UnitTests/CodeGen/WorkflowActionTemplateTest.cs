@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -18,9 +17,4 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
 #pragma warning restore CA1308 // Normalize strings to uppercase
 
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
-
-    internal string Execute(Func<string> action)
-    {
-        return action.Invoke();
-    }
 }
