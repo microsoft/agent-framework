@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import AIFunction, AITool, HostedCodeInterpreterTool, ai_function
+from agent_framework import AIFunction, HostedCodeInterpreterTool, ToolProtocol, ai_function
 from agent_framework._tools import _parse_inputs
 from agent_framework.telemetry import GenAIAttributes
 
@@ -18,7 +18,7 @@ def test_ai_function_decorator():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, AITool)
+    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, AIFunction)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
@@ -39,7 +39,7 @@ def test_ai_function_decorator_without_args():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, AITool)
+    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, AIFunction)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
@@ -60,7 +60,7 @@ async def test_ai_function_decorator_with_async():
         """An async function that adds two numbers."""
         return x + y
 
-    assert isinstance(async_test_tool, AITool)
+    assert isinstance(async_test_tool, ToolProtocol)
     assert isinstance(async_test_tool, AIFunction)
     assert async_test_tool.name == "async_test_tool"
     assert async_test_tool.description == "An async test tool"
@@ -399,7 +399,7 @@ def test_parse_inputs_data_dict():
 
 
 def test_parse_inputs_ai_contents_instance():
-    """Test _parse_inputs with AIContents instance."""
+    """Test _parse_inputs with Contents instance."""
     from agent_framework import TextContent
 
     text_content = TextContent(text="Hello, world!")
@@ -418,7 +418,7 @@ def test_parse_inputs_mixed_list():
         "http://example.com",  # string
         {"uri": "https://test.org", "media_type": "text/html"},  # URI dict
         {"file_id": "file-456"},  # hosted file dict
-        TextContent(text="Hello"),  # AIContents instance
+        TextContent(text="Hello"),  # Contents instance
     ]
 
     result = _parse_inputs(inputs)
@@ -477,7 +477,7 @@ def test_hosted_code_interpreter_tool_with_dict_inputs():
 
 
 def test_hosted_code_interpreter_tool_with_ai_contents():
-    """Test HostedCodeInterpreterTool with AIContents instances."""
+    """Test HostedCodeInterpreterTool with Contents instances."""
     from agent_framework import DataContent, TextContent
 
     inputs = [TextContent(text="Hello, world!"), DataContent(data=b"test", media_type="text/plain")]

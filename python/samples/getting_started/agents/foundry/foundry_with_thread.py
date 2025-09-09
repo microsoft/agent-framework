@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatClientAgent
+from agent_framework import AgentThread, ChatAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -26,7 +26,7 @@ async def example_with_automatic_thread_creation() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -55,7 +55,7 @@ async def example_with_thread_persistence() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -96,7 +96,7 @@ async def example_with_existing_thread_id() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatClientAgent(
+        ChatAgent(
             chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -119,7 +119,7 @@ async def example_with_existing_thread_id() -> None:
         # Create a new agent instance but use the existing thread ID
         async with (
             AzureCliCredential() as credential,
-            ChatClientAgent(
+            ChatAgent(
                 chat_client=FoundryChatClient(thread_id=existing_thread_id, async_credential=credential),
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,

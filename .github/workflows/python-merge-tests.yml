@@ -17,6 +17,7 @@ env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   RUN_INTEGRATION_TESTS: "true"
+  RUN_SAMPLES_TESTS: ${{ vars.RUN_SAMPLES_TESTS }}
 
 jobs:
   paths-filter:
@@ -78,6 +79,10 @@ jobs:
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
       - name: Test with pytest
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Test openai samples
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "openai" --junitxml=coverage_samples_main.xml
         working-directory: ./python
       - name: Move coverage file
         run: |
@@ -141,6 +146,10 @@ jobs:
       - name: Test with pytest
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
+      - name: Test azure samples
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "azure" --junitxml=coverage_samples_azure.xml
+        working-directory: ./python
       - name: Move coverage file
         run: |
           mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
@@ -202,6 +211,10 @@ jobs:
       - name: Test with pytest
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
         working-directory: ./python
+      - name: Test foundry samples
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "foundry" --junitxml=coverage_samples_foundry.xml
+        working-directory: ./python
       - name: Move coverage file
         run: |
           mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
@@ -220,6 +233,7 @@ jobs:
           display-options: fEX
           fail-on-empty: true
           title: Test results
+
   python-integration-tests-check:
     if: always()
     runs-on: ubuntu-latest

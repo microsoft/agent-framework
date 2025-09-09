@@ -5,7 +5,7 @@ namespace Microsoft.Agents.Workflows;
 /// <summary>
 /// Configuration options for Executor behavior.
 /// </summary>
-public sealed class ExecutorOptions
+public class ExecutorOptions
 {
     /// <summary>
     /// The default runner configuration.
