@@ -142,13 +142,14 @@ def _normalize_allow_transfers(
     if not transfers:
         return {}
     if isinstance(transfers, dict) and transfers and isinstance(next(iter(transfers.values())), list):
-        return transfers  # type: ignore[return-value]
+        # At this point transfers is already of the final shape
+        return cast(dict[str, list[tuple[str, str]]], transfers)
+
+    # Remaining cases: OrchestrationHandoffs | dict[str, dict[str, str]]
+    dict_of_dicts: dict[str, dict[str, str]] = cast(dict[str, dict[str, str]], transfers)
     out: dict[str, list[tuple[str, str]]] = {}
-    for src, mapping in transfers.items():  # type: ignore[assignment]
-        items = []
-        for tgt, desc in mapping.items():  # type: ignore[union-attr]
-            items.append((tgt, desc or ""))
-        out[src] = items
+    for src, mapping in dict_of_dicts.items():
+        out[src] = [(tgt, (desc or "")) for tgt, desc in mapping.items()]
     return out
 
 
