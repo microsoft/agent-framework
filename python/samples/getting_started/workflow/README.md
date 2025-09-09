@@ -2,7 +2,7 @@
 
 ## Installation
 
-To install the base agent_framework.workflow package, run:
+To install the base `agent_framework.workflow` package, run:
 
 ```bash
 pip install agent-framework-workflow
@@ -14,12 +14,11 @@ To install with visualization support:
 pip install agent-framework-workflow[viz]
 ```
 
-To export visualization images you also need to install GraphViz:
-- https://graphviz.org/download/
+To export visualization images you also need to [install GraphViz](https://graphviz.org/download/).
 
 ## Samples Overview
 
-## Foundational Concepts — Start Here
+## Foundational Concepts - Start Here
 
 Begin with the `!start-here` folder in order. These three samples introduce the core ideas of executors, edges, agents in workflows, and streaming.
 
@@ -27,7 +26,7 @@ Begin with the `!start-here` folder in order. These three samples introduce the 
 |--------|------|----------|
 | Executors and Edges | [!start-here/step1_executors_and_edges.py](./%21start-here/step1_executors_and_edges.py) | Minimal workflow with basic executors and edges |
 | Agents in a Workflow | [!start-here/step2_agents_in_a_workflow.py](./%21start-here/step2_agents_in_a_workflow.py) | Introduces AgentExecutor; calling agents inside a workflow |
-| Streaming (Basics) | [!start-here/step3_streaming_basics.py](./%21start-here/step3_streaming_basics.py) | Extends workflows with event streaming |
+| Streaming (Basics) | [!start-here/step3_streaming.py](./%21start-here/step3_streaming.py) | Extends workflows with event streaming |
 
 Once comfortable with these, explore the rest of the samples below.
 
