@@ -5,6 +5,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>alpha</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
+    <InjectSharedConstants>true</InjectSharedConstants>
     <NoWarn>$(NoWarn);IDE0009;</NoWarn>
   </PropertyGroup>
 

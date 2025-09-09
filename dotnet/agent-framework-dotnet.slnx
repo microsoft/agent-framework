@@ -166,6 +166,9 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/" />
+  <Folder Name="/Solution Items/src/Shared/Constants/">
+    <File Path="src/Shared/Constants/HttpHeaderConstant.cs" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/Demos/">
     <File Path="src/Shared/Demos/README.md" />
     <File Path="src/Shared/Demos/SampleEnvironment.cs" />

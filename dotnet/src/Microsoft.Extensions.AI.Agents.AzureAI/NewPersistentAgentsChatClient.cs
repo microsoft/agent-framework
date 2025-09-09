@@ -9,12 +9,16 @@
 
 #nullable enable
 
+using System.ClientModel.Primitives;
 using System.Collections;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Azure.Core;
+using Azure.Core.Pipeline;
 using Microsoft.Extensions.AI;
 
 namespace Azure.AI.Agents.Persistent
@@ -37,6 +41,9 @@ namespace Azure.AI.Agents.Persistent
         /// <summary>The thread ID to use if none is supplied in <see cref="ChatOptions.ConversationId"/>.</summary>
         private readonly string? _defaultThreadId;
 
+        /// <summary>Additional headers to include in requests.</summary>
+        private readonly IDictionary<string, string>? _additionalHeaders;
+
         /// <summary>Lazily-retrieved agent instance. Used for its properties.</summary>
         private PersistentAgent? _agent;
 
@@ -49,6 +56,19 @@ namespace Azure.AI.Agents.Persistent
             _client = client;
             _agentId = agentId;
             _defaultThreadId = defaultThreadId;
+
+            _metadata = new(ProviderName);
+        }
+
+        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, PersistentAgentsChatClientOptions? options)
+        {
+            Argument.AssertNotNull(client, nameof(client));
+            Argument.AssertNotNullOrWhiteSpace(agentId, nameof(agentId));
+
+            _client = client;
+            _agentId = agentId;
+            _defaultThreadId = options?.DefaultThreadId;
+            _additionalHeaders = options?.AdditionalHeaders;
 
             _metadata = new(ProviderName);
         }
@@ -98,7 +118,12 @@ namespace Azure.AI.Agents.Persistent
             ThreadRun? threadRun = null;
             if (threadId is not null)
             {
-                await foreach (ThreadRun? run in _client!.Runs.GetRunsAsync(threadId, limit: 1, ListSortOrder.Descending, cancellationToken: cancellationToken).ConfigureAwait(false))
+                var getRunsAsync = _additionalHeaders is null
+                    ? _client!.Runs.GetRunsAsync(threadId, limit: 1, ListSortOrder.Descending, cancellationToken: cancellationToken)
+                    // Currently there's no protocol method publicly available to pass headers for getting runs
+                    : _client!.Runs.GetRunsAsync(threadId, limit: 1, ListSortOrder.Descending, cancellationToken: cancellationToken);
+
+                await foreach (ThreadRun? run in getRunsAsync.ConfigureAwait(false))
                 {
                     if (run.Status != RunStatus.Completed && run.Status != RunStatus.Cancelled && run.Status != RunStatus.Failed && run.Status != RunStatus.Expired)
                     {
@@ -125,7 +150,9 @@ namespace Azure.AI.Agents.Persistent
                 if (threadId is null)
                 {
                     // No thread ID was provided, so create a new thread.
-                    PersistentAgentThread thread = await _client!.Threads.CreateThreadAsync(runOptions.ThreadOptions.Messages, runOptions.ToolResources, runOptions.Metadata, cancellationToken).ConfigureAwait(false);
+                    PersistentAgentThread thread = _additionalHeaders is null
+                        ? await _client!.Threads.CreateThreadAsync(runOptions.ThreadOptions.Messages, runOptions.ToolResources, runOptions.Metadata, cancellationToken).ConfigureAwait(false)
+                        : await this.ProtocolThreadsCreateThreadAsync(runOptions.ThreadOptions.Messages, runOptions.ToolResources, runOptions.Metadata, cancellationToken).ConfigureAwait(false);
                     runOptions.ThreadOptions.Messages.Clear();
                     threadId = thread.Id;
                 }
@@ -275,6 +302,49 @@ namespace Azure.AI.Agents.Persistent
                         break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Creates a new thread using the protocol method that allows passing additional headers.
+        /// </summary>
+        /// <param name="messages"> The initial messages to associate with the new thread. </param>
+        /// <param name="toolResources">
+        /// A set of resources that are made available to the agent's tools in this thread. The resources are specific to the
+        /// type of tool. For example, the `code_interpreter` tool requires a list of file IDs, while the `file_search` tool requires
+        /// a list of vector store IDs.
+        /// </param>
+        /// <param name="metadata">
+        /// A set of up to 16 key/value pairs that can be attached to an object,
+        /// used for storing additional information about that object in a structured format. Keys may be up
+        /// to 64 characters in length and values may be up to 512 characters in length.
+        /// </param>
+        /// <param name="cancellationToken"> The cancellation token to use. </param>
+        /// <returns></returns>
+        private async Task<Response<PersistentAgentThread>> ProtocolThreadsCreateThreadAsync(IList<ThreadMessageOptions> messages, ToolResources toolResources, IReadOnlyDictionary<string, string> metadata, CancellationToken cancellationToken)
+        {
+            var requestContext = new RequestContext();
+            if (this._additionalHeaders is not null)
+            {
+                requestContext.AddPolicy(new AddHeadersPolicy(this._additionalHeaders), HttpPipelinePosition.PerCall);
+            }
+
+            var createThreadRequestType = Type.GetType("Azure.AI.Agents.Persistent.CreateThreadRequest, Azure.AI.Agents.Persistent")!;
+
+            // Step 4: Create an instance using Activator
+            var createThreadRequest = Activator.CreateInstance(
+                type: createThreadRequestType,
+                bindingAttr: BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null,
+                args: [messages, toolResources, metadata, null],
+                culture: null);
+
+            using var requestContent = RequestContent.Create(ModelReaderWriter.Write(createThreadRequest!));
+
+            var response = await this._client!.Threads.CreateThreadAsync(requestContent, requestContext).ConfigureAwait(false);
+
+            var responseValue = ModelReaderWriter.Read<PersistentAgentThread>(response.Content);
+
+            return Response.FromValue<PersistentAgentThread>(responseValue!, response);
         }
 
         /// <inheritdoc />
@@ -598,6 +668,25 @@ namespace Azure.AI.Agents.Persistent
         private sealed partial class AgentsChatClientJsonContext : JsonSerializerContext;
     }
 
+    /// <summary>
+    /// Represents configuration options for the <see cref="PersistentAgentsChatClient"/>.
+    /// </summary>
+    /// <remarks>This class provides options to customize the behavior of the chat client, such as specifying
+    /// a default thread ID for conversations and adding custom headers to outgoing requests.</remarks>
+    public class PersistentAgentsChatClientOptions
+    {
+        /// <summary>
+        /// Gets or sets the default thread ID to use for requests where no thread ID is provided in <see cref="ChatOptions.ConversationId"/>.
+        /// If not set, a new thread will be created for each request that doesn't provide a thread ID.
+        /// </summary>
+        public string? DefaultThreadId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the additional headers to include in requests.
+        /// </summary>
+        public IDictionary<string, string>? AdditionalHeaders { get; set; }
+    }
+
     internal static class Argument
     {
         public static void AssertNotNull<T>(T value, string name)
@@ -710,6 +799,41 @@ namespace Azure.AI.Agents.Persistent
             if (value != null)
             {
                 throw new ArgumentException(message ?? "Value must be null.", name);
+            }
+        }
+    }
+
+    internal sealed class AddHeadersPolicy : HttpPipelineSynchronousPolicy
+    {
+        private readonly IDictionary<string, string> _addHeaders;
+
+        public AddHeadersPolicy(IDictionary<string, string> addHeaders)
+        {
+            _addHeaders = addHeaders;
+        }
+
+        public override void OnSendingRequest(HttpMessage message)
+        {
+            foreach (var header in _addHeaders)
+            {
+                if (message.Request.Headers.TryGetValues(header.Key, out var existingValues))
+                {
+                    message.Request.Headers.SetValue(header.Key, header.Value);
+
+                    // User-Agent is special case; where we prepend the value rather than replacing.
+                    if (string.Equals("User-Agent", header.Key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Re-add any existing afterwards.
+                        foreach (var existingValue in existingValues)
+                        {
+                            message.Request.Headers.Add(header.Key, existingValue);
+                        }
+                    }
+                }
+                else
+                {
+                    message.Request.Headers.SetValue(header.Key, header.Value);
+                }
             }
         }
     }

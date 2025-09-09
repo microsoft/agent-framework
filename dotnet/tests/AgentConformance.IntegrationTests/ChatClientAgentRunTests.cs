@@ -28,7 +28,7 @@ public abstract class ChatClientAgentRunTests<TAgentFixture>(Func<TAgentFixture>
         // Act
         var response = await agent.RunAsync(thread);
 
-        // Assert
+        // Assertj
         Assert.NotNull(response);
         Assert.Single(response.Messages);
         Assert.Contains("Computer says no", response.Text, StringComparison.OrdinalIgnoreCase);

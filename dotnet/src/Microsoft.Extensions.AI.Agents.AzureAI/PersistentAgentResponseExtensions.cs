@@ -2,6 +2,7 @@
 
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Microsoft.Shared.Constants;
 
 namespace Azure.AI.Agents.Persistent;
 
@@ -47,7 +48,14 @@ internal static class PersistentAgentResponseExtensions
         }
 
 #pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentMetadata.Id);
+        var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentMetadata.Id, options: new()
+        {
+            AdditionalHeaders = new Dictionary<string, string>()
+            {
+                [HttpHeaderConstant.Names.UserAgent] = HttpHeaderConstant.Values.UserAgent,
+                [HttpHeaderConstant.Names.AgentFrameworkVersion] = HttpHeaderConstant.Values.GetAssemblyVersion(typeof(PersistentAgentResponseExtensions))
+            }
+        });
 #pragma warning restore CA2000 // Dispose objects before losing scope
 
         return new ChatClientAgent(chatClient, options: new()

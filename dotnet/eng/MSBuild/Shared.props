@@ -8,4 +8,7 @@
   <ItemGroup Condition="'$(InjectSharedIntegrationTestCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTests\*.cs" LinkBase="Shared\IntegrationTests" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedConstants)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Constants\*.cs" LinkBase="Shared\Constants" />
+  </ItemGroup>
 </Project>

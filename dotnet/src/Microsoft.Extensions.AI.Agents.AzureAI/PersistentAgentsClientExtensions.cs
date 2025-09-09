@@ -179,4 +179,14 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A new <see cref="IChatClient"/> instance configured with the specified assistant and optional default thread.</returns>
     public static IChatClient AsNewIChatClient(this PersistentAgentsClient client, string assistantId, string? defaultThreadId = null)
         => new NewPersistentAgentsChatClient(Argument.CheckNotNull(client, nameof(client)), Argument.CheckNotNullOrEmpty(assistantId, nameof(assistantId)), defaultThreadId);
+
+    /// <summary>
+    /// Creates a new instance of an <see cref="IChatClient"/> configured for the specified assistant.
+    /// </summary>
+    /// <param name="client">The <see cref="PersistentAgentsClient"/> instance used to initialize the chat client. Cannot be <see langword="null"/>.</param>
+    /// <param name="assistantId">The unique identifier of the assistant. Cannot be <see langword="null"/> or whitespace.</param>
+    /// <param name="options">Additional options for creating the <see cref="IChatClient"/>.</param>
+    /// <returns>A new <see cref="IChatClient"/> instance configured with the specified assistant and optional default thread.</returns>
+    public static IChatClient AsNewIChatClient(this PersistentAgentsClient client, string assistantId, PersistentAgentsChatClientOptions? options)
+        => new NewPersistentAgentsChatClient(Argument.CheckNotNull(client, nameof(client)), Argument.CheckNotNullOrEmpty(assistantId, nameof(assistantId)), options);
 }
