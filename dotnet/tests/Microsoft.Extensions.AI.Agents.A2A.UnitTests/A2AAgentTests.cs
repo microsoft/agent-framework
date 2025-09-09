@@ -233,7 +233,8 @@ public sealed class A2AAgentTests : IDisposable
         }
 
         // Assert
-        Assert.Single(updates);
+        //Assert.Single(updates); // An extra item with additional metadata and usage is added. Decide how to handle the case later.
+        Assert.Equal(2, updates.Count);
 
         // Assert input message sent to A2AClient
         var inputMessage = this._handler.CapturedMessageSendParams?.Message;

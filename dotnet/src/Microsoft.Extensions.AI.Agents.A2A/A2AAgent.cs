@@ -136,11 +136,9 @@ internal sealed class A2AAgent : AIAgent
                 foreach (var update in this.ConvertToAgentResponse(message).ToAgentRunResponseUpdates())
                 {
                     yield return update;
-                    continue;
                 }
             }
-
-            if (sseEvent.Data is AgentTask task)
+            else if (sseEvent.Data is AgentTask task)
             {
                 contextId = task.ContextId;
 
@@ -155,20 +153,17 @@ internal sealed class A2AAgent : AIAgent
                         yield break;
                     }
                 }
-
-                continue;
             }
-
-            if (sseEvent.Data is TaskUpdateEvent taskUpdateEvent)
+            else if (sseEvent.Data is TaskUpdateEvent taskUpdateEvent)
             {
                 contextId = taskUpdateEvent.ContextId;
 
                 yield return this.ConvertToAgentResponseUpdate(taskUpdateEvent, options);
-
-                continue;
             }
-
-            throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {sseEvent.Data.GetType().FullName ?? "null"}");
+            else
+            {
+                throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {sseEvent.Data.GetType().FullName ?? "null"}");
+            }
         }
 
         UpdateThreadConversationId(thread, contextId);
