@@ -60,7 +60,7 @@ def prepare_function_call_results(content: Contents | Any | list[Contents | Any]
                 results.extend(res)
             else:
                 results.append(res)
-        return results[0] if len(results) == 1 else results
+        return results[0] if len(results) == 1 else json.dumps(results)
     if isinstance(content, BaseModel):
         return content.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
     # fallback
