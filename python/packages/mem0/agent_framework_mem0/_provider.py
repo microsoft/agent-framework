@@ -40,7 +40,6 @@ class Mem0Provider(ContextProvider):
         scope_to_per_operation_thread_id: bool = False,
         context_prompt: str = DEFAULT_CONTEXT_PROMPT,
         mem0_client: Any = None,
-        **kwargs: Any,
     ) -> None:
         """Initializes a new instance of the Mem0Provider class.
 
@@ -54,26 +53,27 @@ class Mem0Provider(ContextProvider):
             scope_to_per_operation_thread_id: Whether to scope memories to per-operation thread ID.
             context_prompt: The prompt to prepend to retrieved memories.
             mem0_client: A pre-created Mem0 MemoryClient or None to create a default client.
-            **kwargs: Additional keyword arguments passed to the parent constructor.
         """
-        super().__init__(**kwargs)
-
-        self.api_key = api_key
-        self.application_id = application_id
-        self.agent_id = agent_id
-        self.thread_id = thread_id
-        self.user_id = user_id
-        self.scope_to_per_operation_thread_id = scope_to_per_operation_thread_id
-        self.context_prompt = context_prompt
-        self.mem0_client = mem0_client
-
-        if self.mem0_client is None:
+        should_close_client = False
+        if mem0_client is None:
             from mem0 import AsyncMemoryClient
 
-            self.mem0_client = AsyncMemoryClient(api_key=api_key)
-            self._should_close_client = True
+            mem0_client = AsyncMemoryClient(api_key=api_key)
+            should_close_client = True
+
+        super().__init__(
+            api_key=api_key,  # type: ignore[reportCallIssue]
+            application_id=application_id,  # type: ignore[reportCallIssue]
+            agent_id=agent_id,  # type: ignore[reportCallIssue]
+            thread_id=thread_id,  # type: ignore[reportCallIssue]
+            user_id=user_id,  # type: ignore[reportCallIssue]
+            scope_to_per_operation_thread_id=scope_to_per_operation_thread_id,  # type: ignore[reportCallIssue]
+            context_prompt=context_prompt,  # type: ignore[reportCallIssue]
+            mem0_client=mem0_client,  # type: ignore[reportCallIssue]
+        )
 
         self._per_operation_thread_id: str | None = None
+        self._should_close_client = should_close_client
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""

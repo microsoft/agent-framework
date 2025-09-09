@@ -318,8 +318,7 @@ class MockContextProvider(ContextProvider):
 async def test_chat_agent_context_providers_model_invoking(chat_client: ChatClientProtocol) -> None:
     """Test that context providers' model_invoking is called during agent run."""
     mock_provider = MockContextProvider(instructions="Test context instructions")
-    agent = ChatAgent(chat_client=chat_client)
-    agent.context_providers.providers.append(mock_provider)
+    agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
 
     await agent.run("Hello")
 
@@ -335,8 +334,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client: ChatClie
             conversation_id="test-thread-id",
         )
     )
-    agent = ChatAgent(chat_client=chat_client_with_id)
-    agent.context_providers.providers.append(mock_provider)
+    agent = ChatAgent(chat_client=chat_client_with_id, context_providers=mock_provider)
 
     await agent.run("Hello")
 
@@ -347,8 +345,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client: ChatClie
 async def test_chat_agent_context_providers_messages_adding(chat_client: ChatClientProtocol) -> None:
     """Test that context providers' messages_adding is called during agent run."""
     mock_provider = MockContextProvider()
-    agent = ChatAgent(chat_client=chat_client)
-    agent.context_providers.providers.append(mock_provider)
+    agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
 
     await agent.run("Hello")
 
@@ -360,8 +357,7 @@ async def test_chat_agent_context_providers_messages_adding(chat_client: ChatCli
 async def test_chat_agent_context_instructions_in_messages(chat_client: ChatClientProtocol) -> None:
     """Test that AI context instructions are included in messages."""
     mock_provider = MockContextProvider(instructions="Context-specific instructions")
-    agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions")
-    agent.context_providers.providers.append(mock_provider)
+    agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions", context_providers=mock_provider)
 
     # We need to test the _prepare_thread_and_messages method directly
     context = Context(instructions="Context-specific instructions")
@@ -416,8 +412,7 @@ async def test_chat_agent_no_context_instructions(chat_client: ChatClientProtoco
 async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientProtocol) -> None:
     """Test that context providers work with run_stream method."""
     mock_provider = MockContextProvider(instructions="Stream context instructions")
-    agent = ChatAgent(chat_client=chat_client)
-    agent.context_providers.providers.append(mock_provider)
+    agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
 
     # Collect all stream updates
     updates: list[AgentRunResponseUpdate] = []
@@ -435,9 +430,7 @@ async def test_chat_agent_multiple_context_providers(chat_client: ChatClientProt
     provider1 = MockContextProvider(instructions="First provider instructions")
     provider2 = MockContextProvider(instructions="Second provider instructions")
 
-    agent = ChatAgent(chat_client=chat_client)
-    agent.context_providers.providers.append(provider1)
-    agent.context_providers.providers.append(provider2)
+    agent = ChatAgent(chat_client=chat_client, context_providers=[provider1, provider2])
 
     await agent.run("Hello")
 
@@ -475,8 +468,7 @@ async def test_chat_agent_context_providers_with_thread_service_id() -> None:
             conversation_id="service-thread-123",
         )
     )
-    agent = ChatAgent(chat_client=chat_client_with_id)
-    agent.context_providers.providers.append(mock_provider)
+    agent = ChatAgent(chat_client=chat_client_with_id, context_providers=mock_provider)
 
     # Use existing service-managed thread
     thread = AgentThread(service_thread_id="existing-thread-id")
