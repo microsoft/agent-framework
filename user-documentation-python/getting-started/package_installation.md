@@ -69,10 +69,10 @@ dependencies = [
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
 [tool.uv.sources]
-"agent-framework" = { git = "https://github.com/microsoft/agent-framework.git", ref = "main", subdirectory = "python/packages/main" }
-"agent-framework-azure" = { git = "https://github.com/microsoft/agent-framework.git", ref = "main", subdirectory = "python/packages/azure" }
-"agent-framework-foundry" = { git = "https://github.com/microsoft/agent-framework.git", ref = "main", subdirectory = "python/packages/foundry" }
-"agent-framework-workflow" = { git = "https://github.com/microsoft/agent-framework.git", ref = "main", subdirectory = "python/packages/workflow" }
+"agent-framework" = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/main" }
+"agent-framework-azure" = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/azure" }
+"agent-framework-foundry" = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/foundry" }
+"agent-framework-workflow" = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/workflow" }
 ```
 Then create a virtual environment:
 ```bash
