@@ -99,10 +99,10 @@ Once comfortable with these, explore the rest of the samples below.
 
 ### resources
 - Sample text inputs used by certain workflows:
-  - [resources/text/long_text.txt](./resources/text/long_text.txt)
-  - [resources/text/email.txt](./resources/text/email.txt)
-  - [resources/text/spam.txt](./resources/text/spam.txt)
-  - [resources/text/ambiguous_email.txt](./resources/text/ambiguous_email.txt)
+  - [resources/long_text.txt](./resources/long_text.txt)
+  - [resources/email.txt](./resources/email.txt)
+  - [resources/spam.txt](./resources/spam.txt)
+  - [resources/ambiguous_email.txt](./resources/ambiguous_email.txt)
 
 Notes
 - Agent-based samples use provider SDKs (Azure/OpenAI, etc.). Ensure credentials are configured, or adapt agents accordingly.
