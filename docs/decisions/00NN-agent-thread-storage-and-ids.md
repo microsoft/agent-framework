@@ -112,6 +112,23 @@ Agents may be exposed via other protocols as well, which may require similar "pu
 Some may even require a response style id change after each invocation.
 Similarly to the previous example the internal thread id used to communicate with the service may however be static, making it important to support two separate ids.
 
+### Reusing Public thread ids for 3rd party storage
+
+Developers may want to store various pieces of data attached to threads in 3rd party storage, e.g.
+
+1. The chat history from the thread
+1. Memories
+
+Chat history is always scoped to a single thread and memories may often also be scoped to a single thread.
+The developer may therefore want to use the id of the thread as the key for storing these pieces of data.
+We have multiple ids in play though, so which one makes sense here?
+
+If we were using ChatClientAgent with Foundry agents, we may be tempted to use the Foundry agent's thread id as the key for storing chat history and memories.
+The problem with this though, is that if we used a different agent type, it may just be storing messages in memory and have no equivalent agentic service provided thread id.
+
+If we had the public thread id (as described above) available in the `AgentThread`, this could be used for 3rd party storage keys.
+It is available regardless of the internal thread id used by the agent to communicate with the internal service.
+
 ### Service Storage support for different services
 
 |Underlying Service|Uses Service Storage|
