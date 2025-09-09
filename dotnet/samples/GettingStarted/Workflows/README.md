@@ -6,13 +6,15 @@ The getting started with workflow samples demonstrate the fundamental concepts a
 
 ### Foundational Concepts - Start Here
 
-Please begin with the [Foundational](./Foundational) samples in order. These three samples introduce the core concepts of executors, edges, agents in workflows, streaming, and workflow construction.
+Please begin with the [Foundational](./_Foundational) samples in order. These three samples introduce the core concepts of executors, edges, agents in workflows, streaming, and workflow construction.
+
+> The folder name starts with an underscore (`_Foundational`) to ensure it appears first in the explorer view.
 
 | Sample | Concepts |
 |--------|----------|
-| [Executors and Edges](./Foundational/01_ExecutorsAndEdges) | Minimal workflow with basic executors and edges |
-| [Streaming](./Foundational/02_Streaming) | Extends workflows with event streaming |
-| [Agents](./Foundational/03_AgentsInWorkflows) | Use agents in workflows |
+| [Executors and Edges](./_Foundational/01_ExecutorsAndEdges) | Minimal workflow with basic executors and edges |
+| [Streaming](./_Foundational/02_Streaming) | Extends workflows with event streaming |
+| [Agents](./_Foundational/03_AgentsInWorkflows) | Use agents in workflows |
 
 Once completed, please proceed to other samples listed below.
 
