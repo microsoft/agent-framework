@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
+using Microsoft.Extensions.AI.Agents.Hosting.Builders;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Internal;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,17 +19,37 @@ public static class AgentHostingBuilderExtensions
     /// </summary>
     /// <param name="builder">The builder for the <see cref="AIAgent"/></param>
     /// <param name="generalMetadata"></param>
-    public static IAgentDiscoveryBuilder WithDiscovery(this IAgentHostingBuilder builder, GeneralMetadata generalMetadata)
+    public static IAgentDiscoveryBuilder WithDiscovery(this IAgentHostingBuilder builder, GeneralMetadata? generalMetadata = null)
     {
-        var agentDiscovery = InitializeAgentsDiscoveryProvider(builder.Services);
+        var agentDiscovery = builder.Services.InitializeAgentsDiscoveryProvider();
 
-        var agentId = generalMetadata.Id ?? builder.ActorType.Name;
-        agentDiscovery.RegisterAgentDiscovery(agentId, generalMetadata);
+        var agentId = generalMetadata?.Id ?? builder.ActorType.Name;
+        var metadata = generalMetadata ?? BuildUpGeneralMetadata(agentId, builder);
 
-        return new AgentDiscoveryBuilder(agentId);
+        agentDiscovery.RegisterAgentDiscovery(agentId, metadata);
+        return new AgentDiscoveryBuilder(agentId, builder.Services);
     }
 
-    private static AgentDiscovery InitializeAgentsDiscoveryProvider(IServiceCollection services)
+    private static GeneralMetadata BuildUpGeneralMetadata(string agentId, IAgentHostingBuilder builder)
+    {
+        return builder switch
+        {
+            ChatClientAgentHostingBuilder chatClientBuilder => new()
+            {
+                Id = agentId,
+                Name = chatClientBuilder.ActorType.Name,
+                Description = chatClientBuilder.Description,
+            },
+
+            _ => new()
+            {
+                Id = agentId,
+                Name = builder.ActorType.Name
+            }
+        };
+    }
+
+    internal static AgentDiscovery InitializeAgentsDiscoveryProvider(this IServiceCollection services)
     {
         Throw.IfNull(services);
 
@@ -37,7 +58,6 @@ public static class AgentHostingBuilderExtensions
         {
             instance = new AgentDiscovery();
             services.Add(ServiceDescriptor.Singleton(instance));
-            // instance.ConfigureServices(services);
         }
 
         return instance;

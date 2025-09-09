@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Internal;
 
@@ -21,6 +22,28 @@ internal sealed class AgentDiscovery
         {
             throw new System.ArgumentException($"An agent with the ID '{agentId}' has already been registered.", nameof(agentId));
         }
+    }
+
+    internal bool AddCustomMetadata(string agentId, Dictionary<string, object> metadata)
+    {
+        if (!this._actorMetadatas.TryGetValue(agentId, out var agentMetadata))
+        {
+            return false;
+        }
+
+        agentMetadata.CustomMetadata = metadata;
+        return true;
+    }
+
+    internal bool AddHttpEndpoint(string agentId, )
+    {
+        if (!this._actorMetadatas.TryGetValue(agentId, out var agentMetadata))
+        {
+            return false;
+        }
+
+        agentMetadata.CustomMetadata = metadata;
+        return true;
     }
 
     public ICollection<AgentMetadata> GetAllAgents()

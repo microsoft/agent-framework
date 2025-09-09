@@ -44,7 +44,17 @@ var pirateAgentBuilder = builder.AddAIAgent(
     chatClientServiceKey: "chat-model");
 
 // discovery configuration
-pirateAgentBuilder.WithDiscovery(new());
+string[] bestPirateWords = ["Argh", "Matey"];
+
+pirateAgentBuilder
+    .WithDiscovery() // adds the agent to the discovery service
+    .WithMetadata(new() // adds data of custom shape to the agent discovery metadata
+    {
+        { "customName", "MyPirate!!" },
+        { "BestWords", bestPirateWords },
+    })
+    .WithHttpEndpoint()
+    ;
 
 builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {

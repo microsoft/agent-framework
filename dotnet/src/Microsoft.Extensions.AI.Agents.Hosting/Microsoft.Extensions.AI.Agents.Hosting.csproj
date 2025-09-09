@@ -39,6 +39,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Hosting.Discovery" />
+  </ItemGroup>
+  
+  <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Hosting.UnitTests" />
   </ItemGroup>
 </Project>

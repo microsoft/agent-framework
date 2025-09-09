@@ -8,14 +8,6 @@
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
-    <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
-    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
-  </PropertyGroup>
-
-  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
-
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers">
