@@ -33,9 +33,7 @@ from agent_framework_workflow import (
 class ScriptedTurn:
     """Represents a single agent turn (structured decision or plain text)."""
 
-    # Structured decision to emit (preferred)
     decision: HandoffDecision | None = None
-    # Raw assistant text (legacy path) if decision not provided
     text: str | None = None
 
 
@@ -103,11 +101,6 @@ class FakeAgent(AgentProtocol):  # type: ignore[misc]
         return AgentThread()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 async def _collect_final(workflow: Workflow, user_text: str) -> ChatMessage:
     """Run the workflow to completion and return the final assistant ChatMessage."""
     final_msg: ChatMessage | None = None
@@ -118,11 +111,6 @@ async def _collect_final(workflow: Workflow, user_text: str) -> ChatMessage:
                 final_msg = data
     assert final_msg is not None, "No final message produced"
     return final_msg
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -145,7 +133,6 @@ async def test_structured_multi_handoff_and_complete():
         HandoffBuilder()
         .participants([intake, spec, closer])
         .start_with("intake")
-        # structured_handoff enabled by default
         .allow_transfers({
             "intake": [("spec", "")],
             "spec": [("closer", "")],
@@ -187,7 +174,6 @@ async def test_structured_handoff_respects_max():
         HandoffBuilder()
         .participants([a, b])
         .start_with("a")
-        # structured_handoff enabled by default
         .allow_transfers({"a": [("b", "")], "b": [("a", "")]})
         .max_handoffs(1)
         .build()
@@ -201,18 +187,10 @@ async def test_structured_handoff_respects_max():
 @pytest.mark.asyncio
 async def test_legacy_directive_handoff_and_complete():
     """Legacy directives: transfer_to_x + complete_task: summary."""
-    # First agent emits legacy transfer directive; second completes
     a = FakeAgent("a", [ScriptedTurn(text="transfer_to_b: reason")])
     b = FakeAgent("b", [ScriptedTurn(text="complete_task: finished work")])
 
-    wf = (
-        HandoffBuilder()
-        .participants([a, b])
-        .start_with("a")
-        # legacy mode (structured disabled)
-        .allow_transfers({"a": [("b", "")]})
-        .build()
-    )
+    wf = HandoffBuilder().participants([a, b]).start_with("a").allow_transfers({"a": [("b", "")]}).build()
 
     final_msg = await _collect_final(wf, "legacy flow")
     assert "finished work" in final_msg.text.lower()
@@ -225,14 +203,7 @@ async def test_structured_malformed_falls_back_to_legacy():
     bad = FakeAgent("bad", [ScriptedTurn(text="{not json}\ntransfer_to_next: go")])
     nxt = FakeAgent("next", [ScriptedTurn(text="complete_task: summary line")])
 
-    wf = (
-        HandoffBuilder()
-        .participants([bad, nxt])
-        .start_with("bad")
-        .allow_transfers({"bad": [("next", "")]})
-        # structured_handoff enabled by default
-        .build()
-    )
+    wf = HandoffBuilder().participants([bad, nxt]).start_with("bad").allow_transfers({"bad": [("next", "")]}).build()
 
     final_msg = await _collect_final(wf, "bad json")
     assert "summary line" in final_msg.text.lower()
