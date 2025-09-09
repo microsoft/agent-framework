@@ -228,12 +228,12 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
             this._workflowInfoCache = this.Workflow.ToWorkflowInfo();
         }
 
-        RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
         Dictionary<EdgeConnection, ExportedState> edgeData = await this.EdgeMap.ExportStateAsync().ConfigureAwait(false);
 
         await prepareTask.ConfigureAwait(false);
         await this.RunContext.StateManager.PublishUpdatesAsync(this.StepTracer).ConfigureAwait(false);
 
+        RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
         Dictionary<ScopeKey, ExportedState> stateData = await this.RunContext.StateManager.ExportStateAsync().ConfigureAwait(false);
 
         Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData);
@@ -261,9 +261,9 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
         }
 
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
-        Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellation);
-
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
+
+        Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellation);
         ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellation);
 
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);

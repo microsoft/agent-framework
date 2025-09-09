@@ -40,6 +40,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step07_3rdPartyThreadStorage/Agent_Step07_3rdPartyThreadStorage.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step08_Telemetry/Agent_Step08_Telemetry.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
@@ -53,15 +54,34 @@
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/">
-    <Project Path="samples/DeclarativeWorkflow/DeclarativeWorkflow.csproj" />
+    <File Path="samples/GettingStarted/Workflows/README.md" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Example/">
+  <Folder Name="/Samples/GettingStarted/Workflows/Concurrent/">
+    <Project Path="samples/GettingStarted/Workflows/Concurrent/Concurrent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/ConditionalEdges/">
+    <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/01_EdgeCondition/01_EdgeCondition.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/02_SwitchCase/02_SwitchCase.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/03_MultiSelection/03_MultiSelection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/Declarative/">
+    <Project Path="samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
     <File Path="../workflows/DeepResearch.yaml" />
     <File Path="../workflows/HelloWorld.yaml" />
     <File Path="../workflows/MathChat.yaml" />
     <File Path="../workflows/Question.yaml" />
     <File Path="../workflows/README.md" />
     <File Path="../workflows/wttr.json" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/Foundational/">
+    <Project Path="samples/GettingStarted/Workflows/Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Foundational/02_Streaming/02_Streaming.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/SharedStates/">
+    <Project Path="samples/GettingStarted/Workflows/SharedStates/SharedStates.csproj" />
   </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/" />
   <Folder Name="/Samples/SemanticKernelMigration/AzureAIFoundry/">

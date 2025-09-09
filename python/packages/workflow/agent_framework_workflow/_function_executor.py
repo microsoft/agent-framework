@@ -10,8 +10,6 @@ This module provides:
   with proper type validation and handler registration.
 """
 
-from __future__ import annotations
-
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable

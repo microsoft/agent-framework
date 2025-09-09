@@ -167,6 +167,23 @@ class WorkflowGraphValidator:
         if start_executor_id not in self._executors:
             raise GraphConnectivityError(f"Start executor '{start_executor_id}' is not present in the workflow graph")
 
+        # Additional presence verification:
+        # A start executor that is only injected via the builder (present in the executors map)
+        # but not referenced by any edge while other executors ARE referenced indicates a
+        # configuration error: the chosen start node is effectively disconnected / unknown to the
+        # defined graph topology. For single-node workflows (no edges) we allow the start executor
+        # to stand alone (handled above when we inject it into the map). We perform this refined
+        # check only when there is at least one edge group defined.
+        if self._edges:  # Only evaluate when the workflow defines edges
+            edge_executor_ids: set[str] = set()
+            for _e in self._edges:
+                edge_executor_ids.add(_e.source_id)
+                edge_executor_ids.add(_e.target_id)
+            if start_executor_id not in edge_executor_ids:
+                raise GraphConnectivityError(
+                    f"Start executor '{start_executor_id}' is not present in the workflow graph"
+                )
+
         # Run all checks
         self._validate_edge_duplication()
         self._validate_handler_output_annotations()

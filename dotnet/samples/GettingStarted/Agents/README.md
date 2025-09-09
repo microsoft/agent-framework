@@ -35,6 +35,7 @@ Before you begin, ensure you have the following prerequisites:
 |[3rd party thread storage with a simple agent](./Agent_Step07_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
 |[Telemetry with a simple agent](./Agent_Step08_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
 |[Dependency injection with a simple agent](./Agent_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
+|[Exposing a simple agent as MCP tool](./Agent_Step10_AsMcpTool/)|This sample demonstrates how to expose an agent as an MCP tool|
 
 ## Running the samples from the console
 
