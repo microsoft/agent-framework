@@ -2,7 +2,7 @@
 # These are optional elements. Feel free to remove any of them.
 status: proposed
 contact: westey-m
-date: 2025-08-15 # {YYYY-MM-DD when the decision was last updated}
+date: 2025-09-09 # {YYYY-MM-DD when the decision was last updated}
 deciders: sergeymenshykh, markwallace-microsoft, rogerbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub, peterychang
 consulted: 
 informed: 
@@ -22,7 +22,7 @@ There are three different messages storage scenarios we need to support:
 2. **InMemory**: The messages are stored in-memory and are transient.
 3. **3rdParty**: The messages are stored in a 3rd party storage solution, e.g. Cosmos DB.
 
-With Scenario 1 the storage of messages is built into the underlying service, and the service typically only supports storage of messages it its own storage.
+With Scenario 1 the storage of messages is built into the underlying service, and the service typically only supports storage of messages in its own storage.
 
 Where services do not have built in storage, the service caller has to provide all chat history on each invocation.
 The messages making up this chat history, can be stored either in memory locally or in some 3rd party storage location.
@@ -104,25 +104,22 @@ Similarly to the previous example the internal thread id used to communicate wit
 
 ## Considered Options
 
-### Decision A: Id Management
+### Decision A: Internal Id Management
 
-We have to decide what kinds of ids we want to support on AgentThread and whether those are stongly typed or not.
+We need to decide how we manage the internal thread ids used for communication with the underlying service.
 
-#### Option 1 - Public Id has concrete property, service thread id is considered implementation detail of Agent and stored in AdditionalProperties
+#### Option 1 - Service thread id is considered implementation detail of Agent and stored in AdditionalProperties
 
-AgentThread has an `Id` property that exposes the thread's public ID.
 Any thread id required for communication with the underlying service would be stored in `AdditionalProperties`.
 
 ```csharp
 public class AgentThread
 {
-    public string Id { get; set; }
     public Dictionary<string, string> AdditionalProperties { get; set; }
 }
 
 new AgentThread()
 {
-    Id = "thread-1",
     AdditionalProperties = new Dictionary<string, string>
     {
         { "response-id", "r-12345" }
@@ -131,26 +128,23 @@ new AgentThread()
 ```
 
 PRO: Consistent experience with any type of agent.
-CONS: Harder to use with the common case where only a single service thread id is needed.
+CON: Harder to use with the common case where only a single service thread id is needed.
+CON: Harder for users to read the service thread id if they need it for breaking out of the abstraction.
 
-#### Option 2 - Public Id has concrete property, service thread id has concrete property
+#### Option 2 - Service thread id has concrete property
 
-AgentThread has an `Id` property that exposes the thread's public ID.
-It also has a `ServiceThreadId` property that exposes the thread's ID used for communication with the underlying service.
-
+AgentThread has a `ServiceThreadId` property that exposes the thread's ID used for communication with the underlying service.
 If the agent is using multiple underlying services with different thread ids, it may need to store thread ids in `AdditionalProperties`.
 
 ```csharp
 public class AgentThread
 {
-    public string Id { get; set; }
     public string? ServiceThreadId { get; set; }
     public Dictionary<string, string> AdditionalProperties { get; set; }
 }
 
 var singleInternalId = new AgentThread()
 {
-    Id = "thread-1",
     ServiceThreadId = "r-12345"
 }
 
@@ -166,37 +160,75 @@ var multipleInternalIds = new AgentThread()
 ```
 
 PRO: Simple to use for agents that only need a single service thread id.
-CONS: For agents that need multiple service thread ids, we end up with an unused property which may confuse users.
+PRO: Easy for users to read the service thread id if they need it for breaking out of the abstraction, e.g. when deleting a thread.
+CON: For agents that need multiple service thread ids, or that don't use service threads, we end up with an unused property which may confuse users.
 
-#### Option 3 - Public Id has concrete property, agents subclass AgentThread if they need to store additional ids
+#### Option 3 - Agents subclass AgentThread if they need to store additional ids
 
-AgentThread has an `Id` property that exposes the thread's public ID.
-If a specific agent needs to store additional IDs, it can subclass `AgentThread` and add the necessary properties.
+If a specific agent needs to store service IDs, it can subclass `AgentThread` and add the necessary properties.
 
 ```csharp
 public class AgentThread
 {
-    public string Id { get; set; }
-    public string? ServiceThreadId { get; set; }
 }
 
-// Could have an implementation specific agent thread.
+// Sample Implementation: We could have one specifically for ChatClientAgent
 public class ChatClientAgentThread : AgentThread
 {
     public string? ServiceThreadId { get; set; }
 }
 
-// Could have common reusable sub classes.
+// Sample Implementation: We could have more generalised types that are reusable by many agent types.
 public class ServiceThreadAgentThread : AgentThread
 {
     public string? ServiceThreadId { get; set; }
 }
+
+// Sample Implementation: For orchestration agents we could have an AgentThread that supports storing a service thread ids per sub agents.
+public class OrchestrationAgentThread : AgentThread
+{
+    public Dictionary<string, string> ServiceThreadIdsBySubAgent { get; set; }
+}
 ```
 
 PRO: Consistent experience with any type of agent.
-CONS: Needs subclassing for agent types, which makes this harder to understand and use.
+CON: Needs subclassing for agent types, which makes this harder to understand and use.
 
-### Decision B: Message Storage
+### Decision B: Public ID Management
+
+#### Option 1 - Public Id has property on AgentThread
+
+In this case would add an Id property to the AgentThread and optionally also pass this to the IChatMessageStore methods
+so that it could be used for message storage and retrieval.
+
+```csharp
+public class AgentThread
+{
+    public string Id { get; set; }
+}
+
+// This option has the possibility to pass the thread id to the message store
+// so that this id could be used for message storage and retrieval.
+// In this case threadId would be added to GetMessagesAsync and AddMessagesAsync.
+public interface IChatMessageStore
+{
+    Task<IEnumerable<ChatMessage>> GetMessagesAsync(string threadId, CancellationToken cancellationToken);
+    Task AddMessagesAsync(string threadId, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken);
+}
+```
+
+PRO: Ability to pass the thread id to the message store for message storage and retrieval.
+CON: The public id is really a feature of how an agent is exposed, and the same agent may be exposed via multiple protocols, requiring different ids for each protocol (e.g. A2A vs responses style ids)
+
+#### Option 2 - Public Id is not stored on AgentThread, and managing it is up to the agent host
+
+In this case, the agent host is responsible for managing the public id.
+The message store would generate its own ids and they may be different from the agent's public id.
+
+PRO: The same agent thread can be used with different hosts, that may require different public ids due to their protocol requirements.
+CON: There is no connection between the agent's public id and the message store's id, which could lead to confusion.
+
+### Decision C: Message Storage
 
 We have to decide how we support message storage with Agent Threads where they are not stored in the service.
 
