@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import contextlib
 import importlib.metadata
 
 from ._agent import WorkflowAgent
@@ -17,10 +18,13 @@ from ._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
-from ._const import (
-    DEFAULT_MAX_ITERATIONS,
+from ._const import DEFAULT_MAX_ITERATIONS
+from ._edge import (
+    Case,
+    Default,
+    SwitchCaseEdgeGroupCase,
+    SwitchCaseEdgeGroupDefault,
 )
-from ._edge import Case, Default
 from ._events import (
     AgentRunEvent,
     AgentRunUpdateEvent,
@@ -47,19 +51,13 @@ from ._executor import (
     intercepts_request,
 )
 from ._function_executor import FunctionExecutor, executor
-from ._handoff import HandoffBuilder
+from ._handoff import HandoffAction, HandoffBuilder, HandoffDecision
 from ._magentic import (
-    MagenticAgentDeltaEvent,
     MagenticAgentExecutor,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticCallbackEvent,
-    MagenticCallbackMode,
     MagenticContext,
-    MagenticFinalResultEvent,
     MagenticManagerBase,
     MagenticOrchestratorExecutor,
-    MagenticOrchestratorMessageEvent,
     MagenticPlanReviewDecision,
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
@@ -70,11 +68,7 @@ from ._magentic import (
     MagenticStartMessage,
     StandardMagenticManager,
 )
-from ._runner_context import (
-    InProcRunnerContext,
-    Message,
-    RunnerContext,
-)
+from ._runner_context import InProcRunnerContext, Message, RunnerContext
 from ._validation import (
     EdgeDuplicationError,
     GraphConnectivityError,
@@ -89,9 +83,8 @@ from ._workflow_context import WorkflowContext
 
 try:
     __version__ = importlib.metadata.version(__name__)
-except importlib.metadata.PackageNotFoundError:
-    __version__ = "0.0.0"  # Fallback for development mode
-
+except importlib.metadata.PackageNotFoundError:  # pragma: no cover
+    __version__ = "0.0.0"
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
@@ -101,7 +94,6 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentMessageEvent",
     "AgentRunEvent",
-    "AgentRunStreamingEvent",
     "AgentRunUpdateEvent",
     "CallbackEvent",
     "CallbackMode",
@@ -117,20 +109,16 @@ __all__ = [
     "FinalResultEvent",
     "FunctionExecutor",
     "GraphConnectivityError",
+    "HandoffAction",
     "HandoffBuilder",
+    "HandoffDecision",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
-    "MagenticAgentDeltaEvent",
     "MagenticAgentExecutor",
-    "MagenticAgentMessageEvent",
     "MagenticBuilder",
-    "MagenticCallbackEvent",
-    "MagenticCallbackMode",
     "MagenticContext",
-    "MagenticFinalResultEvent",
     "MagenticManagerBase",
     "MagenticOrchestratorExecutor",
-    "MagenticOrchestratorMessageEvent",
     "MagenticPlanReviewDecision",
     "MagenticPlanReviewReply",
     "MagenticPlanReviewRequest",
@@ -149,6 +137,8 @@ __all__ = [
     "StandardMagenticManager",
     "SubWorkflowRequestInfo",
     "SubWorkflowResponse",
+    "SwitchCaseEdgeGroupCase",
+    "SwitchCaseEdgeGroupDefault",
     "TypeCompatibilityError",
     "ValidationTypeEnum",
     "Workflow",
@@ -160,6 +150,7 @@ __all__ = [
     "WorkflowEvent",
     "WorkflowExecutor",
     "WorkflowRunResult",
+    "WorkflowRunResult",
     "WorkflowStartedEvent",
     "WorkflowValidationError",
     "WorkflowViz",
@@ -170,12 +161,6 @@ __all__ = [
     "validate_workflow_graph",
 ]
 
-
-# Rebuild models to resolve forward references after all imports are complete
-import contextlib
-
-with contextlib.suppress(AttributeError, TypeError, ValueError):
-    # Rebuild WorkflowExecutor to resolve Workflow forward reference
+with contextlib.suppress(AttributeError, TypeError, ValueError):  # pragma: no cover
     WorkflowExecutor.model_rebuild()
-    # Rebuild WorkflowAgent to resolve Workflow forward reference
     WorkflowAgent.model_rebuild()

@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Any, Literal, Protocol, TypeVar, Union, cast
+from typing import Annotated, Any, TypeVar, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -27,6 +27,14 @@ from agent_framework._agents import BaseAgent
 from agent_framework._pydantic import AFBaseModel
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._callback import (
+    AgentDeltaEvent,
+    AgentMessageEvent,
+    CallbackMode,
+    CallbackSink,
+    FinalResultEvent,
+    OrchestratorMessageEvent,
+)
 from ._events import WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
@@ -48,70 +56,6 @@ ORCH_MSG_KIND_TASK_LEDGER = "task_ledger"
 # Newly surfaced kinds for unified callback consumers
 ORCH_MSG_KIND_INSTRUCTION = "instruction"
 ORCH_MSG_KIND_NOTICE = "notice"
-
-# region Unified callback API (developer-facing)
-
-
-class MagenticCallbackMode(str, Enum):
-    """Controls whether agent deltas are surfaced via on_event.
-
-    STREAMING: emit AgentDeltaEvent chunks and a final AgentMessageEvent.
-    NON_STREAMING: suppress deltas and only emit AgentMessageEvent.
-    """
-
-    STREAMING = "streaming"
-    NON_STREAMING = "non_streaming"
-
-
-@dataclass
-class MagenticOrchestratorMessageEvent:
-    source: Literal["orchestrator"] = "orchestrator"
-    orchestrator_id: str = ""
-    message: ChatMessage | None = None
-    # Kind values include: user_task, task_ledger, instruction, notice
-    kind: str = ""
-
-
-@dataclass
-class MagenticAgentDeltaEvent:
-    source: Literal["agent"] = "agent"
-    agent_id: str | None = None
-    text: str | None = None
-    # Optional: function/tool streaming payloads
-    function_call_id: str | None = None
-    function_call_name: str | None = None
-    function_call_arguments: Any | None = None
-    function_result_id: str | None = None
-    function_result: Any | None = None
-    role: Role | None = None
-
-
-@dataclass
-class MagenticAgentMessageEvent:
-    source: Literal["agent"] = "agent"
-    agent_id: str = ""
-    message: ChatMessage | None = None
-
-
-@dataclass
-class MagenticFinalResultEvent:
-    source: Literal["workflow"] = "workflow"
-    message: ChatMessage | None = None
-
-
-MagenticCallbackEvent = Union[
-    MagenticOrchestratorMessageEvent,
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
-    MagenticFinalResultEvent,
-]
-
-
-class CallbackSink(Protocol):
-    async def __call__(self, event: MagenticCallbackEvent) -> None: ...
-
-
-# endregion Unified callback API
 
 # region Magentic One Prompts
 
@@ -1433,7 +1377,7 @@ class MagenticBuilder:
         self._enable_plan_review: bool = False
         # Unified callback wiring
         self._unified_callback: CallbackSink | None = None
-        self._callback_mode: MagenticCallbackMode | None = None
+        self._callback_mode: CallbackMode | None = None
 
     def participants(self, **participants: AgentProtocol | Executor) -> Self:
         """Add participants (agents) to the workflow."""
@@ -1515,9 +1459,7 @@ class MagenticBuilder:
         self._result_callback = callback
         return self
 
-    def on_event(
-        self, callback: CallbackSink, *, mode: MagenticCallbackMode = MagenticCallbackMode.NON_STREAMING
-    ) -> Self:
+    def on_event(self, callback: CallbackSink, *, mode: CallbackMode = CallbackMode.NON_STREAMING) -> Self:
         """Register a single sink for all workflow, orchestrator, and agent events.
 
         mode=STREAMING yields AgentDeltaEvent plus AgentMessageEvent at the end.
@@ -1555,21 +1497,21 @@ class MagenticBuilder:
 
             async def _on_result(msg: ChatMessage) -> None:
                 with contextlib.suppress(Exception):
-                    await unified(MagenticFinalResultEvent(message=msg))
+                    await unified(FinalResultEvent(message=msg))
                 if prior_result is not None:
                     with contextlib.suppress(Exception):
                         await prior_result(msg)
 
             async def _on_orch(orch_id: str, msg: ChatMessage, kind: str) -> None:
                 with contextlib.suppress(Exception):
-                    await unified(MagenticOrchestratorMessageEvent(orchestrator_id=orch_id, message=msg, kind=kind))
+                    await unified(OrchestratorMessageEvent(orchestrator_id=orch_id, message=msg, kind=kind))
 
             async def _on_agent_final(agent_id: str, message: ChatMessage) -> None:
                 with contextlib.suppress(Exception):
-                    await unified(MagenticAgentMessageEvent(agent_id=agent_id, message=message))
+                    await unified(AgentMessageEvent(agent_id=agent_id, message=message))
 
             async def _on_agent_delta(agent_id: str, update: AgentRunResponseUpdate, is_final: bool) -> None:
-                if mode == MagenticCallbackMode.STREAMING:
+                if mode == CallbackMode.STREAMING:
                     # TODO(evmattso): Make sure we surface other non-text streaming items
                     # (or per-type events) and plumb through consumers.
                     chunk: str | None = getattr(update, "text", None)
@@ -1580,7 +1522,7 @@ class MagenticBuilder:
                     if chunk:
                         with contextlib.suppress(Exception):
                             await unified(
-                                MagenticAgentDeltaEvent(
+                                AgentDeltaEvent(
                                     agent_id=agent_id,
                                     text=chunk,
                                     role=getattr(update, "role", None),
@@ -1592,7 +1534,7 @@ class MagenticBuilder:
                         for item in content_items:
                             if isinstance(item, FunctionCallContent):
                                 await unified(
-                                    MagenticAgentDeltaEvent(
+                                    AgentDeltaEvent(
                                         agent_id=agent_id,
                                         function_call_id=getattr(item, "call_id", None),
                                         function_call_name=getattr(item, "name", None),
@@ -1602,7 +1544,7 @@ class MagenticBuilder:
                                 )
                             elif isinstance(item, FunctionResultContent):
                                 await unified(
-                                    MagenticAgentDeltaEvent(
+                                    AgentDeltaEvent(
                                         agent_id=agent_id,
                                         function_result_id=getattr(item, "call_id", None),
                                         function_result=getattr(item, "result", None),
@@ -1615,7 +1557,7 @@ class MagenticBuilder:
             self._result_callback = _on_result
             self._message_callback = _on_orch
             self._agent_response_callback = _on_agent_final
-            self._agent_streaming_callback = _on_agent_delta if mode == MagenticCallbackMode.STREAMING else None
+            self._agent_streaming_callback = _on_agent_delta if mode == CallbackMode.STREAMING else None
 
         # Create orchestrator executor
         orchestrator_executor = MagenticOrchestratorExecutor(

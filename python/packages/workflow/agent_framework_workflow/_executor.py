@@ -769,6 +769,10 @@ class AgentExecutorRequest:
 
     messages: list[ChatMessage]
     should_respond: bool = True
+    # Optional structured output model for a single-turn typed response (e.g., JSON schema enforcement)
+    response_format_model: type[AFBaseModel] | None = None
+    # Extra keyword args to forward to the agent's run() when using response_format_model
+    response_format_kwargs: dict[str, object] | None = None
 
 
 @dataclass

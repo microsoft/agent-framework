@@ -7,16 +7,16 @@ from typing import cast
 from agent_framework import ChatAgent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework_workflow import (
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
+    AgentDeltaEvent,
+    AgentMessageEvent,
+    CallbackEvent,
+    CallbackMode,
+    FinalResultEvent,
     MagenticBuilder,
-    MagenticCallbackEvent,
-    MagenticCallbackMode,
-    MagenticFinalResultEvent,
-    MagenticOrchestratorMessageEvent,
     MagenticPlanReviewDecision,
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
+    OrchestratorMessageEvent,
     RequestInfoEvent,
     WorkflowCompletedEvent,
 )
@@ -73,11 +73,11 @@ async def main() -> None:
         logger.exception("Workflow exception", exc_info=exception)
 
     # Unified callback
-    async def on_event(event: MagenticCallbackEvent) -> None:
+    async def on_event(event: CallbackEvent) -> None:
         nonlocal last_stream_agent_id, stream_line_open
-        if isinstance(event, MagenticOrchestratorMessageEvent):
+        if isinstance(event, OrchestratorMessageEvent):
             print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-        elif isinstance(event, MagenticAgentDeltaEvent):
+        elif isinstance(event, AgentDeltaEvent):
             if last_stream_agent_id != event.agent_id or not stream_line_open:
                 if stream_line_open:
                     print()
@@ -85,7 +85,7 @@ async def main() -> None:
                 last_stream_agent_id = event.agent_id
                 stream_line_open = True
             print(event.text, end="", flush=True)
-        elif isinstance(event, MagenticAgentMessageEvent):
+        elif isinstance(event, AgentMessageEvent):
             if stream_line_open:
                 print(" (final)")
                 stream_line_open = False
@@ -94,7 +94,7 @@ async def main() -> None:
             if msg is not None:
                 response_text = (msg.text or "").replace("\n", " ")
                 print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-        elif isinstance(event, MagenticFinalResultEvent):
+        elif isinstance(event, FinalResultEvent):
             print("\n" + "=" * 50)
             print("FINAL RESULT:")
             print("=" * 50)
@@ -111,7 +111,7 @@ async def main() -> None:
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
         .on_exception(on_exception)
-        .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
+        .on_event(on_event, mode=CallbackMode.STREAMING)
         .with_standard_manager(
             chat_client=OpenAIChatClient(),
             max_round_count=10,

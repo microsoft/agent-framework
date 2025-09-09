@@ -1,8 +1,10 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, Protocol, Union
 
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 
 
 class CallbackMode(str, Enum):
@@ -36,7 +38,7 @@ class AgentDeltaEvent:
     function_call_arguments: Any | None = None
     function_result_id: str | None = None
     function_result: Any | None = None
-    role: ChatRole | None = None
+    role: Role | None = None
 
 
 @dataclass
@@ -65,12 +67,11 @@ class CallbackSink(Protocol):
 
 
 __all__ = [
-    "CallbackMode",
-    "OrchestratorMessageEvent",
     "AgentDeltaEvent",
     "AgentMessageEvent",
-    "FinalResultEvent",
     "CallbackEvent",
+    "CallbackMode",
     "CallbackSink",
+    "FinalResultEvent",
+    "OrchestratorMessageEvent",
 ]
-
