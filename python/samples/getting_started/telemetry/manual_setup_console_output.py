@@ -19,7 +19,12 @@ from opentelemetry.semconv.resource import ResourceAttributes
 from opentelemetry.trace import set_tracer_provider
 from pydantic import Field
 
-resource = Resource.create({ResourceAttributes.SERVICE_NAME: "ZeroTouchConsole"})
+"""
+This sample shows how to manually set up OpenTelemetry to log to the console.
+And this can also be used as a reference for more complex telemetry setups.
+"""
+
+resource = Resource.create({ResourceAttributes.SERVICE_NAME: "ManualSetup"})
 
 
 def setup_console_telemetry():

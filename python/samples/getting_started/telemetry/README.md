@@ -52,7 +52,7 @@ Finally, you can enable live metrics streaming to Application Insights:
 ## Samples
 This folder contains different samples demonstrating how to use telemetry in various scenarios.
 
-### [01 - zero_touch](./01-zero_touch.py):
+### [01 - zero_code](./01-zero_code.py):
 A simple example showing how to enable telemetry in a zero-touch scenario. When the above environment variables are set, telemetry will be automatically enabled, however since you do not define any overarching tracer, you will only see the spans for the specific calls to the chat client and tools.
 
 ### [02a](./02a-generic_chat_client.py) and [02b](./02b-foundry_chat_client.py) Chat Clients:
@@ -74,7 +74,7 @@ This sample shows how to setup telemetry when using the Agent Framework's workfl
     > Set `AGENT_FRAMEWORK_ENABLE_OTEL=true` to enable basic telemetry and `AGENT_FRAMEWORK_ENABLE_SENSITIVE_DATA=true` to include sensitive information like prompts and responses.
         > Sensitive information should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
     > Set `AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL=true` to enable workflow telemetry for the workflow samples.
-3. Activate your python virtual environment, and then run `python 01-zero_touch.py` or others.
+3. Activate your python virtual environment, and then run `python 01-zero_code.py` or others.
 > This will output the Operation/Trace ID, which can be used later for filtering.
 
 ## Application Insights/Azure Monitor
@@ -148,7 +148,7 @@ AGENT_FRAMEWORK_OTLP_ENDPOINT=http://localhost:4317
 Or set it as an environment variable when running your samples:
 
 ```bash
-AGENT_FRAMEWORK_ENABLE_OTEL=true AGENT_FRAMEWORK_OTLP_ENDPOINT=http://localhost:4317 python 01-zero_touch.py
+AGENT_FRAMEWORK_ENABLE_OTEL=true AGENT_FRAMEWORK_OTLP_ENDPOINT=http://localhost:4317 python 01-zero_code.py
 ```
 
 ### Viewing telemetry data
@@ -161,4 +161,4 @@ Once your sample finishes running, navigate to <http://localhost:18888> in a web
 
 You won't have to deploy an Application Insights resource or install Docker to run Aspire Dashboard if you choose to inspect telemetry data in a console. However, it is difficult to navigate through all the spans and logs produced, so **this method is only recommended when you are just getting started**.
 
-Use the guides from OpenTelemetry to setup exporters for [the console](https://opentelemetry.io/docs/languages/python/getting-started/), or use [X-manual_console.py](./X-manual_console.py) as a reference, just know that there are a lot of options you can setup and this is not a comprehensive example.
+Use the guides from OpenTelemetry to setup exporters for [the console](https://opentelemetry.io/docs/languages/python/getting-started/), or use [manual_setup_console_output](./manual_setup_console_output.py) as a reference, just know that there are a lot of options you can setup and this is not a comprehensive example.

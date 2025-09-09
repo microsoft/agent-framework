@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 
 
 """
-This is the most simple sample of using Agent Framework with telemetry.
-Since it does not create a tracer or span in the scripts code, we can let the Agent Framework SDK handle everything.
+This is the simplest sample of using the Agent Framework with telemetry.
+Since it does not create a tracer or span in the script's code, we can let the Agent Framework SDK handle everything.
 If the environment variables are set correctly,
 the SDK will automatically initialize telemetry and collect traces and logs.
 """

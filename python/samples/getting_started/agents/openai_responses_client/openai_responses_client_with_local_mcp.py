@@ -78,7 +78,7 @@ async def run_with_mcp() -> None:
 async def main() -> None:
     print("=== OpenAI Responses Client Agent with Function Tools Examples ===\n")
 
-    # await run_with_mcp()
+    await run_with_mcp()
     await streaming_with_mcp()
 
 
