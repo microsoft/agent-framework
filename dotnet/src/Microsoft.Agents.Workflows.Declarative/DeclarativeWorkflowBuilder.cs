@@ -17,6 +17,8 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// </summary>
 public static class DeclarativeWorkflowBuilder
 {
+    private const string DefaultWorkflowId = "workflow";
+
     /// <summary>
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
@@ -57,7 +59,7 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
 
-        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
+        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? DefaultWorkflowId);
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
@@ -106,7 +108,7 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
 
-        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
+        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? DefaultWorkflowId);
 
         WorkflowTypeInfo typeInfo = workflowElement.WrapWithBot().Describe();
 
