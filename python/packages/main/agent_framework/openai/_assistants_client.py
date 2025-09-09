@@ -29,6 +29,7 @@ from .._types import (
     ChatResponseUpdate,
     ChatToolMode,
     Contents,
+    DataContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
@@ -423,7 +424,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             for content in chat_message.contents:
                 if isinstance(content, TextContent):
                     message_contents.append(TextContentBlockParam(type="text", text=content.text))
-                elif isinstance(content, UriContent) and content.has_top_level_media_type("image"):
+                elif isinstance(content, (DataContent, UriContent)) and content.has_top_level_media_type("image"):
                     message_contents.append(
                         ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))
                     )

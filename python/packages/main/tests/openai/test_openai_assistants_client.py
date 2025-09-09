@@ -21,6 +21,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     ChatToolMode,
+    DataContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
@@ -829,6 +830,28 @@ def test_openai_assistants_client_create_run_options_with_image_content(mock_asy
     assert len(message["content"]) == 1
     assert message["content"][0]["type"] == "image_url"
     assert message["content"][0]["image_url"]["url"] == "https://example.com/image.jpg"
+
+
+def test_openai_assistants_client_create_run_options_with_data_content(mock_async_openai: MagicMock) -> None:
+    """Test _create_run_options with DataContent (base64 image)."""
+
+    chat_client = create_test_openai_assistants_client(mock_async_openai)
+
+    # Create message with DataContent containing a base64 encoded image
+    data_content = DataContent(data=b"fake_image_data", media_type="image/png")
+    messages = [ChatMessage(role=Role.USER, contents=[data_content])]
+
+    # Call the method
+    run_options, tool_results = chat_client._create_run_options(messages, None)  # type: ignore
+
+    # Check that DataContent was processed as image_url
+    assert "additional_messages" in run_options
+    assert len(run_options["additional_messages"]) == 1
+    message = run_options["additional_messages"][0]
+    assert message["role"] == "user"
+    assert len(message["content"]) == 1
+    assert message["content"][0]["type"] == "image_url"
+    assert message["content"][0]["image_url"]["url"] == "data:image/png;base64,ZmFrZV9pbWFnZV9kYXRh"
 
 
 def test_openai_assistants_client_convert_function_results_to_tool_output_empty(mock_async_openai: MagicMock) -> None:
