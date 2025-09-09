@@ -23,6 +23,7 @@ from agent_framework import (
     UriContent,
     ai_function,
 )
+from agent_framework import __version__ as AF_VERSION
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     RequiredFunctionToolCall,
@@ -315,9 +316,10 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
     )
 
     await chat_client._cleanup_agent_if_needed()  # type: ignore
-
     # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
+        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
     assert not chat_client._should_delete_agent  # type: ignore
 
 
@@ -358,7 +360,9 @@ async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> 
     await chat_client.close()
 
     # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
+        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
 
 
 async def test_foundry_chat_client_async_context_manager(mock_ai_project_client: MagicMock) -> None:
@@ -372,7 +376,9 @@ async def test_foundry_chat_client_async_context_manager(mock_ai_project_client:
         pass  # Just test that we can enter and exit
 
     # Verify cleanup was called on exit
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
+        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
 
 
 def test_foundry_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
@@ -599,7 +605,9 @@ async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_pro
     result = await chat_client._prepare_thread("test-thread", mock_thread_run, run_options)  # type: ignore
 
     assert result == "test-thread"
-    mock_ai_project_client.agents.runs.cancel.assert_called_once_with("test-thread", "run_123")
+    mock_ai_project_client.agents.runs.cancel.assert_called_once_with(
+        "test-thread", "run_123", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
 
 
 def test_foundry_chat_client_create_function_call_contents_basic(mock_ai_project_client: MagicMock) -> None:
