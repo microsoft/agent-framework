@@ -213,10 +213,8 @@ def _enhance_schema_with_function_signature(executor: Any, input_type: Any, base
                 # Create property schema for this parameter
                 param_schema = dict(base_schema)  # Copy the base schema
                 
-                # Add description if available from docstring or annotation
-                if hasattr(param, 'description'):
-                    param_schema['description'] = param.description
-                elif handler_func.__doc__:
+                # Add description if available from docstring
+                if handler_func.__doc__:
                     # Try to extract parameter description from docstring
                     # This is a simple heuristic - could be enhanced with proper docstring parsing
                     doc_lines = handler_func.__doc__.strip().split('\n')

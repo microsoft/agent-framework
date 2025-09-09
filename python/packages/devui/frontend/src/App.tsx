@@ -19,6 +19,7 @@ import type {
   ChatMessage,
   AppState,
   ChatState,
+  RunAgentRequest,
 } from "@/types";
 import type { AgentRunResponseUpdate } from "@/types/agent-framework";
 import {
@@ -39,7 +40,7 @@ interface FunctionCallAccumulator {
 // Helper to extract text content from AgentRunResponseUpdate with proper function call accumulation
 function extractMessageContent(
   update: AgentRunResponseUpdate,
-  functionCallAccumulator: React.MutableRefObject<FunctionCallAccumulator>
+  functionCallAccumulator: { current: FunctionCallAccumulator }
 ): string {
   if (!update) return "";
 
@@ -119,6 +120,38 @@ function extractMessageContent(
 
   const result = textParts.join("\n");
   return result;
+}
+
+// Helper to update rich message contents by accumulating text chunks
+function updateRichMessageContents(
+  existingContents: ChatMessage["contents"], 
+  newChunk: string
+): ChatMessage["contents"] {
+  if (!newChunk) return existingContents;
+
+  const updatedContents = [...existingContents];
+  
+  // Find existing text content to accumulate into
+  const textContentIndex = updatedContents.findIndex(content => content.type === "text");
+  
+  if (textContentIndex >= 0) {
+    // Update existing text content
+    const existingTextContent = updatedContents[textContentIndex];
+    if (existingTextContent.type === "text") {
+      updatedContents[textContentIndex] = {
+        ...existingTextContent,
+        text: (existingTextContent.text || "") + newChunk,
+      };
+    }
+  } else {
+    // Add new text content
+    updatedContents.push({
+      type: "text",
+      text: newChunk,
+    } as import("@/types/agent-framework").TextContent);
+  }
+  
+  return updatedContents;
 }
 
 export default function App() {
@@ -285,11 +318,14 @@ export default function App() {
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
         role: "user",
-        content: `Workflow Input:\n\`\`\`json\n${JSON.stringify(
-          inputData,
-          null,
-          2
-        )}\n\`\`\``,
+        contents: [{
+          type: "text",
+          text: `Workflow Input:\n\`\`\`json\n${JSON.stringify(
+            inputData,
+            null,
+            2
+          )}\n\`\`\``,
+        }],
         timestamp: new Date().toISOString(),
       };
 
@@ -304,7 +340,7 @@ export default function App() {
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        content: "",
+        contents: [],
         timestamp: new Date().toISOString(),
         streaming: true,
       };
@@ -350,7 +386,7 @@ export default function App() {
                 ...prev,
                 messages: prev.messages.map((msg) =>
                   msg.id === assistantMessage.id
-                    ? { ...msg, content: msg.content + contentUpdate + "\n" }
+                    ? { ...msg, contents: updateRichMessageContents(msg.contents, contentUpdate + "\n") }
                     : msg
                 ),
               }));
@@ -413,14 +449,27 @@ export default function App() {
 
   // Handle message sending (for agents)
   const handleSendMessage = useCallback(
-    async (message: string) => {
+    async (messages: RunAgentRequest["messages"]) => {
       if (!appState.selectedAgent) return;
 
-      // Add user message
+
+      // Convert to ChatMessage format for UI state
+      let userMessageContents: import("@/types/agent-framework").Contents[];
+      if (typeof messages === "string") {
+        userMessageContents = [{
+          type: "text",
+          text: messages,
+        } as import("@/types/agent-framework").TextContent];
+      } else {
+        // Cast the contents to the proper Contents type
+        userMessageContents = messages.flatMap(msg => msg.contents) as import("@/types/agent-framework").Contents[];
+      }
+
+      // Add user message to UI state
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
         role: "user",
-        content: message,
+        contents: userMessageContents,
         timestamp: new Date().toISOString(),
       };
 
@@ -435,7 +484,7 @@ export default function App() {
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        content: "",
+        contents: [],
         timestamp: new Date().toISOString(),
         streaming: true,
       };
@@ -447,7 +496,7 @@ export default function App() {
 
       try {
         const request = {
-          message,
+          messages, // Use the correct field name!
           thread_id:
             chatState.messages.length > 0
               ? appState.currentThread?.id
@@ -504,7 +553,7 @@ export default function App() {
                   msg.id === assistantMessage.id
                     ? {
                         ...msg,
-                        content: msg.content + newChunk, // Accumulate chunks
+                        contents: updateRichMessageContents(msg.contents, newChunk),
                       }
                     : msg
                 ),

@@ -33,6 +33,7 @@ from .registry import AgentRegistry
 from .sessions import SessionManager
 from .tracing import TracingManager
 from .execution import ExecutionEngine
+from .utils.messages import frontend_messages_to_chat_messages
 
 logger = logging.getLogger(__name__)
 
@@ -271,13 +272,20 @@ class AgentFrameworkDebugServer:
                     thread_id = self._get_thread_id(thread)
                     self.session_manager.create_session(agent_id, thread_id, thread)
                 
+                # Convert frontend messages to Agent Framework format
+                try:
+                    converted_messages = frontend_messages_to_chat_messages(request.messages)
+                except Exception as e:
+                    logger.error(f"Error converting messages: {e}")
+                    raise HTTPException(status_code=400, detail=f"Invalid message format: {str(e)}")
+                
                 # Execute agent using framework's native method
-                result = await agent_obj.run(request.message, thread=thread)
+                result = await agent_obj.run(converted_messages, thread=thread)
                 
                 # Store result in session
                 thread_id = self._get_thread_id(thread)
                 self.session_manager.add_message(thread_id, {
-                    "user_message": request.message,
+                    "user_messages": request.messages,  # Store original frontend format
                     "agent_response": [msg.model_dump() if hasattr(msg, 'model_dump') else str(msg) 
                                      for msg in result.messages],
                     "timestamp": datetime.now().isoformat()
@@ -354,10 +362,23 @@ class AgentFrameworkDebugServer:
                     else:
                         thread_id = self._get_thread_id(thread)
                     
+                    # Convert frontend messages to Agent Framework format
+                    try:
+                        converted_messages = frontend_messages_to_chat_messages(request.messages)
+                    except Exception as e:
+                        logger.error(f"Error converting messages: {e}")
+                        error_event = DebugStreamEvent(
+                            type="error",
+                            error=f"Invalid message format: {str(e)}",
+                            timestamp=datetime.now().isoformat()
+                        )
+                        yield f"data: {error_event.model_dump_json()}\n\n"
+                        return
+                    
                     # Execute with streaming
                     async for event in self.execution_engine.execute_agent_streaming(
                         agent=agent_obj,
-                        message=request.message, 
+                        message=converted_messages, 
                         thread=thread,
                         thread_id=thread_id,  # Pass thread_id to execution engine
                         capture_traces=request.options.get('capture_traces', True) if request.options else True,

@@ -5,7 +5,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, Optional, TYPE_CHECKING, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread
@@ -13,6 +13,27 @@ if TYPE_CHECKING:
     from .tracing import TracingManager
 
 from .models import DebugStreamEvent
+
+
+def _format_message_for_telemetry(message) -> str:
+    """Format message for telemetry attributes (OpenTelemetry requires primitive types)."""
+    if isinstance(message, str):
+        return message[:100] + "..." if len(message) > 100 else message
+    elif hasattr(message, 'text'):  # ChatMessage or similar
+        text = message.text
+        return text[:100] + "..." if len(text) > 100 else text
+    elif isinstance(message, list):
+        # Handle list of ChatMessage objects
+        texts = []
+        for msg in message:
+            if hasattr(msg, 'text'):
+                texts.append(msg.text)
+            else:
+                texts.append(str(msg))
+        combined = " ".join(texts)
+        return combined[:100] + "..." if len(combined) > 100 else combined
+    else:
+        return str(message)[:100] + "..." if len(str(message)) > 100 else str(message)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +51,7 @@ class ExecutionEngine:
     async def execute_agent_streaming(
         self, 
         agent: 'AgentProtocol', 
-        message: str,
+        message: Union[str, List[Any]],
         thread: Optional['AgentThread'] = None,
         thread_id: Optional[str] = None,
         capture_traces: bool = True,
@@ -72,7 +93,7 @@ class ExecutionEngine:
                         attributes={
                             "thread_id": thread_id,
                             "agent_name": getattr(agent, 'name', 'unknown'),
-                            "message": message[:100] + "..." if len(message) > 100 else message
+                            "message": _format_message_for_telemetry(message)
                         }
                     ) as span:
                         span.set_attribute("devui.session_id", thread_id)

@@ -74,7 +74,12 @@ export interface SessionInfo {
 }
 
 export interface RunAgentRequest {
-  message: string;
+  messages: string | Array<{
+    role: "user" | "assistant" | "system" | "tool";
+    contents: import("./agent-framework").Contents[];
+    author_name?: string;
+    message_id?: string;
+  }>;
   thread_id?: string;
   options?: Record<string, unknown>;
 }
@@ -96,13 +101,15 @@ export interface HealthResponse {
   version: string;
 }
 
-// Chat message types for UI
+// Chat message types matching Agent Framework
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
-  content: string;
+  role: "user" | "assistant" | "system" | "tool";
+  contents: import("./agent-framework").Contents[];
   timestamp: string;
   streaming?: boolean;
+  author_name?: string;
+  message_id?: string;
 }
 
 // UI State types

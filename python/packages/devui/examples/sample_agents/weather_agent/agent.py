@@ -41,7 +41,7 @@ agent = ChatAgent(
     weather information when asked.
     """,
     chat_client=OpenAIChatClient(
-        ai_model_id=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini") 
+        ai_model_id=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4o") 
     ),
     tools=[get_weather, get_forecast]
 )

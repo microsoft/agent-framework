@@ -5,6 +5,7 @@ import type {
   WorkflowInfo,
   ChatMessage,
   DebugStreamEvent,
+  RunAgentRequest,
 } from "@/types";
 
 interface ChatRouterProps {
@@ -13,7 +14,7 @@ interface ChatRouterProps {
   workflowLoading?: boolean;
   messages: ChatMessage[];
   debugEvents: DebugStreamEvent[];
-  onSendMessage: (message: string) => void;
+  onSendMessage: (request: RunAgentRequest["messages"]) => void;
   onSendWorkflowData?: (inputData: Record<string, unknown>) => void;
   isStreaming: boolean;
 }

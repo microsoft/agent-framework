@@ -1,20 +1,23 @@
 /**
- * ChatPanel - Clean conversation interface with streaming support
- * Features: Real-time message updates, typing indicators, auto-scroll
+ * ChatPanel - Rich conversation interface with attachment support
+ * Features: File uploads, rich message rendering, streaming support
  */
 
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { FileUpload } from "@/components/ui/file-upload";
+import { AttachmentGallery, type AttachmentItem } from "@/components/ui/attachment-gallery";
+import { MessageRenderer } from "@/components/message_renderer";
 import { Send, User, Bot, Workflow } from "lucide-react";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import type { AgentInfo, WorkflowInfo, ChatMessage } from "@/types";
+import type { AgentInfo, WorkflowInfo, ChatMessage, RunAgentRequest } from "@/types";
 
 interface ChatPanelProps {
   selectedItem?: AgentInfo | WorkflowInfo;
   messages: ChatMessage[];
-  onSendMessage: (message: string) => void;
+  onSendMessage: (request: RunAgentRequest["messages"]) => void;
   isStreaming?: boolean;
 }
 
@@ -47,12 +50,10 @@ function MessageBubble({ message, agentType }: MessageBubbleProps) {
             isUser ? "bg-primary text-primary-foreground" : "bg-muted"
           }`}
         >
-          <div className="whitespace-pre-wrap break-words">
-            {message.content}
-            {message.streaming && (
-              <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current" />
-            )}
-          </div>
+          <MessageRenderer
+            contents={message.contents}
+            isStreaming={message.streaming}
+          />
         </div>
 
         <div className="text-xs text-muted-foreground font-mono">
@@ -90,6 +91,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [inputValue, setInputValue] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -98,24 +100,102 @@ export function ChatPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isStreaming]);
 
+  // Handle file uploads
+  const handleFilesSelected = async (files: File[]) => {
+    const newAttachments: AttachmentItem[] = [];
+
+    for (const file of files) {
+      const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const type = getFileType(file);
+      
+      let preview: string | undefined;
+      if (type === "image") {
+        preview = await readFileAsDataURL(file);
+      }
+
+      newAttachments.push({
+        id,
+        file,
+        preview,
+        type,
+      });
+    }
+
+    setAttachments((prev) => [...prev, ...newAttachments]);
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((att) => att.id !== id));
+  };
+
+  // Helper functions
+  const getFileType = (file: File): AttachmentItem["type"] => {
+    if (file.type.startsWith("image/")) return "image";
+    if (file.type === "application/pdf") return "pdf";
+    return "other";
+  };
+
+  const readFileAsDataURL = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!inputValue.trim() || isSubmitting || !selectedItem) return;
+    if ((!inputValue.trim() && attachments.length === 0) || isSubmitting || !selectedItem) return;
 
     setIsSubmitting(true);
-    const message = inputValue.trim();
+    const messageText = inputValue.trim();
     setInputValue("");
 
     try {
-      onSendMessage(message);
+      // Create rich message format
+      if (attachments.length > 0 || messageText) {
+        const contents: import("@/types/agent-framework").Contents[] = [];
+
+        // Add text content if present
+        if (messageText) {
+          contents.push({
+            type: "text",
+            text: messageText,
+          } as import("@/types/agent-framework").TextContent);
+        }
+
+        // Add attachments as data content
+        for (const attachment of attachments) {
+          const dataUri = await readFileAsDataURL(attachment.file);
+          contents.push({
+            type: "data",
+            data: dataUri,
+            mime_type: attachment.file.type,
+          } as import("@/types/agent-framework").DataContent);
+        }
+
+        const richMessage = [{
+          role: "user" as const,
+          contents,
+        }];
+
+        onSendMessage(richMessage);
+      } else {
+        // Simple string message for backward compatibility
+        onSendMessage(messageText);
+      }
+
+      // Clear attachments after sending
+      setAttachments([]);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const canSendMessage =
-    selectedItem && !isSubmitting && !isStreaming && inputValue.trim();
+    selectedItem && !isSubmitting && !isStreaming && (inputValue.trim() || attachments.length > 0);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
@@ -171,29 +251,46 @@ export function ChatPanel({
       </ScrollArea>
 
       {/* Input */}
-      <div className="border-t p-4 flex-shrink-0">
+      <div className="border-t flex-shrink-0">
         {selectedItem ? (
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <Input
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder={`Message ${selectedItem.name || selectedItem.id}...`}
-              disabled={isSubmitting || isStreaming}
-              className="flex-1"
-            />
-            <Button
-              type="submit"
-              size="icon"
-              disabled={!canSendMessage}
-              className="shrink-0"
-            >
-              {isSubmitting ? (
-                <LoadingSpinner size="sm" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </Button>
-          </form>
+          <div className="p-4">
+            {/* Attachment gallery */}
+            {attachments.length > 0 && (
+              <div className="mb-3">
+                <AttachmentGallery
+                  attachments={attachments}
+                  onRemoveAttachment={handleRemoveAttachment}
+                />
+              </div>
+            )}
+
+            {/* Input form */}
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              <Input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={`Message ${selectedItem.name || selectedItem.id}...`}
+                disabled={isSubmitting || isStreaming}
+                className="flex-1"
+              />
+              <FileUpload
+                onFilesSelected={handleFilesSelected}
+                disabled={isSubmitting || isStreaming}
+              />
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!canSendMessage}
+                className="shrink-0"
+              >
+                {isSubmitting ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </form>
+          </div>
         ) : (
           <div className="text-center text-muted-foreground text-sm py-2">
             Select an agent or workflow from the dropdown to begin

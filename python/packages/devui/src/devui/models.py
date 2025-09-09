@@ -54,8 +54,11 @@ class WorkflowInfo(BaseModel):
     start_executor_id: str
 
 class RunAgentRequest(BaseModel):
-    """Request to execute an agent."""
-    message: str
+    """Request to execute an agent.
+    
+    Supports both simple string messages and rich message arrays with attachments.
+    """
+    messages: Union[str, List[Dict[str, Any]]]
     thread_id: Optional[str] = None
     options: Optional[Dict[str, Any]] = None
 
