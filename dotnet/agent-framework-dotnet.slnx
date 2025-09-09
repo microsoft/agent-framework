@@ -25,6 +25,8 @@
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundry/Agent_With_AzureFoundry.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
@@ -43,6 +45,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
+    <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Telemetry/">
