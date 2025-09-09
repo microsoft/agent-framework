@@ -16,25 +16,30 @@ internal partial class ProviderTemplate
         this.Executors = executors;
         this.Instances = instances;
         this.Edges = edges;
-        this.RootInstanceVariable = workflowId.FormatName();
         this.RootExecutorType = workflowId.FormatType();
     }
 
     public string? Namespace { get; init; }
-    public string RootInstanceVariable { get; }
+    public string? Prefix { get; init; }
+
     public string RootExecutorType { get; }
 
     public IEnumerable<string> Executors { get; }
     public IEnumerable<string> Instances { get; }
     public IEnumerable<string> Edges { get; }
 
-    public static IEnumerable<string> ByLine(IEnumerable<string> templates)
+    public static IEnumerable<string> ByLine(IEnumerable<string> templates, bool formatGroup = false)
     {
         foreach (string template in templates)
         {
             foreach (string line in template.ByLine())
             {
                 yield return line;
+            }
+
+            if (formatGroup)
+            {
+                yield return string.Empty;
             }
         }
     }

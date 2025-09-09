@@ -43,11 +43,11 @@ internal static class StringExtensions
         return string.Concat(words);
     }
 
-    public static IEnumerable<string> ByLine(this string template)
+    public static IEnumerable<string> ByLine(this string source)
     {
-        foreach (string line in template.Trim().Split('\n'))
+        foreach (string line in source.Trim().Split('\n'))
         {
-            yield return line.Trim();
+            yield return line.TrimEnd();
         }
     }
 }

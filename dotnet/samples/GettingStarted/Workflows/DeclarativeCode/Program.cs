@@ -42,7 +42,7 @@ internal sealed class Program
             };
 
         // Use the generated provider to create a workflow instance.
-        Workflow<string> workflow = WorkflowProvider.CreateWorkflow<string>(options);
+        Workflow<string> workflow = SampleWorkflowProvider.CreateWorkflow<string>(options);
 
         Notify("\nWORKFLOW: Starting...");
 

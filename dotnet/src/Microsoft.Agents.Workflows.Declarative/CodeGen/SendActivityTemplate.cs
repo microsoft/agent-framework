@@ -27,24 +27,27 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         /// </summary>
         public virtual string TransformText()
         {
+            this.Write("\n");
+            this.Write("\n");
+            this.Write("\n");
             this.Write("\ninternal sealed class ");
             
-            #line 4 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
             this.Write("Executor() : ActionExecutor(id: \"");
             
-            #line 4 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write("\")\r\n{\r\n    protected override async ValueTask ExecuteAsync(IWorkflowContext conte" +
-                    "xt, CancellationToken cancellationToken)\r\n    { ");
+            this.Write("\")\n{\n    protected override async ValueTask ExecuteAsync(IWorkflowContext context" +
+                    ", CancellationToken cancellationToken)\n    { ");
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
 
 if (this.Model.Activity is MessageActivityTemplate messageActivity)
 { 
@@ -53,7 +56,7 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
             #line hidden
             this.Write("\n        string activityText = \n            await context.FormatTemplateAsync( ");
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
 
     foreach (TemplateLine line in messageActivity.Text)
     {  
@@ -62,7 +65,7 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
             #line hidden
             this.Write("\n                \"\"\"");
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
 
         foreach (string text in line.ToTemplateString().ByLine())
         { 
@@ -71,13 +74,13 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
             #line hidden
             this.Write("\n                ");
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(text));
             
             #line default
             #line hidden
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
 
         } 
             
@@ -85,7 +88,7 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
             #line hidden
             this.Write("\n                \"\"\"");
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
 
     } 
      
@@ -94,15 +97,15 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
             #line hidden
             this.Write("\n            );\n        AgentRunResponse response = new([new ChatMessage(ChatRole" +
                     ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRunRes" +
-                    "ponseEvent(this.Id, response)).ConfigureAwait(false);\n");
+                    "ponseEvent(this.Id, response)).ConfigureAwait(false);");
             
-            #line 7 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
 
 } 
             
             #line default
             #line hidden
-            this.Write("\n    }\r\n}");
+            this.Write("\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
     }

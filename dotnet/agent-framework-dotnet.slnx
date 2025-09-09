@@ -61,6 +61,8 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/">
     <Project Path="samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/DeclarativeCode/DeclarativeCode.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/DeclarativeEject/DeclarativeEject.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
     <File Path="../workflows/DeepResearch.yaml" />

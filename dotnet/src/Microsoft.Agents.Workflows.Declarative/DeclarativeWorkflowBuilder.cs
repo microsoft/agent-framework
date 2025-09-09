@@ -78,25 +78,29 @@ public static class DeclarativeWorkflowBuilder
     /// Generates source code (provider/executor scaffolding) for the workflow defined in the YAML file.
     /// </summary>
     /// <param name="workflowFile">The path to the workflow YAML file.</param>
-    /// <param name="namespace">Optional target namespace for the generated code.</param>
+    /// <param name="workflowNamespace">Optional target namespace for the generated code.</param>
+    /// <param name="workflowPrefix">Optional prefix for generated workflow type.</param>
     /// <returns>The generated source code representing the workflow.</returns>
     public static string Eject(
         string workflowFile,
-        string? @namespace = null)
+        string? workflowNamespace = null,
+        string? workflowPrefix = null)
     {
         using StreamReader yamlReader = File.OpenText(workflowFile);
-        return Eject(yamlReader, @namespace);
+        return Eject(yamlReader, workflowNamespace, workflowPrefix);
     }
 
     /// <summary>
     /// Generates source code (provider/executor scaffolding) for the workflow defined in the provided YAML reader.
     /// </summary>
     /// <param name="yamlReader">The reader supplying the workflow YAML.</param>
-    /// <param name="namespace">Optional target namespace for the generated code.</param>
+    /// <param name="workflowNamespace">Optional target namespace for the generated code.</param>
+    /// <param name="workflowPrefix">Optional prefix for generated workflow type.</param>
     /// <returns>The generated source code representing the workflow.</returns>
     public static string Eject(
         TextReader yamlReader,
-        string? @namespace = null)
+        string? workflowNamespace = null,
+        string? workflowPrefix = null)
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Workflow undefined.");
 
@@ -115,9 +119,10 @@ public static class DeclarativeWorkflowBuilder
         walker.Visit(rootElement);
 
         ProviderTemplate template =
-            new(rootId, visitor.Executors, visitor.Instances, visitor.Edges)
+            new(visitor.Executors, visitor.Instances, visitor.Edges)
             {
-                Namespace = @namespace
+                Namespace = workflowNamespace,
+                Prefix = workflowPrefix,
             };
 
         return template.TransformText();

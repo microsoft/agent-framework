@@ -22,14 +22,16 @@ using Microsoft.Extensions.AI.Agents;
 if (this.Namespace is not null) 
 {#>
 namespace <#= this.Namespace #>;
-<#} 
-foreach (string executor in this.Executors)
-{ #>
-<#= executor.Trim() #>
 <#
-}#>
-public static class WorkflowProvider
-{
+}
+#>
+public static class <#= this.Prefix ?? string.Empty #>WorkflowProvider
+{<#
+foreach (string executor in ByLine(this.Executors, formatGroup: true))
+{ #>
+    <#= executor #><#
+}
+#>
     public static Workflow<TInput> CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
@@ -37,15 +39,14 @@ public static class WorkflowProvider
     {
         // Create executor instances
         inputTransform ??= message => DeclarativeWorkflowBuilder.DefaultTransform(message);
-        <#= this.RootExecutorType #>Executor<TInput> <#= this.RootInstanceVariable #> = new(inputTransform, options.Configuration);<#
+        <#= this.RootExecutorType #>Executor<TInput> root = new(inputTransform, options.Configuration);<#
 foreach (string instance in ByLine(this.Instances))
 { #>
         <#= instance #><#
-}
- #>
+}#>
 
         // Define the workflow builder
-        WorkflowBuilder builder = new(<#= this.RootInstanceVariable #>);
+        WorkflowBuilder builder = new(root);
 
         // Connect executors<#
 foreach (string edge in ByLine(this.Edges))

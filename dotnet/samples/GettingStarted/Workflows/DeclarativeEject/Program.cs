@@ -4,7 +4,6 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative;
 
 namespace Demo.DeclarativeEject;
@@ -20,13 +19,13 @@ namespace Demo.DeclarativeEject;
 /// </remarks>
 internal sealed class Program
 {
-    public static async Task Main(string[] args)
+    public static void Main(string[] args)
     {
         Program program = new(args);
-        await program.ExecuteAsync();
+        program.Execute();
     }
 
-    private async Task ExecuteAsync()
+    private void Execute()
     {
         // Read and parse the declarative workflow.
         Notify($"WORKFLOW: Parsing {Path.GetFullPath(this.WorkflowFile)}");
@@ -34,7 +33,7 @@ internal sealed class Program
         Stopwatch timer = Stopwatch.StartNew();
 
         // Use DeclarativeWorkflowBuilder to generate code based on a YAML file.
-        string code = DeclarativeWorkflowBuilder.Eject(this.WorkflowFile, "Demo.DeclarativeCode");
+        string code = DeclarativeWorkflowBuilder.Eject(this.WorkflowFile, workflowNamespace: "Demo.DeclarativeCode", workflowPrefix: "Sample");
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}\n");
 
