@@ -223,7 +223,7 @@ class HostedMCPSpecificApproval(TypedDict, total=False):
     never_require_approval: Collection[str] | None
 
 
-class HostedMCPTool(AIToolBase):
+class HostedMCPTool(BaseTool):
     """Represents a MCP tool that is managed and executed by the service."""
 
     url: AnyUrl

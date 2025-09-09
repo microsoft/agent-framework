@@ -533,7 +533,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         """Parse a chat message into the openai format."""
         all_messages: list[dict[str, Any]] = []
         args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, ChatRole) else message.role,
+            "role": message.role.value if isinstance(message.role, Role) else message.role,
         }
         if message.additional_properties:
             args["metadata"] = message.additional_properties
@@ -600,7 +600,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 }
             case TextContent():
                 return {
-                    "type": "output_text" if role == ChatRole.ASSISTANT else "input_text",
+                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
                     "text": content.text,
                 }
             # TODO(peterychang): We'll probably need to specialize the other content types as well
@@ -724,6 +724,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     additional_properties=additional_properties,
                                 )
                             )
+                    else:
+                        contents.append(
+                            TextReasoningContent(
+                                text="",
+                                raw_representation=item,
+                            )
+                        )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     if item.outputs:
                         for code_output in item.outputs:
@@ -751,8 +758,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             raw_representation=item,
                         )
                     )
-                case "mcp_list_tools":  # ResponseOutputMcpListTools
-                    logger.debug("MCP List Tools not supported in Responses API: %s", item.tools)
                 case "mcp_approval_request":  # ResponseOutputMcpApprovalRequest
                     contents.append(
                         FunctionApprovalRequestContent(

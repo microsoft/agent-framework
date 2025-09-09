@@ -394,16 +394,14 @@ class BaseChatClient(AFBaseModel, ABC):
 
     @staticmethod
     def _normalize_tools(
-        tools: AITool
-        | list[AITool]
-        | Callable[..., Any]
-        | list[Callable[..., Any]]
+        tools: ToolProtocol
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | Callable[..., Any]
+        | list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]]
         | None = None,
-    ) -> list[AITool | dict[str, Any] | Callable[..., Any]]:
+    ) -> list[ToolProtocol | dict[str, Any] | Callable[..., Any]]:
         """Normalize the tools input to a list of tools."""
-        final_tools: list[AITool | dict[str, Any] | Callable[..., Any]] = []
+        final_tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] = []
         if not tools:
             return final_tools
         for tool in tools if isinstance(tools, list) else [tools]:  # type: ignore[reportUnknownType]

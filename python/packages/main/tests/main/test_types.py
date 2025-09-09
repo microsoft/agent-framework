@@ -392,7 +392,7 @@ def test_function_approval_request_and_response_creation():
     assert req.type == "function_approval_request"
     assert req.function_call == fc
     assert req.id == "req-1"
-    assert isinstance(req, AIContent)
+    assert isinstance(req, BaseContent)
 
     resp = req.create_response(True)
 
@@ -411,7 +411,7 @@ def test_function_approval_serialization_roundtrip():
     assert loaded == req
 
     class TestModel(BaseModel):
-        content: AIContents
+        content: Contents
 
     test_item = TestModel.model_validate({"content": dumped})
     assert isinstance(test_item.content, FunctionApprovalRequestContent)

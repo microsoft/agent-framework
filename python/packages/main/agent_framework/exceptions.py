@@ -12,14 +12,15 @@ class AgentFrameworkException(Exception):
     Automatically logs the message as debug.
     """
 
-    def __init__(self, message: str, inner_exception: Exception | None = None, *args: Any, **kwargs: Any):
+    def __init__(self, message: str, inner_exception: Exception | None = None, *args: Any):
         """Create an AgentFrameworkException.
 
         This emits a debug log, with the inner_exception if provided.
         """
         logger.debug(message, exc_info=inner_exception)
-        kwargs["inner_exception"] = inner_exception
-        super().__init__(message, *args, **kwargs)  # type: ignore
+        if inner_exception:
+            super().__init__(message, inner_exception, *args)  # type: ignore
+        super().__init__(message, *args)  # type: ignore
 
 
 class AgentException(AgentFrameworkException):
