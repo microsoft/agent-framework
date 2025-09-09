@@ -201,11 +201,14 @@ async def main():
     )
 
     # Read ambiguous email if available. Otherwise use a simple inline sample.
-    resources_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "resources", "ambiguous_email.txt")
+    resources_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "resources", "ambiguous_email.txt"
+    )
     if os.path.exists(resources_path):
         with open(resources_path, encoding="utf-8") as f:  # noqa: ASYNC230
             email = f.read()
     else:
+        print("Unable to find resource file, using default text.")
         email = (
             "Hey there, I noticed you might be interested in our latest offer—no pressure, but it expires soon. "
             "Let me know if you'd like more details."

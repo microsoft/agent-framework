@@ -13,7 +13,7 @@ internal static class Step5EntryPoint
 {
     private static CheckpointManager CheckpointManager { get; } = new();
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, bool rehydrateToRestore = false)
     {
         Workflow<NumberSignal, string> workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
         Checkpointed<StreamingRun<string>> checkpointed =
@@ -30,7 +30,19 @@ internal static class Step5EntryPoint
         checkpoints.Should().HaveCount(6, "we should have two checkpoints, one for each step");
         judge.Tries.Should().Be(2);
 
-        await checkpointed.RestoreCheckpointAsync(checkpoints[2], CancellationToken.None).ConfigureAwait(false);
+        CheckpointInfo targetCheckpoint = checkpoints[2];
+
+        if (rehydrateToRestore)
+        {
+            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, CheckpointManager, CancellationToken.None)
+                                                   .ConfigureAwait(false);
+            handle = checkpointed.Run;
+        }
+        else
+        {
+            await checkpointed.RestoreCheckpointAsync(checkpoints[2], CancellationToken.None).ConfigureAwait(false);
+        }
+
         judge.Tries.Should().Be(1);
 
         cancellationSource.Dispose();
