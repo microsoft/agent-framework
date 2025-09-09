@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 /// </summary>
 internal static class ChatMessageExtensions
 {
-    public static Message ToA2AMessage(this IReadOnlyCollection<ChatMessage> messages)
+    internal static Message ToA2AMessage(this IReadOnlyCollection<ChatMessage> messages)
     {
         List<Part> allParts = [];
 

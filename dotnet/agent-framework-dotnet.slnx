@@ -7,6 +7,11 @@
   <Folder Name="/Samples/">
     <File Path="samples/README.md" />
   </Folder>
+  <Folder Name="/Samples/A2AClientServer/">
+    <File Path="samples/A2AClientServer/README.md" />
+    <Project Path="samples/A2AClientServer/A2AClient/A2AClient.csproj" />
+    <Project Path="samples/A2AClientServer/A2AServer/A2AServer.csproj" />
+  </Folder>
   <Folder Name="/Samples/AgentWebChat/">
     <Project Path="samples/AgentWebChat/AgentWebChat.AgentHost/AgentWebChat.AgentHost.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.AppHost/AgentWebChat.AppHost.csproj" />
