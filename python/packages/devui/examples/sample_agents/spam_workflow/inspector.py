@@ -21,8 +21,7 @@ from devui.execution import ExecutionEngine
 from devui.models import DebugStreamEvent
 
 # Import the sample workflows
-from workflow import workflow as simple_workflow
-from complex_workflow import complex_workflow
+from workflow import workflow as simple_workflow 
 
 
 class WorkflowInspector:
@@ -240,9 +239,8 @@ async def main():
     workflows_to_test = []
     if workflow_type in ["simple", "both"]:
         workflows_to_test.append((simple_workflow, "simple_workflow"))
-    if workflow_type in ["complex", "both"]:
-        workflows_to_test.append((complex_workflow, "complex_workflow"))
-    
+   
+
     # Run tests for each workflow and test case
     script_dir = Path(__file__).parent
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
