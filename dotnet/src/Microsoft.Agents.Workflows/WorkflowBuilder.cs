@@ -2,7 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -205,6 +208,32 @@ public class WorkflowBuilder
         return this;
     }
 
+    [SuppressMessage("Reliability", "CA2008:Do not create tasks without passing a TaskScheduler",
+     Justification = "We explicitly set the TaskScheduler when we create the TaskFactory")]
+    [SuppressMessage("Usage", "VSTHRD002:Avoid problematic synchronous waits",
+     Justification = "This runs the thread on the thread pool")]
+    private static TResult RunSync<TResult>(Func<ValueTask<TResult>> funcAsync)
+    {
+        TaskFactory factory = new(CancellationToken.None, TaskCreationOptions.None, TaskContinuationOptions.None, TaskScheduler.Default);
+
+        // See ASP.Net.Identity's implementation of AsyncHelper
+        // https://github.com/aspnet/AspNetIdentity/blob/main/src/Microsoft.AspNet.Identity.Core/AsyncHelper.cs
+
+        // Capture the current culture and UI culture
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        var uiCulture = System.Globalization.CultureInfo.CurrentUICulture;
+
+        return factory.StartNew(PropagateCultureAndInvoke).Unwrap().GetAwaiter().GetResult();
+
+        Task<TResult> PropagateCultureAndInvoke()
+        {
+            // Set the culture and UI culture to the captured values
+            System.Globalization.CultureInfo.CurrentCulture = culture;
+            System.Globalization.CultureInfo.CurrentUICulture = uiCulture;
+            return funcAsync().AsTask();
+        }
+    }
+
     /// <summary>
     /// Builds and returns a workflow instance configured to process messages of the specified input type.
     /// </summary>
@@ -228,9 +257,7 @@ public class WorkflowBuilder
             throw new InvalidOperationException($"Start executor with ID '{this._startExecutorId}' is not bound.");
         }
 
-        // TODO: Delay-instantiate the start executor, and ensure it take input of type T
-        Executor startExecutor = startRegistration.Provider();
-
+        Executor startExecutor = RunSync(startRegistration.CreateInstanceAsync);
         if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(T))))
         {
             // We have no handlers for the input type T, which means the built workflow will not be able to

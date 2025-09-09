@@ -16,8 +16,8 @@ public class ReflectingExecutor<
     ] TExecutor
     > : Executor where TExecutor : ReflectingExecutor<TExecutor>
 {
-    /// <inheritdoc cref="Executor.Executor(string?)"/>
-    protected ReflectingExecutor(string? id = null) : base(id)
+    /// <inheritdoc cref="Executor.Executor(string?, ExecutorOptions?)"/>
+    protected ReflectingExecutor(string? id = null, ExecutorOptions? options = null) : base(id, options)
     { }
 
     /// <inheritdoc />

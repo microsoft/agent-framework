@@ -47,42 +47,49 @@ public class RepresentationTests
         return current;
     }
 
-    private static void RunExecutorishInfoMatchTest(ExecutorIsh target)
+    private static async ValueTask RunExecutorishInfoMatchTestAsync(ExecutorIsh target)
     {
         ExecutorRegistration registration = target.Registration;
         ExecutorInfo info = registration.ToExecutorInfo();
 
-        info.IsMatch(registration.Provider()).Should().BeTrue();
+        info.IsMatch(await registration.ProviderAsync()).Should().BeTrue();
     }
 
     [Fact]
-    public void Test_Executorish_Infos()
+    public async Task Test_Executorish_InfosAsync()
     {
         int testsRun = 0;
-        RunExecutorishTest(new TestExecutor());
-        RunExecutorishTest(TestInputPort);
-        RunExecutorishTest(new TestAgent());
+        await RunExecutorishTest(new TestExecutor());
+        await RunExecutorishTest(TestInputPort);
+        await RunExecutorishTest(new TestAgent());
+
+        Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
+        await RunExecutorishTest(function.AsExecutor("FunctionExecutor"));
 
         if (Enum.GetValues(typeof(ExecutorIsh.Type)).Length > testsRun + 1)
         {
             Assert.Fail("Not all ExecutorIsh types were tested.");
         }
 
-        void RunExecutorishTest(ExecutorIsh executorish)
+        async ValueTask RunExecutorishTest(ExecutorIsh executorish)
         {
-            RunExecutorishInfoMatchTest(executorish);
+            await RunExecutorishInfoMatchTestAsync(executorish);
             testsRun++;
+        }
+
+        async ValueTask MessageHandlerAsync(int message, IWorkflowContext workflowContext, CancellationToken cancellation = default)
+        {
         }
     }
 
     [Fact]
-    public void Test_SpecializedExecutor_Infos()
+    public async Task Test_SpecializedExecutor_InfosAsync()
     {
-        RunExecutorishInfoMatchTest(new AIAgentHostExecutor(new TestAgent()));
-        RunExecutorishInfoMatchTest(new RequestInfoExecutor(TestInputPort));
+        await RunExecutorishInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
+        await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestInputPort));
 
         OutputCollectorExecutor<ChatMessage, IEnumerable<ChatMessage>> outputCollector = new(StreamingAggregators.Union<ChatMessage>());
-        RunExecutorishInfoMatchTest(outputCollector);
+        await RunExecutorishInfoMatchTestAsync(outputCollector);
     }
 
     private static string Source(string id) => $"Source/{id}";
