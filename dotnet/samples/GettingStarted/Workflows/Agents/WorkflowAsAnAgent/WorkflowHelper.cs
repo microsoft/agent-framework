@@ -16,7 +16,7 @@ internal static class WorkflowHelper
     /// Creates a workflow that uses two language agents to process input concurrently.
     /// </summary>
     /// <param name="chatClient">The chat client to use for the agents</param>
-    /// <returns>>A workflow that processes input using two language agents</returns>
+    /// <returns>A workflow that processes input using two language agents</returns>
     internal static Workflow<List<ChatMessage>> GetWorkflow(IChatClient chatClient)
     {
         // Create executors
