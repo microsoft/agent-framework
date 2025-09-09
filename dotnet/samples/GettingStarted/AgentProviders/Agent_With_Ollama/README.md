@@ -23,12 +23,12 @@ After the container has started, launch a Terminal window for the docker contain
 From this terminal download the required models, e.g. here we are downloading the phi3 model.
 
 ```text
-ollama pull phi3
+ollama pull gpt-oss
 ```
 
 Set the following environment variables:
 
 ```powershell
 $env:OLLAMA_ENDPOINT="http://localhost:11434"
-$env:OLLAMA_MODEL_NAME="phi3"
+$env:OLLAMA_MODEL_NAME="gpt-oss"
 ```
