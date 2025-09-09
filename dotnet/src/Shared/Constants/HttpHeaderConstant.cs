@@ -21,16 +21,27 @@ internal static class HttpHeaderConstant
 
     public static class Values
     {
+        // Cache the versions for the types we query to avoid repeated reflection calls for each request.
+        private static readonly Dictionary<Type, string> s_versionCache = [];
+
         /// <summary>User agent string to use for all HTTP requests issued by Semantic Kernel.</summary>
-        public static string UserAgent => "agent-framework-dotnet";
+        public static string GetUserAgent(Type type) => $"agent-framework-dotnet/{GetAssemblyVersion(type)}";
+
+        public static string GetAgentFrameworkVersion(Type type) => $"dotnet/{GetAssemblyVersion(type)}";
 
         /// <summary>
         /// Gets the version of the <see cref="System.Reflection.Assembly"/> in which the specific type is declared.
         /// </summary>
         /// <param name="type">Type for which the assembly version is returned.</param>
-        public static string GetAssemblyVersion(Type type)
+        private static string GetAssemblyVersion(Type type)
         {
-            return $"dotnet/{type.Assembly.GetName().Version!}";
+            if (!s_versionCache.TryGetValue(type, out var foundVersion))
+            {
+                foundVersion = type.Assembly.GetName().Version!.ToString();
+                s_versionCache[type] = foundVersion;
+            }
+
+            return foundVersion;
         }
     }
 }

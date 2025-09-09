@@ -52,8 +52,8 @@ internal static class PersistentAgentResponseExtensions
         {
             AdditionalHeaders = new Dictionary<string, string>()
             {
-                [HttpHeaderConstant.Names.UserAgent] = HttpHeaderConstant.Values.UserAgent,
-                [HttpHeaderConstant.Names.AgentFrameworkVersion] = HttpHeaderConstant.Values.GetAssemblyVersion(typeof(PersistentAgentResponseExtensions))
+                [HttpHeaderConstant.Names.UserAgent] = HttpHeaderConstant.Values.GetUserAgent(typeof(PersistentAgentResponseExtensions)),
+                [HttpHeaderConstant.Names.AgentFrameworkVersion] = HttpHeaderConstant.Values.GetAgentFrameworkVersion(typeof(PersistentAgentResponseExtensions))
             }
         });
 #pragma warning restore CA2000 // Dispose objects before losing scope
