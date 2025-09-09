@@ -29,8 +29,7 @@ internal static class AgentDefinitionYaml
 
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            //.WithTypeConverter(new ModelConfigurationTypeConverter())
-            //.WithTypeConverter(new AgentMetadataTypeConverter())
+            .WithTypeConverter(new ToolTypeConverter())
             .Build();
 
         var agentDefinition = deserializer.Deserialize<AgentDefinition>(text);

@@ -43,9 +43,10 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
-    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
-    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureOpenAI/DeclarativeAgent_AzureOpenAI.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry/DeclarativeAgent_AzureAIFoundry.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureOpenAI/DeclarativeAgent_AzureOpenAI.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_FunctionTools/DeclarativeAgent_FunctionTools.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
@@ -255,5 +256,6 @@
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.Yaml.UnitTests/Microsoft.Extensions.AI.Agents.Yaml.UnitTests.csproj" />
   </Folder>
 </Solution>

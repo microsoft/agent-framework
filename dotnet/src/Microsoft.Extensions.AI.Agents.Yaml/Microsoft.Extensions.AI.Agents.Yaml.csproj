@@ -29,7 +29,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.Yaml.UnitTests" />
   </ItemGroup>
 
 </Project>
