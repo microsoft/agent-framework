@@ -1012,6 +1012,7 @@ async def test_openai_responses_client_web_search_streaming() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_responses_client_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
@@ -1036,6 +1037,7 @@ async def test_openai_responses_client_file_search() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_responses_client_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
