@@ -4,6 +4,6 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
 {
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        await context.ResetStateAsync("<#= this.VariableName #>", "<#= this.TopicName #>").ConfigureAwait(false);
+        await context.QueueStateUpdateAsync("<#= this.VariableName #>", UnassignedValue.Instance, "<#= this.TopicName #>").ConfigureAwait(false);
     }
 }
