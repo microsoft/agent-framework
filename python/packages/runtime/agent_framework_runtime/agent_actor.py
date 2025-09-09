@@ -183,12 +183,12 @@ class AgentActor(Actor):
 
         if thread_data:
             try:
-                if hasattr(self._agent, "deserialize_thread"):
-                    self._thread = await self._agent.deserialize_thread(thread_data)  # type: ignore[attr-defined]
-                else:
-                    # Fallback for agents that only implement AgentProtocol
-                    self._thread = self._agent.get_new_thread()
-                    logger.debug("Agent doesn't support deserialization, created new thread")
+                # Try to deserialize - if the method doesn't exist, we'll get AttributeError
+                self._thread = await self._agent.deserialize_thread(thread_data)  # type: ignore[attr-defined]
+            except AttributeError:
+                # Agent doesn't support deserialization, create new thread
+                self._thread = self._agent.get_new_thread()
+                logger.debug("Agent doesn't support deserialization, created new thread")
             except Exception as e:
                 logger.error(f"Failed to restore thread state: {e}")
                 self._thread = self._agent.get_new_thread()
