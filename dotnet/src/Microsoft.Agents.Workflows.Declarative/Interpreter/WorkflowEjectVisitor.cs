@@ -431,7 +431,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     #endregion
 
-    public static string RootId(string? actionId) => $"root_{actionId ?? "workflow"}";
+    public static string RootId(string? actionId) => $"root_{actionId ?? DeclarativeWorkflowBuilder.DefaultWorkflowId}";
 
     //private static string PostId(string actionId) => $"{actionId}_Post";
 
