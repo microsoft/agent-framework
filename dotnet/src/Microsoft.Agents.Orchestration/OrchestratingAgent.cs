@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -75,11 +76,7 @@ public abstract partial class OrchestratingAgent : AIAgent
                 throw new InvalidOperationException("An agent service managed thread is not supported by this agent.");
             }
 
-            List<ChatMessage> messagesList = [];
-            await foreach (var threadMessage in thread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
-            {
-                messagesList.Add(threadMessage);
-            }
+            List<ChatMessage> messagesList = (await thread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false)).ToList();
             messagesList.AddRange(messages);
             messages = messagesList;
         }
