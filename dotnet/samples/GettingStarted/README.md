@@ -7,6 +7,8 @@ of the agent framework.
 
 |Sample|Description|
 |---|---|
-|[Agents](./Agents/README.md)|Getting started with agents|
+|[Agents](./Agents/README.md)|Step by step instructions for getting started with agents|
 |[Agent Providers](./AgentProviders/README.md)|Getting started with creating agents using various providers|
 |[Agent Open Telemetry](./AgentOpenTelemetry/README.md)|Getting started with OpenTelemetry for agents|
+|[Agent With OpenAI exchange types](./AgentWithOpenAI/README.md)|Using OpenAI exchange types with agents|
+|[Workflow](./Workflow/README.md)|Getting started with Workflow|
