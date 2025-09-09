@@ -19,11 +19,11 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
 {
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        // No state to restore
+        // No state to restore if we're starting from the beginning.
         state.Initialize();
 
         ChatMessage input = (inputTransform ?? RootExecutor<TInput>.DefaultInputTransform).Invoke(message);
-        state.SetLastMessage(input); // %%% SYSTEM VARS
+        state.SetLastMessage(input);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

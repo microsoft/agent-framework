@@ -7,16 +7,12 @@
 /// </summary>
 internal sealed class <#= this.TypeName #>Executor<TInput>(
     DeclarativeWorkflowOptions options,
-    Func<TInput, ChatMessage>? inputTransform = null) :
-    RootExecutor<TInput>("<#= this.Id #>", options)
+    Func<TInput, ChatMessage>? inputTransform) :
+    RootExecutor<TInput>("<#= this.Id #>", options, inputTransform)
     where TInput : notnull
 {
     protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        ChatMessage input = (inputTransform ?? DefaultInputTransform).Invoke(message);
-        //await context.SetLastMessageAsync(input).ConfigureAwait(false); // %%% SYSTEM VARS
-        await context.QueueStateUpdateAsync("LastMessageText", input.Text, "System").ConfigureAwait(false);
-
         // Set environment variables<#
         foreach (string variableName in this.TypeInfo.EnvironmentVariables)
         { #>

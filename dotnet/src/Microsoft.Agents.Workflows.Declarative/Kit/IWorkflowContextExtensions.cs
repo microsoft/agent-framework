@@ -5,7 +5,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -53,7 +52,7 @@ public static class IWorkflowContextExtensions
     /// </example>
     public static async ValueTask<string> FormatTemplateAsync(this IWorkflowContext context, IEnumerable<string> lines, CancellationToken cancellationToken = default)
     {
-        WorkflowFormulaState state = await GetStateAsync(context, cancellationToken: default).ConfigureAwait(false);
+        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken: default).ConfigureAwait(false);
 
         StringBuilder builder = new();
         foreach (string line in lines)
@@ -73,24 +72,10 @@ public static class IWorkflowContextExtensions
     /// <returns>The evaluated expression value</returns>
     public static async ValueTask<object?> EvaluateExpressionAsync(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
     {
-        WorkflowFormulaState state = await GetStateAsync(context, cancellationToken).ConfigureAwait(false);
+        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
 
         return result.Value.ToObject();
-    }
-
-    private static async Task<WorkflowFormulaState> GetStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {
-        if (context is DeclarativeWorkflowContext declarativeContext)
-        {
-            return declarativeContext.State;
-        }
-
-        WorkflowFormulaState scopes = new(RecalcEngineFactory.Create());
-
-        await scopes.RestoreAsync(context, cancellationToken).ConfigureAwait(false);
-
-        return scopes;
     }
 }

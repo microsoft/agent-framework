@@ -86,8 +86,6 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
 
         AgentRunResponse agentResponse = agentResponseUpdates.ToAgentRunResponse();
 
-        ChatMessage response = agentResponse.Messages.Last();
-        this.State.SetLastMessage(response);
         if (this.Model.AutoSend)
         {
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
@@ -109,6 +107,7 @@ internal sealed class AnswerQuestionWithAIExecutor(AnswerQuestionWithAI model, W
         PropertyPath? variablePath = this.Model.Variable?.Path;
         if (variablePath is not null)
         {
+            ChatMessage response = agentResponse.Messages.Last();
             await this.AssignAsync(variablePath, response.ToRecord(), context).ConfigureAwait(false);
         }
 

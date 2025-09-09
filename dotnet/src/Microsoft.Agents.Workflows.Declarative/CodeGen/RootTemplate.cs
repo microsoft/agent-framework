@@ -39,23 +39,16 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line default
             #line hidden
             this.Write("Executor<TInput>(\n    DeclarativeWorkflowOptions options,\n    Func<TInput, ChatMe" +
-                    "ssage>? inputTransform = null) :\n    RootExecutor<TInput>(\"");
+                    "ssage>? inputTransform) :\n    RootExecutor<TInput>(\"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write(@""", options)
-    where TInput : notnull
-{
-    protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
-    {
-        ChatMessage input = (inputTransform ?? DefaultInputTransform).Invoke(message);
-        //await context.SetLastMessageAsync(input).ConfigureAwait(false); // %%% SYSTEM VARS
-        await context.QueueStateUpdateAsync(""LastMessageText"", input.Text, ""System"").ConfigureAwait(false);
-
-        // Set environment variables");
+            this.Write("\", options, inputTransform)\n    where TInput : notnull\n{\n    protected override a" +
+                    "sync ValueTask ExecuteAsync(TInput message, IWorkflowContext context, Cancellati" +
+                    "onToken cancellationToken)\n    {\n        // Set environment variables");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 

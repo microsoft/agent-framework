@@ -25,16 +25,12 @@ public static class SampleWorkflowProvider
     /// </summary>
     internal sealed class RootWorkflowDemoExecutor<TInput>(
         DeclarativeWorkflowOptions options,
-        Func<TInput, ChatMessage>? inputTransform = null) :
-        RootExecutor<TInput>("root_workflow_demo", options)
+        Func<TInput, ChatMessage>? inputTransform) :
+        RootExecutor<TInput>("root_workflow_demo", options, inputTransform)
         where TInput : notnull
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            ChatMessage input = (inputTransform ?? DefaultInputTransform).Invoke(message);
-            //await context.SetLastMessageAsync(input).ConfigureAwait(false); // %%% SYSTEM VARS
-            await context.QueueStateUpdateAsync("LastMessageText", input.Text, "System").ConfigureAwait(false);
-
             // Set environment variables
             await context.QueueStateUpdateAsync("USERNAME", this.GetEnvironmentVariable("USERNAME"), "Env").ConfigureAwait(false);
 
