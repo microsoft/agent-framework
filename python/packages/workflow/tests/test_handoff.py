@@ -145,7 +145,7 @@ async def test_structured_multi_handoff_and_complete():
         HandoffBuilder()
         .participants([intake, spec, closer])
         .start_with("intake")
-        .structured_handoff(enabled=True)
+        # structured_handoff enabled by default
         .allow_transfers({
             "intake": [("spec", "")],
             "spec": [("closer", "")],
@@ -171,7 +171,7 @@ async def test_structured_respond_finalizes():
         "intake",
         [ScriptedTurn(decision=HandoffDecision(action=HandoffAction.RESPOND, assistant_message="Answer now"))],
     )
-    wf = HandoffBuilder().participants([intake]).start_with("intake").structured_handoff(enabled=True).build()
+    wf = HandoffBuilder().participants([intake]).start_with("intake").build()
 
     result = await _collect_final(wf, "question")
     assert "answer now" in result.text.lower()
@@ -187,7 +187,7 @@ async def test_structured_handoff_respects_max():
         HandoffBuilder()
         .participants([a, b])
         .start_with("a")
-        .structured_handoff(enabled=True)
+        # structured_handoff enabled by default
         .allow_transfers({"a": [("b", "")], "b": [("a", "")]})
         .max_handoffs(1)
         .build()
@@ -230,7 +230,7 @@ async def test_structured_malformed_falls_back_to_legacy():
         .participants([bad, nxt])
         .start_with("bad")
         .allow_transfers({"bad": [("next", "")]})
-        .structured_handoff(enabled=True)
+        # structured_handoff enabled by default
         .build()
     )
 
@@ -253,7 +253,7 @@ async def test_structured_complete_includes_assistant_and_summary():
             )
         ],
     )
-    wf = HandoffBuilder().participants([closer]).start_with("closer").structured_handoff(enabled=True).build()
+    wf = HandoffBuilder().participants([closer]).start_with("closer").build()
     final_msg = await _collect_final(wf, "x")
     txt = final_msg.text.lower()
     assert "task summarized" in txt and "final detailed answer" in txt
@@ -264,7 +264,7 @@ async def test_structured_self_handoff_ignored():
     """Self handoff should not change agent and should finalize if no further instructions."""
     selfy = FakeAgent("selfy", [ScriptedTurn(decision=HandoffDecision(action=HandoffAction.HANDOFF, target="selfy"))])
 
-    wf = HandoffBuilder().participants([selfy]).start_with("selfy").structured_handoff(enabled=True).build()
+    wf = HandoffBuilder().participants([selfy]).start_with("selfy").build()
 
     # Since self-handoff is ignored and no completion, we expect fallback finalization with message content (empty)
     final_msg = await _collect_final(wf, "hi")

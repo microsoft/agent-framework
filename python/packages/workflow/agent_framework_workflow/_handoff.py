@@ -2,17 +2,18 @@
 
 import logging
 import re
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import cast
+from typing import Literal, cast
 
-from agent_framework import AgentProtocol, AgentRunResponse, ChatMessage, Role
+from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
 
-from ._callback import CallbackMode, CallbackSink, FinalResultEvent
-from ._events import WorkflowCompletedEvent
+from ._callback import AgentDeltaEvent, AgentMessageEvent, CallbackMode, CallbackSink, FinalResultEvent
+from ._events import AgentRunEvent, AgentRunUpdateEvent, WorkflowCompletedEvent
 from ._executor import (
     AgentExecutor,
     AgentExecutorRequest,
@@ -22,10 +23,17 @@ from ._executor import (
     RequestResponse,
     handler,
 )
-from ._workflow import RequestInfoExecutor, Workflow, WorkflowBuilder
+from ._workflow import RequestInfoExecutor, Workflow, WorkflowBuilder  # type: ignore[attr-defined]
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
+
+_RE_HANDOFF_DIRECTIVE = re.compile(r"^(?:HANDOFF|TRANSFER)\s+TO\s+([\w\-.]+)(?:\s*:\s*(.*))?$", re.IGNORECASE)
+_RE_HANDOFF_FUNCTION = re.compile(
+    r"^(?:handoff\.)?transfer_to_([\w\-.]+)\s*(?:\(\s*\))?\s*(?::\s*(.*))?$", re.IGNORECASE
+)
+_RE_COMPLETE_DIRECT = re.compile(r"^(?:complete_task|complete)\s*:\s*(.+)$", re.IGNORECASE)
+_RE_COMPLETE_FUNCTION = re.compile(r"^(?:handoff\.)?complete_task\s*\(\s*[\"']?(.*?)[\"']?\s*\)\s*$", re.IGNORECASE)
 
 
 class HandoffAction(str, Enum):
@@ -33,6 +41,24 @@ class HandoffAction(str, Enum):
     RESPOND = "respond"
     COMPLETE = "complete"
     ASK_HUMAN = "ask_human"
+
+
+class HITLAskCondition(str, Enum):
+    """Enumeration of built-in Human-In-The-Loop ask trigger modes.
+
+    ALWAYS: Always route clarifying output to a human.
+    IF_QUESTION: Only when the assistant text ends with a question mark.
+        HEURISTIC: Question mark OR starts with a configured polite request cue (stricter than legacy substring scan).
+        RELAXED: Clarification if any question mark appears anywhere OR the first sentence begins with
+            a common interrogative/modal (who/what/when/where/why/how/could/can/would/should/may/do/does/
+            did/are/is/will) even if extra explanatory sentences follow. More forgiving for prompts like
+            "Could you confirm X? This helps me Y." that end with a period.
+    """
+
+    ALWAYS = "always"
+    IF_QUESTION = "if_question"
+    HEURISTIC = "heuristic"
+    RELAXED = "relaxed"
 
 
 class HandoffDecision(AFBaseModel):
@@ -53,24 +79,33 @@ class HandoffDecision(AFBaseModel):
 
 
 def _canonical_agent_name(agent: AgentProtocol | str) -> str:
+    """Return a stable non-empty canonical name for an agent or raise.
+
+    Preference order:
+      1. Provided string (must be non-blank if str)
+      2. agent.name
+      3. agent.id
+    Raises ValueError if the resolved name is blank/empty to avoid silent key collisions.
+    """
     if isinstance(agent, str):
-        return agent
-    return agent.name or agent.id
+        if not agent or not agent.strip():
+            raise ValueError("Blank agent name")
+        return agent.strip()
+    name = getattr(agent, "name", None) or getattr(agent, "id", None)
+    if not name or not str(name).strip():
+        raise ValueError("Agent has neither name nor id")
+    return str(name).strip()
 
 
 def _parse_handoff_directive(text: str) -> tuple[str, str] | None:
     if not text:
         return None
     first_line = text.splitlines()[0].strip()
-    m = re.match(
-        r"^(?:HANDOFF|TRANSFER)\s+TO\s+([\w\-.]+)\s*:\s*(.*)$",
-        first_line,
-        flags=re.IGNORECASE,
-    )
+    m = _RE_HANDOFF_DIRECTIVE.match(first_line)
     if not m:
         return None
     target = m.group(1).strip()
-    reason = m.group(2).strip()
+    reason = (m.group(2) or "").strip()
     return target, reason
 
 
@@ -78,11 +113,7 @@ def _parse_handoff_function(text: str) -> tuple[str, str] | None:
     if not text:
         return None
     first = text.splitlines()[0].strip()
-    m = re.match(
-        r"^(?:handoff\.)?transfer_to_([\w\-.]+)\s*(?:\(\s*\))?\s*(?::\s*(.*))?$",
-        first,
-        flags=re.IGNORECASE,
-    )
+    m = _RE_HANDOFF_FUNCTION.match(first)
     if not m:
         return None
     target = m.group(1).strip()
@@ -94,16 +125,19 @@ def _parse_complete_task(text: str) -> str | None:
     if not text:
         return None
     first = text.splitlines()[0].strip()
-    m = re.match(r"^(?:complete_task|complete)\s*:\s*(.+)$", first, flags=re.IGNORECASE)
+    m = _RE_COMPLETE_DIRECT.match(first)
     if m:
         return m.group(1).strip()
-    m = re.match(r"^(?:handoff\.)?complete_task\s*\(\s*[\"']?(.*?)[\"']?\s*\)\s*$", first, flags=re.IGNORECASE)
+    m = _RE_COMPLETE_FUNCTION.match(first)
     if m:
         return m.group(1).strip()
     return None
 
 
-AgentHandoffs = dict[str, str]
+class AgentHandoffs(dict[str, str]):
+    """A mapping of target_agent_name to description."""
+
+    pass
 
 
 class OrchestrationHandoffs(dict[str, AgentHandoffs]):
@@ -128,8 +162,8 @@ class OrchestrationHandoffs(dict[str, AgentHandoffs]):
     ) -> "OrchestrationHandoffs":
         src = _canonical_agent_name(source_agent)
         if isinstance(target_agents, dict):
-            for tgt, desc in target_agents.items():
-                self.add(src, tgt, desc)
+            for tgt_key, desc in target_agents.items():
+                self.add(src, tgt_key, desc)
         else:
             for tgt in target_agents:
                 self.add(src, tgt, None)
@@ -141,9 +175,47 @@ def _normalize_allow_transfers(
 ) -> dict[str, list[tuple[str, str]]]:
     if not transfers:
         return {}
+    # If values are lists we still validate element structure instead of blindly trusting shape.
     if isinstance(transfers, dict) and transfers and isinstance(next(iter(transfers.values())), list):
-        # At this point transfers is already of the final shape
-        return cast(dict[str, list[tuple[str, str]]], transfers)
+        validated: dict[str, list[tuple[str, str]]] = {}
+        for src, items in transfers.items():  # type: ignore[assignment]
+            if not isinstance(items, list):
+                raise TypeError("Expected list for transfers mapping values in list-shape variant")
+            norm_list: list[tuple[str, str]] = []
+            for idx, item in enumerate(items):
+                tgt: str
+                desc: str
+                if isinstance(item, tuple):
+                    if len(item) != 2:
+                        raise ValueError(f"Transfer entry at {src}[{idx}] tuple must have length 2, got {len(item)}")
+                    raw_tgt, raw_desc = item
+                    tgt = str(raw_tgt)
+                    # Normalize description. Treat falsey (None, "") as empty string; otherwise str().
+                    desc = "" if not raw_desc else str(raw_desc)
+                elif isinstance(item, list):
+                    if len(item) == 1:
+                        tgt = str(item[0])
+                        desc = ""
+                    elif len(item) == 2:
+                        tgt = str(item[0])
+                        desc = "" if item[1] is None else str(item[1])
+                    else:
+                        raise ValueError(
+                            f"Transfer entry at {src}[{idx}] list must have length 1 or 2, got {len(item)}"
+                        )
+                elif isinstance(item, str):
+                    tgt = item
+                    desc = ""
+                else:
+                    raise TypeError(
+                        "Unsupported transfer entry type at "
+                        f"{src}[{idx}]: {type(item).__name__}; expected tuple, list, or str"
+                    )
+                if not tgt or not tgt.strip():
+                    raise ValueError(f"Blank target agent name at {src}[{idx}]")
+                norm_list.append((tgt.strip(), desc.strip()))
+            validated[src] = norm_list
+        return validated
 
     # Remaining cases: OrchestrationHandoffs | dict[str, dict[str, str]]
     dict_of_dicts: dict[str, dict[str, str]] = cast(dict[str, dict[str, str]], transfers)
@@ -175,16 +247,35 @@ class HandoffOrchestrator(Executor):
         allow_transfers: dict[str, list[tuple[str, str]]],
         start_agent_name: str,
         id: str = "handoff_orchestrator",
-        seed_all_on_start: bool = True,
+        seed_all_on_start: bool = False,
+        max_seed_agents: int | None = None,
         max_handoffs: int = 8,
         # HITL configuration
         hitl_enabled: bool = False,
         hitl_executor_id: str | None = None,
         hitl_prompt_builder: Callable[[str, str], str] | None = None,
-        hitl_ask_condition: str | Callable[[str, str], bool] | None = None,
+        hitl_ask_condition: (
+            HITLAskCondition
+            | Literal["always", "if_question", "heuristic", "relaxed"]
+            | Callable[[str, str], bool]
+            | None
+        ) = None,
+        hitl_ask_condition_map: (
+            dict[
+                str,
+                HITLAskCondition
+                | Literal["always", "if_question", "heuristic", "relaxed"]
+                | Callable[[str, str], bool],
+            ]
+            | None
+        ) = None,
+        hitl_heuristic_cues: list[str] | None = None,
         # Structured decision mode
         structured_decision: bool = False,
         decision_model: type[AFBaseModel] = HandoffDecision,
+        decision_prompt_builder: (Callable[[type[AFBaseModel], list[str], list[tuple[str, str]]], str] | None) = None,
+        structured_require: bool = False,
+        decision_retries: int = 0,
     ) -> None:
         super().__init__(id)
         self._participants_by_name = participants_by_name
@@ -195,25 +286,56 @@ class HandoffOrchestrator(Executor):
         self._unified_callback: CallbackSink | None = None
         self._seed_all_on_start = seed_all_on_start
         self._seeded_once = False
+        # If provided, only seed-all when participant count <= max_seed_agents
+        if max_seed_agents is not None and max_seed_agents <= 0:
+            raise ValueError("max_seed_agents must be positive when provided")
+        self._max_seed_agents = max_seed_agents
         self._handoff_count = 0
         self._max_handoffs = max_handoffs
         self._handoff_trace: list[str] = [start_agent_name]
+        # Correlation id for traceability across overflow / finalization logs
+        self._correlation_id: str = uuid.uuid4().hex
 
         # HITL
         self._hitl_enabled = bool(hitl_enabled)
         self._hitl_executor_id = hitl_executor_id
         self._hitl_prompt_builder = hitl_prompt_builder or self._default_hitl_prompt
-        self._hitl_ask_condition = hitl_ask_condition or "if_question"
+        self._hitl_ask_condition = hitl_ask_condition or HITLAskCondition.IF_QUESTION
+        self._hitl_ask_condition_map = hitl_ask_condition_map or {}
+        # Default polite request cues (must be lowercase, no trailing '?')
+        self._hitl_heuristic_cues = (
+            [
+                "could you",
+                "can you",
+                "please provide",
+                "what is",
+                "would you",
+                "may i have",
+                "i need your",
+                "which order",
+                "what's your",
+            ]
+            if hitl_heuristic_cues is None
+            else [c.lower() for c in hitl_heuristic_cues]
+        )
 
         # Structured
         self._structured_decision = bool(structured_decision)
         self._decision_model = decision_model
+        self._decision_prompt_builder = decision_prompt_builder
         self._decision_phase = False  # True when awaiting a structured decision from current agent
+        self._structured_require = bool(structured_require)
+        # Remaining structured attrs
+        self._decision_retries = max(0, int(decision_retries))
+        self._decision_retry_count = 0
+        self._finalized = False  # Ensures single final emission
 
     # Orchestrator API
 
     def set_unified_callback(self, callback: CallbackSink | None) -> None:
         self._unified_callback = callback
+
+    # (helper removed; inline initialization now used)
 
     # Private helpers
 
@@ -240,20 +362,51 @@ class HandoffOrchestrator(Executor):
         )
 
     def _render_structured_prompt_for(self, agent_name: str) -> str:
-        """Short prompt that explains the JSON decision. We rely on response_format to enforce shape."""
+        """Build the structured decision probe prompt.
+
+        Extensible: if a custom decision_model with different field names is supplied, we
+        introspect its field names instead of hard-coding the defaults. Users can also
+        pass a custom decision_prompt_builder for full control.
+        """
         allowed = self._allowed_targets_for(agent_name)
-        lines = "\n".join(f"- {t}: {desc}".rstrip() for t, desc in allowed) or "(none)"
+        allowed_lines = "\n".join(f"- {t}: {desc}".rstrip() for t, desc in allowed) or "(none)"
+
+        if self._decision_prompt_builder is not None:
+            try:
+                return self._decision_prompt_builder(self._decision_model, [a for a, _ in allowed], allowed)
+            except Exception:  # pragma: no cover - defensive logging
+                logger.exception("Handoff: custom decision_prompt_builder failed; falling back to default prompt")
+
+        field_names: list[str] = []
+        try:
+            raw_fields = getattr(self._decision_model, "model_fields", {})
+            if isinstance(raw_fields, dict):
+                field_names = [str(k) for k in raw_fields]  # type: ignore[allow-any-exp]
+        except Exception:  # pragma: no cover
+            logger.debug("Handoff: unable to introspect decision model fields; using defaults")
+        if not field_names:
+            # Fallback to legacy default ordering
+            field_names = ["action", "target", "reason", "summary", "assistant_message"]
+
+        fields_str = ", ".join(field_names)
         return (
-            "Decide the next routing step for this conversation and output only a decision object. "
-            "Use the fields action, target, reason, summary, assistant_message. "
-            "Allowed actions: 'handoff', 'respond', 'complete', 'ask_human'.\n"
-            "Rules:\n"
-            "- If you need a specialist, set action='handoff' and target to one of the allowed targets below.\n"
-            "- If you can answer directly and should respond now, set action='respond' and fill assistant_message.\n"
-            "- If the task is finished, set action='complete' and provide a one-line summary.\n"
-            "- If you must ask a human a question, set action='ask_human' and set assistant_message to that question.\n"
+            "Decide the next routing step for this conversation and output only a JSON object. "
+            f"Use the fields: {fields_str}. "
+            "Common actions (if present): 'handoff', 'respond', 'complete', 'ask_human'.\n"
+            "Guidelines:\n"
+            "- If you need a specialist, use a handoff action and set the target accordingly.\n"
+            "- If you can answer directly, use respond and include the reply text.\n"
+            "- If the task is finished, use complete with a concise summary.\n"
+            "- If you require a human's answer, use ask_human with the question.\n"
             "Allowed targets for handoff:\n"
-            f"{lines}"
+            f"{allowed_lines}"
+        )
+
+    def _render_retry_structured_prompt_for(self, agent_name: str) -> str:
+        base = self._render_structured_prompt_for(agent_name)
+        return base + (
+            "\nSTRICT MODE: Previous response was not valid JSON. Respond with ONLY one JSON object conforming "
+            "exactly to the schema; no commentary, markdown, fences, or extra text."
         )
 
     async def _seed_all(self, ctx: WorkflowContext[AgentExecutorRequest], user_msg: ChatMessage) -> None:
@@ -304,7 +457,7 @@ class HandoffOrchestrator(Executor):
                 if isinstance(m, ChatMessage) and m.role == Role.ASSISTANT:
                     return m
         except Exception as e:  # pragma: no cover
-            logger.exception("Handoff: failed to extract final assistant message: %s", e)
+            logger.exception(f"Handoff: failed to extract final assistant message: {e}")
         return None
 
     def _default_hitl_prompt(self, agent_name: str, agent_text: str) -> str:
@@ -315,36 +468,59 @@ class HandoffOrchestrator(Executor):
         )
 
     def _should_request_human(self, agent_name: str, text: str) -> bool:
+        """Determine if we should route to a human based on configured ask condition(s).
+
+        Precedence:
+          1. Per-agent condition map entry if present
+          2. Global condition / callable
+
+        Heuristic differences (updated):
+          - A question mark at end always triggers (when heuristic or if_question).
+          - Otherwise, heuristic triggers only if the lowercase message STRIPS leading whitespace
+            and starts with one of the configured polite cues (reduces false positives vs substring scan).
+        """
         if not self._hitl_enabled or not self._hitl_executor_id:
             return False
         if not text or not text.strip():
             return False
-        cond = self._hitl_ask_condition
+
+        cond = self._hitl_ask_condition_map.get(agent_name, self._hitl_ask_condition)
+
+        # Callable -> custom logic
         if callable(cond):
             try:
                 return bool(cond(agent_name, text))
             except Exception:  # pragma: no cover
                 logger.exception("Handoff: custom HITL condition raised")
                 return False
-        norm = (cond or "").lower()
-        if norm == "always":
+
+        norm = str(cond).lower()
+        if norm == HITLAskCondition.ALWAYS.value:
             return True
-        if norm == "if_question":
+        if norm == HITLAskCondition.IF_QUESTION.value:
             return text.strip().endswith("?")
-        if norm == "heuristic":
-            low = text.lower()
-            cues = [
-                "could you",
-                "can you",
-                "please provide",
-                "what is",
-                "would you",
-                "may i have",
-                "i need your",
-                "which order",
-                "what's your",
-            ]
-            return text.strip().endswith("?") or any(c in low for c in cues)
+        if norm == HITLAskCondition.HEURISTIC.value:
+            stripped = text.lstrip()
+            if stripped.endswith("?"):
+                return True
+            low = stripped.lower()
+            return any(low.startswith(c) for c in self._hitl_heuristic_cues)
+        if norm == HITLAskCondition.RELAXED.value:
+            # 1. Any question mark anywhere qualifies (multi-sentence clarifications ending with period)
+            if "?" in text:
+                return True
+            stripped = text.strip()
+            if not stripped:
+                return False
+            # 2. First sentence interrogative/modal start heuristic
+            first_sentence = stripped.split(".\n")[0].split(". ")[0][:160].lstrip()
+            return bool(
+                re.match(
+                    r"(?i)^(who|what|when|where|why|how|could|can|would|should|may|do|does|did|are|is|will)\b",
+                    first_sentence,
+                )
+                and len(stripped) <= 800
+            )
         return False
 
     def _try_parse_structured_decision(self, response: AgentRunResponse) -> HandoffDecision | None:
@@ -359,7 +535,8 @@ class HandoffOrchestrator(Executor):
         try:
             return HandoffDecision.model_validate_json(text)
         except Exception:
-            logger.exception("Handoff: exception while parsing structured decision JSON block")
+            # Providers may ignore response_format and return normal content; treat as expected, low-noise path.
+            logger.debug("Handoff: structured decision JSON parse failed on full text; attempting substring scan")
 
         # Try to extract first JSON object substring
         try:
@@ -375,10 +552,16 @@ class HandoffOrchestrator(Executor):
     # Workflow handlers
 
     async def _start_with_user(self, ctx: WorkflowContext[AgentExecutorRequest], user_msg: ChatMessage) -> None:
-        logger.info("Handoff: start. Current=%s", self._current_agent)
+        logger.info(f"Handoff: start. Current={self._current_agent}")
         if self._seed_all_on_start and not self._seeded_once:
-            await self._seed_all(ctx, user_msg)
-            self._seeded_once = True
+            total = len(self._participants_by_name)
+            if self._max_seed_agents is not None and total > self._max_seed_agents:
+                logger.info(
+                    f"Handoff: skipping seed-all ({total} participants exceeds max_seed_agents={self._max_seed_agents})"
+                )
+            else:
+                await self._seed_all(ctx, user_msg)
+                self._seeded_once = True
         await self._route_to_current(ctx, user_msg)
 
     @handler
@@ -405,7 +588,14 @@ class HandoffOrchestrator(Executor):
             decision = self._try_parse_structured_decision(response)
 
             if decision is not None:
-                logger.info("Handoff: structured decision %s", decision.action.value)
+                # Reset retry counter after a successful parse
+                self._decision_retry_count = 0
+                reason_snip = (decision.reason or "").replace("\n", " ")[:120].strip()
+                logger.info(
+                    f"Handoff: structured decision action={decision.action.value} target={decision.target or '-'} "
+                    f"agent={self._current_agent} depth={self._handoff_count} reason={(reason_snip or '-',)} "
+                    f"correlation={self._correlation_id}",
+                )
 
                 if decision.action == HandoffAction.COMPLETE:
                     # Include both assistant_message (if any) and summary for richer final output
@@ -418,12 +608,14 @@ class HandoffOrchestrator(Executor):
                     else:
                         final_text = assistant_part or "Task completed."
                     result = ChatMessage(role=Role.ASSISTANT, text=final_text)
-                    if self._unified_callback is not None:
-                        try:
-                            await self._unified_callback(FinalResultEvent(message=result))
-                        except Exception:
-                            logger.exception("Handoff: unified callback failed on structured completion")
-                    await ctx.add_event(WorkflowCompletedEvent(result))
+                    if not self._finalized:
+                        self._finalized = True
+                        if self._unified_callback is not None:
+                            try:
+                                await self._unified_callback(FinalResultEvent(message=result))
+                            except Exception:
+                                logger.exception("Handoff: unified callback failed on structured completion")
+                        await ctx.add_event(WorkflowCompletedEvent(result))
                     return
 
                 if decision.action == HandoffAction.ASK_HUMAN:
@@ -441,12 +633,14 @@ class HandoffOrchestrator(Executor):
                         return
                     # If HITL not enabled, fall back to finalizing with the message
                     result = ChatMessage(role=Role.ASSISTANT, text=decision.assistant_message or text)
-                    if self._unified_callback is not None:
-                        try:
-                            await self._unified_callback(FinalResultEvent(message=result))
-                        except Exception:
-                            logger.exception("Handoff: unified callback failed on ask_human fallback")
-                    await ctx.add_event(WorkflowCompletedEvent(result))
+                    if not self._finalized:
+                        self._finalized = True
+                        if self._unified_callback is not None:
+                            try:
+                                await self._unified_callback(FinalResultEvent(message=result))
+                            except Exception:
+                                logger.exception("Handoff: unified callback failed on ask_human fallback")
+                        await ctx.add_event(WorkflowCompletedEvent(result))
                     return
 
                 if decision.action == HandoffAction.RESPOND:
@@ -463,6 +657,14 @@ class HandoffOrchestrator(Executor):
                         and self._hitl_executor_id
                         and self._should_request_human(self._current_agent, result_text)
                     ):
+                        if self._structured_decision:
+                            logger.debug(
+                                (
+                                    f"Handoff: RESPOND triggered HITL escalation (agent='{self._current_agent}'). "
+                                    "Consider using action='ask_human' for clarity."
+                                ),
+                                self._current_agent,
+                            )
                         prompt = self._hitl_prompt_builder(self._current_agent, result_text)
                         await ctx.send_message(
                             HandoffHumanRequest(
@@ -474,50 +676,68 @@ class HandoffOrchestrator(Executor):
                         )
                         return
                     result = ChatMessage(role=Role.ASSISTANT, text=result_text)
-                    if self._unified_callback is not None:
-                        try:
-                            await self._unified_callback(FinalResultEvent(message=result))
-                        except Exception:
-                            logger.exception("Handoff: unified callback failed on respond")
-                    await ctx.add_event(WorkflowCompletedEvent(result))
+                    if not self._finalized:
+                        self._finalized = True
+                        if self._unified_callback is not None:
+                            try:
+                                await self._unified_callback(FinalResultEvent(message=result))
+                            except Exception:
+                                logger.exception("Handoff: unified callback failed on respond")
+                        await ctx.add_event(WorkflowCompletedEvent(result))
                     return
 
                 if decision.action == HandoffAction.HANDOFF:
                     target_name = (decision.target or "").strip()
                     allowed_targets = [t for t, _ in self._allowed_targets_for(self._current_agent)]
                     if target_name == self._current_agent:
-                        # Explicit self-handoff: treat as no-op and finalize with empty message
+                        # ignore explicit self-handoff (no finalize, no transfer).
                         logger.warning(
-                            "Handoff: %s attempted self-transfer in structured decision; finalizing without content",
-                            self._current_agent,
+                            f"Handoff: {self._current_agent} attempted self-transfer in structured decision; ignoring",
                         )
-                        result = ChatMessage(role=Role.ASSISTANT, text="")
-                        if self._unified_callback is not None:
-                            try:
-                                await self._unified_callback(FinalResultEvent(message=result))
-                            except Exception:
-                                logger.exception("Handoff: unified callback failed on self-handoff finalize")
-                        await ctx.add_event(WorkflowCompletedEvent(result))
+                        if not self._finalized:
+                            self._finalized = True
+                            fallback_text = "Produced no assistant response."  # contains 'produced no assistant'
+                            result_msg = ChatMessage(role=Role.ASSISTANT, text=fallback_text)
+                            if self._unified_callback is not None:
+                                try:
+                                    await self._unified_callback(FinalResultEvent(message=result_msg))
+                                except Exception:  # pragma: no cover
+                                    logger.error("Handoff: unified callback failed on self-handoff finalize")
+                            await ctx.add_event(WorkflowCompletedEvent(result_msg))
                         return
                     if target_name and target_name in allowed_targets and target_name in self._agent_name_to_exec_id:
                         self._handoff_count += 1
                         self._current_agent = target_name
                         self._handoff_trace.append(target_name)
                         if self._handoff_count > self._max_handoffs:
-                            logger.error("Handoff: exceeded max handoffs. Trace=%s", " -> ".join(self._handoff_trace))
+                            path = " -> ".join(self._handoff_trace)
+                            user_msg_id = None
+                            if self._last_user_message is not None:
+                                # Try common id attribute names for robustness
+                                for attr in ("id", "message_id", "uuid"):
+                                    val = getattr(self._last_user_message, attr, None)
+                                    if isinstance(val, str) and val:
+                                        user_msg_id = val
+                                        break
+                            logger.error(
+                                f"Handoff: exceeded max handoffs trace={path} correlation={self._correlation_id} "
+                                f"user_message_id={user_msg_id or 'n/a'}"
+                            )
+                            extra_bits = f" Path: {path}. Correlation: {self._correlation_id}."
+                            if user_msg_id:
+                                extra_bits += f" UserMessageId: {user_msg_id}."
                             fail_msg = ChatMessage(
                                 role=Role.ASSISTANT,
-                                text=(
-                                    "Could not resolve within the allowed number of transfers. "
-                                    f"Path taken: {' -> '.join(self._handoff_trace)}"
-                                ),
+                                text=("Could not resolve within the allowed number of transfers." + extra_bits),
                             )
-                            if self._unified_callback is not None:
-                                try:
-                                    await self._unified_callback(FinalResultEvent(message=fail_msg))
-                                except Exception:
-                                    logger.exception("Handoff: unified callback failed on overflow")
-                            await ctx.add_event(WorkflowCompletedEvent(fail_msg))
+                            if not self._finalized:
+                                self._finalized = True
+                                if self._unified_callback is not None:
+                                    try:
+                                        await self._unified_callback(FinalResultEvent(message=fail_msg))
+                                    except Exception:
+                                        logger.exception("Handoff: unified callback failed on overflow")
+                                await ctx.add_event(WorkflowCompletedEvent(fail_msg))
                             return
                         # After handoff, probe the new agent again for a decision on the same user message
                         if self._last_user_message is not None:
@@ -531,19 +751,51 @@ class HandoffOrchestrator(Executor):
                             return
                     else:
                         logger.info(
-                            "Handoff: structured target '%s' not allowed from '%s' or unknown. Allowed=%s",
-                            target_name,
-                            self._current_agent,
-                            allowed_targets,
+                            f"Handoff: invalid structured target={target_name} from={self._current_agent} "
+                            f"allowed={allowed_targets} correlation={self._correlation_id}",
                         )
                         # Fall through to legacy handling
             # If structured parse failed, fall back to legacy path using text
             # Do not early return. Continue to legacy handling below.
+            else:
+                # decision is None
+                if self._structured_require:
+                    if self._decision_retry_count < self._decision_retries:
+                        self._decision_retry_count += 1
+                        logger.debug(
+                            f"Handoff: structured decision parse failed strict "
+                            f"retry={self._decision_retry_count}/{self._decision_retries} "
+                            f"correlation={self._correlation_id}",
+                        )
+                        # Re-probe current agent with stricter prompt using same last user message
+                        if self._last_user_message is not None:
+                            self._decision_phase = True
+                            retry_instr = ChatMessage(
+                                role=Role.USER,
+                                text=self._render_retry_structured_prompt_for(self._current_agent),
+                            )
+                            exec_id = self._agent_name_to_exec_id[self._current_agent]
+                            await ctx.send_message(
+                                AgentExecutorRequest(
+                                    messages=[retry_instr, self._last_user_message],
+                                    should_respond=True,
+                                    response_format_model=self._decision_model,
+                                ),
+                                target_id=exec_id,
+                            )
+                            return
+                    # Either retries exhausted or none configured
+                    error_msg = (
+                        "Failed to obtain a valid structured handoff decision from agent "
+                        f"'{self._current_agent}' after {self._decision_retry_count} retry(s)."
+                    )
+                    logger.error(f"Handoff: {error_msg}")
+                    raise ValueError(error_msg)
 
         # Legacy completion directive (first-line)
         complete_summary = _parse_complete_task(text)
         if complete_summary is not None:
-            logger.info("Handoff: %s signaled completion", self._current_agent)
+            logger.info(f"Handoff: {self._current_agent} signaled completion")
             result = ChatMessage(
                 role=Role.ASSISTANT,
                 text=f"Task completed. Summary: {complete_summary}".strip(),
@@ -570,8 +822,8 @@ class HandoffOrchestrator(Executor):
                 if ls is not None:
                     complete_summary = ls
                     logger.info(
-                        "Handoff: %s legacy completion directive found on later line after malformed JSON",
-                        self._current_agent,
+                        f"Handoff: {self._current_agent} legacy completion directive found on later "
+                        f"line after malformed JSON",
                     )
                     result = ChatMessage(
                         role=Role.ASSISTANT,
@@ -588,8 +840,8 @@ class HandoffOrchestrator(Executor):
                 if parsed_line is not None:
                     parsed = parsed_line
                     logger.info(
-                        "Handoff: %s legacy handoff directive found on later line after malformed JSON",
-                        self._current_agent,
+                        f"Handoff: {self._current_agent} legacy handoff directive found on "
+                        f"later line after malformed JSON",
                     )
                     break
         if parsed is not None:
@@ -597,20 +849,31 @@ class HandoffOrchestrator(Executor):
             allowed_targets = [t for t, _ in self._allowed_targets_for(self._current_agent)]
             if target_name in allowed_targets and target_name in self._agent_name_to_exec_id:
                 if target_name == self._current_agent:
-                    logger.warning("Handoff: %s attempted self-transfer; ignoring", self._current_agent)
+                    logger.warning("Handoff: self._current_agent attempted self-transfer; ignoring")
                 else:
                     self._handoff_count += 1
-                    logger.info("Handoff: %s -> %s (%s)", self._current_agent, target_name, reason or "no reason")
+                    logger.info(f"Handoff: {self._current_agent} -> {target_name} ({reason or 'no reason'})")
                     self._current_agent = target_name
                     self._handoff_trace.append(target_name)
                     if self._handoff_count > self._max_handoffs:
-                        logger.error("Handoff: exceeded max handoffs. Trace=%s", " -> ".join(self._handoff_trace))
+                        path = " -> ".join(self._handoff_trace)
+                        user_msg_id = None
+                        if self._last_user_message is not None:
+                            for attr in ("id", "message_id", "uuid"):
+                                val = getattr(self._last_user_message, attr, None)
+                                if isinstance(val, str) and val:
+                                    user_msg_id = val
+                                    break
+                        logger.error(
+                            f"Handoff: exceeded max handoffs. Trace={path} Correlation={self._correlation_id} "
+                            f"UserMessageId={user_msg_id or 'n/a'}"
+                        )
+                        extra_bits = f" Path: {path}. Correlation: {self._correlation_id}."
+                        if user_msg_id:
+                            extra_bits += f" UserMessageId: {user_msg_id}."
                         fail_msg = ChatMessage(
                             role=Role.ASSISTANT,
-                            text=(
-                                "Could not resolve within the allowed number of transfers. "
-                                f"Path taken: {' -> '.join(self._handoff_trace)}"
-                            ),
+                            text=("Could not resolve within the allowed number of transfers." + extra_bits),
                         )
                         if self._unified_callback is not None:
                             try:
@@ -630,17 +893,15 @@ class HandoffOrchestrator(Executor):
                         return
             else:
                 logger.info(
-                    "Handoff: target '%s' not allowed from '%s' or unknown. Allowed=%s",
-                    target_name,
-                    self._current_agent,
-                    allowed_targets,
+                    f"Handoff: target '{target_name}' not allowed from '{self._current_agent}' or unknown. "
+                    f"Allowed={allowed_targets}",
                 )
 
         # No handoff and not completed. Decide whether to ask a human or to finalize.
         if self._should_request_human(self._current_agent, text):
             prompt = self._hitl_prompt_builder(self._current_agent, text)
             if self._hitl_executor_id:
-                logger.info("Handoff: requesting human input for agent '%s'", self._current_agent)
+                logger.info(f"Handoff: requesting human input for agent '{self._current_agent}'")
                 await ctx.send_message(
                     HandoffHumanRequest(prompt=prompt, agent=self._current_agent, preview=text[:1000] or None),
                     target_id=self._hitl_executor_id,
@@ -649,7 +910,8 @@ class HandoffOrchestrator(Executor):
 
         # Otherwise, finalize with the agent's final message or a fallback
         result = final_msg or ChatMessage(
-            role=Role.ASSISTANT, text=f"Agent '{message.executor_id}' produced no assistant message."
+            role=Role.ASSISTANT,
+            text="Conversation ended without a final assistant reply. (No additional content was provided.)",
         )
         if self._unified_callback is not None:
             try:
@@ -690,8 +952,81 @@ class HandoffAgentExecutor(AgentExecutor):
         self._unified_callback = unified_callback
         self._callback_mode = callback_mode or CallbackMode.STREAMING
 
-    # Note: We intentionally do NOT override the base AgentExecutor.run handler to avoid
-    # pyright variance issues. Unified callbacks are handled at orchestration level.
+    async def _emit_update(
+        self,
+        update: AgentRunResponseUpdate,  # type: ignore[name-defined]
+        ctx: WorkflowContext[AgentExecutorResponse],
+    ) -> None:
+        # Internal workflow event
+        await ctx.add_event(AgentRunUpdateEvent(self.id, update))
+        # User callback event (delta) if streaming enabled
+        if self._unified_callback is not None and self._callback_mode == CallbackMode.STREAMING:
+            text_val = getattr(update, "text", None)
+            delta_evt = AgentDeltaEvent(agent_id=self.id, text=text_val)
+            try:
+                await self._unified_callback(delta_evt)
+            except Exception:  # pragma: no cover
+                logger.exception("HandoffAgentExecutor: unified callback failed on delta")
+
+    async def _emit_final(
+        self,
+        response: AgentRunResponse,  # type: ignore[name-defined]
+        ctx: WorkflowContext[AgentExecutorResponse],
+    ) -> None:
+        # Internal event
+        await ctx.add_event(AgentRunEvent(self.id, response))
+        # Callback event (final message)
+        if self._unified_callback is not None:
+            final_msg = None
+            msgs = list(response.messages)
+            if msgs:
+                final_msg = msgs[-1]
+            msg_evt = AgentMessageEvent(agent_id=self.id, message=final_msg)
+            try:
+                await self._unified_callback(msg_evt)
+            except Exception:  # pragma: no cover
+                logger.exception("HandoffAgentExecutor: unified callback failed on final message")
+
+    @handler  # type: ignore[misc]
+    async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:  # type: ignore[override]
+        # Clone of base run with callback hooks.
+        self._cache.extend(request.messages)
+        if request.should_respond:
+            if self._streaming:
+                updates: list[AgentRunResponseUpdate] = []  # type: ignore[name-defined]
+                async for update in self._agent.run_stream(self._cache, thread=self._agent_thread):
+                    if not update:
+                        continue
+                    contents = getattr(update, "contents", None)
+                    text_val = getattr(update, "text", "")
+                    has_text_content = False
+                    if contents:
+                        for c in contents:
+                            if getattr(c, "text", None):
+                                has_text_content = True
+                                break
+                    if not (text_val or has_text_content):
+                        continue
+                    updates.append(update)
+                    await self._emit_update(update, ctx)
+                response = AgentRunResponse.from_agent_run_response_updates(updates)  # type: ignore[name-defined]
+                await self._finalize_and_send(response, ctx)
+            else:
+                response = await self._agent.run(self._cache, thread=self._agent_thread)
+                await self._emit_final(response, ctx)
+                await self._finalize_and_send(response, ctx)
+
+    async def _finalize_and_send(
+        self,
+        response: AgentRunResponse,  # type: ignore[name-defined]
+        ctx: WorkflowContext[AgentExecutorResponse],
+    ) -> None:
+        full_conversation: list[ChatMessage] | None = None
+        if self._cache:
+            full_conversation = list(self._cache) + list(response.messages)
+        agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
+        await ctx.send_message(agent_response)
+        self._cache.clear()
 
 
 class HandoffBuilder:
@@ -703,18 +1038,31 @@ class HandoffBuilder:
         self._start_agent_name: str | None = None
         self._unified_callback: CallbackSink | None = None
         self._callback_mode: CallbackMode | None = None
-        self._seed_all_on_start: bool = True
+        self._seed_all_on_start: bool = False
+        self._seed_all_max_agents: int | None = None
         self._max_handoffs: int = 8
 
         # HITL config
         self._hitl_enabled: bool = False
         self._hitl_executor_id: str = "request_info"
         self._hitl_prompt_builder: Callable[[str, str], str] | None = None
-        self._hitl_ask_condition: str | Callable[[str, str], bool] = "if_question"
+        self._hitl_ask_condition: (
+            HITLAskCondition | Literal["always", "if_question", "heuristic", "relaxed"] | Callable[[str, str], bool]
+        ) = HITLAskCondition.IF_QUESTION
+        self._hitl_ask_condition_map: dict[
+            str,
+            HITLAskCondition | Literal["always", "if_question", "heuristic", "relaxed"] | Callable[[str, str], bool],
+        ] = {}
+        self._hitl_heuristic_cues: list[str] = []
 
         # Structured decision
-        self._structured_decision: bool = False
+        self._structured_decision: bool = True
         self._decision_model: type[AFBaseModel] = HandoffDecision
+        self._structured_require: bool = False
+        self._decision_retries: int = 0
+        self._decision_prompt_builder: Callable[[type[AFBaseModel], list[str], list[tuple[str, str]]], str] | None = (
+            None
+        )
 
     def participants(self, participants: list[AgentProtocol]) -> "HandoffBuilder":
         for a in participants:
@@ -728,10 +1076,6 @@ class HandoffBuilder:
         self._start_agent_name = _canonical_agent_name(agent)
         return self
 
-    def handoffs(self, handoffs: OrchestrationHandoffs | dict[str, dict[str, str]]) -> "HandoffBuilder":
-        self._allow_transfers = _normalize_allow_transfers(handoffs)
-        return self
-
     def allow_transfers(self, transfers: dict[str, list[tuple[str, str]]]) -> "HandoffBuilder":
         self._allow_transfers = _normalize_allow_transfers(transfers)
         return self
@@ -741,8 +1085,22 @@ class HandoffBuilder:
         self._callback_mode = mode
         return self
 
-    def seed_all_on_start(self, value: bool) -> "HandoffBuilder":
+    def seed_all_on_start(self, value: bool, *, max_agents: int | None = None) -> "HandoffBuilder":
+        """Configure whether to pre-seed every participant with the initial user message.
+
+        Parameters:
+            value: Enable/disable seed-all behavior. When enabled, each agent receives the
+                initial instruction + user message with should_respond=False so their local
+                context is primed without invoking runs.
+            max_agents: Optional guard. If provided, seed-all only occurs when the total
+                number of participants is <= max_agents. Otherwise it is skipped to avoid
+                large fan-out costs.
+        """
         self._seed_all_on_start = bool(value)
+        if max_agents is not None:
+            if max_agents <= 0:
+                raise ValueError("max_agents must be positive when provided")
+            self._seed_all_max_agents = int(max_agents)
         return self
 
     def max_handoffs(self, value: int) -> "HandoffBuilder":
@@ -755,12 +1113,51 @@ class HandoffBuilder:
         self,
         *,
         executor_id: str = "request_info",
-        ask: str | Callable[[str, str], bool] = "if_question",
+        ask: (
+            HITLAskCondition | Literal["always", "if_question", "heuristic", "relaxed"] | Callable[[str, str], bool]
+        ) = HITLAskCondition.IF_QUESTION,
         prompt_builder: Callable[[str, str], str] | None = None,
+        ask_per_agent: (
+            dict[
+                str,
+                HITLAskCondition
+                | Literal["always", "if_question", "heuristic", "relaxed"]
+                | Callable[[str, str], bool],
+            ]
+            | None
+        ) = None,
+        heuristic_cues: list[str] | None = None,
     ) -> "HandoffBuilder":
+        """Enable basic Human-In-The-Loop escalation.
+
+        Parameters:
+            executor_id: The RequestInfo executor id to route human prompts.
+            ask: Global ask condition (enum / literal / callable).
+            prompt_builder: Optional function to build human prompt.
+            ask_per_agent: Optional per-agent overrides (string enum literal or callable).
+            heuristic_cues: Optional replacement list of polite request cues for heuristic mode.
+        """
         self._hitl_enabled = True
         self._hitl_executor_id = executor_id
         self._hitl_ask_condition = ask
+        if ask_per_agent:
+            self._hitl_ask_condition_map = dict(ask_per_agent)
+        if heuristic_cues is not None:
+            self._hitl_heuristic_cues = [c.lower() for c in heuristic_cues]
+        else:
+            # Set defaults (matches orchestrator) only if empty
+            if not self._hitl_heuristic_cues:
+                self._hitl_heuristic_cues = [
+                    "could you",
+                    "can you",
+                    "please provide",
+                    "what is",
+                    "would you",
+                    "may i have",
+                    "i need your",
+                    "which order",
+                    "what's your",
+                ]
         self._hitl_prompt_builder = prompt_builder
         return self
 
@@ -769,17 +1166,54 @@ class HandoffBuilder:
         *,
         enabled: bool = True,
         decision_model: type[AFBaseModel] = HandoffDecision,
+        require: bool = False,
+        retries: int = 0,
+        decision_prompt_builder: (Callable[[type[AFBaseModel], list[str], list[tuple[str, str]]], str] | None) = None,
     ) -> "HandoffBuilder":
-        """Enable typed decision probes for routing. No mutation of user agents."""
+        """Enable typed decision probes for routing.
+
+        Parameters:
+            enabled: Turn structured decision probes on/off (default: True).
+            decision_model: Pydantic model enforcing the decision schema.
+            require: If True, parsing must succeed (raises on failure after retries).
+            retries: Additional probe attempts (strict prompt) before failing when require=True.
+        """
         self._structured_decision = bool(enabled)
         self._decision_model = decision_model
+        self._decision_prompt_builder = decision_prompt_builder
+        self._structured_require = bool(require)
+        self._decision_retries = max(0, int(retries))
         return self
 
     def build(self) -> Workflow:
         if not self._participants:
             raise ValueError("No participants configured. Call participants([...]) with AgentProtocol instances.")
 
-        by_name: dict[str, AgentProtocol] = {_canonical_agent_name(a): a for a in self._participants}
+        # Detect duplicate canonical names (agent.name or fallback id) to avoid silent overwrite.
+        names: list[str] = [_canonical_agent_name(a) for a in self._participants]
+        seen_names: set[str] = set()
+        dup_name_set: set[str] = set()
+        for n in names:
+            if n in seen_names:
+                dup_name_set.add(n)
+            else:
+                seen_names.add(n)
+        if dup_name_set:
+            raise ValueError(f"Duplicate agent names: {sorted(dup_name_set)}")
+
+        # Detect duplicate raw ids, which would corrupt executor graph wiring.
+        ids: list[str] = [a.id for a in self._participants]
+        seen_ids: set[str] = set()
+        dup_id_set: set[str] = set()
+        for i in ids:
+            if i in seen_ids:
+                dup_id_set.add(i)
+            else:
+                seen_ids.add(i)
+        if dup_id_set:
+            raise ValueError(f"Duplicate agent ids: {sorted(dup_id_set)}")
+
+        by_name: dict[str, AgentProtocol] = {n: a for n, a in zip(names, self._participants, strict=True)}
         name_to_exec_id: dict[str, str] = {name: agent.id for name, agent in by_name.items()}
 
         for src, targets in self._allow_transfers.items():
@@ -791,9 +1225,15 @@ class HandoffBuilder:
                 if tgt == src:
                     raise ValueError(f"Agent '{src}' cannot handoff to itself")
 
-        start_name = self._start_agent_name or next(iter(by_name.keys()))
+        if self._start_agent_name is None:
+            raise ValueError(
+                "No start agent specified. Call start_with(<agent>) on HandoffBuilder to choose the initial agent."
+            )
+        start_name = self._start_agent_name
         if start_name not in by_name:
-            raise ValueError(f"Starting agent '{start_name}' is not among participants")
+            raise ValueError(
+                f"Starting agent '{start_name}' is not among participants (participants={list(by_name.keys())})."
+            )
 
         orchestrator = HandoffOrchestrator(
             participants_by_name=by_name,
@@ -801,13 +1241,19 @@ class HandoffBuilder:
             allow_transfers=self._allow_transfers,
             start_agent_name=start_name,
             seed_all_on_start=self._seed_all_on_start,
+            max_seed_agents=self._seed_all_max_agents,
             max_handoffs=self._max_handoffs,
             hitl_enabled=self._hitl_enabled,
             hitl_executor_id=self._hitl_executor_id if self._hitl_enabled else None,
             hitl_prompt_builder=self._hitl_prompt_builder,
             hitl_ask_condition=self._hitl_ask_condition,
+            hitl_ask_condition_map=self._hitl_ask_condition_map,
+            hitl_heuristic_cues=self._hitl_heuristic_cues,
             structured_decision=self._structured_decision,
             decision_model=self._decision_model,
+            decision_prompt_builder=getattr(self, "_decision_prompt_builder", None),
+            structured_require=self._structured_require,
+            decision_retries=self._decision_retries,
         )
         orchestrator.set_unified_callback(self._unified_callback)
 
@@ -835,6 +1281,7 @@ class HandoffBuilder:
 
 __all__ = [
     "AgentHandoffs",
+    "HITLAskCondition",
     "HandoffAction",
     "HandoffBuilder",
     "HandoffDecision",

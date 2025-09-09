@@ -167,10 +167,14 @@ async def main() -> None:
     # Routing is defined explicitly via allow_transfers.
     workflow: Workflow = (
         HandoffBuilder()
-        .participants([intake, research, solution, answer])  # register all agents
+        .participants([intake, research, solution, answer])  # Register all agents that can participate
         .start_with("intake")  # entry point agent
-        .structured_handoff(enabled=True)  # enable structured JSON routing
         .on_event(on_event, mode=CallbackMode.STREAMING)  # register unified callback
+        # Configure valid handoffs between agents:
+        # - The dictionary key is the current agent's name.
+        # - The value is a list of tuples.
+        #   Each tuple is (allowed_target_agent_name, reason_string).
+        #   The reason_string describes why this transfer is valid and helps guide the model.
         .allow_transfers({
             "intake": [
                 ("research", "Factual lookup or domain detail required"),

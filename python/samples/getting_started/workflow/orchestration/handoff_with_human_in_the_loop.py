@@ -77,9 +77,6 @@ async def main() -> None:
 
     # Define agents for each specialized role. All are created as `AgentProtocol`.
 
-    # TRIAGE agent:
-    # Decides whether the request belongs to refund, order, or support.
-    # Does not itself resolve the request except for trivial support cases.
     triage: AgentProtocol = chat_client.create_agent(
         name="triage",
         id="triage",
@@ -90,8 +87,6 @@ async def main() -> None:
         ),
     )
 
-    # REFUND agent:
-    # Specializes in billing, returns, and refunds.
     refund: AgentProtocol = chat_client.create_agent(
         name="refund",
         id="refund",
@@ -101,10 +96,6 @@ async def main() -> None:
         ),
     )
 
-    # ORDER agent:
-    # Handles shipping, order changes, and cancellations.
-    # If missing information (like order number), it uses HITL escalation by emitting
-    # `RequestInfoEvent` (action='respond') to prompt the user for details.
     order: AgentProtocol = chat_client.create_agent(
         name="order",
         id="order",
@@ -120,8 +111,6 @@ async def main() -> None:
         ),
     )
 
-    # SUPPORT agent:
-    # Handles general product or service questions.
     support: AgentProtocol = chat_client.create_agent(
         name="support",
         id="support",
@@ -131,9 +120,6 @@ async def main() -> None:
         ),
     )
 
-    # DELIVERY agent:
-    # Provides delivery windows after order changes.
-    # If details are missing, it may request clarification via HITL.
     delivery: AgentProtocol = chat_client.create_agent(
         name="delivery",
         id="delivery",
@@ -142,7 +128,8 @@ async def main() -> None:
             "provide an estimated delivery window. Keep it concise (e.g., 'Your updated order will arrive between "
             "Sept 14-16'). If sufficient info is present, finalize with action='complete' and a one-line summary "
             "including the delivery window. If something is missing, ask one clarifying question using "
-            "action='respond'."
+            "action='respond'. "
+            "For demo purposes, confirm with the customer that their address is correct before finalizing."
         ),
     )
 
@@ -153,7 +140,6 @@ async def main() -> None:
     async def on_event(event: CallbackEvent) -> None:
         nonlocal last_stream_agent_id, stream_line_open
         if isinstance(event, AgentDeltaEvent):
-            # Handle incremental text from streaming output.
             if last_stream_agent_id != event.agent_id or not stream_line_open:
                 if stream_line_open:
                     print()
@@ -163,30 +149,31 @@ async def main() -> None:
             if event.text:
                 print(event.text, end="", flush=True)
         elif isinstance(event, AgentMessageEvent):
-            # Handle an agent's final completed message.
             if stream_line_open:
                 print(" (final)")
                 stream_line_open = False
             if event.message is not None and (event.message.text or "").strip():
                 print(f"\n[AGENT:{event.agent_id}]\n{event.message.text}\n{'-' * 26}")
         elif isinstance(event, FinalResultEvent):
-            # Handle final workflow result callback.
             if event.message is not None:
                 print("\n=== FINAL RESULT (callback) ===\n")
                 print(event.message.text)
 
     # Build the workflow using HandoffBuilder.
-    # Configure participants, routing rules, structured handoffs, and HITL escalation.
     workflow: Workflow = (
         HandoffBuilder()
-        .participants([triage, refund, order, support, delivery])  # all agents registered
-        .start_with("triage")  # workflow entry point
-        .structured_handoff(enabled=True)  # enable JSON-based routing
-        .on_event(on_event, mode=CallbackMode.STREAMING)  # callback for all events
+        .participants([triage, refund, order, support, delivery])  # Register all agents that can participate
+        .start_with("triage")  # Set entry point agent
+        .on_event(on_event, mode=CallbackMode.STREAMING)  # Register callback for events
         .enable_human_in_the_loop(
-            executor_id="request_info",  # special executor for human feedback
-            ask="if_question",  # legacy mode still works; structured mode uses action="ask_human"
+            executor_id="request_info",  # Executor responsible for human feedback
+            ask="relaxed",  # Options: 'always', 'if_question', 'heuristic', 'relaxed'
         )
+        # Configure valid handoffs between agents:
+        # - The dictionary key is the current agent's name.
+        # - The value is a list of tuples.
+        #   Each tuple is (allowed_target_agent_name, reason_string).
+        #   The reason_string describes why this transfer is valid and helps guide the model.
         .allow_transfers({
             "triage": [
                 ("refund", "Billing, returns, exchanges, or refund policy questions"),
@@ -232,7 +219,6 @@ async def main() -> None:
                 completion_event = event
             elif isinstance(event, RequestInfoEvent):
                 request_info_event = event
-                # Print the HITL request prompt to the console.
                 try:
                     prompt = getattr(event.data, "prompt", None)
                     agent = getattr(event.data, "agent", None)
@@ -244,11 +230,11 @@ async def main() -> None:
         if request_info_event is not None:
             # Wait for human feedback.
             user_input = input("Human feedback required. Please provide your input: ")
-            if user_input.strip():
-                print(f"\n[HITL INPUT ECHO]\n{user_input.strip()}\n")
             # Example responses:
             # 1st HITL: enter an order number, e.g., "1939393828"
-            # 2nd HITL: confirm delivery, e.g., "Yes, please proceed"
+            # 2nd HITL: confirm delivery address, e.g., "123 Main St."
+            if user_input.strip():
+                print(f"\n[HITL INPUT ECHO]\n{user_input.strip()}\n")
         elif completion_event is not None:
             break
 
