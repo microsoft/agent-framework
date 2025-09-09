@@ -228,7 +228,7 @@ namespace Azure.AI.Agents.Persistent
                             RawRepresentation = ru,
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
-                            Status = ToResponseStatus(runStatus),
+                            Status = ToResponseStatus(runStatus, options),
                         };
 
                         if (ru.Value.Usage is { } usage)
@@ -272,7 +272,7 @@ namespace Azure.AI.Agents.Persistent
                             MessageId = responseId,
                             RawRepresentation = mcu,
                             ResponseId = responseId,
-                            Status = ToResponseStatus(runStatus),
+                            Status = ToResponseStatus(runStatus, options),
                         };
 
                         // Add any annotations from the text update. The OpenAI Assistants API does not support passing these back
@@ -324,7 +324,7 @@ namespace Azure.AI.Agents.Persistent
                             RawRepresentation = update,
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
-                            Status = ToResponseStatus(runStatus),
+                            Status = ToResponseStatus(runStatus, options),
                             SequenceNumber = stepId,
                         };
 
@@ -649,9 +649,10 @@ namespace Azure.AI.Agents.Persistent
         }
 
         /// <summary>Converts a <see cref="RunStatus"/> to a <see cref="NewResponseStatus"/>.</summary>
-        private static NewResponseStatus? ToResponseStatus(RunStatus? status)
+        private NewResponseStatus? ToResponseStatus(RunStatus? status, ChatOptions? options)
         {
-            if (status is null)
+            // Unless the new behavior of not awaiting run completion is requested, we don't return a status
+            if (status is null || ShouldAwaitRunCompletion(options))
             {
                 return null;
             }
@@ -794,13 +795,13 @@ namespace Azure.AI.Agents.Persistent
 
                             var message = await _client.Messages.GetMessageAsync(step.ThreadId, messageDetails.MessageCreation.MessageId, cancellationToken).ConfigureAwait(false);
 
-                            yield return CreateChatResponseUpdate(run, step, message);
+                            yield return this.CreateChatResponseUpdate(run, options, step, message);
                         }
                     }
                 }
                 else if (run.Status == RunStatus.Queued || run.Status == RunStatus.InProgress || run.Status == RunStatus.Cancelling)
                 {
-                    yield return CreateChatResponseUpdate(run);
+                    yield return this.CreateChatResponseUpdate(run, options);
                 }
                 else if (run.Status == RunStatus.RequiresAction)
                 {
@@ -808,13 +809,13 @@ namespace Azure.AI.Agents.Persistent
                     {
                         var functionCallContents = GetFunctionCallContents(step);
 
-                        yield return CreateChatResponseUpdate(run, step, functionCallContents: functionCallContents);
+                        yield return this.CreateChatResponseUpdate(run, options, step, functionCallContents: functionCallContents);
                     }
                 }
             }
         }
 
-        private static NewChatResponseUpdate CreateChatResponseUpdate(ThreadRun run, RunStep? step = null, PersistentThreadMessage? message = null, IEnumerable<FunctionCallContent>? functionCallContents = null)
+        private NewChatResponseUpdate CreateChatResponseUpdate(ThreadRun run, ChatOptions? options, RunStep? step = null, PersistentThreadMessage? message = null, IEnumerable<FunctionCallContent>? functionCallContents = null)
         {
             var update = new NewChatResponseUpdate
             {
@@ -826,7 +827,7 @@ namespace Azure.AI.Agents.Persistent
                 RawRepresentation = message ?? step as object ?? run,
                 ResponseId = run.Id,
                 Role = message?.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant,
-                Status = ToResponseStatus(run.Status),
+                Status = this.ToResponseStatus(run.Status, options),
                 SequenceNumber = step?.Id,
             };
 
@@ -903,7 +904,8 @@ namespace Azure.AI.Agents.Persistent
                 return null;
             }
 
-            return new[] { CreateChatResponseUpdate(run) }.NewToChatResponse();
+            // Setting AwaitLongRunCompletion to false here only to get the `Status` property set in the response.
+            return new[] { CreateChatResponseUpdate(run, new NewChatOptions { AwaitLongRunCompletion = false }) }.NewToChatResponse();
         }
 
         public Task<ChatResponse?> DeleteRunAsync(string id, ChatDeleteRunOptions? options = null, CancellationToken cancellationToken = default)

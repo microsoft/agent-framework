@@ -132,8 +132,8 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
 
         var openAIResponse = await _responseClient.CancelResponseAsync(id, cancellationToken).ConfigureAwait(false);
 
-        // Convert the response to a ChatResponse.
-        return FromOpenAIResponse(openAIResponse, openAIOptions: null);
+        // Setting Background to true here only to get the `Status` property set in the response.
+        return FromOpenAIResponse(openAIResponse, openAIOptions: new ResponseCreationOptions { Background = true });
     }
 
     /// <inheritdoc />
@@ -150,12 +150,12 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
         };
     }
 
-    internal static ChatResponse FromOpenAIResponse(OpenAIResponse openAIResponse, ResponseCreationOptions? openAIOptions)
+    internal ChatResponse FromOpenAIResponse(OpenAIResponse openAIResponse, ResponseCreationOptions openAIOptions)
     {
         // Convert and return the results.
         NewChatResponse response = new()
         {
-            ConversationId = openAIOptions?.StoredOutputEnabled is false ? null : openAIResponse.Id,
+            ConversationId = openAIOptions.StoredOutputEnabled is false ? null : openAIResponse.Id,
             CreatedAt = openAIResponse.CreatedAt,
             FinishReason = ToFinishReason(openAIResponse.IncompleteStatusDetails?.Reason),
             ModelId = openAIResponse.Model,
@@ -189,7 +189,7 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
             }
         }
 
-        response.Status = ToResponseStatus(openAIResponse.Status);
+        response.Status = ToResponseStatus(openAIResponse.Status, openAIOptions);
 
         return response;
     }
@@ -320,24 +320,24 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
                     responseId = createdUpdate.Response.Id;
                     conversationId = options.StoredOutputEnabled is false ? null : responseId;
                     modelId = createdUpdate.Response.Model;
-                    responseStatus = ToResponseStatus(createdUpdate.Response.Status);
+                    responseStatus = ToResponseStatus(createdUpdate.Response.Status, options);
                     goto default;
 
                 case StreamingResponseInProgressUpdate inProgressUpdate:
-                    responseStatus = ToResponseStatus(inProgressUpdate.Response.Status);
+                    responseStatus = ToResponseStatus(inProgressUpdate.Response.Status, options);
                     goto default;
 
                 case StreamingResponseIncompleteUpdate incompleteUpdate:
-                    responseStatus = ToResponseStatus(incompleteUpdate.Response.Status);
+                    responseStatus = ToResponseStatus(incompleteUpdate.Response.Status, options);
                     goto default;
 
                 case StreamingResponseFailedUpdate failedUpdate:
-                    responseStatus = ToResponseStatus(failedUpdate.Response.Status);
+                    responseStatus = ToResponseStatus(failedUpdate.Response.Status, options);
                     goto default;
 
                 case StreamingResponseCompletedUpdate completedUpdate:
                 {
-                    responseStatus = ToResponseStatus(completedUpdate.Response.Status);
+                    responseStatus = ToResponseStatus(completedUpdate.Response.Status, options);
                     var update = CreateUpdate(ToUsageDetails(completedUpdate.Response) is { } usage ? new UsageContent(usage) : null);
                     update.FinishReason =
                         ToFinishReason(completedUpdate.Response.IncompleteStatusDetails?.Reason) ??
@@ -881,9 +881,10 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
     }
 
     /// <summary>Converts a <see cref="ResponseStatus"/> to a <see cref="NewResponseStatus"/>.</summary>
-    private static NewResponseStatus? ToResponseStatus(ResponseStatus? status)
+    private static NewResponseStatus? ToResponseStatus(ResponseStatus? status, ResponseCreationOptions options)
     {
-        if (status is null)
+        // Unless the new behavior of not awaiting run completion is requested, we don't return a status
+        if (status is null || options.Background is false)
         {
             return null;
         }

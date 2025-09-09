@@ -39,6 +39,7 @@ public sealed class NewPersistentAgentsChatClientTests
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
+            Assert.Null(response.Status);
         }
         else
         {
@@ -65,6 +66,7 @@ public sealed class NewPersistentAgentsChatClientTests
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
+            Assert.Null(response.Status);
         }
         else
         {
@@ -141,7 +143,7 @@ public sealed class NewPersistentAgentsChatClientTests
         Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
+        Assert.Null(response.Status);
     }
 
     [Fact]
@@ -157,10 +159,11 @@ public sealed class NewPersistentAgentsChatClientTests
         };
 
         // Act
-        ChatResponse response = await client.GetResponseAsync("What time is it?", options);
+        NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What time is it?", options);
 
         // Assert
         Assert.Contains("5:43", response.Text);
+        Assert.Null(response.Status);
     }
 
     [Fact]
@@ -198,6 +201,7 @@ public sealed class NewPersistentAgentsChatClientTests
         }
 
         Assert.Contains("5:43", response.Text);
+        Assert.Equal(NewResponseStatus.Completed, response.Status);
     }
 
     [Fact]
@@ -229,7 +233,7 @@ public sealed class NewPersistentAgentsChatClientTests
         Assert.Equal(3, response.Messages.Count);
         Assert.Contains("5:43", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
+        Assert.Null(response.Status);
     }
 
     [Fact]

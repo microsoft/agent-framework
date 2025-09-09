@@ -54,6 +54,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
+            Assert.Null(response.Status);
         }
         else
         {
@@ -84,6 +85,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
+            Assert.Null(response.Status);
         }
         else
         {
@@ -158,7 +160,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
+        Assert.Null(response.Status);
     }
 
     [Fact]
@@ -172,10 +174,11 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         };
 
         // Act
-        ChatResponse response = await this._chatClient.GetResponseAsync("What time is it?", options);
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What time is it?", options);
 
         // Assert
         Assert.Contains("5:43", response.Text);
+        Assert.Null(response.Status);
     }
 
     [Fact]
@@ -240,7 +243,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         Assert.Equal(3, response.Messages.Count);
         Assert.Contains("5:43", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
+        Assert.Null(response.Status);
     }
 
     [Fact]

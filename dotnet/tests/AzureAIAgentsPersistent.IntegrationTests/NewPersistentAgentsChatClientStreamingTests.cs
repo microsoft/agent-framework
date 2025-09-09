@@ -47,9 +47,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Assert
         if (awaitRunCompletion)
         {
-            Assert.Contains(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.Empty(statuses);
             Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
@@ -84,9 +82,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Assert
         if (awaitRunCompletion)
         {
-            Assert.Contains(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.Empty(statuses);
             Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
@@ -150,9 +146,17 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             responseText += update;
         }
 
-        Assert.Contains("Paris", responseText);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        if (continueWithAwaiting)
+        {
+            Assert.Contains("Paris", responseText);
+            Assert.Empty(statuses);
+        }
+        else
+        {
+            Assert.Contains("Paris", responseText);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
     }
 
     [Fact]
@@ -183,9 +187,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         // Assert
         Assert.Contains("5:43", responseText);
-        Assert.Contains(NewResponseStatus.Queued, statuses);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        Assert.Empty(statuses);
     }
 
     [Theory]
@@ -196,9 +198,11 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
 
-        NewChatOptions options = new();
-        options.AwaitLongRunCompletion = false;
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            AwaitLongRunCompletion = false,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -243,9 +247,16 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         Assert.Contains("5:43", responseText);
 
-        Assert.Contains(NewResponseStatus.Queued, statuses);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        if (continueWithAwaiting)
+        {
+            Assert.Empty(statuses);
+        }
+        else
+        {
+            Assert.Contains(NewResponseStatus.Queued, statuses);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
     }
 
     //[Theory]

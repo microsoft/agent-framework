@@ -43,9 +43,7 @@ public sealed class A2AAgentStreaming
         // Assert
         if (awaitRunCompletion)
         {
-            Assert.Contains(NewResponseStatus.Submitted, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.Empty(statuses);
             Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
@@ -80,9 +78,7 @@ public sealed class A2AAgentStreaming
         // Assert
         if (awaitRunCompletion)
         {
-            Assert.Contains(NewResponseStatus.Submitted, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.Empty(statuses);
             Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
@@ -142,9 +138,16 @@ public sealed class A2AAgentStreaming
 
         Assert.Contains("Paris", responseText);
 
-        Assert.Contains(NewResponseStatus.Submitted, statuses);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        if (continueWithAwaiting)
+        {
+            Assert.Empty(statuses);
+        }
+        else
+        {
+            Assert.Contains(NewResponseStatus.Submitted, statuses);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
     }
 
     [Fact]

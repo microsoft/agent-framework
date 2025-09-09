@@ -103,7 +103,7 @@ internal sealed class A2AAgent : AIAgent
 
             UpdateThreadConversationId(thread, task.ContextId);
 
-            return this.ConvertToAgentResponse(task);
+            return this.ConvertToAgentResponse(task, options);
         }
 
         throw new NotSupportedException($"Only message and task responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
@@ -144,7 +144,7 @@ internal sealed class A2AAgent : AIAgent
             {
                 contextId = task.ContextId;
 
-                foreach (var update in this.ConvertToAgentResponse(task).ToAgentRunResponseUpdates())
+                foreach (var update in this.ConvertToAgentResponse(task, options).ToAgentRunResponseUpdates())
                 {
                     yield return update;
 
@@ -163,7 +163,7 @@ internal sealed class A2AAgent : AIAgent
             {
                 contextId = taskUpdateEvent.ContextId;
 
-                yield return this.ConvertToAgentResponseUpdate(taskUpdateEvent);
+                yield return this.ConvertToAgentResponseUpdate(taskUpdateEvent, options);
 
                 continue;
             }
@@ -181,7 +181,8 @@ internal sealed class A2AAgent : AIAgent
 
         var agentTask = await this._a2aClient.CancelTaskAsync(new TaskIdParams { Id = id }, cancellationToken).ConfigureAwait(false);
 
-        return this.ConvertToAgentResponse(agentTask);
+        // Setting AwaitLongRunCompletion to false here only to get the `Status` property set in the response.
+        return this.ConvertToAgentResponse(agentTask, new AgentRunOptions() { AwaitLongRunCompletion = false });
     }
 
     /// <inheritdoc/>
@@ -228,7 +229,7 @@ internal sealed class A2AAgent : AIAgent
         thread.ConversationId ??= contextId;
     }
 
-    private AgentRunResponse ConvertToAgentResponse(AgentTask task)
+    private AgentRunResponse ConvertToAgentResponse(AgentTask task, AgentRunOptions? options)
     {
         AgentRunResponse response = new()
         {
@@ -236,7 +237,7 @@ internal sealed class A2AAgent : AIAgent
             ResponseId = task.Id,
             RawRepresentation = task,
             Messages = task.History?.ToChatMessages(this.Name, task.Artifacts) ?? [],
-            Status = task.Status.ToResponseStatus(),
+            Status = this.ToResponseStatus(task.Status, options),
             AdditionalProperties = task.Metadata.ToAdditionalProperties() ?? [],
         };
 
@@ -248,6 +249,16 @@ internal sealed class A2AAgent : AIAgent
         }
 
         return response;
+    }
+
+    private NewResponseStatus? ToResponseStatus(AgentTaskStatus status, AgentRunOptions? options)
+    {
+        if (this.ShouldAwaitTaskCompletions(options))
+        {
+            return null;
+        }
+
+        return status.ToResponseStatus();
     }
 
     private AgentRunResponse ConvertToAgentResponse(Message message)
@@ -279,7 +290,7 @@ internal sealed class A2AAgent : AIAgent
         return response;
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
+    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent, AgentRunOptions? options)
     {
         AgentRunResponseUpdate responseUpdate = new()
         {
@@ -294,7 +305,7 @@ internal sealed class A2AAgent : AIAgent
         {
             if (statusUpdateEvent is { Status: { } status })
             {
-                responseUpdate.Status = status.ToResponseStatus();
+                responseUpdate.Status = this.ToResponseStatus(status, options);
 
                 responseUpdate.AdditionalProperties["Status.Timestamp"] = status.Timestamp;
 

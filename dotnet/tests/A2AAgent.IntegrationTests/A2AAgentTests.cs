@@ -34,6 +34,7 @@ public class A2AAgentTests
         {
             Assert.Equal(2, response.Messages.Count);
             Assert.Contains("Paris", response.Text);
+            Assert.Null(response.Status);
         }
         else
         {
@@ -60,6 +61,7 @@ public class A2AAgentTests
         {
             Assert.Equal(2, response.Messages.Count);
             Assert.Contains("Paris", response.Text);
+            Assert.Null(response.Status);
         }
         else
         {
@@ -134,7 +136,7 @@ public class A2AAgentTests
         Assert.Equal(2, response.Messages.Count);
         Assert.Contains("Paris", response.Text);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
+        Assert.Null(response.Status);
     }
 
     [Fact]

@@ -64,9 +64,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         if (awaitRunCompletion)
         {
             Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
-            Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(statuses);
         }
         else
         {
@@ -104,9 +102,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Assert
         if (awaitRunCompletion)
         {
-            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.Empty(statuses);
             Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
@@ -174,9 +170,16 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         Assert.Contains("Paris", responseText);
 
-        Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        if (continueWithAwaiting)
+        {
+            Assert.Empty(statuses);
+        }
+        else
+        {
+            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
     }
 
     [Fact]
@@ -205,8 +208,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         // Assert
         Assert.Contains("5:43", responseText);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        Assert.Empty(statuses);
     }
 
     [Theory]
@@ -268,8 +270,15 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 
         Assert.Contains("5:43", responseText);
 
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        if (continueWithAwaiting)
+        {
+            Assert.Empty(statuses);
+        }
+        else
+        {
+            Assert.Contains(NewResponseStatus.InProgress, statuses);
+            Assert.Contains(NewResponseStatus.Completed, statuses);
+        }
     }
 
     //[Theory]
