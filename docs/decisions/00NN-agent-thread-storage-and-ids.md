@@ -54,7 +54,9 @@ This means that the agent would want to request the latest chat history from the
 For the 3rd party storage scenario, the thread object needs to capture the id (could be a compound id too, e.g. partitionkey+id) that the messages are stored under.
 The thread should also be able to update and query that 3rd party storage solution.
 
-This id used for 3rd party storage should not be confused with any id used for an Agentic/Inference Service's built in storage.
+### 3rd party storage ids vs Agentic/Inference service thread Ids
+
+The id used for 3rd party storage should not be confused with any id used for an Agentic/Inference Service's built in storage.
 They are mutually exclusive, since if you use Agentic/Inference service provided storage, you cannot provide chat history on each invocation
 and 3rd party storage becomes pointless.
 Conversely, if the Agentic/Inference service does not provide built in storage, you must provide chat history on each invocation.
@@ -63,6 +65,28 @@ It's also important to consider the case where services support both modes, e.g.
 If we are using store=false, and storing data in a 3rd party storage solution under an id, we need to ensure that we don't
 confuse that id for a Response id, as passing it to the response service will result in an error.
 It would not be a valid response id after all.
+
+### OPEN QUESTION: Efficient loading of 3rd party stored chat history
+
+Let's consider a scenario where we have an agent host that can host any type of AIAgent and doesn't know the specifics of the underlying implementations.
+The developer is hosting a ChatClientAgent with an AgentThread that is configured to use 3rd party storage.
+
+Now let's consider what happens when the host is invoked from a remote client.
+
+1. The host needs to take the thread id provided by the caller, and load the serialized AgentThread json from storage using that id.
+1. The host then deserializes the AgentThread and passes it to the AIAgent.
+1. The AIAgent calls the IChatMessageStore on the AgentThread to retrieve the current ChatHistory.
+1. The 3rd Party storage IChatMessageStore loads the chat history from the 3rd party storage solution.
+
+In this case we have two roundtrips to storage to eventually load the chat history.
+If the public thread id that we received from the caller, is also the id that the data was stored under in the 3rd party storage solution (or the latter can be derived from the former), this adds unnecessary latency.
+Loading the serialized AgentThread from storage, would have just given us a piece of json with the same id we already had.
+
+That said, the host doesn't know whether the AgentThread will use the public thread id for storage or not.
+Perhaps the AgentThread is using InMemory storage, in which case the serialized thread will already contain the entire chat history.
+When we add `AIContextProvider` support, their state will also be part of the serialized thread, and this also needs to be loaded/serialized.
+
+> Do we need to support a scenario where developers can construct an AgentThread with the id they already have, without needing to load the serialized AgentThread from storage, when they know the underlying supported storage type, and if there are any implications for the AIContextProvider state?
 
 ### Public thread id support
 
