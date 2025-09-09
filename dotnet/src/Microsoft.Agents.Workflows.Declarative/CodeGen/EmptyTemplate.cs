@@ -33,16 +33,16 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("Executor() : ActionExecutor(id: \"");
+            this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write("\")\n{\n    protected override ValueTask ExecuteAsync(IWorkflowContext context, Canc" +
-                    "ellationToken cancellationToken)\n    {\n       // No operation\n       return defa" +
-                    "ult;\n    }\n}");
+            this.Write("\", session)\n{\n    protected override ValueTask ExecuteAsync(IWorkflowContext cont" +
+                    "ext, CancellationToken cancellationToken)\n    {\n       // No operation\n       re" +
+                    "turn default;\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
     }
