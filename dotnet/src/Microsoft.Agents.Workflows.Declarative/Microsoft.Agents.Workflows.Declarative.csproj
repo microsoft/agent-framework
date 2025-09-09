@@ -4,7 +4,6 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>alpha</VersionSuffix>
-    <NoWarn>$(NoWarn);IL2075</NoWarn><!-- // %%% PRAGMA -->
   </PropertyGroup>
 
   <PropertyGroup>

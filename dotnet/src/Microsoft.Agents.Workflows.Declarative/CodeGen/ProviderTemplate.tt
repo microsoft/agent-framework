@@ -1,4 +1,4 @@
-﻿<#@ template language="C#" visibility="internal" #>
+﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" #>
 <#@ import namespace="Microsoft.Agents.Workflows.Declarative.Extensions" #>
 <#@ assembly name="System.Core" #>
 // ------------------------------------------------------------------------------
