@@ -34,6 +34,11 @@ _RE_HANDOFF_FUNCTION = re.compile(
 )
 _RE_COMPLETE_DIRECT = re.compile(r"^(?:complete_task|complete)\s*:\s*(.+)$", re.IGNORECASE)
 _RE_COMPLETE_FUNCTION = re.compile(r"^(?:handoff\.)?complete_task\s*\(\s*[\"']?(.*?)[\"']?\s*\)\s*$", re.IGNORECASE)
+# Relaxed mode: interrogative/modal sentence starters
+_RE_RELAXED_INTERROGATIVE_START = re.compile(
+    r"^(?:who|what|when|where|why|how|could|can|would|should|may|do|does|did|are|is|will)\b",
+    re.IGNORECASE,
+)
 
 
 class HandoffAction(str, Enum):
@@ -514,13 +519,7 @@ class HandoffOrchestrator(Executor):
                 return False
             # 2. First sentence interrogative/modal start heuristic
             first_sentence = stripped.split(".\n")[0].split(". ")[0][:160].lstrip()
-            return bool(
-                re.match(
-                    r"(?i)^(who|what|when|where|why|how|could|can|would|should|may|do|does|did|are|is|will)\b",
-                    first_sentence,
-                )
-                and len(stripped) <= 800
-            )
+            return bool(_RE_RELAXED_INTERROGATIVE_START.match(first_sentence) and len(stripped) <= 800)
         return False
 
     def _try_parse_structured_decision(self, response: AgentRunResponse) -> HandoffDecision | None:
