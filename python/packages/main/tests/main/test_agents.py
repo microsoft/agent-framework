@@ -1,120 +1,25 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, MutableSequence
-from typing import Any
+from collections.abc import AsyncIterable
 from uuid import uuid4
 
-from pytest import fixture, raises
+from pytest import raises
 
 from agent_framework import (
     AgentProtocol,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
-    BaseChatClient,
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
     ChatMessageList,
-    ChatOptions,
     ChatResponse,
-    ChatResponseUpdate,
+    HostedCodeInterpreterTool,
     Role,
     TextContent,
 )
 from agent_framework.exceptions import AgentExecutionException
-
-
-# Mock AgentThread implementation for testing
-class MockAgentThread(AgentThread):
-    pass
-
-
-# Mock Agent implementation for testing
-class MockAgent(AgentProtocol):
-    @property
-    def id(self) -> str:
-        return str(uuid4())
-
-    @property
-    def name(self) -> str | None:
-        """Returns the name of the agent."""
-        return "Name"
-
-    @property
-    def display_name(self) -> str:
-        """Returns the name of the agent."""
-        return "Display Name"
-
-    @property
-    def description(self) -> str | None:
-        return "Description"
-
-    async def run(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Response")])])
-
-    async def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        yield AgentRunResponseUpdate(contents=[TextContent("Response")])
-
-    def get_new_thread(self) -> AgentThread:
-        return MockAgentThread()
-
-
-# Mock ChatClientProtocol implementation for testing
-class MockChatClient(BaseChatClient):
-    _mock_response: ChatResponse | None = None
-
-    def __init__(self, mock_response: ChatResponse | None = None) -> None:
-        self._mock_response = mock_response
-
-    async def _inner_get_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> ChatResponse:
-        return (
-            self._mock_response
-            if self._mock_response
-            else ChatResponse(messages=ChatMessage(role=Role.ASSISTANT, text="test response"))
-        )
-
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(role=Role.ASSISTANT, text=TextContent(text="test streaming response"))
-
-
-@fixture
-def agent_thread() -> AgentThread:
-    return MockAgentThread()
-
-
-@fixture
-def agent() -> AgentProtocol:
-    return MockAgent()
-
-
-@fixture
-def chat_client() -> BaseChatClient:
-    return MockChatClient()
 
 
 def test_agent_thread_type(agent_thread: AgentThread) -> None:
@@ -178,7 +83,7 @@ async def test_chat_client_agent_run_streaming(chat_client: ChatClientProtocol) 
 
     result = await AgentRunResponse.from_agent_response_generator(agent.run_stream("Hello"))
 
-    assert result.text == "test streaming response"
+    assert result.text == "test streaming response another update"
 
 
 async def test_chat_client_agent_get_new_thread(chat_client: ChatClientProtocol) -> None:
@@ -203,14 +108,16 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
     assert result_messages[1].text == "Test"
 
 
-async def test_chat_client_agent_update_thread_id() -> None:
-    chat_client = MockChatClient(
-        mock_response=ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
-            conversation_id="123",
-        )
+async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
+    mock_response = ChatResponse(
+        messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+        conversation_id="123",
     )
-    agent = ChatAgent(chat_client=chat_client)
+    chat_client_base.run_responses = [mock_response]
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=HostedCodeInterpreterTool(),
+    )
     thread = agent.get_new_thread()
 
     result = await agent.run("Hello", thread=thread)
@@ -263,15 +170,16 @@ async def test_chat_client_agent_author_name_as_agent_name(chat_client: ChatClie
     assert result.messages[0].author_name == "TestAgent"
 
 
-async def test_chat_client_agent_author_name_is_used_from_response() -> None:
-    chat_client = MockChatClient(
-        mock_response=ChatResponse(
+async def test_chat_client_agent_author_name_is_used_from_response(chat_client_base: ChatClientProtocol) -> None:
+    chat_client_base.run_responses = [
+        ChatResponse(
             messages=[
                 ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")], author_name="TestAuthor")
             ]
         )
-    )
-    agent = ChatAgent(chat_client=chat_client)
+    ]
+
+    agent = ChatAgent(chat_client=chat_client_base, tools=HostedCodeInterpreterTool())
 
     result = await agent.run("Hello")
     assert result.text == "test response"

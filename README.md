@@ -42,7 +42,7 @@ Below are the basics for each language implementation. For more details on pytho
 - [Azure Integration](./python/packages/azure): Azure OpenAI and AI Foundry integration
 - [Getting Started with Workflows](./python/samples/getting_started/workflow): basic workflow creation and integration with agents
 
-### .Net
+### .NET
 - [Getting Started with Agents](./dotnet/samples/GettingStarted/Agents): basic agent creation and tool usage
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
 - [Orchestration Samples](./dotnet/samples/GettingStarted/Orchestration): advanced multi-agent patterns

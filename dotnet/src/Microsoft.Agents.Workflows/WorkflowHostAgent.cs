@@ -129,7 +129,7 @@ internal class WorkflowHostAgent : AIAgent
             merger.AddUpdate(update);
         }
 
-        return merger.ComputeMerged(workflowThread.ResponseId);
+        return merger.ComputeMerged(workflowThread.ResponseId, this.Id, this.Name);
     }
 
     public override async

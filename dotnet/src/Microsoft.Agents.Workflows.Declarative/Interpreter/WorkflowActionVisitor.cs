@@ -80,7 +80,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             // Complete the condition item.
             void CompletionHandler()
             {
-                string completionId = this.ContinuationFor(stepId); // End items
+                string completionId = this.ContinuationFor(stepId, conditionGroup.DoneAsync); // End items
                 this._workflowModel.AddLink(completionId, PostId(conditionGroup.Id)); // Merge with parent scope
 
                 // Merge link when no action group is defined
@@ -461,12 +461,12 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         item.GetParentId() ??
         throw new DeclarativeModelException($"Missing parent ID for action element: {item.GetId()} [{item.GetType().Name}].");
 
-    private string ContinuationFor(string parentId) => this.ContinuationFor(parentId, parentId);
+    private string ContinuationFor(string parentId, DelegateAction? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
 
-    private string ContinuationFor(string actionId, string parentId)
+    private string ContinuationFor(string actionId, string parentId, DelegateAction? stepAction = null)
     {
         actionId = PostId(actionId);
-        this._workflowModel.AddNode(this.CreateStep(actionId), parentId);
+        this._workflowModel.AddNode(this.CreateStep(actionId, stepAction), parentId);
         return actionId;
     }
 

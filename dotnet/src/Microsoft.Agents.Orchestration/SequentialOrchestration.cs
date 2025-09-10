@@ -32,10 +32,13 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
         this.ResumeAsync(0, messages, context, cancellationToken);
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.SequentialState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
-        return this.ResumeAsync(state.Index, state.Messages, context, cancellationToken);
+
+        // Append the new messages to the checkpoint state
+        List<ChatMessage> allMessages = [.. state.Messages, .. newMessages];
+        return this.ResumeAsync(state.Index, allMessages, context, cancellationToken);
     }
 
     /// <inheritdoc />

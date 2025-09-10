@@ -94,11 +94,19 @@ internal sealed class Program
         {
             if (evt is ExecutorInvokedEvent executorInvoked)
             {
-                Debug.WriteLine($"STEP ENTER #{executorInvoked.ExecutorId}");
+                Debug.WriteLine($"EXECUTOR ENTER #{executorInvoked.ExecutorId}");
             }
             else if (evt is ExecutorCompletedEvent executorCompleted)
             {
-                Debug.WriteLine($"STEP EXIT #{executorCompleted.ExecutorId}");
+                Debug.WriteLine($"EXECUTOR EXIT #{executorCompleted.ExecutorId}");
+            }
+            if (evt is DeclarativeActionInvokeEvent actionInvoked)
+            {
+                Debug.WriteLine($"ACTION ENTER #{actionInvoked.ActionId} [{actionInvoked.ActionType}]");
+            }
+            else if (evt is DeclarativeActionCompleteEvent actionComplete)
+            {
+                Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionComplete.ActionType}]");
             }
             else if (evt is ExecutorFailureEvent executorFailure)
             {
