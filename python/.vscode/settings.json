@@ -35,10 +35,5 @@
             "name": "azure",
             "depth": 2
         }
-    ],
-    "python.testing.pytestArgs": [
-        "."
-    ],
-    "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+    ]
 }
