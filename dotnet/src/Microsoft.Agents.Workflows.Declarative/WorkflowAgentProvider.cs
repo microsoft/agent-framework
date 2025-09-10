@@ -29,7 +29,7 @@ public abstract class WorkflowAgentProvider
     /// Asynchronously creates a new conversation and returns its unique identifier.
     /// </summary>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    /// <returns></returns>
+    /// <returns>The conversation identifier</returns>
     public abstract Task<string> CreateConversationAsync(CancellationToken cancellationToken = default);
 }
 
