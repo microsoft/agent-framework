@@ -525,7 +525,7 @@ public class ChatClientAgentTests
             {
                 Messages = [new(ChatRole.System, "context provider message")],
                 Instructions = "context provider instructions",
-                AIFunctions = [AIFunctionFactory.Create(() => { }, "context provider function")]
+                Tools = [AIFunctionFactory.Create(() => { }, "context provider function")]
             });
 
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });

@@ -73,7 +73,7 @@ namespace SampleApp
     /// </summary>
     internal sealed class UserInfoMemory(IChatClient chatClient, UserInfo userInfo) : AIContextProvider
     {
-        public override async Task MessagesAddingAsync(IReadOnlyCollection<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override async Task MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((userInfo.UserName == null || userInfo.UserAge == null) && newMessages.Any(x => x.Role == ChatRole.User))

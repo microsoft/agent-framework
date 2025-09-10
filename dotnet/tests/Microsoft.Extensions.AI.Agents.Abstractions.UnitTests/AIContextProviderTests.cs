@@ -43,7 +43,7 @@ public class AIContextProviderTests
             return Task.FromResult(new AIContext());
         }
 
-        public override async Task MessagesAddingAsync(IReadOnlyCollection<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override async Task MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
         {
             await base.MessagesAddingAsync(newMessages, agentThreadId, cancellationToken);
         }

@@ -363,13 +363,13 @@ public sealed class ChatClientAgent : AIAgent
                 threadMessages.AddRange(aiContext.Messages);
             }
 
-            if (aiContext.AIFunctions is { Count: > 0 })
+            if (aiContext.Tools is { Count: > 0 })
             {
                 chatOptions ??= new();
                 chatOptions.Tools ??= [];
-                foreach (AIFunction function in aiContext.AIFunctions)
+                foreach (AITool tool in aiContext.Tools)
                 {
-                    chatOptions.Tools.Add(function);
+                    chatOptions.Tools.Add(tool);
                 }
             }
 

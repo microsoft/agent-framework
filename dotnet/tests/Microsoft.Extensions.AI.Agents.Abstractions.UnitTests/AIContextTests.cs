@@ -43,16 +43,16 @@ public class AIContextTests
     {
         var context = new AIContext
         {
-            AIFunctions = new List<AIFunction>
+            Tools = new List<AITool>
             {
                 AIFunctionFactory.Create(() => "Function1", "Function1", "Description1"),
                 AIFunctionFactory.Create(() => "Function2", "Function2", "Description2"),
             }
         };
 
-        Assert.NotNull(context.AIFunctions);
-        Assert.Equal(2, context.AIFunctions.Count);
-        Assert.Equal("Function1", context.AIFunctions[0].Name);
-        Assert.Equal("Function2", context.AIFunctions[1].Name);
+        Assert.NotNull(context.Tools);
+        Assert.Equal(2, context.Tools.Count);
+        Assert.Equal("Function1", context.Tools[0].Name);
+        Assert.Equal("Function2", context.Tools[1].Name);
     }
 }

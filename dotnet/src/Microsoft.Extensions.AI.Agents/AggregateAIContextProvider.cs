@@ -12,12 +12,12 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// An <see cref="AIContextProvider"/> that aggregates other <see cref="AIContextProvider"/> instances and delegates events to them.
 /// </summary>
-public class AggregateAIContextProvider : AIContextProvider, IList<AIContextProvider>
+public sealed class AggregateAIContextProvider : AIContextProvider, IList<AIContextProvider>
 {
     private readonly List<AIContextProvider> _providers = new();
 
     /// <inheritdoc />
-    public override async Task MessagesAddingAsync(IReadOnlyCollection<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public override async Task MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
     {
         if (this._providers.Count == 0)
         {
@@ -39,7 +39,7 @@ public class AggregateAIContextProvider : AIContextProvider, IList<AIContextProv
         var subContexts = await Task.WhenAll(this._providers.Select(x => x.ModelInvokingAsync(newMessages, agentThreadId, cancellationToken))).ConfigureAwait(false);
 
         // Aggregate all the sub-contexts into a single context.
-        List<AIFunction>? allFunctions = null;
+        List<AITool>? allTools = null;
         List<ChatMessage>? allMessages = null;
         StringBuilder? allInstructions = null;
         foreach (var subContext in subContexts)
@@ -49,10 +49,10 @@ public class AggregateAIContextProvider : AIContextProvider, IList<AIContextProv
                 continue;
             }
 
-            if (subContext.AIFunctions != null && subContext.AIFunctions.Count > 0)
+            if (subContext.Tools != null && subContext.Tools.Count > 0)
             {
-                allFunctions ??= [];
-                allFunctions.AddRange(subContext.AIFunctions);
+                allTools ??= [];
+                allTools.AddRange(subContext.Tools);
             }
 
             if (subContext.Messages != null && subContext.Messages.Count > 0)
@@ -74,7 +74,7 @@ public class AggregateAIContextProvider : AIContextProvider, IList<AIContextProv
 
         var combinedContext = new AIContext
         {
-            AIFunctions = allFunctions,
+            Tools = allTools,
             Messages = allMessages,
             Instructions = allInstructions?.ToString()
         };

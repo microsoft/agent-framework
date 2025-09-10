@@ -46,13 +46,13 @@ public class AggregateAIContextProviderTests
         {
             Instructions = "Instruction1",
             Messages = new List<ChatMessage> { new(ChatRole.System, "SystemMessage1") },
-            AIFunctions = new List<AIFunction> { AIFunctionFactory.Create(() => { }, "AIFunction1") }
+            Tools = [AIFunctionFactory.Create(() => { }, "AIFunction1")]
         };
         var context2 = new AIContext
         {
             Instructions = "Instruction2",
             Messages = new List<ChatMessage> { new(ChatRole.User, "UserMessage2") },
-            AIFunctions = new List<AIFunction> { AIFunctionFactory.Create(() => { }, "AIFunction2") }
+            Tools = [AIFunctionFactory.Create(() => { }, "AIFunction2")]
         };
 
         var mockProvider1 = new Mock<AIContextProvider>();
@@ -75,9 +75,9 @@ public class AggregateAIContextProviderTests
         Assert.Equal(2, result.Messages?.Count);
         Assert.Equal("SystemMessage1", result.Messages?[0].Text);
         Assert.Equal("UserMessage2", result.Messages?[1].Text);
-        Assert.Equal(2, result.AIFunctions?.Count);
-        Assert.Equal("AIFunction1", result.AIFunctions?[0].Name);
-        Assert.Equal("AIFunction2", result.AIFunctions?[1].Name);
+        Assert.Equal(2, result.Tools?.Count);
+        Assert.Equal("AIFunction1", result.Tools?[0].Name);
+        Assert.Equal("AIFunction2", result.Tools?[1].Name);
     }
 
     [Fact]
@@ -92,7 +92,7 @@ public class AggregateAIContextProviderTests
         // Assert
         Assert.Null(result.Instructions);
         Assert.Null(result.Messages);
-        Assert.Null(result.AIFunctions);
+        Assert.Null(result.Tools);
     }
 
     [Fact]

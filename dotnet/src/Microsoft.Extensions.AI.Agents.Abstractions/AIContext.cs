@@ -21,7 +21,7 @@ public sealed class AIContext
     /// already exist.
     /// </summary>
     /// <remarks>
-    /// These instructions will be transitory and only apply to the current invocation.
+    /// These instructions will be transient and only apply to the current invocation.
     /// </remarks>
     public string? Instructions { get; set; }
 
@@ -37,7 +37,7 @@ public sealed class AIContext
     /// Gets or sets a list of functions/tools to make available to the AI model for the current invocation.
     /// </summary>
     /// <remarks>
-    /// These functions/tools will be transitory and only apply to the current invocation.
+    /// These functions/tools will be transient and only apply to the current invocation.
     /// </remarks>
-    public IList<AIFunction>? AIFunctions { get; set; }
+    public IList<AITool>? Tools { get; set; }
 }
