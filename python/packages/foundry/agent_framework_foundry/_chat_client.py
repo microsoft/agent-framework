@@ -255,7 +255,9 @@ class FoundryChatClient(BaseChatClient):
 
         # Get the thread ID
         thread_id: str | None = (
-            chat_options.conversation_id if chat_options.conversation_id is not None else self.thread_id
+            chat_options.conversation_id
+            if chat_options.conversation_id is not None
+            else run_options.get("conversation_id", self.thread_id)
         )
 
         if thread_id is None and tool_results is not None:
