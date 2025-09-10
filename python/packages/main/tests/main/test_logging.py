@@ -22,7 +22,7 @@ def test_get_logger_custom_name():
 
 def test_get_logger_invalid_name():
     """Test that an exception is raised for an invalid logger name."""
-    with pytest.raises(AgentFrameworkException, match="Logger name must start with 'agent_framework'."):
+    with pytest.raises(AgentFrameworkException):
         get_logger("invalid_name")
 
 

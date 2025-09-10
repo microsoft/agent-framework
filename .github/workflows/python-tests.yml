@@ -48,7 +48,7 @@ jobs:
         run: |
           echo "PACKAGE_NAME=main" >> $GITHUB_ENV
       - name: Test with pytest - main
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test  -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file - main
         run: |
@@ -70,7 +70,7 @@ jobs:
         run: |
           echo "PACKAGE_NAME=azure" >> $GITHUB_ENV
       - name: Test with pytest - azure
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test  -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file - azure
         run: |
@@ -92,7 +92,7 @@ jobs:
         run: |
           echo "PACKAGE_NAME=foundry" >> $GITHUB_ENV
       - name: Test with pytest - foundry
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test  -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file - foundry
         run: |
@@ -114,7 +114,7 @@ jobs:
         run: |
           echo "PACKAGE_NAME=workflow" >> $GITHUB_ENV
       - name: Test with pytest - workflow
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test  -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Move coverage file - workflow
         run: |

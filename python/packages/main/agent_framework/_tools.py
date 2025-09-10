@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import inspect
-from collections.abc import Awaitable, Callable
+import sys
+from collections.abc import Awaitable, Callable, Collection
 from functools import wraps
 from time import perf_counter
 from typing import (
@@ -9,6 +9,7 @@ from typing import (
     Annotated,
     Any,
     Generic,
+    Literal,
     Protocol,
     TypeVar,
     get_args,
@@ -17,14 +18,20 @@ from typing import (
 )
 
 from opentelemetry import metrics, trace
-from pydantic import BaseModel, Field, PrivateAttr, create_model
+from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, ValidationError, create_model, field_validator
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
+from .exceptions import ToolException
 from .telemetry import GenAIAttributes, start_as_current_span
 
 if TYPE_CHECKING:
     from ._types import Contents
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict  # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # pragma: no cover
 
 tracer: trace.Tracer = trace.get_tracer("agent_framework")
 meter: metrics.Meter = metrics.get_meter_provider().get_meter("agent_framework")
@@ -34,6 +41,8 @@ __all__ = [
     "AIFunction",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
+    "HostedMCPSpecificApproval",
+    "HostedMCPTool",
     "HostedWebSearchTool",
     "ToolProtocol",
     "ai_function",
@@ -197,13 +206,88 @@ class HostedWebSearchTool(BaseTool):
         args: dict[str, Any] = {
             "name": "web_search",
         }
+        super().__init__(**args, **kwargs)
+
+
+class HostedMCPSpecificApproval(TypedDict, total=False):
+    """Represents the `specific` mode for a hosted tool.
+
+    When using this mode, the user must specify which tools always or never require approval.
+    This is represented as a dictionary with two optional keys:
+    - `always_require_approval`: A sequence of tool names that always require approval.
+    - `never_require_approval`: A sequence of tool names that never require approval.
+
+    """
+
+    always_require_approval: Collection[str] | None
+    never_require_approval: Collection[str] | None
+
+
+class HostedMCPTool(BaseTool):
+    """Represents a MCP tool that is managed and executed by the service."""
+
+    url: AnyUrl
+    approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None
+    allowed_tools: set[str] | None = None
+    headers: dict[str, str] | None = None
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        url: AnyUrl | str,
+        approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None,
+        allowed_tools: Collection[str] | None = None,
+        headers: dict[str, str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create a hosted MCP tool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            url: The URL of the tool.
+            approval_mode: The approval mode for the tool. This can be:
+                - "always_require": The tool always requires approval before use.
+                - "never_require": The tool never requires approval before use.
+                - A dict with keys `always_require_approval` or `never_require_approval`,
+                  followed by a sequence of strings with the names of the relevant tools.
+            allowed_tools: A list of tools that are allowed to use this tool.
+            headers: Headers to include in requests to the tool.
+            additional_properties: Additional properties to include in the tool definition.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        args: dict[str, Any] = {
+            "name": name,
+            "url": url,
+        }
+        if allowed_tools is not None:
+            args["allowed_tools"] = allowed_tools
+        if approval_mode is not None:
+            args["approval_mode"] = approval_mode
+        if headers is not None:
+            args["headers"] = headers
         if description is not None:
             args["description"] = description
         if additional_properties is not None:
             args["additional_properties"] = additional_properties
-        if "name" in kwargs:
-            raise ValueError("The 'name' argument is reserved for the HostedFileSearchTool and cannot be set.")
-        super().__init__(**args, **kwargs)
+        try:
+            super().__init__(**args, **kwargs)
+        except ValidationError as err:
+            raise ToolException(f"Error initializing HostedMCPTool: {err}", inner_exception=err) from err
+
+    @field_validator("approval_mode")
+    def validate_approval_mode(cls, approval_mode: str | dict[str, Any] | None) -> str | dict[str, Any] | None:
+        """Validate the approval_mode field to ensure it is one of the accepted values."""
+        if approval_mode is None or not isinstance(approval_mode, dict):
+            return approval_mode
+        # Validate that the dict has sets
+        for key, value in approval_mode.items():
+            if not isinstance(value, set):
+                approval_mode[key] = set(value)  # Convert to set if it's a list or other collection
+        return approval_mode
 
 
 class HostedFileSearchTool(BaseTool):

@@ -13,18 +13,12 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
-from openai.types.responses.response_completed_event import ResponseCompletedEvent
-from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
-from openai.types.responses.response_function_call_arguments_delta_event import ResponseFunctionCallArgumentsDeltaEvent
-from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
-from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-from openai.types.responses.response_output_text import ResponseOutputText
 from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
-from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
     CodeInterpreter,
     CodeInterpreterContainerCodeInterpreterToolAuto,
+    Mcp,
     ToolParam,
 )
 from openai.types.responses.web_search_tool_param import UserLocation as WebSearchUserLocation
@@ -33,7 +27,14 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import BaseChatClient, use_tool_calling
 from .._logging import get_logger
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, HostedWebSearchTool, ToolProtocol
+from .._tools import (
+    AIFunction,
+    HostedCodeInterpreterTool,
+    HostedFileSearchTool,
+    HostedMCPTool,
+    HostedWebSearchTool,
+    ToolProtocol,
+)
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -42,6 +43,8 @@ from .._types import (
     CitationAnnotation,
     Contents,
     DataContent,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedFileContent,
@@ -364,15 +367,41 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
     # region Prep methods
 
-    def _chat_to_response_tool_spec(
+    def _tools_to_response_tools(
         self, tools: list[ToolProtocol | MutableMapping[str, Any]]
     ) -> list[ToolParam | dict[str, Any]]:
         response_tools: list[ToolParam | dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
+                    case HostedMCPTool():
+                        mcp: Mcp = {
+                            "type": "mcp",
+                            "server_label": tool.name.replace(" ", "_"),
+                            "server_url": str(tool.url),
+                            "server_description": tool.description,
+                            "headers": tool.headers,
+                        }
+                        if tool.allowed_tools:
+                            mcp["allowed_tools"] = list(tool.allowed_tools)
+                        if tool.approval_mode:
+                            match tool.approval_mode:
+                                case str():
+                                    mcp["require_approval"] = (
+                                        "always" if tool.approval_mode == "always_require" else "never"
+                                    )
+                                case _:
+                                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
+                                        mcp["require_approval"] = {
+                                            "always": {"tool_names": list(always_require_approvals)}
+                                        }
+                                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
+                                        mcp["require_approval"] = {
+                                            "never": {"tool_names": list(never_require_approvals)}
+                                        }
+                        response_tools.append(mcp)
                     case HostedCodeInterpreterTool():
-                        tool_args: dict[str, Any] = {"type": "auto"}
+                        tool_args: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
                         if tool.inputs:
                             tool_args["file_ids"] = []
                             for tool_input in tool.inputs:
@@ -383,7 +412,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         response_tools.append(
                             CodeInterpreter(
                                 type="code_interpreter",
-                                container=CodeInterpreterContainerCodeInterpreterToolAuto(**tool_args),  # type: ignore[typeddict-item]
+                                container=tool_args,
                             )
                         )
                     case AIFunction():
@@ -455,7 +484,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         if chat_options.tools is None:
             options_dict.pop("parallel_tool_calls", None)
         else:
-            options_dict["tools"] = self._chat_to_response_tool_spec(chat_options.tools)
+            options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
         # other settings
         if "store" not in options_dict:
             options_dict["store"] = False
@@ -496,6 +525,137 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
+    def _openai_chat_message_parser(
+        self,
+        message: ChatMessage,
+        call_id_to_id: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Parse a chat message into the openai format."""
+        all_messages: list[dict[str, Any]] = []
+        args: dict[str, Any] = {
+            "role": message.role.value if isinstance(message.role, Role) else message.role,
+        }
+        if message.additional_properties:
+            args["metadata"] = message.additional_properties
+        for content in message.contents:
+            match content:
+                case FunctionResultContent():
+                    new_args: dict[str, Any] = {}
+                    new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
+                    all_messages.append(new_args)
+                case FunctionCallContent():
+                    function_call = self._openai_content_parser(message.role, content, call_id_to_id)
+                    all_messages.append(function_call)  # type: ignore
+                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent():
+                    all_messages.append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
+                case _:
+                    if "content" not in args:
+                        args["content"] = []
+                    args["content"].append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
+        if "content" in args or "tool_calls" in args:
+            all_messages.append(args)
+        return all_messages
+
+    def _openai_content_parser(
+        self,
+        role: Role,
+        content: Contents,
+        call_id_to_id: dict[str, str],
+    ) -> dict[str, Any]:
+        """Parse contents into the openai format."""
+        match content:
+            case TextContent():
+                return {
+                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
+                    "text": content.text,
+                }
+            case TextReasoningContent():
+                ret: dict[str, Any] = {
+                    "type": "reasoning",
+                    "summary": {
+                        "type": "summary_text",
+                        "text": content.text,
+                    },
+                }
+                if content.additional_properties is not None:
+                    if status := content.additional_properties.get("status"):
+                        ret["status"] = status
+                    if reasoning_text := content.additional_properties.get("reasoning_text"):
+                        ret["content"] = {"type": "reasoning_text", "text": reasoning_text}
+                    if encrypted_content := content.additional_properties.get("encrypted_content"):
+                        ret["encrypted_content"] = encrypted_content
+                return ret
+            case DataContent() | UriContent():
+                if content.has_top_level_media_type("image"):
+                    return {
+                        "type": "input_image",
+                        "image_url": content.uri,
+                        "detail": content.additional_properties.get("detail", "auto")
+                        if content.additional_properties
+                        else "auto",
+                        "file_id": content.additional_properties.get("file_id", None)
+                        if content.additional_properties
+                        else None,
+                    }
+                if content.has_top_level_media_type("audio"):
+                    if content.media_type and "wav" in content.media_type:
+                        format = "wav"
+                    elif content.media_type and "mp3" in content.media_type:
+                        format = "mp3"
+                    else:
+                        logger.warning("Unsupported audio media type: %s", content.media_type)
+                        return {}
+                    return {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": content.uri,
+                            "format": format,
+                        },
+                    }
+                return {}
+            case FunctionCallContent():
+                return {
+                    "call_id": content.call_id,
+                    "id": call_id_to_id[content.call_id],
+                    "type": "function_call",
+                    "name": content.name,
+                    "arguments": content.arguments,
+                }
+            case FunctionResultContent():
+                # call_id for the result needs to be the same as the call_id for the function call
+                args: dict[str, Any] = {
+                    "call_id": content.call_id,
+                    "id": call_id_to_id.get(content.call_id),
+                    "type": "function_call_output",
+                }
+                if content.result:
+                    args["output"] = prepare_function_call_results(content.result)
+                return args
+            case FunctionApprovalRequestContent():
+                return {
+                    "type": "mcp_approval_request",
+                    "id": content.id,
+                    "arguments": content.function_call.arguments,
+                    "name": content.function_call.name,
+                    "server_label": content.function_call.additional_properties.get("server_label")
+                    if content.function_call.additional_properties
+                    else None,
+                }
+            case FunctionApprovalResponseContent():
+                return {
+                    "type": "mcp_approval_response",
+                    "approval_request_id": content.id,
+                    "approve": content.approved,
+                }
+            case HostedFileContent():
+                return {
+                    "type": "input_file",
+                    "file_id": content.file_id,
+                }
+            case _:  # should catch UsageDetails and ErrorContent and HostedVectorStoreContent
+                logger.debug("Unsupported content type passed (type: %s)", type(content))
+                return {}
+
     # region Response creation methods
 
     def _create_response_content(
@@ -533,7 +693,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         match message_content.type:
                             case "output_text":
                                 text_content = TextContent(
-                                    text=message_content.text, raw_representation=message_content
+                                    text=message_content.text,
+                                    raw_representation=message_content,  # type: ignore[reportUnknownArgumentType]
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
                                 if message_content.annotations:
@@ -639,6 +800,19 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             raw_representation=item,
                         )
                     )
+                case "mcp_approval_request":  # ResponseOutputMcpApprovalRequest
+                    contents.append(
+                        FunctionApprovalRequestContent(
+                            id=item.id,
+                            function_call=FunctionCallContent(
+                                call_id=item.id,
+                                name=item.name,
+                                arguments=item.arguments,
+                                additional_properties={"server_label": item.server_label},
+                                raw_representation=item,
+                            ),
+                        )
+                    )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     if item.result:
                         contents.append(
@@ -649,7 +823,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                 # TODO(peterychang): Add support for other content types
                 case _:
-                    logger.debug("Unparsed content of type: %s: %s", item.type, item)
+                    logger.debug("Unparsed output of type: %s: %s", item.type, item)
         response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
@@ -677,35 +851,151 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     ) -> ChatResponseUpdate:
         """Create a streaming chat message content object from a choice."""
         metadata: dict[str, Any] = {}
-        items: list[Contents] = []
+        contents: list[Contents] = []
         conversation_id: str | None = None
         model = self.ai_model_id
         # TODO(peterychang): Add support for other content types
-        match event:
-            case ResponseContentPartAddedEvent():
-                match event.part:
-                    case ResponseOutputText():
-                        items.append(TextContent(text=event.part.text, raw_representation=event))
-                        metadata.update(self._get_metadata_from_response(event.part))
-                    case ResponseOutputRefusal():
-                        items.append(TextContent(text=event.part.refusal, raw_representation=event))
-            case ResponseTextDeltaEvent():
-                items.append(TextContent(text=event.delta, raw_representation=event))
+        match event.type:
+            # types:
+            # ResponseAudioDeltaEvent,
+            # ResponseAudioDoneEvent,
+            # ResponseAudioTranscriptDeltaEvent,
+            # ResponseAudioTranscriptDoneEvent,
+            # ResponseCodeInterpreterCallCodeDeltaEvent,
+            # ResponseCodeInterpreterCallCodeDoneEvent,
+            # ResponseCodeInterpreterCallCompletedEvent,
+            # ResponseCodeInterpreterCallInProgressEvent,
+            # ResponseCodeInterpreterCallInterpretingEvent,
+            # ResponseCompletedEvent,
+            # ResponseContentPartAddedEvent,
+            # ResponseContentPartDoneEvent,
+            # ResponseCreatedEvent,
+            # ResponseErrorEvent,
+            # ResponseFileSearchCallCompletedEvent,
+            # ResponseFileSearchCallInProgressEvent,
+            # ResponseFileSearchCallSearchingEvent,
+            # ResponseFunctionCallArgumentsDeltaEvent,
+            # ResponseFunctionCallArgumentsDoneEvent,
+            # ResponseInProgressEvent,
+            # ResponseFailedEvent,
+            # ResponseIncompleteEvent,
+            # ResponseOutputItemAddedEvent,
+            # ResponseOutputItemDoneEvent,
+            # ResponseReasoningSummaryPartAddedEvent,
+            # ResponseReasoningSummaryPartDoneEvent,
+            # ResponseReasoningSummaryTextDeltaEvent,
+            # ResponseReasoningSummaryTextDoneEvent,
+            # ResponseReasoningTextDeltaEvent,
+            # ResponseReasoningTextDoneEvent,
+            # ResponseRefusalDeltaEvent,
+            # ResponseRefusalDoneEvent,
+            # ResponseTextDeltaEvent,
+            # ResponseTextDoneEvent,
+            # ResponseWebSearchCallCompletedEvent,
+            # ResponseWebSearchCallInProgressEvent,
+            # ResponseWebSearchCallSearchingEvent,
+            # ResponseImageGenCallCompletedEvent,
+            # ResponseImageGenCallGeneratingEvent,
+            # ResponseImageGenCallInProgressEvent,
+            # ResponseImageGenCallPartialImageEvent,
+            # ResponseMcpCallArgumentsDeltaEvent,
+            # ResponseMcpCallArgumentsDoneEvent,
+            # ResponseMcpCallCompletedEvent,
+            # ResponseMcpCallFailedEvent,
+            # ResponseMcpCallInProgressEvent,
+            # ResponseMcpListToolsCompletedEvent,
+            # ResponseMcpListToolsFailedEvent,
+            # ResponseMcpListToolsInProgressEvent,
+            # ResponseOutputTextAnnotationAddedEvent,
+            # ResponseQueuedEvent,
+            # ResponseCustomToolCallInputDeltaEvent,
+            # ResponseCustomToolCallInputDoneEvent,
+            case "response.content_part.added":
+                event_part = event.part
+                match event_part.type:
+                    case "output_text":
+                        contents.append(TextContent(text=event_part.text, raw_representation=event))
+                        metadata.update(self._get_metadata_from_response(event_part))
+                    case "refusal":
+                        contents.append(TextContent(text=event_part.refusal, raw_representation=event))
+            case "response.output_text.delta":
+                contents.append(TextContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case ResponseCompletedEvent():
+            case "response.completed":
                 conversation_id = event.response.id if chat_options.store is True else None
                 model = event.response.model
                 if event.response.usage:
                     usage = self._usage_details_from_openai(event.response.usage)
                     if usage:
-                        items.append(UsageContent(details=usage, raw_representation=event))
-            case ResponseOutputItemAddedEvent():
-                if event.item.type == "function_call":
-                    function_call_ids[event.output_index] = (event.item.call_id, event.item.name)
-            case ResponseFunctionCallArgumentsDeltaEvent():
+                        contents.append(UsageContent(details=usage, raw_representation=event))
+            case "response.output_item.added":
+                event_item = event.item
+                match event_item.type:
+                    # types:
+                    # ResponseOutputMessage,
+                    # ResponseFileSearchToolCall,
+                    # ResponseFunctionToolCall,
+                    # ResponseFunctionWebSearch,
+                    # ResponseComputerToolCall,
+                    # ResponseReasoningItem,
+                    # ImageGenerationCall,
+                    # ResponseCodeInterpreterToolCall,
+                    # LocalShellCall,
+                    # McpCall,
+                    # McpListTools,
+                    # McpApprovalRequest,
+                    # ResponseCustomToolCall,
+                    case "function_call":
+                        function_call_ids[event.output_index] = (event_item.call_id, event_item.name)
+                    case "mcp_approval_request":
+                        contents.append(
+                            FunctionApprovalRequestContent(
+                                id=event_item.id,
+                                function_call=FunctionCallContent(
+                                    call_id=event_item.id,
+                                    name=event_item.name,
+                                    arguments=event_item.arguments,
+                                    additional_properties={"server_label": event_item.server_label},
+                                    raw_representation=event_item,
+                                ),
+                            )
+                        )
+                    case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
+                        if event_item.outputs:
+                            for code_output in event_item.outputs:
+                                if code_output.type == "logs":
+                                    contents.append(TextContent(text=code_output.logs, raw_representation=event_item))
+                                if code_output.type == "image":
+                                    contents.append(
+                                        UriContent(
+                                            uri=code_output.url,
+                                            raw_representation=event_item,
+                                            # no more specific media type then this can be inferred
+                                            media_type="image",
+                                        )
+                                    )
+                        elif event_item.code:
+                            # fallback if no output was returned is the code:
+                            contents.append(TextContent(text=event_item.code, raw_representation=event_item))
+                    case "reasoning":  # ResponseOutputReasoning
+                        if event_item.content:
+                            for index, reasoning_content in enumerate(event_item.content):
+                                additional_properties = None
+                                if event_item.summary and index < len(event_item.summary):
+                                    additional_properties = {"summary": event_item.summary[index]}
+                                contents.append(
+                                    TextReasoningContent(
+                                        text=reasoning_content.text,
+                                        raw_representation=reasoning_content,
+                                        additional_properties=additional_properties,
+                                    )
+                                )
+                    case _:
+                        logger.debug("Unparsed event of type: %s: %s", event.type, event)
+            case "response.function_call_arguments.delta":
                 call_id, name = function_call_ids.get(event.output_index, (None, None))
                 if call_id and name:
-                    items.append(
+                    contents.append(
                         FunctionCallContent(
                             call_id=call_id,
                             name=name,
@@ -715,10 +1005,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                     )
             case _:
-                logger.debug("Unparsed event: %s", event)
+                logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
         return ChatResponseUpdate(
-            contents=items,
+            contents=contents,
             conversation_id=conversation_id,
             role=Role.ASSISTANT,
             ai_model_id=model,
@@ -737,69 +1027,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
             details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
         return details
-
-    def _openai_chat_message_parser(
-        self,
-        message: ChatMessage,
-        call_id_to_id: dict[str, str],
-    ) -> list[dict[str, Any]]:
-        """Parse a chat message into the openai format."""
-        all_messages: list[dict[str, Any]] = []
-        args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, Role) else message.role,
-        }
-        if message.additional_properties:
-            args["metadata"] = message.additional_properties
-        for content in message.contents:
-            match content:
-                case FunctionResultContent():
-                    new_args: dict[str, Any] = {}
-                    new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
-                    all_messages.append(new_args)
-                case FunctionCallContent():
-                    function_call = self._openai_content_parser(message.role, content, call_id_to_id)
-                    all_messages.append(function_call)  # type: ignore
-                case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    args["content"].append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
-        if "content" in args or "tool_calls" in args:
-            all_messages.append(args)
-        return all_messages
-
-    def _openai_content_parser(
-        self,
-        role: Role,
-        content: Contents,
-        call_id_to_id: dict[str, str],
-    ) -> dict[str, Any]:
-        """Parse contents into the openai format."""
-        match content:
-            case FunctionCallContent():
-                return {
-                    "call_id": content.call_id,
-                    "id": call_id_to_id[content.call_id],
-                    "type": "function_call",
-                    "name": content.name,
-                    "arguments": content.arguments,
-                }
-            case FunctionResultContent():
-                # call_id for the result needs to be the same as the call_id for the function call
-                args: dict[str, Any] = {
-                    "call_id": content.call_id,
-                    "type": "function_call_output",
-                }
-                if content.result:
-                    args["output"] = prepare_function_call_results(content.result)
-                return args
-            case TextContent():
-                return {
-                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
-                    "text": content.text,
-                }
-            # TODO(peterychang): We'll probably need to specialize the other content types as well
-            case _:
-                return content.model_dump(exclude_none=True)
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:
         """Get metadata from a chat choice."""

@@ -29,7 +29,7 @@ from pydantic import (
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from ._tools import ToolProtocol, ai_function
-from .exceptions import AgentFrameworkException
+from .exceptions import AdditionItemMismatch
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -55,6 +55,7 @@ KNOWN_MEDIA_TYPES = [
     "application/pdf",
     "application/xml",
     "audio/mpeg",
+    "audio/mp3",
     "audio/ogg",
     "audio/wav",
     "image/apng",
@@ -93,6 +94,8 @@ __all__ = [
     "DataContent",
     "ErrorContent",
     "FinishReason",
+    "FunctionApprovalRequestContent",
+    "FunctionApprovalResponseContent",
     "FunctionCallContent",
     "FunctionResultContent",
     "GeneratedEmbeddings",
@@ -224,7 +227,11 @@ def _process_update(
     is_new_message = False
     if (
         not response.messages
-        or (update.message_id and response.messages[-1].message_id != update.message_id)
+        or (
+            update.message_id
+            and response.messages[-1].message_id
+            and response.messages[-1].message_id != update.message_id
+        )
         or (update.role and response.messages[-1].role != update.role)
     ):
         is_new_message = True
@@ -249,7 +256,7 @@ def _process_update(
         ):
             try:
                 message.contents[-1] += content
-            except AgentFrameworkException:
+            except AdditionItemMismatch:
                 message.contents.append(content)
         elif isinstance(content, UsageContent):
             if response.usage_details is None:
@@ -718,7 +725,7 @@ class DataContent(BaseContent):
             raise ValueError(f"Unknown media type: {media_type}")
         return uri
 
-    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
@@ -776,11 +783,13 @@ class UriContent(BaseContent):
             **kwargs,
         )
 
-    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
-def _has_top_level_media_type(media_type: str | None, top_level_media_type: str) -> bool:
+def _has_top_level_media_type(
+    media_type: str | None, top_level_media_type: Literal["application", "audio", "image", "text"]
+) -> bool:
     if media_type is None:
         return False
 
@@ -924,7 +933,7 @@ class FunctionCallContent(BaseContent):
         if not isinstance(other, FunctionCallContent):
             raise TypeError("Incompatible type")
         if other.call_id and self.call_id != other.call_id:
-            raise AgentFrameworkException("Incompatible function call contents")
+            raise AdditionItemMismatch
         if not self.arguments:
             arguments = other.arguments
         elif not other.arguments:
@@ -1093,6 +1102,110 @@ class HostedVectorStoreContent(BaseContent):
         )
 
 
+class BaseUserInputRequest(BaseContent):
+    """Base class for all user requests."""
+
+    type: Literal["user_input_request"] = "user_input_request"  # type: ignore[assignment]
+    id: Annotated[str, Field(..., min_length=1)]
+
+
+class BaseUserInputResponse(BaseContent):
+    """Base class for all user responses."""
+
+    type: Literal["user_input_response"] = "user_input_response"  # type: ignore[assignment]
+    id: Annotated[str, Field(..., min_length=1)]
+
+
+class FunctionApprovalResponseContent(BaseUserInputResponse):
+    """Represents a response for user approval of a function call."""
+
+    type: Literal["function_approval_response"] = "function_approval_response"  # type: ignore[assignment]
+    approved: bool
+    function_call: FunctionCallContent
+
+    def __init__(
+        self,
+        approved: bool,
+        *,
+        id: str,
+        function_call: FunctionCallContent,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a FunctionApprovalResponseContent instance.
+
+        Args:
+            approved: Whether the function call was approved.
+            id: The unique identifier for the request.
+            function_call: The function call content to be approved.
+            annotations: Optional list of annotations for the request.
+            additional_properties: Optional additional properties for the request.
+            raw_representation: Optional raw representation of the request.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            approved=approved,  # type: ignore[reportCallIssue]
+            id=id,  # type: ignore[reportCallIssue]
+            function_call=function_call,  # type: ignore[reportCallIssue]
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+
+class FunctionApprovalRequestContent(BaseUserInputRequest):
+    """Represents a request for user approval of a function call."""
+
+    type: Literal["function_approval_request"] = "function_approval_request"  # type: ignore[assignment]
+    function_call: FunctionCallContent
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        function_call: FunctionCallContent,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a FunctionApprovalRequestContent instance.
+
+        Args:
+            id: The unique identifier for the request.
+            function_call: The function call content to be approved.
+            annotations: Optional list of annotations for the request.
+            additional_properties: Optional additional properties for the request.
+            raw_representation: Optional raw representation of the request.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            id=id,  # type: ignore[reportCallIssue]
+            function_call=function_call,  # type: ignore[reportCallIssue]
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+    def create_response(self, approved: bool) -> "FunctionApprovalResponseContent":
+        """Create a response for the function approval request."""
+        return FunctionApprovalResponseContent(
+            approved,
+            id=self.id,
+            function_call=self.function_call,
+            additional_properties=self.additional_properties,
+        )
+
+
+UserInputRequestContents = Annotated[
+    FunctionApprovalRequestContent,
+    Field(discriminator="type"),
+]
+
 Contents = Annotated[
     TextContent
     | DataContent
@@ -1103,7 +1216,9 @@ Contents = Annotated[
     | ErrorContent
     | UsageContent
     | HostedFileContent
-    | HostedVectorStoreContent,
+    | HostedVectorStoreContent
+    | FunctionApprovalRequestContent
+    | FunctionApprovalResponseContent,
     Field(discriminator="type"),
 ]
 
@@ -1957,6 +2072,13 @@ class AgentRunResponse(AFBaseModel):
         """Get the concatenated text of all messages."""
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
+    @property
+    def user_input_requests(self) -> list[UserInputRequestContents]:
+        """Get all BaseUserInputRequest messages from the response."""
+        return [
+            content for msg in self.messages for content in msg.contents if isinstance(content, BaseUserInputRequest)
+        ]
+
     @classmethod
     def from_agent_run_response_updates(
         cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
@@ -2006,6 +2128,11 @@ class AgentRunResponseUpdate(AFBaseModel):
             if self.contents
             else ""
         )
+
+    @property
+    def user_input_requests(self) -> list[UserInputRequestContents]:
+        """Get all BaseUserInputRequest messages from the response."""
+        return [content for content in self.contents if isinstance(content, BaseUserInputRequest)]
 
     def __str__(self) -> str:
         return self.text
@@ -2082,9 +2209,3 @@ class TextToSpeechOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
-
-
-# endregion
-
-
-# endregion
