@@ -26,7 +26,11 @@ public static class HostApplicationBuilderAgentExtensions
     /// <returns>The configured host application builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
     public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions)
-        => builder.AddChatClientAgent(name, instructions);
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(name);
+        return builder.AddAIAgent(name, instructions, chatClientServiceKey: null);
+    }
 
     /// <summary>
     /// Adds an AI agent to the host application builder with the specified name, instructions, and chat client key.
@@ -41,22 +45,8 @@ public static class HostApplicationBuilderAgentExtensions
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
-
-        var chatClientAgentHostingBuilder = new ChatClientAgentHostingBuilder(builder.Services, name, instructions);
-        return builder.AddAIAgent(chatClientAgentHostingBuilder, name, (sp, key) => new ChatClientAgent(chatClient, instructions, key));
+        return builder.AddAIAgent(name, (sp, key) => new ChatClientAgent(chatClient, instructions, key));
     }
-
-    /// <summary>
-    /// Adds an AI agent to the host application builder with the specified name, instructions, and chat client key.
-    /// </summary>
-    /// <param name="builder">The host application builder to configure.</param>
-    /// <param name="name">The name of the agent.</param>
-    /// <param name="instructions">The instructions for the agent.</param>
-    /// <param name="chatClientServiceKey">The key to use when resolving the chat client from the service provider. If null, a non-keyed service will be resolved.</param>
-    /// <returns>The configured host application builder.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
-    public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, object? chatClientServiceKey)
-    => builder.AddChatClientAgent(name, instructions, description: null, chatClientServiceKey);
 
     /// <summary>
     /// Adds an AI agent to the host application builder with the specified name, instructions, and chat client key.
@@ -69,7 +59,35 @@ public static class HostApplicationBuilderAgentExtensions
     /// <returns>The configured host application builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
     public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, string description, object? chatClientServiceKey)
-        => builder.AddChatClientAgent(name, instructions, description, chatClientServiceKey);
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(name);
+        return builder.AddAIAgent(name, (sp, key) =>
+        {
+            var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
+            return new ChatClientAgent(chatClient, instructions: instructions, name: key, description: description);
+        });
+    }
+
+    /// <summary>
+    /// Adds an AI agent to the host application builder with the specified name, instructions, and chat client key.
+    /// </summary>
+    /// <param name="builder">The host application builder to configure.</param>
+    /// <param name="name">The name of the agent.</param>
+    /// <param name="instructions">The instructions for the agent.</param>
+    /// <param name="chatClientServiceKey">The key to use when resolving the chat client from the service provider. If null, a non-keyed service will be resolved.</param>
+    /// <returns>The configured host application builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
+    public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, object? chatClientServiceKey)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(name);
+        return builder.AddAIAgent(name, (sp, key) =>
+        {
+            var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
+            return new ChatClientAgent(chatClient, instructions, key);
+        });
+    }
 
     /// <summary>
     /// Adds an AI agent to the host application builder using a custom factory delegate.
@@ -82,32 +100,9 @@ public static class HostApplicationBuilderAgentExtensions
     /// <exception cref="InvalidOperationException">Thrown when the agent factory delegate returns null or an invalid AI agent instance.</exception>
     public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, AIAgent> createAgentDelegate)
     {
-        // unknown type of AI Agent, so using default agentHostingBuilder
-        var agentHostingBuilder = new AIAgentHostingBuilder(builder.Services, name);
-
-        return builder.AddAIAgent(agentHostingBuilder, name, createAgentDelegate);
-    }
-
-    private static IAIAgentHostingBuilder AddChatClientAgent(this IHostApplicationBuilder builder, string name, string instructions, string? description = null, object? chatClientServiceKey = null)
-    {
-        Throw.IfNull(builder);
-        Throw.IfNull(name);
-
-        var chatClientAgentHostingBuilder = new ChatClientAgentHostingBuilder(builder.Services, name, instructions, description);
-        return builder.AddAIAgent(chatClientAgentHostingBuilder, name, (sp, key) =>
-        {
-            var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
-            return new ChatClientAgent(chatClient, instructions: instructions, name: key, description: description);
-        });
-    }
-
-    private static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, IAIAgentHostingBuilder agentHostingBuilder, string name, Func<IServiceProvider, string, AIAgent> createAgentDelegate)
-    {
-        Throw.IfNull(agentHostingBuilder);
         Throw.IfNull(builder);
         Throw.IfNull(name);
         Throw.IfNull(createAgentDelegate);
-
         builder.Services.AddKeyedSingleton<AIAgent>(name, (sp, key) =>
         {
             Throw.IfNull(key);
@@ -122,13 +117,12 @@ public static class HostApplicationBuilderAgentExtensions
             return agent;
         });
 
-        return builder.AddAgentActor(agentHostingBuilder);
+        return builder.AddAgentActor(name);
     }
 
-    private static IAIAgentHostingBuilder AddAgentActor(this IHostApplicationBuilder builder, IAIAgentHostingBuilder agentHostingBuilder)
+    private static IAIAgentHostingBuilder AddAgentActor(this IHostApplicationBuilder builder, string name)
     {
         Throw.IfNull(builder);
-        var name = agentHostingBuilder.ActorType.Name;
 
         // Register the agent by name for discovery.
         var agentHostBuilder = GetAgentRegistry(builder);
@@ -145,7 +139,7 @@ public static class HostApplicationBuilderAgentExtensions
                 ctx,
                 sp.GetRequiredService<ILogger<AgentActor>>()));
 
-        return agentHostingBuilder;
+        return AIAgentHostingBuilder.PrepareAgentBuilder(builder.Services, actorType);
     }
 
     private static LocalAgentRegistry GetAgentRegistry(IHostApplicationBuilder builder)

@@ -10,7 +10,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.Orchestration\Microsoft.Agents.Orchestration.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Hosting.Discovery\Microsoft.Extensions.AI.Agents.Hosting.Discovery.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Hosting\Microsoft.Extensions.AI.Agents.Hosting.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime\Microsoft.Extensions.AI.Agents.Runtime.csproj" />

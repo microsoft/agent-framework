@@ -21,11 +21,7 @@
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.14.2" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.6.0" />
-    <PackageVersion Include="Microsoft.AspNetCore" Version="2.3.0" />
-    <PackageVersion Include="Microsoft.AspNetCore.Hosting.Abstractions" Version="2.3.0" />
-    <PackageVersion Include="Microsoft.AspNetCore.Http.Abstractions" Version="2.3.0" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.8" />
-    <PackageVersion Include="Microsoft.AspNetCore.Routing.Abstractions" Version="2.3.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.8.0-preview.1.25412.6" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="9.8.0" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="9.3.1" />
