@@ -48,7 +48,7 @@ dotnet run
 The sample will:
 
 1. Create a vision-enabled agent named "VisionAgent"
-2. Send a message containing both text ("What do you see in this image?") and a small yellow pixel image
+2. Send a message containing both text ("What do you see in this image?") and a Uri image of a green walk
 3. The agent will analyze the image and provide a description
 4. Clean up resources by deleting the thread and agent
 
