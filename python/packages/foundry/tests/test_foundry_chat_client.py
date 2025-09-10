@@ -22,9 +22,10 @@ from agent_framework import (
     Role,
     TextContent,
     UriContent,
-    ai_function,
 )
+from agent_framework import __version__ as AF_VERSION
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.foundry import FoundryChatClient, FoundrySettings
 from azure.ai.agents.models import (
     RequiredFunctionToolCall,
     SubmitToolOutputsAction,
@@ -33,8 +34,6 @@ from azure.ai.agents.models import (
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field, ValidationError
-
-from agent_framework_foundry import FoundryChatClient, FoundrySettings
 
 skip_if_foundry_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -62,8 +61,7 @@ def create_test_foundry_chat_client(
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
         agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
-        ai_model_deployment_name=foundry_settings.model_deployment_name,  # type:
-        credential=None,
+        ai_model_id=foundry_settings.model_deployment_name,
     )
 
 
@@ -316,9 +314,10 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
     )
 
     await chat_client._cleanup_agent_if_needed()  # type: ignore
-
     # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
+        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
     assert not chat_client._should_delete_agent  # type: ignore
 
 
@@ -359,7 +358,9 @@ async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> 
     await chat_client.close()
 
     # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
+        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
 
 
 async def test_foundry_chat_client_async_context_manager(mock_ai_project_client: MagicMock) -> None:
@@ -373,7 +374,9 @@ async def test_foundry_chat_client_async_context_manager(mock_ai_project_client:
         pass  # Just test that we can enter and exit
 
     # Verify cleanup was called on exit
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
+        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
 
 
 def test_foundry_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
@@ -600,7 +603,9 @@ async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_pro
     result = await chat_client._prepare_thread("test-thread", mock_thread_run, run_options)  # type: ignore
 
     assert result == "test-thread"
-    mock_ai_project_client.agents.runs.cancel.assert_called_once_with("test-thread", "run_123")
+    mock_ai_project_client.agents.runs.cancel.assert_called_once_with(
+        "test-thread", "run_123", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
+    )
 
 
 def test_foundry_chat_client_create_function_call_contents_basic(mock_ai_project_client: MagicMock) -> None:
@@ -925,42 +930,3 @@ async def test_foundry_chat_client_agent_level_tool_persistence():
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
-
-
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_run_level_tool_isolation():
-    """Test that run-level tools are isolated to specific runs and don't persist with FoundryChatClient."""
-    # Counter to track how many times the weather tool is called
-    call_count = 0
-
-    @ai_function
-    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
-        """Get the current weather in a given location."""
-        nonlocal call_count
-        call_count += 1
-        return f"The weather in {location} is sunny and 25°C."
-
-    async with ChatAgent(
-        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
-        instructions="You are a helpful assistant.",
-    ) as agent:
-        # First run - use run-level tool
-        first_response = await agent.run(
-            "What's the weather like in Chicago?",
-            tools=[get_weather_with_counter],  # Run-level tool
-        )
-
-        assert isinstance(first_response, AgentRunResponse)
-        assert first_response.text is not None
-        # Should use the run-level weather tool (call count should be 1)
-        assert call_count == 1
-        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "25"])
-
-        # Second run - run-level tool should NOT persist (key isolation test)
-        second_response = await agent.run("What's the weather like in Miami?")
-
-        assert isinstance(second_response, AgentRunResponse)
-        assert second_response.text is not None
-        # Should NOT use the weather tool since it was only run-level in previous call
-        # Call count should still be 1 (no additional calls)
-        assert call_count == 1

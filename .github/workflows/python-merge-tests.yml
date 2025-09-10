@@ -78,11 +78,13 @@ jobs:
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
       - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        timeout-minutes: 10
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
-      - name: Test openai samples
+      - name: Test main samples
+        timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "openai" --junitxml=coverage_samples_main.xml
+        run: uv run pytest tests/samples/ -m "openai"
         working-directory: ./python
       - name: Move coverage file
         run: |
@@ -144,15 +146,17 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        timeout-minutes: 10
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Test azure samples
+        timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure" --junitxml=coverage_samples_azure.xml
+        run: uv run pytest tests/samples/ -m "azure"
         working-directory: ./python
       - name: Move coverage file
         run: |
-          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml ./coverage_${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -209,11 +213,13 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        timeout-minutes: 10
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Test foundry samples
+        timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "foundry" --junitxml=coverage_samples_foundry.xml
+        run: uv run pytest tests/samples/ -m "foundry"
         working-directory: ./python
       - name: Move coverage file
         run: |

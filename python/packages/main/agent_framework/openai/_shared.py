@@ -60,7 +60,7 @@ def prepare_function_call_results(content: Contents | Any | list[Contents | Any]
                 results.extend(res)
             else:
                 results.append(res)
-        return results[0] if len(results) == 1 else results
+        return results[0] if len(results) == 1 else json.dumps(results)
     if isinstance(content, BaseModel):
         return content.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
     # fallback
@@ -127,7 +127,7 @@ class OpenAIBase(AFBaseModel):
 class OpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an OpenAI service."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
