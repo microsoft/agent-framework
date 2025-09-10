@@ -1,0 +1,6 @@
+TRAVEL_AGENT_EXECUTOR_ID = "travel_agent_executor"
+FLIGHT_SEARCH_EXECUTOR_ID = "flight_search_executor"
+HOTEL_SEARCH_EXECUTOR_ID = "hotel_search_executor"
+BOOKING_EXECUTOR_ID = "booking_executor"
+ACTIVITY_SEARCH_EXECUTOR_ID = "activity_search_executor"
+SEARCH_RESULT_AGGREGATION_EXECUTOR_ID = "search_result_aggregation_executor"
