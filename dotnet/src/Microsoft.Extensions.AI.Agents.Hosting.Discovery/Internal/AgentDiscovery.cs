@@ -3,51 +3,35 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Internal;
 
 internal sealed class AgentDiscovery
 {
-    private readonly ConcurrentDictionary<string, AgentMetadata> _actorMetadatas = new();
+    private readonly ConcurrentDictionary<ActorType, AgentMetadata> _actorMetadatas = new();
 
     public AgentDiscovery()
     {
     }
 
-    internal void RegisterAgentDiscovery(string agentId, GeneralMetadata generalMetadata)
+    internal void RegisterAgentDiscovery(ActorType actorType)
     {
-        var agentMetadata = AgentMetadata.FromGeneralMetadata(agentId, generalMetadata);
-        if (!this._actorMetadatas.TryAdd(agentId, agentMetadata))
+        var agentMetadata = new AgentMetadata(actorType);
+        if (!this._actorMetadatas.TryAdd(actorType, agentMetadata))
         {
-            throw new System.ArgumentException($"An agent with the ID '{agentId}' has already been registered.", nameof(agentId));
+            throw new System.ArgumentException($"An agent with the ID '{actorType}' has already been registered.", nameof(actorType));
         }
-    }
-
-    internal bool AddCustomMetadata(string agentId, Dictionary<string, object> metadata)
-    {
-        if (!this._actorMetadatas.TryGetValue(agentId, out var agentMetadata))
-        {
-            return false;
-        }
-
-        agentMetadata.CustomMetadata = metadata;
-        return true;
-    }
-
-    internal bool AddHttpEndpoint(string agentId, )
-    {
-        if (!this._actorMetadatas.TryGetValue(agentId, out var agentMetadata))
-        {
-            return false;
-        }
-
-        agentMetadata.CustomMetadata = metadata;
-        return true;
     }
 
     public ICollection<AgentMetadata> GetAllAgents()
     {
         return this._actorMetadatas.Values;
     }
+
+    public bool TryGetAgent(string agentName, out AgentMetadata? agentMetadata)
+        => this.TryGetAgent(new ActorType(agentName), out agentMetadata);
+
+    public bool TryGetAgent(ActorType actorType, out AgentMetadata? agentMetadata)
+        => this._actorMetadatas.TryGetValue(actorType, out agentMetadata);
 }

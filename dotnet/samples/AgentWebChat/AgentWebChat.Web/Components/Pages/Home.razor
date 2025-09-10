@@ -1089,7 +1089,7 @@
             thread.ConversationId = currentConversation.SessionId;
 
             await foreach (var update in agent.RunStreamingAsync(
-            [new ChatMessage(ChatRole.User, userMessage)],
+				[new ChatMessage(ChatRole.User, userMessage)],
                 thread,
                 cancellationToken: timeoutCts.Token))
             {

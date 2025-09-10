@@ -1,28 +1,35 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
-namespace AgentWebChat.AgentHost;
+namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Actor;
 
-internal static class HttpActorProcessor
+[SuppressMessage("Performance", "CA1812")]
+internal sealed class HttpActorProcessor
 {
-    public static async Task<IResult> GetResponseAsync(
+    private readonly IActorClient _actorClient;
+
+    public HttpActorProcessor(IActorClient actorClient)
+    {
+        this._actorClient = actorClient;
+    }
+
+    public async Task<IResult> GetResponseAsync(
         string actorType,
         string actorKey,
         string messageId,
         bool? blocking,
         bool? streaming,
-        HttpContext context,
-        IActorClient actorClient,
         CancellationToken cancellationToken)
     {
         var actorId = new ActorId(actorType, actorKey);
-
-        var responseHandle = await actorClient.GetResponseAsync(actorId, messageId, cancellationToken);
-
+        var responseHandle = await this._actorClient.GetResponseAsync(actorId, messageId, cancellationToken).ConfigureAwait(false);
         if (responseHandle.TryGetResponse(out var response))
         {
             return GetResult(response);
@@ -35,7 +42,7 @@ internal static class HttpActorProcessor
 
         if (blocking == true)
         {
-            response = await responseHandle.GetResponseAsync(cancellationToken);
+            response = await responseHandle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
             return GetResult(response);
         }
 
@@ -48,17 +55,19 @@ internal static class HttpActorProcessor
         });
     }
 
-    public static async Task<IResult> SendRequestAsync(
+    public async Task<IResult> SendRequestAsync(
         string actorType,
         string actorKey,
         string messageId,
         bool? blocking,
         bool? streaming,
-        ActorRequest request,
-        IActorClient actorClient,
+        SendMessageRequest sendMessageRequest,
         CancellationToken cancellationToken)
     {
-        var responseHandle = await actorClient.SendRequestAsync(request, cancellationToken);
+        var actorId = new ActorId(actorType, actorKey);
+        var request = new ActorRequest(actorId, messageId, sendMessageRequest.Method, sendMessageRequest.Params);
+
+        var responseHandle = await this._actorClient.SendRequestAsync(request, cancellationToken).ConfigureAwait(false);
         if (responseHandle.TryGetResponse(out var response))
         {
             return GetResult(response);
@@ -71,32 +80,21 @@ internal static class HttpActorProcessor
 
         if (blocking == true)
         {
-            response = await responseHandle.GetResponseAsync(cancellationToken);
+            response = await responseHandle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
             return GetResult(response);
         }
 
         return Results.Accepted();
     }
 
-    private static IResult GetResult(ActorResponse response)
-    {
-        if (response.Status == RequestStatus.NotFound)
-        {
-            return Results.NotFound();
-        }
-
-        return Results.Ok(response);
-    }
-
-    public static async Task<IResult> CancelRequestAsync(
+    public async Task<IResult> CancelRequestAsync(
         string actorType,
         string actorKey,
         string messageId,
-        IActorClient actorClient,
         CancellationToken cancellationToken)
     {
         var actorId = new ActorId(actorType, actorKey);
-        var responseHandle = await actorClient.GetResponseAsync(actorId, messageId, cancellationToken);
+        var responseHandle = await this._actorClient.GetResponseAsync(actorId, messageId, cancellationToken).ConfigureAwait(false);
 
         if (responseHandle.TryGetResponse(out var response))
         {
@@ -110,8 +108,18 @@ internal static class HttpActorProcessor
             }
         }
 
-        await responseHandle.CancelAsync(cancellationToken);
+        await responseHandle.CancelAsync(cancellationToken).ConfigureAwait(false);
         return Results.NoContent();
+    }
+
+    private static IResult GetResult(ActorResponse response)
+    {
+        if (response.Status == RequestStatus.NotFound)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok(response);
     }
 
     private sealed class ActorUpdateStreamingResult(
@@ -128,7 +136,7 @@ internal static class HttpActorProcessor
             // Make sure we disable all response buffering for SSE.
             response.Headers.ContentEncoding = "identity";
             httpContext.Features.GetRequiredFeature<IHttpResponseBodyFeature>().DisableBuffering();
-            await response.Body.FlushAsync(cancellationToken);
+            await response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
 
             var updateTypeInfo = AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ActorRequestUpdate));
 
@@ -137,8 +145,8 @@ internal static class HttpActorProcessor
                 var eventData = JsonSerializer.Serialize(update, updateTypeInfo);
                 var eventText = $"data: {eventData}\n\n";
 
-                await response.WriteAsync(eventText, cancellationToken);
-                await response.Body.FlushAsync(cancellationToken);
+                await response.WriteAsync(eventText, cancellationToken).ConfigureAwait(false);
+                await response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
         }
     }

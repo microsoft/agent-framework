@@ -1,9 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
-using Microsoft.Extensions.AI.Agents.Hosting.Builders;
+using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Actor;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Internal;
-using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
 
@@ -18,35 +17,15 @@ public static class AgentHostingBuilderExtensions
     /// Adds <see cref="AIAgent"/> to the discovery services exposing the agent metadata via discovery endpoints.
     /// </summary>
     /// <param name="builder">The builder for the <see cref="AIAgent"/></param>
-    /// <param name="generalMetadata"></param>
-    public static IAgentDiscoveryBuilder WithDiscovery(this IAgentHostingBuilder builder, GeneralMetadata? generalMetadata = null)
+    public static IAgentHostingBuilder WithDiscovery(this IAgentHostingBuilder builder)
     {
         var agentDiscovery = builder.Services.InitializeAgentsDiscoveryProvider();
+        builder.Services.InitializeHttpActorProcessor();
 
-        var agentId = generalMetadata?.Id ?? builder.ActorType.Name;
-        var metadata = generalMetadata ?? BuildUpGeneralMetadata(agentId, builder);
+        var actorType = builder.ActorType;
+        agentDiscovery.RegisterAgentDiscovery(actorType);
 
-        agentDiscovery.RegisterAgentDiscovery(agentId, metadata);
-        return new AgentDiscoveryBuilder(agentId, builder.Services);
-    }
-
-    private static GeneralMetadata BuildUpGeneralMetadata(string agentId, IAgentHostingBuilder builder)
-    {
-        return builder switch
-        {
-            ChatClientAgentHostingBuilder chatClientBuilder => new()
-            {
-                Id = agentId,
-                Name = chatClientBuilder.ActorType.Name,
-                Description = chatClientBuilder.Description,
-            },
-
-            _ => new()
-            {
-                Id = agentId,
-                Name = builder.ActorType.Name
-            }
-        };
+        return builder;
     }
 
     internal static AgentDiscovery InitializeAgentsDiscoveryProvider(this IServiceCollection services)
@@ -61,5 +40,16 @@ public static class AgentHostingBuilderExtensions
         }
 
         return instance;
+    }
+
+    internal static void InitializeHttpActorProcessor(this IServiceCollection services)
+    {
+        Throw.IfNull(services);
+
+        var descriptor = services.FirstOrDefault(s => s.ImplementationInstance is HttpActorProcessor);
+        if (descriptor?.ImplementationInstance is not HttpActorProcessor instance)
+        {
+            services.AddSingleton<HttpActorProcessor>();
+        }
     }
 }

@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Azure.Cosmos;
@@ -48,12 +47,6 @@ string[] bestPirateWords = ["Argh", "Matey"];
 
 pirateAgentBuilder
     .WithDiscovery() // adds the agent to the discovery service
-    .WithMetadata(new() // adds data of custom shape to the agent discovery metadata
-    {
-        { "customName", "MyPirate!!" },
-        { "BestWords", bestPirateWords },
-    })
-    .WithHttpEndpoint()
     ;
 
 builder.AddAIAgent("knights-and-knaves", (sp, key) =>
@@ -89,7 +82,7 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
         """, "Narrator");
 
     return new ConcurrentOrchestration([knight, knave, narrator], name: key);
-});
+}).WithDiscovery();
 
 // Add CosmosDB state storage to override default storage
 builder.Services.AddCosmosActorStateStorage("actor-state-db", "ActorState");
@@ -105,8 +98,6 @@ app.UseSwaggerUI(options =>
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
 
-app.MapActors();
-
 // attach a2a with simple message communication
 app.AttachA2A(agentName: "pirate", path: "/a2a/pirate");
 app.AttachA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
@@ -118,9 +109,6 @@ app.AttachA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", 
     // Url can be not set, and SDK will help assign it.
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
-
-// Map the agents HTTP endpoints
-app.MapAgentDiscovery("/agents");
 
 // Map the agents HTTP discovery endpoint
 app.EnableDiscovery();

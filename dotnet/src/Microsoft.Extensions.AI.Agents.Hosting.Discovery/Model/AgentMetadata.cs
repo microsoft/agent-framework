@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
 
@@ -9,12 +10,12 @@ internal sealed class AgentMetadata
     /// <summary>
     /// Id for agent
     /// </summary>
-    public required string Id { get; set; }
+    public ActorType Name { get; }
 
-    /// <summary>
-    /// name
-    /// </summary>
-    public string? Name { get; set; }
+    public AgentMetadata(ActorType name)
+    {
+        this.Name = name;
+    }
 
     /// <summary>
     /// descr
@@ -30,26 +31,4 @@ internal sealed class AgentMetadata
     /// Custom metadata associated with the agent.
     /// </summary>
     public IDictionary<string, object>? CustomMetadata { get; set; }
-
-    /// <summary>
-    /// Definition of HTTP endpoints to call to trigger agent.
-    /// </summary>
-    public IList<HttpEndpointMetadata>? HttpEndpoints { get; set; }
-
-    public static AgentMetadata FromGeneralMetadata(string id, GeneralMetadata generalMetadata)
-    {
-        return new AgentMetadata
-        {
-            Id = id,
-            Name = generalMetadata.Name,
-            Description = generalMetadata.Description,
-            Version = generalMetadata.Version
-        };
-    }
-}
-
-internal sealed class HttpEndpointMetadata
-{
-    public required string Route { get; set; }
-    public required string Method { get; set; }
 }

@@ -9,7 +9,7 @@ public class AgentDiscoveryClient(HttpClient httpClient, ILogger<AgentDiscoveryC
 {
     public async Task<List<AgentDiscoveryCard>> GetAgentsAsync(CancellationToken cancellationToken = default)
     {
-        var response = await httpClient.GetAsync(new Uri("/agents", UriKind.Relative), cancellationToken);
+        var response = await httpClient.GetAsync(new Uri("/agents/v1", UriKind.Relative), cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -24,5 +24,6 @@ public class AgentDiscoveryClient(HttpClient httpClient, ILogger<AgentDiscoveryC
     {
         public string? Name { get; set; }
         public string? Description { get; set; }
+        public string? Version { get; set; }
     }
 }
