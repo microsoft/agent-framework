@@ -31,8 +31,8 @@ from agent_framework.telemetry import (
     USER_AGENT_TELEMETRY_DISABLED_ENV_VAR,
     ChatMessageListTimestampFilter,
     OtelAttr,
+    get_function_span,
     prepend_agent_framework_to_user_agent,
-    start_as_current_span,
     use_agent_telemetry,
     use_telemetry,
 )
@@ -184,26 +184,26 @@ def test_index_key_constant():
     assert ChatMessageListTimestampFilter.INDEX_KEY == "chat_message_index"
 
 
-# region Test start_as_current_span
+# region Test get_function_span
 
 
 def test_start_span_basic():
     """Test starting a span with basic function info."""
     mock_tracer = Mock()
     mock_span = Mock()
-    mock_tracer.start_as_current_span.return_value = mock_span
+    mock_tracer.get_function_span.return_value = mock_span
 
     # Create a mock function
     mock_function = Mock()
     mock_function.name = "test_function"
     mock_function.description = "Test function description"
 
-    result = start_as_current_span(mock_tracer, mock_function)
+    result = get_function_span(mock_tracer, mock_function)
 
     assert result == mock_span
-    mock_tracer.start_as_current_span.assert_called_once()
+    mock_tracer.get_function_span.assert_called_once()
 
-    call_args = mock_tracer.start_as_current_span.call_args
+    call_args = mock_tracer.get_function_span.call_args
     assert call_args[1]["name"] == "execute_tool test_function"
 
     attributes = call_args[1]["attributes"]
@@ -216,7 +216,7 @@ def test_start_span_with_tool_call_id():
     """Test starting a span with tool_call_id."""
     mock_tracer = Mock()
     mock_span = Mock()
-    mock_tracer.start_as_current_span.return_value = mock_span
+    mock_tracer.get_function_span.return_value = mock_span
 
     mock_function = Mock()
     mock_function.name = "test_function"
@@ -224,9 +224,9 @@ def test_start_span_with_tool_call_id():
 
     tool_call_id = "test_call_123"
 
-    _ = start_as_current_span(mock_tracer, mock_function, tool_call_id)
+    _ = get_function_span(mock_tracer, mock_function, tool_call_id)
 
-    call_args = mock_tracer.start_as_current_span.call_args
+    call_args = mock_tracer.get_function_span.call_args
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_123"
 
@@ -235,15 +235,15 @@ def test_start_span_without_description():
     """Test starting a span when function has no description."""
     mock_tracer = Mock()
     mock_span = Mock()
-    mock_tracer.start_as_current_span.return_value = mock_span
+    mock_tracer.get_function_span.return_value = mock_span
 
     mock_function = Mock()
     mock_function.name = "test_function"
     mock_function.description = None
 
-    start_as_current_span(mock_tracer, mock_function)
+    get_function_span(mock_tracer, mock_function)
 
-    call_args = mock_tracer.start_as_current_span.call_args
+    call_args = mock_tracer.get_function_span.call_args
     attributes = call_args[1]["attributes"]
     assert OtelAttr.TOOL_DESCRIPTION not in attributes
 
@@ -375,19 +375,19 @@ async def test_streaming_response_with_otel(mock_chat_client, otel_settings):
 
 
 def test_start_as_current_span_with_none_metadata():
-    """Test start_as_current_span with None metadata."""
+    """Test get_function_span with None metadata."""
     mock_tracer = Mock()
     mock_span = Mock()
-    mock_tracer.start_as_current_span.return_value = mock_span
+    mock_tracer.get_function_span.return_value = mock_span
 
     mock_function = Mock()
     mock_function.name = "test_function"
     mock_function.description = "Test description"
 
-    result = start_as_current_span(mock_tracer, mock_function, None)
+    result = get_function_span(mock_tracer, mock_function, None)
 
     assert result == mock_span
-    call_args = mock_tracer.start_as_current_span.call_args
+    call_args = mock_tracer.get_function_span.call_args
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.TOOL_CALL_ID] == "unknown"
 

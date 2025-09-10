@@ -28,9 +28,8 @@ from .telemetry import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
     _capture_exception,  # type: ignore
+    get_function_span,
     meter,
-    start_as_current_span,
-    tracer,
 )
 
 if TYPE_CHECKING:
@@ -334,8 +333,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             return result  # type: ignore[reportReturnType]
 
         setup_telemetry()
-        with start_as_current_span(
-            tracer=tracer,
+        with get_function_span(
             function=self,
             tool_call_id=tool_call_id,
         ) as span:

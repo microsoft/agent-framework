@@ -109,7 +109,6 @@ class FoundryChatClient(BaseChatClient):
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
-    _should_setup_tracing: bool = PrivateAttr(default=True)  # Track whether we should setup tracing
 
     def __init__(
         self,
@@ -187,15 +186,16 @@ class FoundryChatClient(BaseChatClient):
         self._should_close_client = should_close_client
 
     async def setup_foundry_telemetry(self, enable_live_metrics: bool = False) -> None:
-        """Call this method to setup tracing for Foundry.
+        """Call this method to setup tracing with Foundry.
 
         This will take the connection string from the project client.
+        It will override any connection string that is set in the environment variables.
         It will disable any OTLP endpoint that might have been set.
         """
         from agent_framework.telemetry import setup_telemetry
 
         setup_telemetry(
-            monitor_connection_string=await self.client.telemetry.get_application_insights_connection_string(),
+            application_insights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
             enable_live_metrics=enable_live_metrics,
         )
 

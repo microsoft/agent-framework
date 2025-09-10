@@ -114,8 +114,6 @@ dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-monitor-opentelemetry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-monitor-opentelemetry-exporter", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -124,8 +122,6 @@ requires-dist = [
     { name = "aiohttp", specifier = "~=3.8" },
     { name = "azure-ai-agents", specifier = ">=1.1.0b1" },
     { name = "azure-ai-projects", specifier = ">=1.0.0b11" },
-    { name = "azure-monitor-opentelemetry", specifier = ">=1.7.0" },
-    { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0b41" },
 ]
 
 [[package]]

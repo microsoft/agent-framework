@@ -10,7 +10,7 @@ from functools import wraps
 from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, TypeVar
 
-from opentelemetry import metrics, trace
+from opentelemetry import metrics
 from opentelemetry.semconv_ai import GenAISystem, Meters, SpanAttributes
 from opentelemetry.trace import Span, StatusCode, get_tracer, use_span
 from opentelemetry.version import __version__ as otel_version
@@ -193,6 +193,8 @@ class OtelAttr(str, Enum):
     TOOL_CALL_ID = "gen_ai.tool.call.id"
     TOOL_DESCRIPTION = "gen_ai.tool.description"
     TOOL_NAME = "gen_ai.tool.name"
+    TOOL_TYPE = "gen_ai.tool.type"
+    # Agent attributes
     AGENT_ID = "gen_ai.agent.id"
     # Client attributes
     # replaced TOKEN with T, because both ruff and bandit,
@@ -336,11 +338,11 @@ def _configure_tracing(exporters: dict[str, list[Any]], resource: "Resource") ->
     set_meter_provider(meter_provider)
 
 
-OTEL_ENABLED_ENV_VAR = "AGENT_FRAMEWORK_ENABLE_OTEL"
-SENSITIVE_DATA_ENV_VAR = "AGENT_FRAMEWORK_ENABLE_SENSITIVE_DATA"
-MONITOR_CONNECTION_STRING_ENV_VAR = "AGENT_FRAMEWORK_MONITOR_CONNECTION_STRING"
-MONITOR_LIVE_METRICS_ENV_VAR = "AGENT_FRAMEWORK_MONITOR_LIVE_METRICS"
-OTLP_ENDPOINT_ENV_VAR = "AGENT_FRAMEWORK_OTLP_ENDPOINT"
+OTEL_ENABLED_ENV_VAR = "ENABLE_OTEL"
+SENSITIVE_DATA_ENV_VAR = "ENABLE_SENSITIVE_DATA"
+MONITOR_CONNECTION_STRING_ENV_VAR = "MONITOR_CONNECTION_STRING"
+MONITOR_LIVE_METRICS_ENV_VAR = "MONITOR_LIVE_METRICS"
+OTLP_ENDPOINT_ENV_VAR = "OTLP_ENDPOINT"
 
 
 class OtelSettings(AFBaseSettings):
@@ -359,23 +361,23 @@ class OtelSettings(AFBaseSettings):
 
     Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
-                    (Env var AGENT_FRAMEWORK_ENABLE_OTEL)
+                    (Env var ENABLE_OTEL)
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
-                    (Env var AGENT_FRAMEWORK_ENABLE_SENSITIVE_DATA)
-        monitor_connection_string: The Azure Monitor connection string. Default is None.
-                    (Env var AGENT_FRAMEWORK_MONITOR_CONNECTION_STRING)
-        monitor_live_metrics: Enable Azure Monitor live metrics. Default is False.
-                    (Env var AGENT_FRAMEWORK_MONITOR_LIVE_METRICS)
+                    (Env var ENABLE_SENSITIVE_DATA)
+        application_insights_connection_string: The Azure Monitor connection string. Default is None.
+                    (Env var APPLICATION_INSIGHTS_CONNECTION_STRING)
+        application_insights_live_metrics: Enable Azure Monitor live metrics. Default is False.
+                    (Env var APPLICATION_INSIGHTS_LIVE_METRICS)
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
-                    (Env var AGENT_FRAMEWORK_OTLP_ENDPOINT)
+                    (Env var OTLP_ENDPOINT)
     """
 
-    env_prefix: ClassVar[str] = "AGENT_FRAMEWORK_"
+    env_prefix: ClassVar[str] = ""
 
     enable_otel: bool = False
     enable_sensitive_data: bool = False
-    monitor_connection_string: str | None = None
-    monitor_live_metrics: bool = False
+    application_insights_connection_string: str | None = None
+    application_insights_live_metrics: bool = False
     otlp_endpoint: str | None = None
     _executed_setup: bool = PrivateAttr(default=False)
 
@@ -408,10 +410,10 @@ class OtelSettings(AFBaseSettings):
         if not self.ENABLED or self._executed_setup:
             return
 
-        if not self.monitor_connection_string and not self.otlp_endpoint:
+        if not self.application_insights_connection_string and not self.otlp_endpoint:
             logger.warning("Telemetry is enabled but no connection string or OTLP endpoint is provided.")
             return
-        if self.monitor_connection_string and self.otlp_endpoint:
+        if self.application_insights_connection_string and self.otlp_endpoint:
             logger.warning("Both connection string and OTLP endpoint are provided. Azure Monitor will be used.")
 
         from opentelemetry.sdk.resources import Resource
@@ -420,14 +422,14 @@ class OtelSettings(AFBaseSettings):
         resource = Resource.create({service_attributes.SERVICE_NAME: "agent_framework"})
         global_logger = logging.getLogger()
         global_logger.setLevel(logging.NOTSET)
-        if self.monitor_connection_string:
+        if self.application_insights_connection_string:
             from azure.monitor.opentelemetry import configure_azure_monitor
 
             configure_azure_monitor(
-                connection_string=self.monitor_connection_string,
+                connection_string=self.application_insights_connection_string,
                 logger_name="agent_framework",
                 resource=resource,
-                enable_live_metrics=self.monitor_live_metrics,
+                enable_live_metrics=self.application_insights_live_metrics,
             )
         if self.otlp_endpoint:
             exporters = _get_exporters(endpoint=self.otlp_endpoint)
@@ -444,7 +446,7 @@ def setup_telemetry(
     enable_otel: bool | None = None,
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | None = None,
-    monitor_connection_string: str | None = None,
+    application_insights_connection_string: str | None = None,
     enable_live_metrics: bool | None = None,
 ) -> None:
     """Setup telemetry with optionally provided settings.
@@ -452,11 +454,13 @@ def setup_telemetry(
     All of these values can be set through environment variables or you can pass them here,
     in the case where both are present, the provided value takes precedence.
 
+    If you have both connection_string and otlp_endpoint, the connection_string will be used.
+
     Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
-        monitor_connection_string: The Azure Monitor connection string. Default is None.
+        application_insights_connection_string: The Azure Monitor connection string. Default is None.
         enable_live_metrics: Enable Azure Monitor live metrics. Default is False.
 
     """
@@ -467,10 +471,10 @@ def setup_telemetry(
         OTEL_SETTINGS.enable_sensitive_data = enable_sensitive_data
     if otlp_endpoint is not None:
         OTEL_SETTINGS.otlp_endpoint = otlp_endpoint
-    if monitor_connection_string is not None:
-        OTEL_SETTINGS.monitor_connection_string = monitor_connection_string
+    if application_insights_connection_string is not None:
+        OTEL_SETTINGS.application_insights_connection_string = application_insights_connection_string
     if enable_live_metrics is not None:
-        OTEL_SETTINGS.monitor_live_metrics = enable_live_metrics
+        OTEL_SETTINGS.application_insights_live_metrics = enable_live_metrics
     OTEL_SETTINGS.setup_telemetry()
 
 
@@ -872,15 +876,13 @@ def use_agent_telemetry(
 # region Otel Helpers
 
 
-def start_as_current_span(
-    tracer: trace.Tracer,
+def get_function_span(
     function: "AIFunction[Any, Any]",
     tool_call_id: str | None = None,
 ) -> "_AgnosticContextManager[Span]":
-    """Starts a span for the given function using the provided tracer.
+    """Starts a span for the given function.
 
     Args:
-        tracer: The OpenTelemetry tracer to use.
         function: The function for which to start the span.
         tool_call_id: The id of the tool_call that was requested.
 
@@ -891,6 +893,7 @@ def start_as_current_span(
         OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
         OtelAttr.TOOL_NAME: function.name,
         OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
+        OtelAttr.TOOL_TYPE: "function",
     }
     if function.description:
         attributes[OtelAttr.TOOL_DESCRIPTION] = function.description
