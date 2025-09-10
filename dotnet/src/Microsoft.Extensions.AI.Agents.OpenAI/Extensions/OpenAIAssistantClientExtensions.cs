@@ -28,14 +28,14 @@ public static class OpenAIAssistantClientExtensions
     private const string StrictKey = "strictJsonSchema";
 
     /// <summary>
-    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="PersistentAgentsClient"/>.
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
     /// </summary>
     /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> for the persistent agent.</returns>
+    /// <returns>A <see cref="ChatClientAgent"/> for the assistant agent.</returns>
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         string agentId,
@@ -57,23 +57,23 @@ public static class OpenAIAssistantClientExtensions
     }
 
     /// <summary>
-    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="PersistentAgentsClient"/>.
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
     /// </summary>
-    /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> for the persistent agent.</returns>
+    /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> for the assistant agent.</returns>
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
     public static async Task<ChatClientAgent> GetAIAgentAsync(
-        this AssistantClient persistentAgentsClient,
+        this AssistantClient assistantClient,
         string agentId,
         ChatOptions? chatOptions = null,
         CancellationToken cancellationToken = default)
     {
-        if (persistentAgentsClient is null)
+        if (assistantClient is null)
         {
-            throw new ArgumentNullException(nameof(persistentAgentsClient));
+            throw new ArgumentNullException(nameof(assistantClient));
         }
 
         if (string.IsNullOrWhiteSpace(agentId))
@@ -81,8 +81,9 @@ public static class OpenAIAssistantClientExtensions
             throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
         }
 
-        var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions);
+        var assistanceResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
+
+        return assistanceResponse.AsAIAgent(assistantClient, chatOptions);
     }
 
     /// <summary>
