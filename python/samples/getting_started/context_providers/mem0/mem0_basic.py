@@ -32,12 +32,11 @@ async def main() -> None:
     # For Mem0 authentication, set Mem0 API key via "api_key" parameter or MEM0_API_KEY environment variable.
     async with (
         AzureCliCredential() as credential,
-        Mem0Provider(user_id=user_id) as context_provider,
         FoundryChatClient(async_credential=credential).create_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_providers=context_provider,
+            context_providers=Mem0Provider(user_id=user_id),
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.

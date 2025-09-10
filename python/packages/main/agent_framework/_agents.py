@@ -3,7 +3,6 @@
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
@@ -300,12 +299,16 @@ class ChatAgent(BaseAgent):
     async def __aenter__(self) -> "Self":
         """Async context manager entry.
 
-        If either the chat_client or the local_mcp_tools are context managers,
+        If any of the chat_client, local_mcp_tools, or context_providers are context managers,
         they will be entered into the async exit stack to ensure proper cleanup.
 
         This list might be extended in the future.
         """
-        for context_manager in chain([self.chat_client], self._local_mcp_tools):
+        context_managers = [self.chat_client, *self._local_mcp_tools]
+        if self.context_providers:
+            context_managers.append(self.context_providers)
+
+        for context_manager in context_managers:
             if isinstance(context_manager, AbstractAsyncContextManager):
                 await self._async_exit_stack.enter_async_context(context_manager)
         return self

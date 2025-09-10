@@ -1,11 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import MutableSequence, Sequence
+from contextlib import AsyncExitStack
+from types import TracebackType
 
 from ._pydantic import AFBaseModel
 from ._types import ChatMessage
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 # region Context
 
@@ -72,6 +80,33 @@ class ContextProvider(AFBaseModel, ABC):
         """
         pass
 
+    async def __aenter__(self) -> "Self":
+        """Async context manager entry.
+
+        Override this method to perform any setup operations when the context provider is entered.
+
+        Returns:
+            Self for chaining.
+        """
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Async context manager exit.
+
+        Override this method to perform any cleanup operations when the context provider is exited.
+
+        Args:
+            exc_type: Exception type if an exception occurred, None otherwise.
+            exc_val: Exception value if an exception occurred, None otherwise.
+            exc_tb: Exception traceback if an exception occurred, None otherwise.
+        """
+        pass
+
 
 # region AggregateContextProvider
 
@@ -92,6 +127,7 @@ class AggregateContextProvider(ContextProvider):
             context_providers: Context providers to add.
         """
         super().__init__(providers=list(context_providers or []))  # type: ignore
+        self._exit_stack: AsyncExitStack | None = None
 
     def add(self, context_provider: ContextProvider) -> None:
         """Adds new context provider.
@@ -112,3 +148,35 @@ class AggregateContextProvider(ContextProvider):
         combined_context = Context()
         combined_context.instructions = "\n".join([ctx.instructions for ctx in sub_contexts if ctx.instructions])
         return combined_context
+
+    async def __aenter__(self) -> "Self":
+        """Enter async context manager and set up all providers.
+
+        Returns:
+            Self for chaining.
+        """
+        self._exit_stack = AsyncExitStack()
+        await self._exit_stack.__aenter__()
+
+        # Enter all context providers
+        for provider in self.providers:
+            await self._exit_stack.enter_async_context(provider)
+
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit async context manager and clean up all providers.
+
+        Args:
+            exc_type: Exception type if an exception occurred, None otherwise.
+            exc_val: Exception value if an exception occurred, None otherwise.
+            exc_tb: Exception traceback if an exception occurred, None otherwise.
+        """
+        if self._exit_stack is not None:
+            await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+            self._exit_stack = None

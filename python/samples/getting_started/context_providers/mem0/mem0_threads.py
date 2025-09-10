@@ -27,16 +27,15 @@ async def example_global_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        Mem0Provider(
-            user_id=user_id,
-            thread_id=global_thread_id,
-            scope_to_per_operation_thread_id=False,  # Share memories across all threads
-        ) as global_context_provider,
         FoundryChatClient(async_credential=credential).create_agent(
             name="GlobalMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
-            context_providers=global_context_provider,
+            context_providers=Mem0Provider(
+                user_id=user_id,
+                thread_id=global_thread_id,
+                scope_to_per_operation_thread_id=False,  # Share memories across all threads
+            ),
         ) as global_agent,
     ):
         # Store some preferences in the global scope
@@ -66,15 +65,14 @@ async def example_per_operation_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        Mem0Provider(
-            user_id=user_id,
-            scope_to_per_operation_thread_id=True,  # Isolate memories per thread
-        ) as scoped_context_provider,
         FoundryChatClient(async_credential=credential).create_agent(
             name="ScopedMemoryAssistant",
             instructions="You are an assistant with thread-scoped memory.",
             tools=get_user_preferences,
-            context_providers=scoped_context_provider,
+            context_providers=Mem0Provider(
+                user_id=user_id,
+                scope_to_per_operation_thread_id=True,  # Isolate memories per thread
+            ),
         ) as scoped_agent,
     ):
         # Create a specific thread for this scoped provider
@@ -115,21 +113,19 @@ async def example_multiple_agents() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        Mem0Provider(
-            agent_id=agent_id_1,
-        ) as personal_context_provider,
-        Mem0Provider(
-            agent_id=agent_id_2,
-        ) as work_context_provider,
         FoundryChatClient(async_credential=credential).create_agent(
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
-            context_providers=personal_context_provider,
+            context_providers=Mem0Provider(
+                agent_id=agent_id_1,
+            ),
         ) as personal_agent,
         FoundryChatClient(async_credential=credential).create_agent(
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
-            context_providers=work_context_provider,
+            context_providers=Mem0Provider(
+                agent_id=agent_id_2,
+            ),
         ) as work_agent,
     ):
         # Store personal information
