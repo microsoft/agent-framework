@@ -443,7 +443,7 @@ public class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync sets the Id on the thread when the service returns a conversation id
+    /// Verify that RunAsync sets the Id on the thread when the service returns a conversation id,
     /// and when the Id is the same as the ConversationId.
     /// </summary>
     [Fact]

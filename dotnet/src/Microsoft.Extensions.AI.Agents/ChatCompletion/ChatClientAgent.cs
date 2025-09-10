@@ -203,7 +203,11 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
     {
-        var thread = new AgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(), AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke() };
+        var thread = new AgentThread
+        {
+            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(),
+            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke()
+        };
         return thread;
     }
 
