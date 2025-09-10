@@ -5,13 +5,20 @@ using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
 
-internal sealed class AgentMetadata
+/// <summary>
+/// Representation of metadata for the <see cref="AIAgent"/>
+/// </summary>
+public sealed class AgentMetadata
 {
     /// <summary>
     /// Id for agent
     /// </summary>
     public ActorType Name { get; }
 
+    /// <summary>
+    /// Initializes the agent metadata with the specified <see cref="ActorType"/>.
+    /// </summary>
+    /// <param name="name"></param>
     public AgentMetadata(ActorType name)
     {
         this.Name = name;
@@ -26,6 +33,16 @@ internal sealed class AgentMetadata
     /// version
     /// </summary>
     public string? Version { get; set; }
+
+    /// <summary>
+    /// If applicable, the instructions supplied to the agent.
+    /// </summary>
+    public string? Instructions { get; set; }
+
+    /// <summary>
+    /// The underlying model used by the agent
+    /// </summary>
+    public string? Model { get; set; }
 
     /// <summary>
     /// Custom metadata associated with the agent.

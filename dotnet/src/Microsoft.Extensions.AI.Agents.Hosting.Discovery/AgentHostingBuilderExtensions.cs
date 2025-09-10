@@ -3,7 +3,9 @@
 using System.Linq;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Actor;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Internal;
+using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery;
@@ -17,39 +19,30 @@ public static class AgentHostingBuilderExtensions
     /// Adds <see cref="AIAgent"/> to the discovery services exposing the agent metadata via discovery endpoints.
     /// </summary>
     /// <param name="builder">The builder for the <see cref="AIAgent"/></param>
-    public static IAgentHostingBuilder WithDiscovery(this IAgentHostingBuilder builder)
+    /// <param name="agentMetadata"></param>
+    public static IAgentHostingBuilder WithDiscovery(this IAgentHostingBuilder builder, AgentMetadata? agentMetadata = null)
     {
         var agentDiscovery = builder.Services.InitializeAgentsDiscoveryProvider();
-        builder.Services.InitializeHttpActorProcessor();
 
-        var actorType = builder.ActorType;
-        agentDiscovery.RegisterAgentDiscovery(actorType);
+        var metadata = agentMetadata ?? builder.ResolveAgentMetadata();
+        agentDiscovery.RegisterAgentDiscovery(builder.ActorType, metadata);
 
         return builder;
     }
 
-    internal static AgentDiscovery InitializeAgentsDiscoveryProvider(this IServiceCollection services)
+    internal static AgentDiscoveryProvider InitializeAgentsDiscoveryProvider(this IServiceCollection services)
     {
         Throw.IfNull(services);
 
-        var descriptor = services.FirstOrDefault(s => s.ImplementationInstance is AgentDiscovery);
-        if (descriptor?.ImplementationInstance is not AgentDiscovery instance)
+        var descriptor = services.FirstOrDefault(s => s.ImplementationInstance is AgentDiscoveryProvider);
+        if (descriptor?.ImplementationInstance is not AgentDiscoveryProvider instance)
         {
-            instance = new AgentDiscovery();
+            instance = new AgentDiscoveryProvider();
             services.Add(ServiceDescriptor.Singleton(instance));
         }
 
+        services.TryAddSingleton<HttpActorProcessor>();
+
         return instance;
-    }
-
-    internal static void InitializeHttpActorProcessor(this IServiceCollection services)
-    {
-        Throw.IfNull(services);
-
-        var descriptor = services.FirstOrDefault(s => s.ImplementationInstance is HttpActorProcessor);
-        if (descriptor?.ImplementationInstance is not HttpActorProcessor instance)
-        {
-            services.AddSingleton<HttpActorProcessor>();
-        }
     }
 }

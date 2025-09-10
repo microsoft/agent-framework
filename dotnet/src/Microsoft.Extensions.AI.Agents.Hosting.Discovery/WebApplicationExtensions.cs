@@ -39,7 +39,7 @@ public static class WebApplicationExtensions
 
     private static void MapAgentsDiscovery(this IEndpointRouteBuilder routeGroup)
     {
-        var agentDiscovery = routeGroup.ServiceProvider.GetService<AgentDiscovery>();
+        var agentDiscovery = routeGroup.ServiceProvider.GetService<AgentDiscoveryProvider>();
         if (agentDiscovery is null)
         {
             throw new ArgumentException($"At least one {typeof(AIAgent)} should be added to discovery via {nameof(AgentHostingBuilderExtensions.WithDiscovery)}");

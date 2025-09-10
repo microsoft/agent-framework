@@ -7,17 +7,16 @@ using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Internal;
 
-internal sealed class AgentDiscovery
+internal sealed class AgentDiscoveryProvider
 {
     private readonly ConcurrentDictionary<ActorType, AgentMetadata> _actorMetadatas = new();
 
-    public AgentDiscovery()
+    public AgentDiscoveryProvider()
     {
     }
 
-    internal void RegisterAgentDiscovery(ActorType actorType)
+    internal void RegisterAgentDiscovery(ActorType actorType, AgentMetadata agentMetadata)
     {
-        var agentMetadata = new AgentMetadata(actorType);
         if (!this._actorMetadatas.TryAdd(actorType, agentMetadata))
         {
             throw new System.ArgumentException($"An agent with the ID '{actorType}' has already been registered.", nameof(actorType));
