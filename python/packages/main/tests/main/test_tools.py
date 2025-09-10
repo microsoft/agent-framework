@@ -88,7 +88,7 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
 
     # Mock the tracer and span
     with (
-        patch("agent_framework._tools.tracer") as mock_tracer,
+        patch("agent_framework.telemetry.tracer"),
         patch("agent_framework._tools.get_function_span") as mock_start_span,
     ):
         mock_span = Mock()
@@ -108,9 +108,7 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
         assert result == 3
 
         # Verify telemetry calls
-        mock_start_span.assert_called_once_with(
-            tracer=mock_tracer, function=telemetry_test_tool, tool_call_id="test_call_id"
-        )
+        mock_start_span.assert_called_once_with(function=telemetry_test_tool, tool_call_id="test_call_id")
 
         # Verify histogram was called with correct attributes
         mock_histogram.record.assert_called_once()
@@ -138,7 +136,7 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
     args_model = pydantic_test_tool.input_model(x=5, y=10)
 
     with (
-        patch("agent_framework._tools.tracer") as mock_tracer,
+        patch("agent_framework.telemetry.tracer"),
         patch("agent_framework._tools.get_function_span") as mock_start_span,
     ):
         mock_span = Mock()
@@ -158,7 +156,6 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
 
         # Verify telemetry calls
         mock_start_span.assert_called_once_with(
-            tracer=mock_tracer,
             function=pydantic_test_tool,
             tool_call_id="pydantic_call",
         )
@@ -178,7 +175,7 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
         raise ValueError("Test exception for telemetry")
 
     with (
-        patch("agent_framework._tools.tracer"),
+        patch("agent_framework.telemetry.tracer"),
         patch("agent_framework._tools.get_function_span") as mock_start_span,
     ):
         mock_span = Mock()
@@ -223,7 +220,7 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
         return x * y
 
     with (
-        patch("agent_framework._tools.tracer") as mock_tracer,
+        patch("agent_framework.telemetry.tracer"),
         patch("agent_framework._tools.get_function_span") as mock_start_span,
     ):
         mock_span = Mock()
@@ -242,9 +239,7 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
         assert result == 12
 
         # Verify telemetry calls
-        mock_start_span.assert_called_once_with(
-            tracer=mock_tracer, function=async_telemetry_test, tool_call_id="async_call"
-        )
+        mock_start_span.assert_called_once_with(function=async_telemetry_test, tool_call_id="async_call")
 
         # Verify histogram recording
         mock_histogram.record.assert_called_once()
