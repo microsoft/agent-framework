@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 from mcp import types
 from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.client.websocket import websocket_client
@@ -49,7 +48,6 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
 }
 
 __all__ = [
-    "MCPSseTools",
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
     "MCPWebsocketTool",
@@ -224,7 +222,7 @@ def _normalize_mcp_name(name: str) -> str:
 
 
 class MCPTool:
-    """Base class with the MCP logic."""
+    """Main MCP class, to initialize use one of the subclasses."""
 
     def __init__(
         self,
@@ -565,82 +563,6 @@ class MCPStdioTool(MCPTool):
         if self._client_kwargs:
             args.update(self._client_kwargs)
         return stdio_client(server=StdioServerParameters(**args))
-
-
-class MCPSseTools(MCPTool):
-    """MCP sse server configuration."""
-
-    def __init__(
-        self,
-        name: str,
-        url: str,
-        *,
-        load_tools: bool = True,
-        load_prompts: bool = True,
-        request_timeout: int | None = None,
-        session: ClientSession | None = None,
-        description: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | None = None,
-        sse_read_timeout: float | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the MCP sse plugin.
-
-                The arguments are used to create a sse client.
-        see mcp.client.sse.sse_client for more details.
-
-        Any extra arguments passed to the constructor will be passed to the
-        sse client constructor.
-
-        Args:
-            name: The name of the plugin.
-            url: The URL of the MCP server.
-            load_tools: Whether to load tools from the MCP server.
-            load_prompts: Whether to load prompts from the MCP server.
-            request_timeout: The default timeout used for all requests.
-            session: The session to use for the MCP connection.
-            description: The description of the plugin.
-            additional_properties: Additional properties.
-            headers: The headers to send with the request.
-            timeout: The timeout for the request.
-            sse_read_timeout: The timeout for reading from the SSE stream.
-            chat_client: The chat client to use for sampling.
-            kwargs: Any extra arguments to pass to the sse client.
-
-        """
-        super().__init__(
-            name=name,
-            description=description,
-            additional_properties=additional_properties,
-            session=session,
-            chat_client=chat_client,
-            load_tools=load_tools,
-            load_prompts=load_prompts,
-            request_timeout=request_timeout,
-        )
-        self.url = url
-        self.headers = headers or {}
-        self.timeout = timeout
-        self.sse_read_timeout = sse_read_timeout
-        self._client_kwargs = kwargs
-
-    def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
-        """Get an MCP SSE client."""
-        args: dict[str, Any] = {
-            "url": self.url,
-        }
-        if self.headers:
-            args["headers"] = self.headers
-        if self.timeout is not None:
-            args["timeout"] = self.timeout
-        if self.sse_read_timeout is not None:
-            args["sse_read_timeout"] = self.sse_read_timeout
-        if self._client_kwargs:
-            args.update(self._client_kwargs)
-        return sse_client(**args)
 
 
 class MCPStreamableHTTPTool(MCPTool):

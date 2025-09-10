@@ -32,7 +32,7 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
-        return await thread.GetMessagesAsync().ToListAsync();
+        return thread.MessageStore is null ? [] : (await thread.MessageStore.GetMessagesAsync()).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(

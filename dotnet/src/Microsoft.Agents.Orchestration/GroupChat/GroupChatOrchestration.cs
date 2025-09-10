@@ -51,10 +51,14 @@ public sealed partial class GroupChatOrchestration : OrchestratingAgent
     }
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.GroupChatState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
-        return this.ResumeAsync(state.AllMessages, state.OriginalMessageCount, context, cancellationToken);
+
+        // Append the new messages to the checkpoint state
+        List<ChatMessage> allMessages = [.. state.AllMessages, .. newMessages];
+
+        return this.ResumeAsync(allMessages, allMessages.Count, context, cancellationToken);
     }
 
     private async Task<AgentRunResponse> ResumeAsync(

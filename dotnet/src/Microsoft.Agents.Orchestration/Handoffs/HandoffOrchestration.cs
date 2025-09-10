@@ -52,26 +52,28 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
     }
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.HandoffState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
 
         AIAgent? nextAgent = null;
-        foreach (var agent in this.Agents)
+        if (state.NextAgent is null)
         {
-            if (agent.Id == state.NextAgent)
+            nextAgent = this._handoffs.InitialAgent;
+        }
+        else
+        {
+            nextAgent = this.Agents.FirstOrDefault(a => a.Id == state.NextAgent);
+            if (nextAgent is null)
             {
-                nextAgent = agent;
-                break;
+                Throw.InvalidOperationException($"The next agent '{state.NextAgent}' is not defined in the orchestration.");
             }
         }
 
-        if (nextAgent is null)
-        {
-            Throw.InvalidOperationException($"The next agent '{state.NextAgent}' is not defined in the orchestration.");
-        }
+        // Append the new messages to the checkpoint state
+        List<ChatMessage> allMessages = [.. state.AllMessages, .. newMessages];
 
-        return this.ResumeAsync(nextAgent, state.AllMessages, state.OriginalMessageCount, context, cancellationToken);
+        return this.ResumeAsync(nextAgent, allMessages, allMessages.Count, context, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -144,7 +146,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
     private static void RemoveHandoffFunctionCalls(AgentRunResponse response, List<AITool> handoffTools)
     {
         HashSet<string>? removeToolNames = null;
-        HashSet<string>? callIds = null;
+        HashSet<string>? handoffCallIds = null;
 
         foreach (var message in response.Messages)
         {
@@ -153,23 +155,22 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
                 if (message.Contents[i] is FunctionCallContent fcc)
                 {
                     removeToolNames ??= [.. handoffTools.Select(t => t.Name)];
-                    (callIds ??= new()).Add(fcc.CallId);
-
                     if (removeToolNames.Contains(fcc.Name))
                     {
+                        (handoffCallIds ??= []).Add(fcc.CallId);
                         message.Contents.RemoveAt(i);
                     }
                 }
             }
         }
 
-        if (callIds is not null)
+        if (handoffCallIds is not null)
         {
             foreach (var message in response.Messages)
             {
                 for (int i = message.Contents.Count - 1; i >= 0; i--)
                 {
-                    if (message.Contents[i] is FunctionResultContent frc && callIds.Contains(frc.CallId))
+                    if (message.Contents[i] is FunctionResultContent frc && handoffCallIds.Contains(frc.CallId))
                     {
                         message.Contents.RemoveAt(i);
                     }
@@ -215,7 +216,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
             static void Terminate()
             {
-                if (FunctionInvokingChatClient.CurrentContext is not { } ctx)
+                if (NewFunctionInvokingChatClient.CurrentContext is not { } ctx)
                 {
                     throw new NotSupportedException($"The agent is not configured with a {nameof(FunctionInvokingChatClient)}. Cease execution.");
                 }

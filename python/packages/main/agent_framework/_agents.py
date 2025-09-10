@@ -9,11 +9,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, PrivateAttr
 
-from ._clients import ChatClientProtocol
+from ._clients import BaseChatClient, ChatClientProtocol
+from ._logging import get_logger
 from ._mcp import MCPTool
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
-from ._tools import ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, ToolProtocol
 from ._types import (
     AgentRunResponse,
     AgentRunResponseUpdate,
@@ -31,6 +32,8 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+
+logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
 
@@ -248,6 +251,11 @@ class ChatAgent(BaseAgent):
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
+        if not hasattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) and isinstance(chat_client, BaseChatClient):
+            logger.warning(
+                "The provided chat client does not support function invoking, this might limit agent capabilities."
+            )
+
         kwargs.update(additional_properties or {})
 
         # We ignore the MCP Servers here and store them separately,
@@ -317,8 +325,8 @@ class ChatAgent(BaseAgent):
         should check if there is already a agent name defined, and if not
         set it to this value.
         """
-        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue]
-            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue]
+        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue, attr-defined]
+            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
     async def run(
         self,
