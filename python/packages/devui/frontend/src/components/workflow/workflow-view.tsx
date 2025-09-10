@@ -14,6 +14,7 @@ import type { DebugEventHandler } from "@/components/shared/chat-base";
 import type { WorkflowInfo } from "@/types";
 import type { DebugStreamEvent } from "@/types/agent-framework";
 import type { ExecutorNodeData } from "@/components/workflow/executor-node";
+import type { Workflow } from "@/types/workflow";
 
 interface WorkflowViewProps {
   selectedWorkflow: WorkflowInfo;
@@ -21,7 +22,7 @@ interface WorkflowViewProps {
 }
 
 interface WorkflowExecution {
-  workflowDump?: Record<string, unknown>;
+  workflowDump?: Workflow;
   activeExecutors: string[];
   executorHistory: Array<{
     executorId: string;
@@ -79,7 +80,7 @@ export function WorkflowView({
     setSelectedExecutor(null);
 
     loadWorkflowInfo();
-  }, [selectedWorkflow.id]);
+  }, [selectedWorkflow.id, selectedWorkflow.type]);
 
   const handleNodeSelect = (executorId: string, data: ExecutorNodeData) => {
     setSelectedExecutor(data);
@@ -215,7 +216,10 @@ export function WorkflowView({
 
   // Save panel height to localStorage
   useEffect(() => {
-    localStorage.setItem("workflowBottomPanelHeight", bottomPanelHeight.toString());
+    localStorage.setItem(
+      "workflowBottomPanelHeight",
+      bottomPanelHeight.toString()
+    );
   }, [bottomPanelHeight]);
 
   // Handle resize drag
@@ -375,7 +379,6 @@ export function WorkflowView({
             </div>
           </div>
         )}
-
       </div>
 
       {/* Resize Handle */}
@@ -397,11 +400,11 @@ export function WorkflowView({
       >
         {/* Left Half - Execution Details */}
         <div className="flex-1 min-w-0 p-4 overflow-auto">
-          {(selectedExecutor ||
-            workflowExecution.activeExecutors.length > 0 ||
-            workflowExecution.executorHistory.length > 0 ||
-            workflowExecution.completionResult ||
-            workflowExecution.error) ? (
+          {selectedExecutor ||
+          workflowExecution.activeExecutors.length > 0 ||
+          workflowExecution.executorHistory.length > 0 ||
+          workflowExecution.completionResult ||
+          workflowExecution.error ? (
             <div className="h-full space-y-4">
               {/* Current/Last Executor Panel */}
               {(selectedExecutor ||
@@ -414,7 +417,8 @@ export function WorkflowView({
                         ? `Executor: ${
                             selectedExecutor.name || selectedExecutor.executorId
                           }`
-                        : isStreaming && workflowExecution.activeExecutors.length > 0
+                        : isStreaming &&
+                          workflowExecution.activeExecutors.length > 0
                         ? "Current Executor"
                         : "Last Executor"}
                     </h4>
@@ -480,7 +484,8 @@ export function WorkflowView({
                               </h5>
                               <pre className="text-xs bg-muted p-2 rounded overflow-x-auto max-h-24">
                                 {String(
-                                  typeof selectedExecutor.outputData === "string"
+                                  typeof selectedExecutor.outputData ===
+                                    "string"
                                     ? selectedExecutor.outputData
                                     : (() => {
                                         try {
@@ -519,7 +524,8 @@ export function WorkflowView({
                     ) : (
                       (() => {
                         const currentExecutorId =
-                          isStreaming && workflowExecution.activeExecutors.length > 0
+                          isStreaming &&
+                          workflowExecution.activeExecutors.length > 0
                             ? workflowExecution.activeExecutors[
                                 workflowExecution.activeExecutors.length - 1
                               ]
@@ -532,9 +538,10 @@ export function WorkflowView({
                         if (!currentExecutorId) return null;
 
                         const executorData = getExecutorData(currentExecutorId);
-                        const historyItem = workflowExecution.executorHistory.find(
-                          (h) => h.executorId === currentExecutorId
-                        );
+                        const historyItem =
+                          workflowExecution.executorHistory.find(
+                            (h) => h.executorId === currentExecutorId
+                          );
 
                         return (
                           <div
@@ -582,7 +589,9 @@ export function WorkflowView({
 
                             {historyItem && (
                               <p className="text-sm text-muted-foreground">
-                                {isStreaming ? "Processing..." : historyItem.message}
+                                {isStreaming
+                                  ? "Processing..."
+                                  : historyItem.message}
                               </p>
                             )}
 

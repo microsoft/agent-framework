@@ -1,7 +1,13 @@
-import dagre from "dagre";
+// import dagre from "dagre"; // Removed to eliminate 4.88MB lodash dependency
+import { applySimpleLayout } from "./simple-layout";
 import type { Node, Edge } from "@xyflow/react";
-import type { ExecutorNodeData, ExecutorState } from "@/components/workflow/executor-node";
+import type {
+  ExecutorNodeData,
+  ExecutorState,
+} from "@/components/workflow/executor-node";
 import type { DebugStreamEvent } from "@/types/agent-framework";
+import type { Workflow } from "@/types/workflow";
+import { getTypedWorkflow } from "@/types/workflow";
 
 export interface WorkflowDumpExecutor {
   id: string;
@@ -52,7 +58,7 @@ export interface EdgeTraversal {
  * Convert workflow dump data to React Flow nodes
  */
 export function convertWorkflowDumpToNodes(
-  workflowDump: Record<string, unknown> | undefined,
+  workflowDump: Workflow | Record<string, unknown> | undefined,
   onNodeClick?: (executorId: string, data: ExecutorNodeData) => void
 ): Node<ExecutorNodeData>[] {
   if (!workflowDump) {
@@ -60,12 +66,40 @@ export function convertWorkflowDumpToNodes(
     return [];
   }
 
-  // Handle different possible structures in workflow_dump
-  const executors = getExecutorsFromDump(workflowDump);
-  const startExecutorId = workflowDump.start_executor_id as string | undefined;
-  
+  // Try to get typed workflow first, then fall back to generic handling
+  const typedWorkflow = getTypedWorkflow(workflowDump);
+
+  let executors: WorkflowDumpExecutor[];
+  let startExecutorId: string | undefined;
+
+  if (typedWorkflow) {
+    // Use typed workflow structure
+    executors = Object.values(typedWorkflow.executors).map((executor) => ({
+      id: executor.id,
+      type: executor.type,
+      name:
+        ((executor as Record<string, unknown>).name as string) || executor.id,
+      description: (executor as Record<string, unknown>).description as string,
+      config: (executor as Record<string, unknown>).config as Record<
+        string,
+        unknown
+      >,
+    }));
+    startExecutorId = typedWorkflow.start_executor_id;
+  } else {
+    // Fall back to generic handling for backwards compatibility
+    executors = getExecutorsFromDump(workflowDump as Record<string, unknown>);
+    const workflowDumpRecord = workflowDump as Record<string, unknown>;
+    startExecutorId = workflowDumpRecord?.start_executor_id as
+      | string
+      | undefined;
+  }
+
   if (!executors || !Array.isArray(executors) || executors.length === 0) {
-    console.warn("No executors found in workflow dump. Available keys:", Object.keys(workflowDump));
+    console.warn(
+      "No executors found in workflow dump. Available keys:",
+      Object.keys(workflowDump)
+    );
     return [];
   }
 
@@ -82,7 +116,7 @@ export function convertWorkflowDumpToNodes(
       onNodeClick,
     },
   }));
-  
+
   return nodes;
 }
 
@@ -90,17 +124,42 @@ export function convertWorkflowDumpToNodes(
  * Convert workflow dump data to React Flow edges
  */
 export function convertWorkflowDumpToEdges(
-  workflowDump: Record<string, unknown> | undefined
+  workflowDump: Workflow | Record<string, unknown> | undefined
 ): Edge[] {
   if (!workflowDump) {
     console.warn("convertWorkflowDumpToEdges: workflowDump is undefined");
     return [];
   }
 
-  const connections = getConnectionsFromDump(workflowDump);
-  
+  // Try to get typed workflow first, then fall back to generic handling
+  const typedWorkflow = getTypedWorkflow(workflowDump);
+
+  let connections: WorkflowDumpConnection[];
+
+  if (typedWorkflow) {
+    // Use typed workflow structure to extract connections from edge_groups
+    connections = [];
+    typedWorkflow.edge_groups.forEach((group) => {
+      group.edges.forEach((edge) => {
+        connections.push({
+          source: edge.source_id,
+          target: edge.target_id,
+          condition: edge.condition_name,
+        });
+      });
+    });
+  } else {
+    // Fall back to generic handling for backwards compatibility
+    connections = getConnectionsFromDump(
+      workflowDump as Record<string, unknown>
+    );
+  }
+
   if (!connections || !Array.isArray(connections) || connections.length === 0) {
-    console.warn("No connections found in workflow dump. Available keys:", Object.keys(workflowDump));
+    console.warn(
+      "No connections found in workflow dump. Available keys:",
+      Object.keys(workflowDump)
+    );
     return [];
   }
 
@@ -115,17 +174,26 @@ export function convertWorkflowDumpToEdges(
       strokeWidth: 2,
     },
   }));
-  
+
   return edges;
 }
 
 /**
  * Extract executors from workflow dump - handles different possible structures
  */
-function getExecutorsFromDump(workflowDump: Record<string, unknown>): WorkflowDumpExecutor[] {
+function getExecutorsFromDump(
+  workflowDump: Record<string, unknown>
+): WorkflowDumpExecutor[] {
   // First check if executors is an object (like in the actual dump structure)
-  if (workflowDump.executors && typeof workflowDump.executors === "object" && !Array.isArray(workflowDump.executors)) {
-    const executorsObj = workflowDump.executors as Record<string, RawExecutorData>;
+  if (
+    workflowDump.executors &&
+    typeof workflowDump.executors === "object" &&
+    !Array.isArray(workflowDump.executors)
+  ) {
+    const executorsObj = workflowDump.executors as Record<
+      string,
+      RawExecutorData
+    >;
     return Object.entries(executorsObj).map(([id, executor]) => ({
       id,
       type: executor.type_ || executor.type || "executor",
@@ -134,10 +202,10 @@ function getExecutorsFromDump(workflowDump: Record<string, unknown>): WorkflowDu
       config: executor.config,
     }));
   }
-  
+
   // Try different possible keys where executors might be stored as arrays
   const possibleKeys = ["executors", "agents", "steps", "nodes"];
-  
+
   for (const key of possibleKeys) {
     if (workflowDump[key] && Array.isArray(workflowDump[key])) {
       return workflowDump[key] as WorkflowDumpExecutor[];
@@ -152,7 +220,11 @@ function getExecutorsFromDump(workflowDump: Record<string, unknown>): WorkflowDu
   // Fallback: create executors from any object keys that look like executor IDs
   const executors: WorkflowDumpExecutor[] = [];
   Object.entries(workflowDump).forEach(([key, value]) => {
-    if (typeof value === "object" && value !== null && ("type" in value || "type_" in value)) {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      ("type" in value || "type_" in value)
+    ) {
       const rawExecutor = value as RawExecutorData;
       executors.push({
         id: key,
@@ -170,7 +242,9 @@ function getExecutorsFromDump(workflowDump: Record<string, unknown>): WorkflowDu
 /**
  * Extract connections from workflow dump - handles different possible structures
  */
-function getConnectionsFromDump(workflowDump: Record<string, unknown>): WorkflowDumpConnection[] {
+function getConnectionsFromDump(
+  workflowDump: Record<string, unknown>
+): WorkflowDumpConnection[] {
   // Handle edge_groups structure (actual dump format)
   if (workflowDump.edge_groups && Array.isArray(workflowDump.edge_groups)) {
     const connections: WorkflowDumpConnection[] = [];
@@ -179,8 +253,17 @@ function getConnectionsFromDump(workflowDump: Record<string, unknown>): Workflow
         const edges = (group as { edges: unknown }).edges;
         if (Array.isArray(edges)) {
           edges.forEach((edge: unknown) => {
-            if (typeof edge === "object" && edge !== null && "source_id" in edge && "target_id" in edge) {
-              const edgeObj = edge as { source_id: string; target_id: string; condition_name?: string };
+            if (
+              typeof edge === "object" &&
+              edge !== null &&
+              "source_id" in edge &&
+              "target_id" in edge
+            ) {
+              const edgeObj = edge as {
+                source_id: string;
+                target_id: string;
+                condition_name?: string;
+              };
               connections.push({
                 source: edgeObj.source_id,
                 target: edgeObj.target_id,
@@ -193,10 +276,10 @@ function getConnectionsFromDump(workflowDump: Record<string, unknown>): Workflow
     });
     return connections;
   }
-  
+
   // Try different possible keys where connections might be stored
   const possibleKeys = ["connections", "edges", "transitions", "links"];
-  
+
   for (const key of possibleKeys) {
     if (workflowDump[key] && Array.isArray(workflowDump[key])) {
       return workflowDump[key] as WorkflowDumpConnection[];
@@ -205,58 +288,32 @@ function getConnectionsFromDump(workflowDump: Record<string, unknown>): Workflow
 
   // If no direct array, try to extract from nested structures
   if (workflowDump.config && typeof workflowDump.config === "object") {
-    return getConnectionsFromDump(workflowDump.config as Record<string, unknown>);
+    return getConnectionsFromDump(
+      workflowDump.config as Record<string, unknown>
+    );
   }
 
   return [];
 }
 
 /**
- * Apply dagre layout to nodes and edges
+ * Apply auto-layout to nodes using a lightweight algorithm
+ * Replaces dagre to eliminate 4.88MB lodash dependency
  */
 export function applyDagreLayout(
   nodes: Node<ExecutorNodeData>[],
   edges: Edge[],
   direction: "TB" | "LR" = "LR"
 ): Node<ExecutorNodeData>[] {
-  const dagreGraph = new dagre.graphlib.Graph();
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
-  dagreGraph.setGraph({ 
-    rankdir: direction,
-    nodesep: 100,
-    ranksep: 150,
-  });
-
-  // Add nodes to dagre
-  nodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: 220, height: 120 });
-  });
-
-  // Add edges to dagre
-  edges.forEach((edge) => {
-    dagreGraph.setEdge(edge.source, edge.target);
-  });
-
-  // Apply layout
-  dagre.layout(dagreGraph);
-
-  // Update node positions
-  return nodes.map((node) => {
-    const nodeWithPosition = dagreGraph.node(node.id);
-    return {
-      ...node,
-      position: {
-        x: nodeWithPosition.x - 110, // Center the node
-        y: nodeWithPosition.y - 60,
-      },
-    };
-  });
+  return applySimpleLayout(nodes, edges, direction);
 }
 
 /**
  * Process workflow events and extract node updates
  */
-export function processWorkflowEvents(events: DebugStreamEvent[]): Record<string, NodeUpdate> {
+export function processWorkflowEvents(
+  events: DebugStreamEvent[]
+): Record<string, NodeUpdate> {
   const nodeUpdates: Record<string, NodeUpdate> = {};
 
   events.forEach((event) => {
@@ -273,7 +330,10 @@ export function processWorkflowEvents(events: DebugStreamEvent[]): Record<string
         state = "running";
       } else if (eventType === "ExecutorCompletedEvent") {
         state = "completed";
-      } else if (eventType?.includes("Error") || eventType?.includes("Failed")) {
+      } else if (
+        eventType?.includes("Error") ||
+        eventType?.includes("Failed")
+      ) {
         state = "failed";
         error = typeof eventData === "string" ? eventData : "Execution failed";
       } else if (eventType?.includes("Cancel")) {
@@ -304,12 +364,17 @@ export function updateNodesWithEvents(
   nodes: Node<ExecutorNodeData>[],
   nodeUpdates: Record<string, NodeUpdate>
 ): Node<ExecutorNodeData>[] {
-  console.log("updateNodesWithEvents called with:", { nodes: nodes.length, updates: Object.keys(nodeUpdates) });
-  
+  console.log("updateNodesWithEvents called with:", {
+    nodes: nodes.length,
+    updates: Object.keys(nodeUpdates),
+  });
+
   return nodes.map((node) => {
     const update = nodeUpdates[node.id];
     if (update) {
-      console.log(`Updating node ${node.id}: ${node.data.state} → ${update.state}`);
+      console.log(
+        `Updating node ${node.id}: ${node.data.state} → ${update.state}`
+      );
       return {
         ...node,
         data: {
@@ -325,74 +390,175 @@ export function updateNodesWithEvents(
 }
 
 /**
- * Detect edge traversals from event sequence
+ * Detect edge traversals from event sequence with improved fanout handling
  */
-export function detectEdgeTraversals(events: DebugStreamEvent[]): EdgeTraversal[] {
+export function detectEdgeTraversals(
+  events: DebugStreamEvent[]
+): EdgeTraversal[] {
   const traversals: EdgeTraversal[] = [];
-  
+
   // Filter and sort workflow events by timestamp
   const executorEvents = events
-    .filter(e => e.type === "workflow_event" && e.event?.executor_id)
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    .filter((e) => e.type === "workflow_event" && e.event?.executor_id)
+    .sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
 
-  console.log("Processing executor events for edge traversal detection:", executorEvents.length);
-  
-  // Detect edge traversals from event sequence
-  for (let i = 0; i < executorEvents.length - 1; i++) {
-    const current = executorEvents[i];
-    const next = executorEvents[i + 1];
-    
-    const currentEvent = current.event;
-    const nextEvent = next.event;
-    
-    // Detect edge traversal: A completed → B invoked
-    if (currentEvent?.type === "ExecutorCompletedEvent" && 
-        nextEvent?.type === "ExecutorInvokeEvent" &&
-        currentEvent.executor_id && nextEvent.executor_id &&
-        currentEvent.executor_id !== nextEvent.executor_id) {
-      
-      const traversal: EdgeTraversal = {
-        sourceId: currentEvent.executor_id,
-        targetId: nextEvent.executor_id,
-        timestamp: next.timestamp,
-        status: "traversed"
-      };
-      
-      traversals.push(traversal);
-      console.log("Detected edge traversal:", `${traversal.sourceId} -> ${traversal.targetId}`);
+  console.log(
+    "Processing executor events for edge traversal detection:",
+    executorEvents.length
+  );
+
+  // Group events by executor ID to track completion and invocation times
+  const executorTimeline: Record<
+    string,
+    { completed?: string; invoked?: string }
+  > = {};
+
+  // First pass: build timeline of when each executor was completed and invoked
+  executorEvents.forEach((event) => {
+    const executorId = event.event?.executor_id;
+    const eventType = event.event?.type;
+
+    if (!executorId || !eventType) return;
+
+    if (!executorTimeline[executorId]) {
+      executorTimeline[executorId] = {};
     }
-  }
-  
+
+    if (eventType === "ExecutorCompletedEvent") {
+      executorTimeline[executorId].completed = event.timestamp;
+    } else if (eventType === "ExecutorInvokeEvent") {
+      executorTimeline[executorId].invoked = event.timestamp;
+    }
+  });
+
+  console.log("📊 Executor timeline:", executorTimeline);
+
+  // Second pass: detect traversals with improved fanout handling
+  // Group invocations by time to detect fanout patterns
+  const TIME_WINDOW_MS = 2000; // Shorter window for more precise detection
+  const FANOUT_CLUSTERING_MS = 100; // Cluster simultaneous invocations
+
+  // Get all completions with their timestamps
+  const completions = Object.entries(executorTimeline)
+    .filter(([, timeline]) => timeline.completed)
+    .map(([executorId, timeline]) => ({
+      executorId,
+      timestamp: timeline.completed!,
+      time: new Date(timeline.completed!).getTime(),
+    }))
+    .sort((a, b) => a.time - b.time);
+
+  // Get all invocations with their timestamps
+  const invocations = Object.entries(executorTimeline)
+    .filter(([, timeline]) => timeline.invoked)
+    .map(([executorId, timeline]) => ({
+      executorId,
+      timestamp: timeline.invoked!,
+      time: new Date(timeline.invoked!).getTime(),
+    }))
+    .sort((a, b) => a.time - b.time);
+
+  // For each completion, find subsequent invocations within the time window
+  completions.forEach((completion) => {
+    const potentialTargets = invocations.filter(
+      (invocation) =>
+        invocation.executorId !== completion.executorId &&
+        invocation.time > completion.time &&
+        invocation.time - completion.time <= TIME_WINDOW_MS
+    );
+
+    if (potentialTargets.length === 0) return;
+
+    // Group simultaneous invocations (fanout detection)
+    const invocationGroups: (typeof potentialTargets)[] = [];
+    let currentGroup: typeof potentialTargets = [];
+
+    potentialTargets.forEach((invocation, index) => {
+      if (currentGroup.length === 0) {
+        currentGroup.push(invocation);
+      } else {
+        const timeDiff = invocation.time - currentGroup[0].time;
+        if (timeDiff <= FANOUT_CLUSTERING_MS) {
+          // Part of the same fanout group
+          currentGroup.push(invocation);
+        } else {
+          // Start a new group
+          if (currentGroup.length > 0) {
+            invocationGroups.push([...currentGroup]);
+          }
+          currentGroup = [invocation];
+        }
+      }
+
+      // Add the last group
+      if (index === potentialTargets.length - 1 && currentGroup.length > 0) {
+        invocationGroups.push([...currentGroup]);
+      }
+    });
+
+    // Create traversals for each group (prioritize larger groups as more likely fanouts)
+    invocationGroups.forEach((group) => {
+      group.forEach((invocation) => {
+        const traversal: EdgeTraversal = {
+          sourceId: completion.executorId,
+          targetId: invocation.executorId,
+          timestamp: invocation.timestamp,
+          status: "traversed",
+        };
+
+        traversals.push(traversal);
+
+        const timeDiff = invocation.time - completion.time;
+        const groupSize = group.length;
+        console.log(
+          "🔗 Detected edge traversal:",
+          `${traversal.sourceId} -> ${traversal.targetId}`,
+          `(${timeDiff}ms later, fanout group size: ${groupSize})`
+        );
+      });
+    });
+  });
+
   return traversals;
 }
-
 
 /**
  * Get executors that are currently in execution (invoked but not yet completed)
  */
-export function getCurrentlyExecutingExecutors(events: DebugStreamEvent[]): string[] {
-  const executorTimeline: Record<string, { lastEvent: string; timestamp: string }> = {};
-  
+export function getCurrentlyExecutingExecutors(
+  events: DebugStreamEvent[]
+): string[] {
+  const executorTimeline: Record<
+    string,
+    { lastEvent: string; timestamp: string }
+  > = {};
+
   // Process events to find the most recent event for each executor
-  events.forEach(event => {
+  events.forEach((event) => {
     if (event.type === "workflow_event" && event.event?.executor_id) {
       const executorId = event.event.executor_id;
       const eventType = event.event.type;
-      
-      if (eventType === "ExecutorInvokeEvent" || eventType === "ExecutorCompletedEvent") {
+
+      if (
+        eventType === "ExecutorInvokeEvent" ||
+        eventType === "ExecutorCompletedEvent"
+      ) {
         executorTimeline[executorId] = {
           lastEvent: eventType,
-          timestamp: event.timestamp
+          timestamp: event.timestamp,
         };
       }
     }
   });
-  
+
   // Find executors that were invoked but haven't completed yet
   const currentlyExecuting = Object.entries(executorTimeline)
     .filter(([, timeline]) => timeline.lastEvent === "ExecutorInvokeEvent")
     .map(([executorId]) => executorId);
-  
+
   console.log("⚡ Currently executing executors:", currentlyExecuting);
   console.log("📋 Executor timeline:", executorTimeline);
   return currentlyExecuting;
@@ -407,52 +573,81 @@ export function updateEdgesWithSequenceAnalysis(
 ): Edge[] {
   const traversals = detectEdgeTraversals(events);
   const currentlyExecuting = getCurrentlyExecutingExecutors(events);
-  
+
   console.log("🔄 Updating edges with sequence analysis:", {
     totalEdges: edges.length,
     traversals: traversals.length,
-    currentlyExecuting: currentlyExecuting.length
+    currentlyExecuting: currentlyExecuting.length,
+    edgeList: edges.map((e) => `${e.source}->${e.target}`),
+    traversalsList: traversals.map((t) => `${t.sourceId}->${t.targetId}`),
   });
 
-  return edges.map(edge => {
-    const traversal = traversals.find(t => 
-      t.sourceId === edge.source && t.targetId === edge.target
+  return edges.map((edge) => {
+    const traversal = traversals.find(
+      (t) => t.sourceId === edge.source && t.targetId === edge.target
     );
-    
+
     const targetIsExecuting = currentlyExecuting.includes(edge.target);
-    
+    const sourceCompleted = events.some(
+      (e) =>
+        e.type === "workflow_event" &&
+        e.event?.executor_id === edge.source &&
+        e.event?.type === "ExecutorCompletedEvent"
+    );
+    const targetInvoked = events.some(
+      (e) =>
+        e.type === "workflow_event" &&
+        e.event?.executor_id === edge.target &&
+        e.event?.type === "ExecutorInvokeEvent"
+    );
+    const targetCompleted = events.some(
+      (e) =>
+        e.type === "workflow_event" &&
+        e.event?.executor_id === edge.target &&
+        e.event?.type === "ExecutorCompletedEvent"
+    );
+
     let style = { ...edge.style };
     let animated = false;
-    
+
     // Priority 1: Currently active edge (traversed and target is executing)
     if (traversal && targetIsExecuting) {
       style = {
         stroke: "#3b82f6", // Blue
         strokeWidth: 3,
-        strokeDasharray: "5,5"
+        strokeDasharray: "5,5",
       };
       animated = true;
-      console.log(`🔥 Edge ${edge.id}: ACTIVE`, { 
-        traversal: !!traversal, 
+      console.log(`🔥 Edge ${edge.id}: ACTIVE`, {
+        traversal: !!traversal,
         targetIsExecuting,
         sourceId: edge.source,
-        targetId: edge.target
+        targetId: edge.target,
       });
     }
-    // Priority 2: Completed traversal (traversed and target no longer executing)
-    else if (traversal && !targetIsExecuting) {
+    // Priority 2: Completed traversal (traversed and target completed or source completed + target invoked)
+    else if (traversal || (sourceCompleted && targetInvoked)) {
       style = {
         stroke: "#10b981", // Green
         strokeWidth: 2,
       };
-      console.log(`✅ Edge ${edge.id}: COMPLETED (traversed + finished)`);
+      console.log(`✅ Edge ${edge.id}: COMPLETED`, {
+        traversal: !!traversal,
+        sourceCompleted,
+        targetInvoked,
+        targetCompleted,
+      });
     }
-    // Priority 3: Failed edge (target failed)
-    else if (traversal && events.some(e => 
-      e.type === "workflow_event" && 
-      e.event?.executor_id === edge.target &&
-      e.event?.type?.includes("Error")
-    )) {
+    // Priority 3: Failed edge (source completed and target has error events)
+    else if (
+      sourceCompleted &&
+      events.some(
+        (e) =>
+          e.type === "workflow_event" &&
+          e.event?.executor_id === edge.target &&
+          e.event?.type?.includes("Error")
+      )
+    ) {
       style = {
         stroke: "#ef4444", // Red
         strokeWidth: 2,
@@ -466,9 +661,13 @@ export function updateEdgesWithSequenceAnalysis(
         stroke: "#6b7280", // Gray
         strokeWidth: 2,
       };
-      console.log(`⚪ Edge ${edge.id}: NOT_TRAVERSED`);
+      console.log(`⚪ Edge ${edge.id}: NOT_TRAVERSED`, {
+        sourceCompleted,
+        targetInvoked,
+        targetCompleted,
+      });
     }
-    
+
     return {
       ...edge,
       style,

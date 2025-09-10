@@ -11,7 +11,7 @@ import { AgentView } from "@/components/agent/agent-view";
 import { WorkflowView } from "@/components/workflow/workflow-view";
 import { LoadingState } from "@/components/ui/loading-state";
 import { apiClient } from "@/services/api";
-import { ChevronLeft, GripVertical } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import type {
   AgentInfo,
   WorkflowInfo,

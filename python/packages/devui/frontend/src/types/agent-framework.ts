@@ -238,7 +238,7 @@ export interface DebugStreamEvent {
   event?: WorkflowEvent; // Now properly typed!
   trace_span?: TraceSpan; // Real-time trace span
   // Workflow structure data
-  workflow_dump?: Record<string, unknown>;
+  workflow_dump?: import("./workflow").Workflow;
   mermaid_diagram?: string;
   timestamp: string;
   debug_metadata?: Record<string, unknown>; // Will be removed

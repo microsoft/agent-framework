@@ -20,13 +20,14 @@ import {
   updateEdgesWithSequenceAnalysis,
 } from "@/utils/workflow-utils";
 import type { DebugStreamEvent } from "@/types/agent-framework";
+import type { Workflow } from "@/types/workflow";
 
 const nodeTypes: NodeTypes = {
   executor: ExecutorNode,
 };
 
 interface WorkflowFlowProps {
-  workflowDump?: Record<string, unknown>;
+  workflowDump?: Workflow;
   events: DebugStreamEvent[];
   isStreaming: boolean;
   onNodeSelect?: (executorId: string, data: ExecutorNodeData) => void;
@@ -74,14 +75,39 @@ export function WorkflowFlow({
       setNodes((currentNodes) =>
         updateNodesWithEvents(currentNodes, nodeUpdates)
       );
+    } else if (events.length === 0) {
+      // Reset all nodes to pending state when events are cleared
+      setNodes((currentNodes) =>
+        currentNodes.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            state: "pending" as const,
+            outputData: undefined,
+            error: undefined,
+          },
+        }))
+      );
     }
-  }, [nodeUpdates, setNodes]);
+  }, [nodeUpdates, setNodes, events.length]);
 
   // Update edges with sequence-based analysis (separate from nodeUpdates)
   useMemo(() => {
     if (events.length > 0) {
       setEdges((currentEdges) =>
         updateEdgesWithSequenceAnalysis(currentEdges, events)
+      );
+    } else {
+      // Reset all edges to default state when events are cleared
+      setEdges((currentEdges) =>
+        currentEdges.map((edge) => ({
+          ...edge,
+          animated: false,
+          style: {
+            stroke: "#6b7280", // Gray
+            strokeWidth: 2,
+          },
+        }))
       );
     }
   }, [events, setEdges]);
@@ -92,7 +118,8 @@ export function WorkflowFlow({
       setNodes(initialNodes);
       setEdges(initialEdges);
     }
-  }, [workflowDump]); // Only re-initialize when workflowDump changes, not on every initialNodes change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowDump]); // Only re-initialize when workflowDump changes
 
   const onNodeClick = useCallback(
     (event: React.MouseEvent, node: Node<ExecutorNodeData>) => {

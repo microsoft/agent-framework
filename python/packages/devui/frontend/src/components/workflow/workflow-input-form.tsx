@@ -11,8 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
-import { Send, ChevronDown, ChevronUp } from "lucide-react";
+import { CardTitle } from "@/components/ui/card";
+import { Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { JSONSchemaProperty } from "@/types";
 
@@ -35,7 +35,13 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
           <div className="space-y-2">
             <Label htmlFor={name}>{name}</Label>
             <Select
-              value={typeof value === "string" && value ? value : (typeof defaultValue === "string" ? defaultValue : enumValues[0])}
+              value={
+                typeof value === "string" && value
+                  ? value
+                  : typeof defaultValue === "string"
+                  ? defaultValue
+                  : enumValues[0]
+              }
               onValueChange={(val) => onChange(val)}
             >
               <SelectTrigger>
@@ -222,7 +228,6 @@ export function WorkflowInputForm({
   className,
 }: WorkflowInputFormProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Initialize form with default values
   useEffect(() => {
@@ -249,7 +254,7 @@ export function WorkflowInputForm({
     } else if (inputSchema.type === "object") {
       const properties = inputSchema.properties || {};
       const fieldNames = Object.keys(properties);
-      
+
       if (fieldNames.length === 1) {
         const fieldName = fieldNames[0];
         onSubmit({ [fieldName]: formData[fieldName] || "" });
@@ -268,51 +273,36 @@ export function WorkflowInputForm({
     }));
   };
 
-  // Determine form layout
+  // Form layout
   const properties = inputSchema.properties || {};
   const fieldNames = Object.keys(properties);
-  const isSimpleInput = inputSchema.type === "string" || 
+  const isSimpleInput =
+    inputSchema.type === "string" ||
     (inputSchema.type === "object" && fieldNames.length === 1);
-  
-  const primaryField = inputSchema.type === "string" 
-    ? { name: "value", schema: inputSchema, placeholder: inputSchema.description || "Enter workflow input..." }
-    : inputSchema.type === "object" && fieldNames.length === 1
-    ? { name: fieldNames[0], schema: properties[fieldNames[0]], placeholder: properties[fieldNames[0]].description || `Enter ${fieldNames[0]}...` }
-    : null;
+
+  const primaryField =
+    inputSchema.type === "string"
+      ? {
+          name: "value",
+          schema: inputSchema,
+          placeholder: inputSchema.description || "Enter workflow input...",
+        }
+      : inputSchema.type === "object" && fieldNames.length === 1
+      ? {
+          name: fieldNames[0],
+          schema: properties[fieldNames[0]],
+          placeholder:
+            properties[fieldNames[0]].description ||
+            `Enter ${fieldNames[0]}...`,
+        }
+      : null;
 
   return (
     <div className={cn("h-full flex flex-col", className)}>
-      <Card className="h-full flex flex-col">
+      <div className="h-full flex flex-col">
+        {/* Header with Run Button */}
         <div className="border-b border-border px-4 py-3 bg-muted flex-shrink-0">
-          <div className="flex items-center justify-between mb-2">
-            <CardTitle className="text-sm">Run Workflow</CardTitle>
-            {!isSimpleInput && fieldNames.length > 1 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="text-xs"
-              >
-                {showAdvanced ? (
-                  <>Hide Fields <ChevronUp className="h-3 w-3 ml-1" /></>
-                ) : (
-                  <>Show All <ChevronDown className="h-3 w-3 ml-1" /></>
-                )}
-              </Button>
-            )}
-          </div>
-          
-          <div className="text-xs text-muted-foreground mb-3">
-            <strong>Type:</strong>{" "}
-            <code className="bg-muted-foreground/20 px-1 py-0.5 rounded">
-              {inputTypeName}
-            </code>
-            {inputSchema.type === "object" && (
-              <span className="ml-2">
-                ({fieldNames.length} field{fieldNames.length !== 1 ? 's' : ''})
-              </span>
-            )}
-          </div>
+          <CardTitle className="text-sm mb-3">Run Workflow</CardTitle>
 
           {/* Run Button - Always visible at top */}
           <Button
@@ -320,10 +310,10 @@ export function WorkflowInputForm({
             form="workflow-form"
             disabled={
               isSubmitting ||
-              (isSimpleInput && primaryField && (
-                typeof formData[primaryField.name] !== "string" ||
-                !(formData[primaryField.name] as string).trim()
-              ))
+              (isSimpleInput && primaryField
+                ? typeof formData[primaryField.name] !== "string" ||
+                  !(formData[primaryField.name] as string).trim()
+                : false)
             }
             className="w-full"
             size="default"
@@ -333,14 +323,39 @@ export function WorkflowInputForm({
           </Button>
         </div>
 
-        <CardContent className="flex-1 p-4 overflow-hidden">
+        {/* Form Content */}
+        <div className="flex-1 p-4 overflow-hidden">
           <form id="workflow-form" onSubmit={handleSubmit} className="h-full">
-            <div className="h-full overflow-y-auto space-y-3">
+            {/* Form Header with Type Info */}
+            <div className="mb-3 pb-2 border-b">
+              <h4 className="text-sm font-medium text-foreground mb-1">
+                Input Fields
+              </h4>
+              <div className="text-xs text-muted-foreground">
+                <strong>Type:</strong>{" "}
+                <code className="bg-muted px-1 py-0.5 rounded">
+                  {inputTypeName}
+                </code>
+                {inputSchema.type === "object" && (
+                  <span className="ml-2">
+                    ({fieldNames.length} field
+                    {fieldNames.length !== 1 ? "s" : ""})
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3">
               {/* Simple input */}
               {isSimpleInput && primaryField && (
                 <div className="space-y-2">
-                  <Label htmlFor={primaryField.name} className="text-sm font-medium">
-                    {primaryField.name === "value" ? "Input" : primaryField.name}
+                  <Label
+                    htmlFor={primaryField.name}
+                    className="text-sm font-medium"
+                  >
+                    {primaryField.name === "value"
+                      ? "Input"
+                      : primaryField.name}
                   </Label>
                   <Input
                     id={primaryField.name}
@@ -349,7 +364,9 @@ export function WorkflowInputForm({
                         ? (formData[primaryField.name] as string)
                         : ""
                     }
-                    onChange={(e) => updateField(primaryField.name, e.target.value)}
+                    onChange={(e) =>
+                      updateField(primaryField.name, e.target.value)
+                    }
                     placeholder={primaryField.placeholder}
                     disabled={isSubmitting}
                   />
@@ -361,10 +378,10 @@ export function WorkflowInputForm({
                 </div>
               )}
 
-              {/* Complex form fields */}
+              {/* Complex form fields - Show all */}
               {!isSimpleInput && (
                 <div className="space-y-3">
-                  {fieldNames.slice(0, showAdvanced ? fieldNames.length : 2).map((fieldName) => (
+                  {fieldNames.map((fieldName) => (
                     <FormField
                       key={fieldName}
                       name={fieldName}
@@ -373,26 +390,12 @@ export function WorkflowInputForm({
                       onChange={(value) => updateField(fieldName, value)}
                     />
                   ))}
-                  
-                  {!showAdvanced && fieldNames.length > 2 && (
-                    <div className="text-center">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowAdvanced(true)}
-                        className="text-xs text-muted-foreground"
-                      >
-                        +{fieldNames.length - 2} more fields
-                      </Button>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

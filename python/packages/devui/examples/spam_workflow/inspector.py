@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 # Import the sample workflows
-from workflow import workflow as simple_workflow
+from .workflow import workflow as simple_workflow
 
 # Import the execution engine and workflow
 from agent_framework_devui._execution import ExecutionEngine
@@ -40,7 +40,7 @@ class WorkflowInspector:
 
         try:
             async for debug_event in self.execution_engine.execute_workflow_streaming(
-                workflow=workflow, input_data=input_message, capture_traces=True
+                workflow=workflow, input_data=input_message
             ):
                 # Convert DebugStreamEvent to serializable format
                 event_data = self._serialize_debug_event(debug_event)

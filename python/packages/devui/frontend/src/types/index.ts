@@ -50,7 +50,7 @@ export interface JSONSchema {
 
 export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {
   executors: string[]; // List of executor IDs in this workflow
-  workflow_dump?: Record<string, unknown>; // Raw workflow.model_dump() - zero abstraction
+  workflow_dump?: import("./workflow").Workflow; // Typed workflow structure
   mermaid_diagram?: string;
   // Input specification for dynamic form generation
   input_schema: JSONSchema; // JSON Schema for workflow input

@@ -27,6 +27,7 @@ from agent_framework.workflow import (
     WorkflowContext,
     handler,
 )
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -73,27 +74,29 @@ class ProcessingResult:
     processing_time: float
     status: str
 
+class EmailRequest(BaseModel): 
+    email: str = Field(description="The email message to be processed.", default="Hi there, are you interested in our new offer today? Click here!")
 
 class EmailPreprocessor(Executor):
     """Step 1: An executor that preprocesses and cleans email content."""
 
     @handler
-    async def handle_email(self, email: str, ctx: WorkflowContext[EmailContent]) -> None:
+    async def handle_email(self, email: EmailRequest, ctx: WorkflowContext[EmailContent]) -> None:
         """Clean and preprocess the email message."""
         print("📧 Step 1: Preprocessing email message...")
         print(f"   Original: {email}")
         await asyncio.sleep(1.5)  # Simulate preprocessing time
 
         # Simulate email cleaning
-        cleaned = email.strip().lower()
-        word_count = len(email.split())
+        cleaned = email.email.strip().lower()
+        word_count = len(email.email.split())
 
         # Check for suspicious patterns
         suspicious_patterns = ["urgent", "limited time", "act now", "free money"]
         has_suspicious = any(pattern in cleaned for pattern in suspicious_patterns)
 
         result = EmailContent(
-            original_message=email,
+            original_message=email.email,
             cleaned_message=cleaned,
             word_count=word_count,
             has_suspicious_patterns=has_suspicious,
