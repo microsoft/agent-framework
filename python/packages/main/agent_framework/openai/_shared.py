@@ -22,7 +22,7 @@ from pydantic.types import StringConstraints
 
 from .._logging import get_logger
 from .._pydantic import AFBaseModel, AFBaseSettings
-from .._types import AIContents, ChatOptions, SpeechToTextOptions, TextToSpeechOptions
+from .._types import ChatOptions, Contents, SpeechToTextOptions, TextToSpeechOptions
 from ..exceptions import ServiceInitializationError
 from ..telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 
@@ -50,7 +50,7 @@ __all__ = [
 ]
 
 
-def prepare_function_call_results(content: AIContents | Any | list[AIContents | Any]) -> str | list[str]:
+def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str | list[str]:
     """Prepare the values of the function call results."""
     if isinstance(content, list):
         results: list[str] = []
@@ -60,7 +60,7 @@ def prepare_function_call_results(content: AIContents | Any | list[AIContents | 
                 results.extend(res)
             else:
                 results.append(res)
-        return results[0] if len(results) == 1 else results
+        return results[0] if len(results) == 1 else json.dumps(results)
     if isinstance(content, BaseModel):
         return content.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
     # fallback
@@ -117,17 +117,17 @@ class OpenAISettings(AFBaseSettings):
     realtime_model_id: str | None = None
 
 
-class OpenAIHandler(AFBaseModel):
+class OpenAIBase(AFBaseModel):
     """Base class for OpenAI Clients."""
 
     client: AsyncOpenAI
     ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class OpenAIConfigBase(OpenAIHandler):
+class OpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an OpenAI service."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -138,6 +138,7 @@ class OpenAIConfigBase(OpenAIHandler):
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        base_url: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a client for OpenAI services.
@@ -146,17 +147,19 @@ class OpenAIConfigBase(OpenAIHandler):
         different types of AI model interactions, like chat or text completion.
 
         Args:
-            ai_model_id (str): OpenAI model identifier. Must be non-empty.
+            ai_model_id: OpenAI model identifier. Must be non-empty.
                 Default to a preset value.
-            api_key (str): OpenAI API key for authentication.
+            api_key: OpenAI API key for authentication.
                 Must be non-empty. (Optional)
-            org_id (str): OpenAI organization ID. This is optional
+            org_id: OpenAI organization ID. This is optional
                 unless the account belongs to multiple organizations.
-            default_headers (Mapping[str, str]): Default headers
+            default_headers: Default headers
                 for HTTP requests. (Optional)
-            client (AsyncOpenAI): An existing OpenAI client, optional.
-            instruction_role (str): The role to use for 'instruction'
+            client: An existing OpenAI client, optional.
+            instruction_role: The role to use for 'instruction'
                 messages, for example, summarization prompts could use `developer` or `system`. (Optional)
+            base_url: The optional base URL to use. If provided will override the standard value for a OpenAI connector.
+                Will not be used when supplying a custom client.
             kwargs: Additional keyword arguments.
 
         """
@@ -169,11 +172,12 @@ class OpenAIConfigBase(OpenAIHandler):
         if not client:
             if not api_key:
                 raise ServiceInitializationError("Please provide an api_key")
-            client = AsyncOpenAI(
-                api_key=api_key,
-                organization=org_id,
-                default_headers=merged_headers,
-            )
+            args: dict[str, Any] = {"api_key": api_key, "default_headers": merged_headers}
+            if org_id:
+                args["organization"] = org_id
+            if base_url:
+                args["base_url"] = base_url
+            client = AsyncOpenAI(**args)
         args = {
             "ai_model_id": ai_model_id,
             "client": client,

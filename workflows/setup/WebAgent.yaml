@@ -1,0 +1,15 @@
+type: foundry_agent
+name: ResearchWeb
+description: Demo agent for DeepResearch workflow
+instructions: |-
+  Only provide requested information in a way that is throughfully organized and formatted.
+  Never include any analysis or code.
+  Never generate a file.
+  Avoid repeating yourself.
+model:
+  id: ${AzureAI:ModelDeployment}
+tools:
+  - type: bing_grounding
+    options:
+      tool_connections:
+        - ${AzureAI:BingConnectionId}

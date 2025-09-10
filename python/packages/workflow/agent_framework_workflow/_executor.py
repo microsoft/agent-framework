@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_or
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, AgentThread, AIAgent, ChatMessage
+from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
 from agent_framework._pydantic import AFBaseModel
 from pydantic import Field
 
 from ._events import (
     AgentRunEvent,
-    AgentRunStreamingEvent,
+    AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorInvokeEvent,
     RequestInfoEvent,
@@ -39,7 +39,7 @@ class Executor(AFBaseModel):
         min_length=1,
         description="Unique identifier for the executor",
     )
-    type: str = Field(default="", description="The type of executor, corresponding to the class name")
+    type_: str = Field(default="", alias="type", description="The type of executor, corresponding to the class name")
 
     def __init__(self, id: str | None = None, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
@@ -52,13 +52,14 @@ class Executor(AFBaseModel):
         executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
 
         kwargs.update({"id": executor_id})
-        if "type" not in kwargs:
-            kwargs["type"] = self.__class__.__name__
+        if "type" not in kwargs and "type_" not in kwargs:
+            kwargs["type_"] = self.__class__.__name__
 
         super().__init__(**kwargs)
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
+        self._instance_handler_specs: list[dict[str, Any]] = []
         self._discover_handlers()
 
         if not self._handlers and not self._request_interceptors:
@@ -78,27 +79,44 @@ class Executor(AFBaseModel):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
+        # Create processing span for tracing (gracefully handles disabled tracing)
+        from ._telemetry import workflow_tracer
+
+        source_trace_contexts = getattr(context, "_trace_contexts", None)
+        source_span_ids = getattr(context, "_source_span_ids", None)
+
         # Handle case where Message wrapper is passed instead of raw data
+        from ._runner_context import Message
 
-        # Lazy registration for SubWorkflowRequestInfo if we have interceptors
-        if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-            # Directly handle SubWorkflowRequestInfo
+        if isinstance(message, Message):
+            message = message.data
+
+        with workflow_tracer.create_processing_span(
+            self.id,
+            self.__class__.__name__,
+            type(message).__name__,
+            source_trace_contexts=source_trace_contexts,
+            source_span_ids=source_span_ids,
+        ):
+            # Lazy registration for SubWorkflowRequestInfo if we have interceptors
+            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
+                # Directly handle SubWorkflowRequestInfo
+                await context.add_event(ExecutorInvokeEvent(self.id))
+                await self._handle_sub_workflow_request(message, context)
+                await context.add_event(ExecutorCompletedEvent(self.id))
+                return
+
+            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            for message_type in self._handlers:
+                if is_instance_of(message, message_type):
+                    handler = self._handlers[message_type]
+                    break
+
+            if handler is None:
+                raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
             await context.add_event(ExecutorInvokeEvent(self.id))
-            await self._handle_sub_workflow_request(message, context)
+            await handler(message, context)
             await context.add_event(ExecutorCompletedEvent(self.id))
-            return
-
-        handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
-        for message_type in self._handlers:
-            if is_instance_of(message, message_type):
-                handler = self._handlers[message_type]
-                break
-
-        if handler is None:
-            raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
-        await context.add_event(ExecutorInvokeEvent(self.id))
-        await handler(message, context)
-        await context.add_event(ExecutorCompletedEvent(self.id))
 
     def _discover_handlers(self) -> None:
         """Discover message handlers and request interceptors in the executor class."""
@@ -188,23 +206,21 @@ class Executor(AFBaseModel):
                     # Check if interceptor handled it or needs to forward
                     if isinstance(response, RequestResponse):
                         # Add automatic correlation info to the response
-                        correlated_response = RequestResponse._with_correlation(
-                            response, request.data, request.request_id
+                        correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
+                            response,
+                            request.data,
+                            request.request_id,
                         )
 
                         if correlated_response.is_handled:
                             # Send response back to sub-workflow
-                            from ._runner_context import Message
-
-                            response_message = Message(
-                                source_id=self.id,
-                                target_id=request.sub_workflow_id,
-                                data=SubWorkflowResponse(
+                            await ctx.send_message(
+                                SubWorkflowResponse(
                                     request_id=request.request_id,
                                     data=correlated_response.data,
                                 ),
+                                target_id=request.sub_workflow_id,
                             )
-                            await ctx.send_message(response_message)
                         else:
                             # Forward WITH CONTEXT PRESERVED
                             # Update the data if interceptor provided a modified request
@@ -212,13 +228,7 @@ class Executor(AFBaseModel):
                                 request.data = correlated_response.forward_request
 
                             # Send the inner request to RequestInfoExecutor to create external request
-                            from ._runner_context import Message
-
-                            forward_message = Message(
-                                source_id=self.id,
-                                data=request,
-                            )
-                            await ctx.send_message(forward_message)
+                            await ctx.send_message(request)
                     else:
                         # Legacy support: direct return means handled
                         await ctx.send_message(
@@ -232,10 +242,7 @@ class Executor(AFBaseModel):
 
         # No interceptor found - forward inner request to RequestInfoExecutor
         # This sends the original request to RequestInfoExecutor
-        from ._runner_context import Message
-
-        passthrough_message = Message(source_id=self.id, data=request.data)
-        await ctx.send_message(passthrough_message)
+        await ctx.send_message(request.data)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -248,6 +255,45 @@ class Executor(AFBaseModel):
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
 
+    def register_instance_handler(
+        self,
+        name: str,
+        func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]],
+        message_type: type,
+        ctx_annotation: Any,
+        output_types: list[type],
+    ) -> None:
+        """Register a handler at instance level.
+
+        Args:
+            name: Name of the handler function for error reporting
+            func: The async handler function to register
+            message_type: Type of message this handler processes
+            ctx_annotation: The WorkflowContext[T] annotation from the function
+            output_types: List of output types inferred from ctx_annotation
+        """
+        if message_type in self._handlers:
+            raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
+
+        self._handlers[message_type] = func
+        self._instance_handler_specs.append({
+            "name": name,
+            "message_type": message_type,
+            "ctx_annotation": ctx_annotation,
+            "output_types": output_types,
+        })
+
+    def can_handle_type(self, message_type: type[Any]) -> bool:
+        """Check if the executor can handle a given message type.
+
+        Args:
+            message_type: The message type to check.
+
+        Returns:
+            True if the executor can handle the message type, False otherwise.
+        """
+        return message_type in self._handlers
+
 
 # endregion: Executor
 
@@ -257,23 +303,8 @@ class Executor(AFBaseModel):
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
 
 
-@overload
 def handler(
     func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-) -> Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]: ...
-
-
-@overload
-def handler(
-    func: None = None,
-) -> Callable[
-    [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]],
-    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-]: ...
-
-
-def handler(
-    func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]] | None = None,
 ) -> (
     Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]
     | Callable[
@@ -370,7 +401,7 @@ def handler(
             return await func(self, message, ctx)
 
         # Preserve the original function signature for introspection during validation
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(AttributeError, TypeError):
             wrapper.__signature__ = sig  # type: ignore[attr-defined]
 
         wrapper._handler_spec = {  # type: ignore
@@ -382,14 +413,24 @@ def handler(
 
         return wrapper
 
-    if func is None:
-        return decorator
     return decorator(func)
 
 
 # endregion: Handler Decorator
 
+
 # region Request/Response Types
+@dataclass
+class RequestInfoMessage:
+    """Base class for all request messages in workflows.
+
+    Any message that should be routed to the RequestInfoExecutor for external
+    handling must inherit from this class. This ensures type safety and makes
+    the request/response pattern explicit.
+    """
+
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
 
 TRequest = TypeVar("TRequest", bound="RequestInfoMessage")
 TResponse = TypeVar("TResponse")
@@ -411,7 +452,7 @@ class RequestResponse(Generic[TRequest, TResponse]):
     request_id: str | None = None  # Added for tracking
 
     @classmethod
-    def handled(cls, data: TResponse) -> "RequestResponse[Any, TResponse]":
+    def handled(cls, data: TResponse) -> "RequestResponse[TRequest, TResponse]":
         """Create a response indicating the request was handled.
 
         Correlation info (original_request, request_id) will be added automatically
@@ -420,17 +461,19 @@ class RequestResponse(Generic[TRequest, TResponse]):
         return cls(is_handled=True, data=data)
 
     @classmethod
-    def forward(cls, modified_request: Any = None) -> "RequestResponse[Any, Any]":
+    def forward(cls, modified_request: Any = None) -> "RequestResponse[TRequest, TResponse]":
         """Create a response indicating the request should be forwarded."""
         return cls(is_handled=False, forward_request=modified_request)
 
     @staticmethod
-    def _with_correlation(
-        original_response: "RequestResponse[Any, TResponse]", original_request: TRequest, request_id: str
+    def with_correlation(
+        original_response: "RequestResponse[TRequest, TResponse]",
+        original_request: TRequest,
+        request_id: str,
     ) -> "RequestResponse[TRequest, TResponse]":
-        """Internal method to add correlation info to a response.
+        """Add correlation info to a response.
 
-        This is called automatically by the framework and should not be used directly.
+        This is called automatically by the framework when processing intercepted requests.
         """
         return RequestResponse(
             is_handled=original_response.is_handled,
@@ -451,7 +494,7 @@ class SubWorkflowRequestInfo:
 
     request_id: str  # Original request ID from sub-workflow
     sub_workflow_id: str  # ID of the WorkflowExecutor that sent this
-    data: Any  # The actual request data
+    data: RequestInfoMessage  # The actual request data
 
 
 @dataclass
@@ -595,108 +638,7 @@ def intercepts_request(
 
 # endregion: Intercepts Request Decorator
 
-# region Agent Executor
-
-
-@dataclass
-class AgentExecutorRequest:
-    """A request to an agent executor.
-
-    Attributes:
-        messages: A list of chat messages to be processed by the agent.
-        should_respond: A flag indicating whether the agent should respond to the messages.
-            If False, the messages will be saved to the executor's cache but not sent to the agent.
-    """
-
-    messages: list[ChatMessage]
-    should_respond: bool = True
-
-
-@dataclass
-class AgentExecutorResponse:
-    """A response from an agent executor.
-
-    Attributes:
-        executor_id: The ID of the executor that generated the response.
-        response: The agent run response containing the messages generated by the agent.
-    """
-
-    executor_id: str
-    agent_run_response: AgentRunResponse
-
-
-class AgentExecutor(Executor):
-    """built-in executor that wraps an agent for handling messages."""
-
-    def __init__(
-        self,
-        agent: AIAgent,
-        *,
-        agent_thread: AgentThread | None = None,
-        streaming: bool = False,
-        id: str | None = None,
-    ):
-        """Initialize the executor with a unique identifier.
-
-        Args:
-            agent: The agent to be wrapped by this executor.
-            agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            streaming: Whether to enable streaming for the agent. If enabled, the executor will emit
-                AgentRunStreamingEvent updates instead of a single AgentRunEvent.
-            id: A unique identifier for the executor. If None, a new UUID will be generated.
-        """
-        super().__init__(id or agent.id)
-        self._agent = agent
-        self._agent_thread = agent_thread or self._agent.get_new_thread()
-        self._streaming = streaming
-        self._cache: list[ChatMessage] = []
-
-    @handler
-    async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
-        """Run the agent executor with the given request."""
-        self._cache.extend(request.messages)
-
-        if request.should_respond:
-            if self._streaming:
-                updates: list[AgentRunResponseUpdate] = []
-                async for update in self._agent.run_streaming(
-                    self._cache,
-                    thread=self._agent_thread,
-                ):
-                    updates.append(update)
-                    await ctx.add_event(AgentRunStreamingEvent(self.id, update))
-                response = AgentRunResponse.from_agent_run_response_updates(updates)
-            else:
-                response = await self._agent.run(
-                    self._cache,
-                    thread=self._agent_thread,
-                )
-                await ctx.add_event(AgentRunEvent(self.id, response))
-
-            await ctx.send_message(AgentExecutorResponse(self.id, response))
-            self._cache.clear()
-
-
-# endregion: Agent Executor
-
-
 # region Request Info Executor
-
-
-@dataclass
-class RequestInfoMessage:
-    """Base class for all request messages in workflows.
-
-    Any message that should be routed to the RequestInfoExecutor for external
-    handling must inherit from this class. This ensures type safety and makes
-    the request/response pattern explicit.
-    """
-
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-
-# Note: SubWorkflowRequestInfo, SubWorkflowResponse, and RequestResponse
-# have been moved before intercepts_request decorator
 
 
 class RequestInfoExecutor(Executor):
@@ -759,8 +701,8 @@ class RequestInfoExecutor(Executor):
         event = RequestInfoEvent(
             request_id=message.request_id,  # Use original request ID
             source_executor_id=source_executor_id,
-            request_type=type(message.data),  # SubWorkflowRequestInfo type
-            request_data=message.data,  # The full SubWorkflowRequestInfo
+            request_type=type(message.data),  # Type of the wrapped data # type: ignore
+            request_data=message.data,  # The wrapped request data
         )
         self._request_events[message.request_id] = event
         await ctx.add_event(event)
@@ -798,13 +740,211 @@ class RequestInfoExecutor(Executor):
         else:
             # Regular response - send directly back to source
             # Create a correlated response that includes both the response data and original request
-            correlated_response = RequestResponse.handled(response_data)
-            correlated_response = RequestResponse._with_correlation(correlated_response, event.data, request_id)
+            if not isinstance(event.data, RequestInfoMessage):
+                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+            correlated_response = RequestResponse[RequestInfoMessage, Any].handled(response_data)
+            correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
+                correlated_response,
+                event.data,
+                request_id,
+            )
 
             await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 
 
 # endregion: Request Info Executor
+
+# region Agent Executor
+
+
+@dataclass
+class AgentExecutorRequest:
+    """A request to an agent executor.
+
+    Attributes:
+        messages: A list of chat messages to be processed by the agent.
+        should_respond: A flag indicating whether the agent should respond to the messages.
+            If False, the messages will be saved to the executor's cache but not sent to the agent.
+    """
+
+    messages: list[ChatMessage]
+    should_respond: bool = True
+
+
+@dataclass
+class AgentExecutorResponse:
+    """A response from an agent executor.
+
+    Attributes:
+        executor_id: The ID of the executor that generated the response.
+    agent_run_response: The underlying agent run response (unaltered from client).
+    full_conversation: The full conversation context (prior inputs + all assistant/tool outputs) that
+        should be used when chaining to another AgentExecutor. This prevents downstream agents losing
+        user prompts while keeping the emitted AgentRunEvent text faithful to the raw agent output.
+    """
+
+    executor_id: str
+    agent_run_response: AgentRunResponse
+    full_conversation: list[ChatMessage] | None = None
+
+
+class AgentExecutor(Executor):
+    """built-in executor that wraps an agent for handling messages."""
+
+    def __init__(
+        self,
+        agent: AgentProtocol,
+        *,
+        agent_thread: AgentThread | None = None,
+        streaming: bool = False,
+        id: str | None = None,
+    ):
+        """Initialize the executor with a unique identifier.
+
+        Args:
+            agent: The agent to be wrapped by this executor.
+            agent_thread: The thread to use for running the agent. If None, a new thread will be created.
+            streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
+            id: A unique identifier for the executor. If None, a new UUID will be generated.
+        """
+        # Prefer provided id; else use agent.name if present; else generate deterministic prefix
+        if id is not None:
+            exec_id = id
+        else:
+            agent_name = agent.name
+            exec_id = str(agent_name) if agent_name else f"executor_{uuid.uuid4()}"
+        super().__init__(exec_id)
+        self._agent = agent
+        self._agent_thread = agent_thread or self._agent.get_new_thread()
+        self._streaming = streaming
+        self._cache: list[ChatMessage] = []
+
+    async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
+        """Execute the underlying agent, emit events, and enqueue response.
+
+        Terminal detection & WorkflowCompletedEvent emission are handled centrally in Runner.
+        This method only produces AgentRunEvent/AgentRunUpdateEvent plus enqueues an
+        AgentExecutorResponse message for routing.
+        """
+        if self._streaming:
+            updates: list[AgentRunResponseUpdate] = []
+            async for update in self._agent.run_stream(
+                self._cache,
+                thread=self._agent_thread,
+            ):
+                # Skip empty updates (no textual or structural content)
+                if not update:
+                    continue
+                contents = getattr(update, "contents", None)
+                text_val = getattr(update, "text", "")
+                has_text_content = False
+                if contents:
+                    for c in contents:
+                        if getattr(c, "text", None):
+                            has_text_content = True
+                            break
+                if not (text_val or has_text_content):
+                    continue
+                updates.append(update)
+                await ctx.add_event(AgentRunUpdateEvent(self.id, update))
+            response = AgentRunResponse.from_agent_run_response_updates(updates)
+        else:
+            response = await self._agent.run(
+                self._cache,
+                thread=self._agent_thread,
+            )
+            await ctx.add_event(AgentRunEvent(self.id, response))
+
+        full_conversation: list[ChatMessage] | None = None
+        if self._cache:
+            # Construct conversation snapshot = inputs (cache) + agent outputs (agent_run_response.messages).
+            # Do not mutate response.messages so AgentRunEvent remains clean.
+            full_conversation = list(self._cache) + list(response.messages)
+
+        agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
+        await ctx.send_message(agent_response)
+        self._cache.clear()
+
+    @handler
+    async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
+        """Handle an AgentExecutorRequest (canonical input).
+
+        This is the standard path: extend cache with provided messages; if should_respond
+        run the agent and emit an AgentExecutorResponse downstream.
+        """
+        self._cache.extend(request.messages)
+        if request.should_respond:
+            if self._streaming:
+                updates: list[AgentRunResponseUpdate] = []
+                async for update in self._agent.run_stream(
+                    self._cache,
+                    thread=self._agent_thread,
+                ):
+                    if not update:
+                        continue
+                    contents = getattr(update, "contents", None)
+                    text_val = getattr(update, "text", "")
+                    has_text_content = False
+                    if contents:
+                        for c in contents:
+                            if getattr(c, "text", None):
+                                has_text_content = True
+                                break
+                    if not (text_val or has_text_content):
+                        continue
+                    updates.append(update)
+                    await ctx.add_event(AgentRunUpdateEvent(self.id, update))
+                response = AgentRunResponse.from_agent_run_response_updates(updates)
+            else:
+                response = await self._agent.run(
+                    self._cache,
+                    thread=self._agent_thread,
+                )
+                await ctx.add_event(AgentRunEvent(self.id, response))
+
+            full_conversation: list[ChatMessage] | None = None
+            if self._cache:
+                full_conversation = list(self._cache) + list(response.messages)
+
+            agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
+            await ctx.send_message(agent_response)
+            self._cache.clear()
+
+    @handler
+    async def from_response(self, prior: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
+        """Enable seamless chaining: accept a prior AgentExecutorResponse as input.
+
+        Strategy: treat the prior response's messages as the conversation state and
+        immediately run the agent to produce a new response.
+        """
+        # Replace cache with full conversation if available, else fall back to agent_run_response messages.
+        if prior.full_conversation is not None:
+            self._cache = list(prior.full_conversation)
+        else:
+            self._cache = list(prior.agent_run_response.messages)
+        await self._run_agent_and_emit(ctx)
+
+    @handler
+    async def from_str(self, text: str, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
+        """Accept a raw user prompt string and run the agent (one-shot)."""
+        self._cache = [ChatMessage(role="user", text=text)]  # type: ignore[arg-type]
+        await self._run_agent_and_emit(ctx)
+
+    @handler
+    async def from_message(self, message: ChatMessage, ctx: WorkflowContext[AgentExecutorResponse]) -> None:  # type: ignore[name-defined]
+        """Accept a single ChatMessage as input."""
+        self._cache = [message]
+        await self._run_agent_and_emit(ctx)
+
+    @handler
+    async def from_messages(self, messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorResponse]) -> None:  # type: ignore[name-defined]
+        """Accept a list of ChatMessage objects as conversation context."""
+        self._cache = list(messages)
+        await self._run_agent_and_emit(ctx)
+
+
+# endregion: Agent Executor
+
 
 # region Workflow Executor
 
@@ -817,15 +957,19 @@ class WorkflowExecutor(Executor):
     are intercepted by parent workflows.
     """
 
-    def __init__(self, workflow: "Workflow", id: str | None = None):
+    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
+
+    def __init__(self, workflow: "Workflow", id: str | None = None, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
             workflow: The workflow to execute as a sub-workflow.
             id: Optional unique identifier for this executor.
+            **kwargs: Additional keyword arguments passed to the parent constructor.
         """
-        super().__init__(id)
-        self._workflow = workflow
+        kwargs.update({"workflow": workflow})
+        super().__init__(id, **kwargs)
+
         # Track pending external responses by request_id
         self._pending_responses: dict[str, Any] = {}  # request_id -> response_data
         # Track workflow state for proper resumption - support multiple concurrent requests
@@ -857,7 +1001,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Run the sub-workflow and collect all events
-            events = [event async for event in self._workflow.run_streaming(input_data)]
+            events = [event async for event in self.workflow.run_stream(input_data)]
 
             # Count requests and initialize response tracking
             request_count = 0
@@ -889,6 +1033,8 @@ class WorkflowExecutor(Executor):
                     self._pending_requests[event.request_id] = event.data
 
                     # Wrap request with routing context and send to parent
+                    if not isinstance(event.data, RequestInfoMessage):
+                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
                     wrapped_request = SubWorkflowRequestInfo(
                         request_id=event.request_id,
                         sub_workflow_id=self.id,
@@ -941,7 +1087,7 @@ class WorkflowExecutor(Executor):
             responses_to_send = dict(self._collected_responses)
             self._collected_responses.clear()  # Clear for next batch
 
-            result_events = [event async for event in self._workflow.send_responses_streaming(responses_to_send)]
+            result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
 
             # Process the result events
             new_request_count = 0
@@ -957,6 +1103,8 @@ class WorkflowExecutor(Executor):
                     self._pending_requests[event.request_id] = event.data
 
                     # Send the new request to parent
+                    if not isinstance(event.data, RequestInfoMessage):
+                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
                     wrapped_request = SubWorkflowRequestInfo(
                         request_id=event.request_id,
                         sub_workflow_id=self.id,

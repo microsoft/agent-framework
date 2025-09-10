@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.azure import AzureAssistantsClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 
@@ -23,7 +23,9 @@ async def non_streaming_example() -> None:
 
     # Since no assistant ID is provided, the assistant will be automatically created
     # and deleted after getting a response
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()).create_agent(
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
+    async with AzureAssistantsClient(credential=AzureCliCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -39,14 +41,14 @@ async def streaming_example() -> None:
 
     # Since no assistant ID is provided, the assistant will be automatically created
     # and deleted after getting a response
-    async with AzureAssistantsClient(ad_credential=DefaultAzureCredential()).create_agent(
+    async with AzureAssistantsClient(credential=AzureCliCredential()).create_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
         query = "What's the weather like in Portland?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
-        async for chunk in agent.run_streaming(query):
+        async for chunk in agent.run_stream(query):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
         print("\n")

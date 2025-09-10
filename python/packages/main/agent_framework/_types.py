@@ -28,8 +28,8 @@ from pydantic import (
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
-from ._tools import AITool, ai_function
-from .exceptions import AgentFrameworkException
+from ._tools import ToolProtocol, ai_function
+from .exceptions import AdditionItemMismatch
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -55,6 +55,7 @@ KNOWN_MEDIA_TYPES = [
     "application/pdf",
     "application/xml",
     "audio/mpeg",
+    "audio/mp3",
     "audio/ogg",
     "audio/wav",
     "image/apng",
@@ -77,29 +78,30 @@ KNOWN_MEDIA_TYPES = [
 
 
 __all__ = [
-    "AIAnnotation",
-    "AIAnnotations",
-    "AIContent",
-    "AIContents",
     "AgentRunResponse",
     "AgentRunResponseUpdate",
-    "AnnotatedRegion",
     "AnnotatedRegions",
-    "ChatFinishReason",
+    "Annotations",
+    "BaseAnnotation",
+    "BaseContent",
     "ChatMessage",
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
-    "ChatRole",
     "ChatToolMode",
     "CitationAnnotation",
+    "Contents",
     "DataContent",
     "ErrorContent",
+    "FinishReason",
+    "FunctionApprovalRequestContent",
+    "FunctionApprovalResponseContent",
     "FunctionCallContent",
     "FunctionResultContent",
     "GeneratedEmbeddings",
     "HostedFileContent",
     "HostedVectorStoreContent",
+    "Role",
     "SpeechToTextOptions",
     "TextContent",
     "TextReasoningContent",
@@ -225,13 +227,17 @@ def _process_update(
     is_new_message = False
     if (
         not response.messages
-        or (update.message_id and response.messages[-1].message_id != update.message_id)
+        or (
+            update.message_id
+            and response.messages[-1].message_id
+            and response.messages[-1].message_id != update.message_id
+        )
         or (update.role and response.messages[-1].role != update.role)
     ):
         is_new_message = True
 
     if is_new_message:
-        message = ChatMessage(role=ChatRole.ASSISTANT, contents=[])
+        message = ChatMessage(role=Role.ASSISTANT, contents=[])
         response.messages.append(message)
     else:
         message = response.messages[-1]
@@ -250,7 +256,7 @@ def _process_update(
         ):
             try:
                 message.contents[-1] += content
-            except AgentFrameworkException:
+            except AdditionItemMismatch:
                 message.contents.append(content)
         elif isinstance(content, UsageContent):
             if response.usage_details is None:
@@ -278,12 +284,12 @@ def _process_update(
 
 
 def _coalesce_text_content(
-    contents: list["AIContents"], type_: type["TextContent"] | type["TextReasoningContent"]
+    contents: list["Contents"], type_: type["TextContent"] | type["TextReasoningContent"]
 ) -> None:
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
-    coalesced_contents: list["AIContents"] = []
+    coalesced_contents: list["Contents"] = []
     first_new_content: Any | None = None
     for content in contents:
         if isinstance(content, type_):
@@ -313,22 +319,10 @@ def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
         _coalesce_text_content(msg.contents, TextReasoningContent)
 
 
-# region AIAnnotation
+# region BaseAnnotation
 
 
-class AnnotatedRegion(AFBaseModel):
-    """Represents a collection of annotated regions.
-
-    Attributes:
-        regions: A list of regions that have been annotated.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content from an underlying implementation.
-    """
-
-    type: Literal["annotated_regions"] = "annotated_regions"  # type: ignore[assignment]
-
-
-class TextSpanRegion(AnnotatedRegion):
+class TextSpanRegion(AFBaseModel):
     """Represents a region of text that has been annotated."""
 
     type: Literal["text_span"] = "text_span"  # type: ignore[assignment]
@@ -337,28 +331,26 @@ class TextSpanRegion(AnnotatedRegion):
 
 
 AnnotatedRegions = Annotated[
-    TextSpanRegion | AnnotatedRegion,
+    TextSpanRegion,
     Field(discriminator="type"),
 ]
 
 
-class AIAnnotation(AFBaseModel):
+class BaseAnnotation(AFBaseModel):
     """Base class for all AI Annotation types.
 
     Args:
-        type: The type of content, which is always "ai_annotation" for this class.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content from an underlying implementation.
 
     """
 
-    type: Literal["ai_annotation"] = "ai_annotation"
     annotated_regions: list[AnnotatedRegions] | None = None
     additional_properties: dict[str, Any] | None = None
     raw_representation: Any | None = Field(default=None, repr=False)
 
 
-class CitationAnnotation(AIAnnotation):
+class CitationAnnotation(BaseAnnotation):
     """Represents a citation annotation.
 
     Attributes:
@@ -381,33 +373,31 @@ class CitationAnnotation(AIAnnotation):
     snippet: str | None = None
 
 
-AIAnnotations = Annotated[
-    CitationAnnotation | AIAnnotation,
+Annotations = Annotated[
+    CitationAnnotation,
     Field(discriminator="type"),
 ]
 
 
-# region AIContent
+# region BaseContent
 
 
-class AIContent(AFBaseModel):
+class BaseContent(AFBaseModel):
     """Represents content used by AI services.
 
     Attributes:
-        type: The type of content, which is always "ai" for this class.
         annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content from an underlying implementation.
 
     """
 
-    type: Literal["ai"] = "ai"
-    annotations: list[AIAnnotations] | None = None
+    annotations: list[Annotations] | None = None
     additional_properties: dict[str, Any] | None = None
     raw_representation: Any | None = Field(default=None, repr=False, exclude=True)
 
 
-class TextContent(AIContent):
+class TextContent(BaseContent):
     """Represents text content in a chat.
 
     Attributes:
@@ -508,7 +498,7 @@ class TextContent(AIContent):
         return self
 
 
-class TextReasoningContent(AIContent):
+class TextReasoningContent(BaseContent):
     """Represents text reasoning content in a chat.
 
     Remarks:
@@ -609,7 +599,7 @@ class TextReasoningContent(AIContent):
         return self
 
 
-class DataContent(AIContent):
+class DataContent(BaseContent):
     """Represents binary data content with an associated media type (also known as a MIME type).
 
     Attributes:
@@ -632,7 +622,7 @@ class DataContent(AIContent):
         self,
         *,
         uri: str,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -658,7 +648,7 @@ class DataContent(AIContent):
         *,
         data: bytes,
         media_type: str,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -685,7 +675,7 @@ class DataContent(AIContent):
         uri: str | None = None,
         data: bytes | None = None,
         media_type: str | None = None,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -735,11 +725,11 @@ class DataContent(AIContent):
             raise ValueError(f"Unknown media type: {media_type}")
         return uri
 
-    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
-class UriContent(AIContent):
+class UriContent(BaseContent):
     """Represents a URI content.
 
     Remarks:
@@ -765,7 +755,7 @@ class UriContent(AIContent):
         uri: str,
         media_type: str,
         *,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -793,11 +783,13 @@ class UriContent(AIContent):
             **kwargs,
         )
 
-    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
-def _has_top_level_media_type(media_type: str | None, top_level_media_type: str) -> bool:
+def _has_top_level_media_type(
+    media_type: str | None, top_level_media_type: Literal["application", "audio", "image", "text"]
+) -> bool:
     if media_type is None:
         return False
 
@@ -807,7 +799,7 @@ def _has_top_level_media_type(media_type: str | None, top_level_media_type: str)
     return span.lower() == top_level_media_type.lower()
 
 
-class ErrorContent(AIContent):
+class ErrorContent(BaseContent):
     """Represents an error.
 
     Remarks:
@@ -837,7 +829,7 @@ class ErrorContent(AIContent):
         message: str | None = None,
         error_code: str | None = None,
         details: str | None = None,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -868,7 +860,7 @@ class ErrorContent(AIContent):
         return f"Error {self.error_code}: {self.message}" if self.error_code else self.message or "Unknown error"
 
 
-class FunctionCallContent(AIContent):
+class FunctionCallContent(BaseContent):
     """Represents a function call request.
 
     Attributes:
@@ -896,7 +888,7 @@ class FunctionCallContent(AIContent):
         name: str,
         arguments: str | dict[str, Any | None] | None = None,
         exception: Exception | None = None,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -941,7 +933,7 @@ class FunctionCallContent(AIContent):
         if not isinstance(other, FunctionCallContent):
             raise TypeError("Incompatible type")
         if other.call_id and self.call_id != other.call_id:
-            raise AgentFrameworkException("Incompatible function call contents")
+            raise AdditionItemMismatch("", log_level=None)
         if not self.arguments:
             arguments = other.arguments
         elif not other.arguments:
@@ -962,7 +954,7 @@ class FunctionCallContent(AIContent):
         )
 
 
-class FunctionResultContent(AIContent):
+class FunctionResultContent(BaseContent):
     """Represents the result of a function call.
 
     Attributes:
@@ -987,7 +979,7 @@ class FunctionResultContent(AIContent):
         call_id: str,
         result: Any | None = None,
         exception: Exception | None = None,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1014,7 +1006,7 @@ class FunctionResultContent(AIContent):
         )
 
 
-class UsageContent(AIContent):
+class UsageContent(BaseContent):
     """Represents usage information associated with a chat request and response.
 
     Attributes:
@@ -1033,7 +1025,7 @@ class UsageContent(AIContent):
         self,
         details: UsageDetails,
         *,
-        annotations: list[AIAnnotations] | None = None,
+        annotations: list[Annotations] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1048,7 +1040,7 @@ class UsageContent(AIContent):
         )
 
 
-class HostedFileContent(AIContent):
+class HostedFileContent(BaseContent):
     """Represents a hosted file content.
 
     Attributes:
@@ -1079,7 +1071,7 @@ class HostedFileContent(AIContent):
         )
 
 
-class HostedVectorStoreContent(AIContent):
+class HostedVectorStoreContent(BaseContent):
     """Represents a hosted vector store content.
 
     Attributes:
@@ -1110,7 +1102,111 @@ class HostedVectorStoreContent(AIContent):
         )
 
 
-AIContents = Annotated[
+class BaseUserInputRequest(BaseContent):
+    """Base class for all user requests."""
+
+    type: Literal["user_input_request"] = "user_input_request"  # type: ignore[assignment]
+    id: Annotated[str, Field(..., min_length=1)]
+
+
+class BaseUserInputResponse(BaseContent):
+    """Base class for all user responses."""
+
+    type: Literal["user_input_response"] = "user_input_response"  # type: ignore[assignment]
+    id: Annotated[str, Field(..., min_length=1)]
+
+
+class FunctionApprovalResponseContent(BaseUserInputResponse):
+    """Represents a response for user approval of a function call."""
+
+    type: Literal["function_approval_response"] = "function_approval_response"  # type: ignore[assignment]
+    approved: bool
+    function_call: FunctionCallContent
+
+    def __init__(
+        self,
+        approved: bool,
+        *,
+        id: str,
+        function_call: FunctionCallContent,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a FunctionApprovalResponseContent instance.
+
+        Args:
+            approved: Whether the function call was approved.
+            id: The unique identifier for the request.
+            function_call: The function call content to be approved.
+            annotations: Optional list of annotations for the request.
+            additional_properties: Optional additional properties for the request.
+            raw_representation: Optional raw representation of the request.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            approved=approved,  # type: ignore[reportCallIssue]
+            id=id,  # type: ignore[reportCallIssue]
+            function_call=function_call,  # type: ignore[reportCallIssue]
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+
+class FunctionApprovalRequestContent(BaseUserInputRequest):
+    """Represents a request for user approval of a function call."""
+
+    type: Literal["function_approval_request"] = "function_approval_request"  # type: ignore[assignment]
+    function_call: FunctionCallContent
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        function_call: FunctionCallContent,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a FunctionApprovalRequestContent instance.
+
+        Args:
+            id: The unique identifier for the request.
+            function_call: The function call content to be approved.
+            annotations: Optional list of annotations for the request.
+            additional_properties: Optional additional properties for the request.
+            raw_representation: Optional raw representation of the request.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            id=id,  # type: ignore[reportCallIssue]
+            function_call=function_call,  # type: ignore[reportCallIssue]
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+
+    def create_response(self, approved: bool) -> "FunctionApprovalResponseContent":
+        """Create a response for the function approval request."""
+        return FunctionApprovalResponseContent(
+            approved,
+            id=self.id,
+            function_call=self.function_call,
+            additional_properties=self.additional_properties,
+        )
+
+
+UserInputRequestContents = Annotated[
+    FunctionApprovalRequestContent,
+    Field(discriminator="type"),
+]
+
+Contents = Annotated[
     TextContent
     | DataContent
     | TextReasoningContent
@@ -1120,14 +1216,16 @@ AIContents = Annotated[
     | ErrorContent
     | UsageContent
     | HostedFileContent
-    | HostedVectorStoreContent,
+    | HostedVectorStoreContent
+    | FunctionApprovalRequestContent
+    | FunctionApprovalResponseContent,
     Field(discriminator="type"),
 ]
 
 # region Chat Response constants
 
 
-class ChatRole(AFBaseModel):
+class Role(AFBaseModel):
     """Describes the intended purpose of a message within a chat interaction.
 
     Attributes:
@@ -1157,19 +1255,19 @@ class ChatRole(AFBaseModel):
 
     def __repr__(self) -> str:
         """Returns the string representation of the role."""
-        return f"ChatRole(value={self.value!r})"
+        return f"Role(value={self.value!r})"
 
 
 # Note: ClassVar is used to indicate that these are class-level constants, not instance attributes.
 # The type: ignore[assignment] is used to suppress the type checker warning about assigning to a ClassVar,
 # it gets assigned immediately after the class definition.
-ChatRole.SYSTEM = ChatRole(value="system")  # type: ignore[assignment]
-ChatRole.USER = ChatRole(value="user")  # type: ignore[assignment]
-ChatRole.ASSISTANT = ChatRole(value="assistant")  # type: ignore[assignment]
-ChatRole.TOOL = ChatRole(value="tool")  # type: ignore[assignment]
+Role.SYSTEM = Role(value="system")  # type: ignore[assignment]
+Role.USER = Role(value="user")  # type: ignore[assignment]
+Role.ASSISTANT = Role(value="assistant")  # type: ignore[assignment]
+Role.TOOL = Role(value="tool")  # type: ignore[assignment]
 
 
-class ChatFinishReason(AFBaseModel):
+class FinishReason(AFBaseModel):
     """Represents the reason a chat response completed.
 
     Attributes:
@@ -1179,21 +1277,21 @@ class ChatFinishReason(AFBaseModel):
     value: str
 
     CONTENT_FILTER: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model filtering content, whether for safety, prohibited content,
+    """A FinishReason representing the model filtering content, whether for safety, prohibited content,
     sensitive content, or other such issues."""
     LENGTH: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model reaching the maximum length allowed for the request and/or
+    """A FinishReason representing the model reaching the maximum length allowed for the request and/or
     response (typically in terms of tokens)."""
     STOP: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model encountering a natural stop point or provided stop sequence."""
+    """A FinishReason representing the model encountering a natural stop point or provided stop sequence."""
     TOOL_CALLS: ClassVar[Self]  # type: ignore[assignment]
-    """A ChatFinishReason representing the model requesting the use of a tool that was defined in the request."""
+    """A FinishReason representing the model requesting the use of a tool that was defined in the request."""
 
 
-ChatFinishReason.CONTENT_FILTER = ChatFinishReason(value="content_filter")  # type: ignore[assignment]
-ChatFinishReason.LENGTH = ChatFinishReason(value="length")  # type: ignore[assignment]
-ChatFinishReason.STOP = ChatFinishReason(value="stop")  # type: ignore[assignment]
-ChatFinishReason.TOOL_CALLS = ChatFinishReason(value="tool_calls")  # type: ignore[assignment]
+FinishReason.CONTENT_FILTER = FinishReason(value="content_filter")  # type: ignore[assignment]
+FinishReason.LENGTH = FinishReason(value="length")  # type: ignore[assignment]
+FinishReason.STOP = FinishReason(value="stop")  # type: ignore[assignment]
+FinishReason.TOOL_CALLS = FinishReason(value="tool_calls")  # type: ignore[assignment]
 
 # region ChatMessage
 
@@ -1211,9 +1309,9 @@ class ChatMessage(AFBaseModel):
 
     """
 
-    role: ChatRole
+    role: Role
     """The role of the author of the message."""
-    contents: list[AIContents]
+    contents: list[Contents]
     """The chat message content items."""
     author_name: str | None
     """The name of the author of the message."""
@@ -1227,7 +1325,7 @@ class ChatMessage(AFBaseModel):
     @overload
     def __init__(
         self,
-        role: ChatRole | Literal["system", "user", "assistant", "tool"],
+        role: Role | Literal["system", "user", "assistant", "tool"],
         *,
         text: str,
         author_name: str | None = None,
@@ -1249,9 +1347,9 @@ class ChatMessage(AFBaseModel):
     @overload
     def __init__(
         self,
-        role: ChatRole | Literal["system", "user", "assistant", "tool"],
+        role: Role | Literal["system", "user", "assistant", "tool"],
         *,
-        contents: MutableSequence[AIContents],
+        contents: MutableSequence[Contents],
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1261,7 +1359,7 @@ class ChatMessage(AFBaseModel):
 
         Args:
             role: The role of the author of the message.
-            contents: Optional list of AIContent items to include in the message.
+            contents: Optional list of BaseContent items to include in the message.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
@@ -1270,10 +1368,10 @@ class ChatMessage(AFBaseModel):
 
     def __init__(
         self,
-        role: ChatRole | Literal["system", "user", "assistant", "tool"],
+        role: Role | Literal["system", "user", "assistant", "tool"],
         *,
         text: str | None = None,
-        contents: MutableSequence[AIContents] | None = None,
+        contents: MutableSequence[Contents] | None = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1284,7 +1382,7 @@ class ChatMessage(AFBaseModel):
         if text is not None:
             contents.append(TextContent(text=text))
         if isinstance(role, str):
-            role = ChatRole(value=role)
+            role = Role(value=role)
         super().__init__(
             role=role,  # type: ignore[reportCallIssue]
             contents=contents,  # type: ignore[reportCallIssue]
@@ -1334,7 +1432,7 @@ class ChatResponse(AFBaseModel):
     """The model ID used in the creation of the chat response."""
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
     """A timestamp for the chat response."""
-    finish_reason: ChatFinishReason | None = None
+    finish_reason: FinishReason | None = None
     """The reason for the chat response."""
     usage_details: UsageDetails | None = None
     """The usage details for the chat response."""
@@ -1354,7 +1452,7 @@ class ChatResponse(AFBaseModel):
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
+        finish_reason: FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: Any | None = None,
         response_format: type[BaseModel] | None = None,
@@ -1389,7 +1487,7 @@ class ChatResponse(AFBaseModel):
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
+        finish_reason: FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: Any | None = None,
         response_format: type[BaseModel] | None = None,
@@ -1424,7 +1522,7 @@ class ChatResponse(AFBaseModel):
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
+        finish_reason: FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: Any | None = None,
         response_format: type[BaseModel] | None = None,
@@ -1440,7 +1538,7 @@ class ChatResponse(AFBaseModel):
         if text is not None:
             if isinstance(text, str):
                 text = TextContent(text=text)
-            messages.append(ChatMessage(role=ChatRole.ASSISTANT, contents=[text]))
+            messages.append(ChatMessage(role=Role.ASSISTANT, contents=[text]))
 
         super().__init__(
             messages=messages,  # type: ignore[reportCallIssue]
@@ -1528,10 +1626,10 @@ class ChatResponseUpdate(AFBaseModel):
 
     """
 
-    contents: list[AIContents]
+    contents: list[Contents]
     """The chat response update content items."""
 
-    role: ChatRole | None = None
+    role: Role | None = None
     """The role of the author of the response update."""
     author_name: str | None = None
     """The name of the author of the response update."""
@@ -1546,7 +1644,7 @@ class ChatResponseUpdate(AFBaseModel):
     """The model ID associated with this response update."""
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
     """A timestamp for the chat response update."""
-    finish_reason: ChatFinishReason | None = None
+    finish_reason: FinishReason | None = None
     """The finish reason for the operation."""
 
     additional_properties: dict[str, Any] | None = None
@@ -1558,15 +1656,15 @@ class ChatResponseUpdate(AFBaseModel):
     def __init__(
         self,
         *,
-        contents: list[AIContents],
-        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
+        contents: list[Contents],
+        role: Role | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
         ai_model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
+        finish_reason: FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -1577,14 +1675,14 @@ class ChatResponseUpdate(AFBaseModel):
         self,
         *,
         text: TextContent | str,
-        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
+        role: Role | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
         ai_model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
+        finish_reason: FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -1593,16 +1691,16 @@ class ChatResponseUpdate(AFBaseModel):
     def __init__(
         self,
         *,
-        contents: list[AIContents] | None = None,
+        contents: list[Contents] | None = None,
         text: TextContent | str | None = None,
-        role: ChatRole | Literal["system", "user", "assistant", "tool"] | None = None,
+        role: Role | Literal["system", "user", "assistant", "tool"] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
         ai_model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: ChatFinishReason | None = None,
+        finish_reason: FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -1614,7 +1712,7 @@ class ChatResponseUpdate(AFBaseModel):
                 text = TextContent(text=text)
             contents.append(text)
         if role and isinstance(role, str):
-            role = ChatRole(value=role)
+            role = Role(value=role)
         super().__init__(
             contents=contents,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
@@ -1637,7 +1735,7 @@ class ChatResponseUpdate(AFBaseModel):
     def __str__(self) -> str:
         return self.text
 
-    def with_(self, contents: list[AIContent] | None = None, message_id: str | None = None) -> Self:
+    def with_(self, contents: list[BaseContent] | None = None, message_id: str | None = None) -> Self:
         """Returns a new instance with the specified contents and message_id."""
         if contents is None:
             contents = []
@@ -1709,7 +1807,7 @@ class ChatOptions(AFBaseModel):
     store: bool | None = None
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: list[AITool | MutableMapping[str, Any]] | None = None
+    tools: list[ToolProtocol | MutableMapping[str, Any]] | None = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
 
@@ -1718,23 +1816,21 @@ class ChatOptions(AFBaseModel):
     def _validate_tools(
         cls,
         tools: (
-            AITool
-            | list[AITool]
+            ToolProtocol
             | Callable[..., Any]
-            | list[Callable[..., Any]]
             | MutableMapping[str, Any]
-            | list[MutableMapping[str, Any]]
+            | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
             | None
         ),
-    ) -> list[AITool | MutableMapping[str, Any]] | None:
+    ) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
         """Parse the tools field."""
         if not tools:
             return None
         if not isinstance(tools, list):
             tools = [tools]  # type: ignore[reportAssignmentType, assignment]
         for idx, tool in enumerate(tools):  # type: ignore[reportArgumentType, arg-type]
-            if not isinstance(tool, (AITool, MutableMapping)):
-                # Convert to AITool if it's a function or callable
+            if not isinstance(tool, (ToolProtocol, MutableMapping)):
+                # Convert to ToolProtocol if it's a function or callable
                 tools[idx] = ai_function(tool)  # type: ignore[reportIndexIssues, reportCallIssue, reportArgumentType, index, call-overload, arg-type]
         return tools  # type: ignore[reportReturnType, return-value]
 
@@ -1792,11 +1888,14 @@ class ChatOptions(AFBaseModel):
         if not isinstance(other, ChatOptions):
             return self
         other_tools = other.tools
+        # tool_choice has a specialized serialize method. Save it here so we can fix it later.
+        tool_choice = other.tool_choice or self.tool_choice
         updated_values = other.model_dump(exclude_none=True, exclude={"tools"})
         logit_bias = updated_values.pop("logit_bias", {})
         metadata = updated_values.pop("metadata", {})
         additional_properties = updated_values.pop("additional_properties", {})
         combined = self.model_copy(update=updated_values)
+        combined.tool_choice = tool_choice
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
@@ -1973,6 +2072,13 @@ class AgentRunResponse(AFBaseModel):
         """Get the concatenated text of all messages."""
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
+    @property
+    def user_input_requests(self) -> list[UserInputRequestContents]:
+        """Get all BaseUserInputRequest messages from the response."""
+        return [
+            content for msg in self.messages for content in msg.contents if isinstance(content, BaseUserInputRequest)
+        ]
+
     @classmethod
     def from_agent_run_response_updates(
         cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
@@ -2005,8 +2111,8 @@ class AgentRunResponse(AFBaseModel):
 class AgentRunResponseUpdate(AFBaseModel):
     """Represents a single streaming response chunk from an Agent."""
 
-    contents: list[AIContents] = Field(default_factory=list[AIContents])
-    role: ChatRole | None = None
+    contents: list[Contents] = Field(default_factory=list[Contents])
+    role: Role | None = None
     author_name: str | None = None
     response_id: str | None = None
     message_id: str | None = None
@@ -2022,6 +2128,11 @@ class AgentRunResponseUpdate(AFBaseModel):
             if self.contents
             else ""
         )
+
+    @property
+    def user_input_requests(self) -> list[UserInputRequestContents]:
+        """Get all BaseUserInputRequest messages from the response."""
+        return [content for content in self.contents if isinstance(content, BaseUserInputRequest)]
 
     def __str__(self) -> str:
         return self.text
@@ -2098,9 +2209,3 @@ class TextToSpeechOptions(AFBaseModel):
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
-
-
-# endregion
-
-
-# endregion

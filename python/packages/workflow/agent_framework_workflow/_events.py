@@ -1,8 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
+
+if TYPE_CHECKING:
+    from ._executor import RequestInfoMessage
 
 
 class WorkflowEvent:
@@ -61,7 +64,7 @@ class RequestInfoEvent(WorkflowEvent):
         request_id: str,
         source_executor_id: str,
         request_type: type,
-        request_data: Any,
+        request_data: "RequestInfoMessage",
     ):
         """Initialize the request info event.
 
@@ -116,7 +119,7 @@ class ExecutorCompletedEvent(ExecutorEvent):
         return f"{self.__class__.__name__}(executor_id={self.executor_id})"
 
 
-class AgentRunStreamingEvent(ExecutorEvent):
+class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
     def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):

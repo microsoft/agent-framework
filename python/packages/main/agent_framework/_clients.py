@@ -2,257 +2,53 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, MutableSequence, Sequence
-from functools import wraps
+from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ._logging import get_logger
+from ._mcp import MCPTool
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
-from ._tools import AIFunction, AITool
+from ._tools import ToolProtocol
 from ._types import (
-    AIContents,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ChatToolMode,
-    FunctionCallContent,
-    FunctionResultContent,
     GeneratedEmbeddings,
 )
 
 if TYPE_CHECKING:
-    from ._agents import ChatClientAgent
+    from ._agents import ChatAgent
+
 
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
-TChatClientBase = TypeVar("TChatClientBase", bound="ChatClientBase")
+TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
 
 logger = get_logger()
 
 __all__ = [
-    "ChatClient",
-    "ChatClientBase",
+    "BaseChatClient",
+    "ChatClientProtocol",
     "EmbeddingGenerator",
-    "use_tool_calling",
 ]
 
-# region Tool Calling Functions and Decorators
 
-
-async def _auto_invoke_function(
-    function_call_content: FunctionCallContent,
-    custom_args: dict[str, Any] | None = None,
-    *,
-    tool_map: dict[str, AIFunction[BaseModel, Any]],
-    sequence_index: int | None = None,
-    request_index: int | None = None,
-) -> AIContents:
-    """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
-    tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.name)
-    if tool is None:
-        raise KeyError(f"No tool or function named '{function_call_content.name}'")
-
-    parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
-
-    # Merge with user-supplied args; right-hand side dominates, so parsed args win on conflicts.
-    merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
-    args = tool.input_model.model_validate(merged_args)
-    exception = None
-    try:
-        function_result = await tool.invoke(arguments=args, tool_call_id=function_call_content.call_id)
-    except Exception as ex:
-        exception = ex
-        function_result = None
-    return FunctionResultContent(
-        call_id=function_call_content.call_id,
-        exception=exception,
-        result=function_result,
-    )
-
-
-def _tool_call_non_streaming(
-    func: Callable[..., Awaitable["ChatResponse"]],
-) -> Callable[..., Awaitable["ChatResponse"]]:
-    """Decorate the internal _inner_get_response method to enable tool calls."""
-
-    @wraps(func)
-    async def wrapper(
-        self: "ChatClientBase",
-        *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> ChatResponse:
-        response: ChatResponse | None = None
-        fcc_messages: list[ChatMessage] = []
-        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
-            response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
-            # if there are function calls, we will handle them first
-            function_results = {
-                it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
-            }
-            function_calls = [
-                it
-                for it in response.messages[0].contents
-                if isinstance(it, FunctionCallContent) and it.call_id not in function_results
-            ]
-            if function_calls:
-                # Run all function calls concurrently
-                results = await asyncio.gather(*[
-                    _auto_invoke_function(
-                        function_call,
-                        custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options.tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
-                        sequence_index=seq_idx,
-                        request_index=attempt_idx,
-                    )
-                    for seq_idx, function_call in enumerate(function_calls)
-                ])
-                # add a single ChatMessage to the response with the results
-                result_message = ChatMessage(role="tool", contents=results)
-                response.messages.append(result_message)
-                # response should contain 2 messages after this,
-                # one with function call contents
-                # and one with function result contents
-                # the amount and call_id's should match
-                # this runs in every but the first run
-                # we need to keep track of all function call messages
-                fcc_messages.extend(response.messages)
-                # and add them as additional context to the messages
-                if chat_options.store:
-                    messages.clear()
-                    messages.append(result_message)
-                else:
-                    messages.extend(response.messages)
-                continue
-            # If we reach this point, it means there were no function calls to handle,
-            # we'll add the previous function call and responses
-            # to the front of the list, so that the final response is the last one
-            # TODO (eavanvalkenburg): control this behavior?
-            if fcc_messages:
-                for msg in reversed(fcc_messages):
-                    response.messages.insert(0, msg)
-            return response
-
-        # Failsafe: give up on tools, ask model for plain answer
-        chat_options.tool_choice = "none"
-        self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        response = await func(self, messages=messages, chat_options=chat_options, **kwargs)
-        if fcc_messages:
-            for msg in reversed(fcc_messages):
-                response.messages.insert(0, msg)
-        return response
-
-    return wrapper
-
-
-def _tool_call_streaming(
-    func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
-) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
-    """Decorate the internal _inner_get_response method to enable tool calls."""
-
-    @wraps(func)
-    async def wrapper(
-        self: "ChatClientBase",
-        *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Wrap the inner get streaming response method to handle tool calls."""
-        for attempt_idx in range(getattr(self, "__maximum_iterations_per_request", 10)):
-            function_call_returned = False
-            all_messages: list[ChatResponseUpdate] = []
-            async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
-                if update.contents and any(isinstance(item, FunctionCallContent) for item in update.contents):
-                    all_messages.append(update)
-                    function_call_returned = True
-                yield update
-
-            if not function_call_returned:
-                return
-
-            # There is one FunctionCallContent response stream in the messages, combining now to create
-            # the full completion depending on the prompt, the message may contain both function call
-            # content and others
-            response: ChatResponse = ChatResponse.from_chat_response_updates(all_messages)
-            # add the single assistant response message to the history
-            messages.append(response.messages[0])
-            function_calls = [item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)]
-
-            # When conversation id is present, it means that messages are hosted on the server.
-            # In this case, we need to update ChatOptions with conversation id and also clear messages
-            if response.conversation_id is not None:
-                chat_options.conversation_id = response.conversation_id
-                messages = []
-
-            if function_calls:
-                # Run all function calls concurrently
-                results = await asyncio.gather(*[
-                    _auto_invoke_function(
-                        function_call,
-                        custom_args=kwargs,
-                        tool_map={t.name: t for t in chat_options.tools or [] if isinstance(t, AIFunction)},  # type: ignore[reportPrivateUsage]
-                        sequence_index=seq_idx,
-                        request_index=attempt_idx,
-                    )
-                    for seq_idx, function_call in enumerate(function_calls)
-                ])
-                yield ChatResponseUpdate(contents=results, role="tool")
-                function_result_msg = ChatMessage(role="tool", contents=results)
-                response.messages.append(function_result_msg)
-                messages.append(function_result_msg)
-                continue
-
-        # Failsafe: give up on tools, ask model for plain answer
-        chat_options.tool_choice = "none"
-        self._prepare_tool_choice(chat_options=chat_options)  # type: ignore[reportPrivateUsage]
-        async for update in func(self, messages=messages, chat_options=chat_options, **kwargs):
-            yield update
-
-    return wrapper
-
-
-def use_tool_calling(cls: type[TChatClientBase]) -> type[TChatClientBase]:
-    """Class decorator that enables tool calling for a chat client.
-
-    Remarks:
-        This only works on classes that derive from ChatClientBase
-        and the `_inner_get_response`
-        and `_inner_get_streaming_response` methods.
-        It also sets a `__maximum_iterations_per_request` attribute on the class.
-        if you want to expose this to end_users, do a version of this:
-
-            @property
-
-            def maximum_iterations_per_request(self):
-                return getattr(self, "__maximum_iterations_per_request", 10)
-
-            @maximum_iterations_per_request.setter
-
-            def maximum_iterations_per_request(self, value: int) -> None:
-                setattr(self, "__maximum_iterations_per_request", value)
-
-    """
-    setattr(cls, "__maximum_iterations_per_request", 10)
-
-    if inner_response := getattr(cls, "_inner_get_response", None):
-        cls._inner_get_response = _tool_call_non_streaming(inner_response)  # type: ignore
-    if inner_streaming_response := getattr(cls, "_inner_get_streaming_response", None):
-        cls._inner_get_streaming_response = _tool_call_streaming(inner_streaming_response)  # type: ignore
-    return cls
-
-
-# region ChatClient Protocol
+# region ChatClientProtocol Protocol
 
 
 @runtime_checkable
-class ChatClient(Protocol):
+class ChatClientProtocol(Protocol):
     """A protocol for a chat client that can generate responses."""
+
+    @property
+    def additional_properties(self) -> dict[str, Any]:
+        """Get additional properties associated with the client."""
+        ...
 
     async def get_response(
         self,
@@ -270,12 +66,10 @@ class ChatClient(Protocol):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -329,12 +123,10 @@ class ChatClient(Protocol):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -374,26 +166,54 @@ class ChatClient(Protocol):
         ...
 
 
-class ChatClientBase(AFBaseModel, ABC):
+# region ChatClientBase
+
+
+def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
+    """Turn the allowed input into a list of chat messages."""
+    if isinstance(messages, str):
+        return [ChatMessage(role="user", text=messages)]
+    if isinstance(messages, ChatMessage):
+        return [messages]
+    return_messages: list[ChatMessage] = []
+    for msg in messages:
+        if isinstance(msg, str):
+            msg = ChatMessage(role="user", text=msg)
+        return_messages.append(msg)
+    return return_messages
+
+
+class BaseChatClient(AFBaseModel, ABC):
     """Base class for chat clients."""
 
-    MODEL_PROVIDER_NAME: str = "unknown"
+    additional_properties: dict[str, Any] = Field(default_factory=dict)
+    OTEL_PROVIDER_NAME: str = "unknown"
     # This is used for OTel setup, should be overridden in subclasses
 
-    def _prepare_messages(
+    def prepare_messages(
         self, messages: str | ChatMessage | list[str] | list[ChatMessage]
     ) -> MutableSequence[ChatMessage]:
         """Turn the allowed input into a list of chat messages."""
-        if isinstance(messages, str):
-            return [ChatMessage(role="user", text=messages)]
-        if isinstance(messages, ChatMessage):
-            return [messages]
-        return_messages: list[ChatMessage] = []
-        for msg in messages:
-            if isinstance(msg, str):
-                msg = ChatMessage(role="user", text=msg)
-            return_messages.append(msg)
-        return return_messages
+        return prepare_messages(messages)
+
+    @staticmethod
+    def _normalize_tools(
+        tools: ToolProtocol
+        | MutableMapping[str, Any]
+        | Callable[..., Any]
+        | list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]]
+        | None = None,
+    ) -> list[ToolProtocol | dict[str, Any] | Callable[..., Any]]:
+        """Normalize the tools input to a list of tools."""
+        final_tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] = []
+        if not tools:
+            return final_tools
+        for tool in tools if isinstance(tools, list) else [tools]:  # type: ignore[reportUnknownType]
+            if isinstance(tool, MCPTool):
+                final_tools.extend(tool.functions)  # type: ignore
+                continue
+            final_tools.append(tool)  # type: ignore
+        return final_tools
 
     # region Internal methods to be implemented by the derived classes
 
@@ -461,12 +281,10 @@ class ChatClientBase(AFBaseModel, ABC):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -499,6 +317,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Returns:
             A chat response from the model.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):
@@ -518,11 +337,11 @@ class ChatClientBase(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
             )
-        prepped_messages = self._prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
         return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
 
@@ -542,12 +361,10 @@ class ChatClientBase(AFBaseModel, ABC):
         store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -579,6 +396,7 @@ class ChatClientBase(AFBaseModel, ABC):
         Yields:
             A stream representing the response(s) from the LLM.
         """
+        # Should we merge chat options instead of ignoring the input params?
         if "chat_options" in kwargs:
             chat_options = kwargs.pop("chat_options")
             if not isinstance(chat_options, ChatOptions):
@@ -598,12 +416,12 @@ class ChatClientBase(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
                 **kwargs,
             )
-        prepped_messages = self._prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
         async for update in self._inner_get_streaming_response(
             messages=prepped_messages, chat_options=chat_options, **kwargs
@@ -626,29 +444,27 @@ class ChatClientBase(AFBaseModel, ABC):
         else:
             chat_options.tool_choice = chat_tool_mode.mode
 
-    def service_url(self) -> str | None:
+    def service_url(self) -> str:
         """Get the URL of the service.
 
         Override this in the subclass to return the proper URL.
         If the service does not have a URL, return None.
         """
-        return None
+        return "Unknown"
 
     def create_agent(
         self,
         *,
         name: str | None = None,
         instructions: str | None = None,
-        tools: AITool
-        | list[AITool]
+        tools: ToolProtocol
         | Callable[..., Any]
-        | list[Callable[..., Any]]
         | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         **kwargs: Any,
-    ) -> "ChatClientAgent":
+    ) -> "ChatAgent":
         """Create an agent with the given name and instructions.
 
         Args:
@@ -658,14 +474,14 @@ class ChatClientBase(AFBaseModel, ABC):
             chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
             **kwargs: Additional keyword arguments to pass to the agent.
-                See ChatClientAgent for all the available options.
+                See ChatAgent for all the available options.
 
         Returns:
-            An instance of ChatClientAgent.
+            An instance of ChatAgent.
         """
-        from ._agents import ChatClientAgent
+        from ._agents import ChatAgent
 
-        return ChatClientAgent(
+        return ChatAgent(
             chat_client=self,
             name=name,
             instructions=instructions,
