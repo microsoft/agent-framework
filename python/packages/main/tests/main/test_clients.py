@@ -1,18 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import sys
-from collections.abc import AsyncIterable, MutableSequence, Sequence
+from collections.abc import Sequence
 from typing import Any
 
-from pydantic import Field
 from pytest import fixture
 
 from agent_framework import (
     BaseChatClient,
     ChatClientProtocol,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     EmbeddingGenerator,
@@ -22,81 +19,12 @@ from agent_framework import (
     Role,
     TextContent,
     ai_function,
-    use_tool_calling,
 )
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore
+    pass  # type: ignore
 else:
-    from typing_extensions import override  # type: ignore[import]
-
-
-class MockChatClient:
-    """Simple implementation of a chat client."""
-
-    async def get_response(
-        self,
-        messages: ChatMessage | Sequence[ChatMessage],
-        **kwargs: Any,
-    ) -> ChatResponse:
-        # Implement the method
-
-        return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
-
-    async def get_streaming_response(
-        self,
-        messages: ChatMessage | Sequence[ChatMessage],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # Implement the method
-        yield ChatResponseUpdate(text=TextContent(text="test streaming response"), role="assistant")
-        yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
-
-
-@use_tool_calling
-class MockBaseChatClient(BaseChatClient):
-    """Mock implementation of the BaseChatClient."""
-
-    run_responses: list[ChatResponse] = Field(default_factory=list)
-    streaming_responses: list[list[ChatResponseUpdate]] = Field(default_factory=list)
-
-    @override
-    async def _inner_get_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> ChatResponse:
-        """Send a chat request to the AI service.
-
-        Args:
-            messages: The chat messages to send.
-            chat_options: The options for the request.
-            kwargs: Any additional keyword arguments.
-
-        Returns:
-            The chat response contents representing the response(s).
-        """
-        if not self.run_responses or chat_options.tool_choice == "none":
-            return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
-        return self.run_responses.pop(0)
-
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        if not self.streaming_responses or chat_options.tool_choice == "none":
-            yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
-            return
-        response = self.streaming_responses.pop(0)
-        for update in response:
-            yield update
-        await asyncio.sleep(0)
+    pass  # type: ignore[import]
 
 
 class MockEmbeddingGenerator:
@@ -115,34 +43,24 @@ class MockEmbeddingGenerator:
 
 
 @fixture
-def chat_client() -> MockChatClient:
-    return MockChatClient()
-
-
-@fixture
-def chat_client_base() -> MockBaseChatClient:
-    return MockBaseChatClient()
-
-
-@fixture
 def embedding_generator() -> MockEmbeddingGenerator:
     gen: EmbeddingGenerator[str, list[float]] = MockEmbeddingGenerator()
     return gen
 
 
-def test_chat_client_type(chat_client: MockChatClient):
+def test_chat_client_type(chat_client: ChatClientProtocol):
     assert isinstance(chat_client, ChatClientProtocol)
 
 
-async def test_chat_client_get_response(chat_client: MockChatClient):
+async def test_chat_client_get_response(chat_client: ChatClientProtocol):
     response = await chat_client.get_response(ChatMessage(role="user", text="Hello"))
     assert response.text == "test response"
     assert response.messages[0].role == Role.ASSISTANT
 
 
-async def test_chat_client_get_streaming_response(chat_client: MockChatClient):
+async def test_chat_client_get_streaming_response(chat_client: ChatClientProtocol):
     async for update in chat_client.get_streaming_response(ChatMessage(role="user", text="Hello")):
-        assert update.text == "test streaming response" or update.text == "another update"
+        assert update.text == "test streaming response " or update.text == "another update"
         assert update.role == Role.ASSISTANT
 
 
@@ -158,23 +76,23 @@ async def test_embedding_generator_generate(embedding_generator: MockEmbeddingGe
         assert len(emb) == 5
 
 
-def test_base_client(chat_client_base: MockBaseChatClient):
+def test_base_client(chat_client_base: ChatClientProtocol):
     assert isinstance(chat_client_base, BaseChatClient)
     assert isinstance(chat_client_base, ChatClientProtocol)
 
 
-async def test_base_client_get_response(chat_client_base: MockBaseChatClient):
+async def test_base_client_get_response(chat_client_base: ChatClientProtocol):
     response = await chat_client_base.get_response(ChatMessage(role="user", text="Hello"))
     assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == "test response - Hello"
 
 
-async def test_base_client_get_streaming_response(chat_client_base: MockBaseChatClient):
+async def test_base_client_get_streaming_response(chat_client_base: ChatClientProtocol):
     async for update in chat_client_base.get_streaming_response(ChatMessage(role="user", text="Hello")):
         assert update.text == "update - Hello" or update.text == "another update"
 
 
-async def test_base_client_with_function_calling(chat_client_base: MockBaseChatClient):
+async def test_base_client_with_function_calling(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -208,8 +126,7 @@ async def test_base_client_with_function_calling(chat_client_base: MockBaseChatC
     assert response.messages[2].text == "done"
 
 
-async def test_base_client_with_function_calling_disabled(chat_client_base: MockBaseChatClient):
-    chat_client_base.__maximum_iterations_per_request = 0
+async def test_base_client_with_function_calling_resets(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -225,16 +142,32 @@ async def test_base_client_with_function_calling_disabled(chat_client_base: Mock
                 contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1": "value1"}')],
             )
         ),
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="2", name="test_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
         ChatResponse(messages=ChatMessage(role="assistant", text="done")),
     ]
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[ai_func])
-    assert exec_counter == 0
-    assert len(response.messages) == 1
+    assert exec_counter == 2
+    assert len(response.messages) == 5
     assert response.messages[0].role == Role.ASSISTANT
-    assert response.messages[0].text == "test response - hello"
+    assert response.messages[1].role == Role.TOOL
+    assert response.messages[2].role == Role.ASSISTANT
+    assert response.messages[3].role == Role.TOOL
+    assert response.messages[4].role == Role.ASSISTANT
+    assert isinstance(response.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(response.messages[1].contents[0], FunctionResultContent)
+    assert isinstance(response.messages[2].contents[0], FunctionCallContent)
+    assert isinstance(response.messages[3].contents[0], FunctionResultContent)
+    # after these two responses, it would try another regular call, but since max_iterations is 1, it stops and calls
+    assert isinstance(response.messages[4].contents[0], TextContent)
+    assert response.text == "I broke out of the function invocation loop..."
 
 
-async def test_base_client_with_streaming_function_calling(chat_client_base: MockBaseChatClient):
+async def test_base_client_with_streaming_function_calling(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
     @ai_function(name="test_function")
@@ -270,38 +203,3 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Moc
     assert updates[2].contents[0].call_id == "1"
     assert updates[3].text == "Processed value1"
     assert exec_counter == 1
-
-
-async def test_base_client_with_streaming_function_calling_disabled(chat_client_base: MockBaseChatClient):
-    chat_client_base.__maximum_iterations_per_request = 0
-    exec_counter = 0
-
-    @ai_function(name="test_function")
-    def ai_func(arg1: str) -> str:
-        nonlocal exec_counter
-        exec_counter += 1
-        return f"Processed {arg1}"
-
-    chat_client_base.streaming_responses = [
-        [
-            ChatResponseUpdate(
-                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1":')],
-                role="assistant",
-            ),
-            ChatResponseUpdate(
-                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='"value1"}')],
-                role="assistant",
-            ),
-        ],
-        [
-            ChatResponseUpdate(
-                contents=[TextContent(text="Processed value1")],
-                role="assistant",
-            )
-        ],
-    ]
-    updates = []
-    async for update in chat_client_base.get_streaming_response("hello", tool_choice="auto", tools=[ai_func]):
-        updates.append(update)
-    assert len(updates) == 1
-    assert exec_counter == 0

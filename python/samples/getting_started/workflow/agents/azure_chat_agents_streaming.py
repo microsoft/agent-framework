@@ -64,7 +64,7 @@ async def main():
             # AgentRunUpdateEvent contains incremental text deltas from the underlying agent.
             # Print a prefix when the executor changes, then append updates on the same line.
             eid = event.executor_id
-            if eid != last_executor_id:
+            if eid != last_executor_id:  # type: ignore[reportUnnecessaryComparison]
                 if last_executor_id is not None:
                     print()
                 print(f"{eid}:", end=" ", flush=True)

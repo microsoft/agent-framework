@@ -60,7 +60,7 @@ public class AgentExtensionsTests
     }
 
     [Fact]
-    public void CreateFromAgent_WithAgentHavingNullDescription_UsesEmptyDescription()
+    public void CreateFromAgent_WithAgentHavingNullDescription_UsesDefaultDescription()
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
@@ -73,7 +73,7 @@ public class AgentExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal("TestAgent", result.Name);
-        Assert.Equal(string.Empty, result.Description);
+        Assert.Equal("Invoke an agent to retrieve some information.", result.Description);
     }
 
     [Fact]
