@@ -218,7 +218,20 @@ async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
         full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)],
     )
 
-    events = await workflow.run(initial_greeting)
+    try:
+        events = await workflow.run(initial_greeting)
+    except RuntimeError as e:
+        if "did not converge" in str(e):
+            logger.error(f"Workflow failed to converge: {e}")
+            # Return a result indicating convergence failure
+            return {
+                "messages": orchestrator.trajectory,
+                "errors": str(e),
+                "termination_reason": TerminationReason.MAX_STEPS,
+            }
+        else:
+            # Re-raise if it's a different RuntimeError
+            raise
 
     # 6. Extract completed event
     completed_event = events.get_completed_event()
@@ -288,7 +301,7 @@ async def main():
     _logger = logger.opt(colors=True)
 
     # Iterate over the tasks
-    for task in tasks[9:20]:  # Test with first tasks
+    for task in tasks[10:20]:  # Test with first tasks
         _logger.info(f"<red>Testing task #{task.id}</red>")
         _logger.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")
 

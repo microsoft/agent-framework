@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from typing import Any
 
 from pydantic import BaseModel
 from tau2.environment.tool import Tool
@@ -86,14 +87,8 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
 
         # Handle function results as separate ToolMessage instances
         for fr in function_results:
-            if isinstance(fr.result, BaseModel):
-                content = fr.result.model_dump_json()
-            elif isinstance(fr.result, dict) or isinstance(fr.result, list):
-                content = json.dumps(fr.result)
-            elif fr.result is None:
-                content = None
-            else:
-                content = str(fr.result)
+            dumpable_content = _dump_function_result(fr.result)
+            content = dumpable_content if isinstance(dumpable_content, str) else json.dumps(dumpable_content)
             tool_msg = ToolMessage(
                 id=fr.call_id,
                 role="tool",
@@ -104,3 +99,16 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
             tau2_messages.append(tool_msg)
 
     return tau2_messages
+
+
+def _dump_function_result(result: Any) -> Any:
+    if isinstance(result, BaseModel):
+        return result.model_dump_json()
+    elif isinstance(result, list):
+        return [_dump_function_result(item) for item in result]
+    elif isinstance(result, dict):
+        return {k: _dump_function_result(v) for k, v in result.items()}
+    elif result is None:
+        return None
+    else:
+        return result
