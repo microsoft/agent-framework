@@ -20,6 +20,7 @@ These agents support a wide range of functionality out of the box:
 
 To create one of these agents, simply construct a `ChatClientAgent` using the ChatClient implementation of your choice.
 
+
 ```csharp
 using Microsoft.Extensions.AI;
 
@@ -28,15 +29,14 @@ var agent = new ChatClientAgent(chatClient, instructions: "You are a helpful ass
 
 For examples on how to construct `ChatClientAgents` with various `IChatClient` implementations, see the [Agent setup samples](../../../dotnet/samples/AgentSetup).
 
-
 ## Complex custom agents
 
 It is also possible to create fully custom agents, that are not just wrappers around a ChatClient.
-The agent framework provides the `AIAgent` base type, which when subclassed allows for complete control over the agent's behavior and capabilities.
+The agent framework provides the `AgentProtocol` base type, which when subclassed allows for complete control over the agent's behavior and capabilities.
 
 ## Remote agents
 
-The agent framework provides out of the box `AIAgent` subclasses for common service hosted agent protocols,
+The agent framework provides out of the box `AgentProtocol` subclasses for common service hosted agent protocols,
 such as A2A.
 
 ## Pre-built agents
