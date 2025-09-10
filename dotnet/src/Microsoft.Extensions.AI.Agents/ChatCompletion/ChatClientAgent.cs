@@ -344,9 +344,9 @@ public sealed class ChatClientAgent : AIAgent
 
         // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];
-        await foreach (ChatMessage message in thread.GetMessagesAsync(cancellationToken).ConfigureAwait(false))
+        if (thread.MessageStore is not null)
         {
-            threadMessages.Add(message);
+            threadMessages.AddRange(await thread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
         }
 
         // Add the input messages to the end of thread messages.

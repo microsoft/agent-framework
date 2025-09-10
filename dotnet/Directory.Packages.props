@@ -40,6 +40,7 @@
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.8" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.8" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
