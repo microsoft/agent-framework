@@ -36,6 +36,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Telemetry with a simple agent](./Agent_Step08_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
 |[Dependency injection with a simple agent](./Agent_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
 |[Exposing a simple agent as MCP tool](./Agent_Step10_AsMcpTool/)|This sample demonstrates how to expose an agent as an MCP tool|
+|[Exposing a simple agent a function tool](./Agent_Step11_AsFunctionTool/)|This sample demonstrates how to expose an agent as a function tool|
 
 ## Running the samples from the console
 

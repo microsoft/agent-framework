@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -38,16 +39,19 @@ public static class AgentExtensions
     {
         Throw.IfNull(agent);
 
-        async Task<string> RunAgentAsync(string query, CancellationToken cancellationToken)
+        [Description("Invoke an agent to retrieve some information.")]
+        async Task<string> RunAgentAsync(
+            [Description("Available information that will guide the agent.")] string query,
+            CancellationToken cancellationToken)
         {
             var response = await agent.RunAsync(query, cancellationToken: cancellationToken).ConfigureAwait(false);
             return response.Text;
         }
 
-        return AIFunctionFactory.Create(RunAgentAsync, options ?? new()
-        {
-            Name = agent.Name,
-            Description = agent.Description,
-        });
+        options ??= new();
+        options.Name ??= agent.Name;
+        options.Description ??= agent.Description;
+
+        return AIFunctionFactory.Create(RunAgentAsync, options);
     }
 }
