@@ -1,0 +1,12 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.Declarative\Microsoft.Agents.Declarative.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Extensions.AI.Agents.AzureAI\Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
+  </ItemGroup>
+
+</Project>

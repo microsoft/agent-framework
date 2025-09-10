@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.Declarative;
 using Microsoft.Extensions.AI.Agents.AzureAI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

@@ -5,9 +5,8 @@
 using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.Declarative;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.ChatCompletion;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";

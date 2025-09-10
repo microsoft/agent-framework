@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
+using Microsoft.Agents.Declarative;
 
 namespace Microsoft.Extensions.AI.Agents.AzureAI;
 

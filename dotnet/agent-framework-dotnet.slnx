@@ -228,6 +228,7 @@
     <File Path="tests/Directory.Build.props" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Microsoft.Agents.Declarative/Microsoft.Agents.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.Orchestration/Microsoft.Agents.Orchestration.csproj" />
     <Project Path="src/Microsoft.Agents.Workflows.Declarative/Microsoft.Agents.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.Workflows/Microsoft.Agents.Workflows.csproj" />
@@ -242,7 +243,6 @@
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Abstractions/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents.Runtime/Microsoft.Extensions.AI.Agents.Runtime.csproj" />
-    <Project Path="src/Microsoft.Extensions.AI.Agents.Yaml/Microsoft.Extensions.AI.Agents.Yaml.csproj" />
     <Project Path="src/Microsoft.Extensions.AI.Agents/Microsoft.Extensions.AI.Agents.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
@@ -259,6 +259,7 @@
     <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/Tests/UnitTests/">
+    <Project Path="tests/Microsoft.Agents.Declarative.UnitTests/Microsoft.Agents.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.Orchestration.UnitTests/Microsoft.Agents.Orchestration.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.Workflows.Declarative.UnitTests/Microsoft.Agents.Workflows.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.Workflows.UnitTests/Microsoft.Agents.Workflows.UnitTests.csproj" />
@@ -268,6 +269,5 @@
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Runtime.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.UnitTests/Microsoft.Extensions.AI.Agents.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Extensions.AI.Agents.Yaml.UnitTests/Microsoft.Extensions.AI.Agents.Yaml.UnitTests.csproj" />
   </Folder>
 </Solution>
