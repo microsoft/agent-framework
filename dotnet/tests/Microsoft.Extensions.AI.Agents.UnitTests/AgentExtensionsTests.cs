@@ -10,7 +10,7 @@ using Moq;
 namespace Microsoft.Extensions.AI.Agents.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AgentExtensions"/> class.
+/// Unit tests for the <see cref="AgentExtensions.AsAIFunction"/> method.
 /// </summary>
 public class AgentExtensionsTests
 {
