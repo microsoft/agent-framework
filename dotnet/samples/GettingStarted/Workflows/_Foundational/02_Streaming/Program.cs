@@ -34,9 +34,9 @@ public static class Program
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Hello, World!");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorCompleteEvent executorComplete)
+            if (evt is ExecutorCompletedEvent executorCompleted)
             {
-                Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
+                Console.WriteLine($"{executorCompleted.ExecutorId}: {executorCompleted.Data}");
             }
         }
     }
