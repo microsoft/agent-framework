@@ -120,7 +120,23 @@ Questions:
 
 ## Communication endpoints `/actors/v1/{actorType}/{actorKey}/{messageId}`
 
-Agent Discovery is only good if there is an established way to communicate to the agents. Without an implemented in-place endpoint for sending/retrieving messages (for actor and conversation) users can build too custom ways 
+Agent Discovery is only good if there is an established way to communicate to the agents. Without an implemented in-place endpoint for sending/retrieving messages (for actor and conversation) users can build too different schemas, and make the client-side work unbearable for multiple different apps.
+
+Based on this thought I am proposing an `actors/v1/...` route group, which allows sending / retrieving and cancelling the message processing. All these endpoints include `actorType`, `actorKey` and `messageId` as the uri params.
+
+- `actorType` here is the same as the name of agent registration (in our case - `pirate`).
+- `actorKey` is the unique identifier of the conversation. For simplicity - GUID would work.
+- `messageId` is the identifier of the message in the conversation. GUID should work here fine as well.
+
+The sending message API (HTTP POST) also has a body to fill in the actual data like message to the chat. `Method` is an already known agentic-framework term (method name to invoke on the agent). `Params` is a free-typed representation of input: in chat-client case it is a user message typed in the chat.
+```json
+{
+  "method": "run",
+  "params": [
+    { "$type": "text", "content": "hey matey!" }
+  ]
+}
+```
 
 ## Versioning and Content Negotiation
 
