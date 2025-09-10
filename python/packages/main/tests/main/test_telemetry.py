@@ -190,62 +190,65 @@ def test_index_key_constant():
 def test_start_span_basic():
     """Test starting a span with basic function info."""
     mock_tracer = Mock()
-    mock_span = Mock()
-    mock_tracer.get_function_span.return_value = mock_span
+    with patch("agent_framework.telemetry.tracer", mock_tracer):
+        mock_span = Mock()
+        mock_tracer.get_function_span.return_value = mock_span
 
-    # Create a mock function
-    mock_function = Mock()
-    mock_function.name = "test_function"
-    mock_function.description = "Test function description"
+        # Create a mock function
+        mock_function = Mock()
+        mock_function.name = "test_function"
+        mock_function.description = "Test function description"
 
-    result = get_function_span(mock_tracer, mock_function)
+        result = get_function_span(mock_function)
 
-    assert result == mock_span
-    mock_tracer.get_function_span.assert_called_once()
+        assert result == mock_span
+        mock_tracer.get_function_span.assert_called_once()
 
-    call_args = mock_tracer.get_function_span.call_args
-    assert call_args[1]["name"] == "execute_tool test_function"
+        call_args = mock_tracer.get_function_span.call_args
+        assert call_args[1]["name"] == "execute_tool test_function"
 
-    attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
-    assert attributes[OtelAttr.TOOL_NAME] == "test_function"
-    assert attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"
+        attributes = call_args[1]["attributes"]
+        assert attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
+        assert attributes[OtelAttr.TOOL_NAME] == "test_function"
+        assert attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"
 
 
 def test_start_span_with_tool_call_id():
     """Test starting a span with tool_call_id."""
     mock_tracer = Mock()
-    mock_span = Mock()
-    mock_tracer.get_function_span.return_value = mock_span
+    with patch("agent_framework.telemetry.tracer", mock_tracer):
+        mock_span = Mock()
+        mock_tracer.get_function_span.return_value = mock_span
 
-    mock_function = Mock()
-    mock_function.name = "test_function"
-    mock_function.description = "Test function"
+        mock_function = Mock()
+        mock_function.name = "test_function"
+        mock_function.description = "Test function"
 
-    tool_call_id = "test_call_123"
+        tool_call_id = "test_call_123"
 
-    _ = get_function_span(mock_tracer, mock_function, tool_call_id)
+        _ = get_function_span(mock_function, tool_call_id)
 
-    call_args = mock_tracer.get_function_span.call_args
-    attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_123"
+        call_args = mock_tracer.get_function_span.call_args
+        attributes = call_args[1]["attributes"]
+        assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_123"
 
 
 def test_start_span_without_description():
     """Test starting a span when function has no description."""
     mock_tracer = Mock()
-    mock_span = Mock()
-    mock_tracer.get_function_span.return_value = mock_span
+    with patch("agent_framework.telemetry.tracer", mock_tracer):
+        mock_span = Mock()
+        mock_tracer.get_function_span.return_value = mock_span
 
-    mock_function = Mock()
-    mock_function.name = "test_function"
-    mock_function.description = None
+        mock_function = Mock()
+        mock_function.name = "test_function"
+        mock_function.description = None
 
-    get_function_span(mock_tracer, mock_function)
+        get_function_span(mock_function)
 
-    call_args = mock_tracer.get_function_span.call_args
-    attributes = call_args[1]["attributes"]
-    assert OtelAttr.TOOL_DESCRIPTION not in attributes
+        call_args = mock_tracer.get_function_span.call_args
+        attributes = call_args[1]["attributes"]
+        assert OtelAttr.TOOL_DESCRIPTION not in attributes
 
 
 # region Test use_telemetry decorator
