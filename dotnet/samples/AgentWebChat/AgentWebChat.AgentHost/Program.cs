@@ -9,6 +9,8 @@ using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore;
 using Microsoft.Extensions.AI.Agents.Hosting.Discovery;
+using Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
+using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,50 +38,59 @@ builder.AddAzureCosmosClient("agent-web-chat-cosmosdb", null, CosmosClientOption
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-var pirateAgentBuilder = builder.AddAIAgent(
-    "pirate",
-    instructions: "You are a pirate. Speak like a pirate",
-    description: "An agent that speaks like a pirate.",
-    chatClientServiceKey: "chat-model");
-
-// discovery configuration
-pirateAgentBuilder
+builder
+    .AddAIAgent(
+        "pirate",
+        instructions: "You are a pirate. Speak like a pirate",
+        description: "An agent that speaks like a pirate.",
+        chatClientServiceKey: "chat-model")
     .WithDiscovery(); // adds the agent to the discovery service
 
-builder.AddAIAgent("knights-and-knaves", (sp, key) =>
-{
-    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+builder
+    .AddAIAgent("knights-and-knaves", (sp, key) =>
+    {
+        var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
 
-    ChatClientAgent knight = new(
-        chatClient,
-        """
-        You are a knight. This means that you must always tell the truth. Your name is Alice.
-        Bob is standing next to you. Bob is a knave, which means he always lies.
-        When replying, always start with your name (Alice). Eg, "Alice: I am a knight."
-        """, "Alice");
+        ChatClientAgent knight = new(
+            chatClient,
+            """
+            You are a knight. This means that you must always tell the truth. Your name is Alice.
+            Bob is standing next to you. Bob is a knave, which means he always lies.
+            When replying, always start with your name (Alice). Eg, "Alice: I am a knight."
+            """, "Alice");
 
-    ChatClientAgent knave = new(
-        chatClient,
-        """
-        You are a knave. This means that you must always lie. Your name is Bob.
-        Alice is standing next to you. Alice is a knight, which means she always tells the truth.
-        When replying, always include your name (Bob). Eg, "Bob: I am a knight."
-        """, "Bob");
+        ChatClientAgent knave = new(
+            chatClient,
+            """
+            You are a knave. This means that you must always lie. Your name is Bob.
+            Alice is standing next to you. Alice is a knight, which means she always tells the truth.
+            When replying, always include your name (Bob). Eg, "Bob: I am a knight."
+            """, "Bob");
 
-    ChatClientAgent narrator = new(
-        chatClient,
-        """
-        You are are the narrator of a puzzle involving knights (who always tell the truth) and knaves (who always lie).
-        The user is going to ask questions and guess whether Alice or Bob is the knight or knave.
-        Alice is standing to one side of you. Alice is a knight, which means she always tells the truth.
-        Bob is standing to the other side of you. Bob is a knave, which means he always lies.
-        When replying, always include your name (Narrator).
-        Once the user has deduced what type (knight or knave) both Alice and Bob are, tell them whether they are right or wrong.
-        If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
-        """, "Narrator");
+        ChatClientAgent narrator = new(
+            chatClient,
+            """
+            You are are the narrator of a puzzle involving knights (who always tell the truth) and knaves (who always lie).
+            The user is going to ask questions and guess whether Alice or Bob is the knight or knave.
+            Alice is standing to one side of you. Alice is a knight, which means she always tells the truth.
+            Bob is standing to the other side of you. Bob is a knave, which means he always lies.
+            When replying, always include your name (Narrator).
+            Once the user has deduced what type (knight or knave) both Alice and Bob are, tell them whether they are right or wrong.
+            If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
+            """, "Narrator");
 
-    return new ConcurrentOrchestration([knight, knave, narrator], name: key);
-}).WithDiscovery();
+        return new ConcurrentOrchestration([knight, knave, narrator], name: key);
+    })
+    .WithDiscovery(new AgentMetadata(new ActorType("knights-and-knaves")) // a fully customized agent metadata
+    {
+        Description = "A narrator agent that helps you solve the knights and knaves puzzle.",
+        Version = "1.0",
+        Model = "chat-gpt-4-turbo", // a hardcode here, we probably can resolve it from the underlying chat clients
+        Metadata = new Dictionary<string, object>()
+        {
+            { "participants.count", "3" }
+        }
+    });
 
 // Add CosmosDB state storage to override default storage
 builder.Services.AddCosmosActorStateStorage("actor-state-db", "ActorState");

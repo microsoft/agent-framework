@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
@@ -13,6 +14,7 @@ public sealed class AgentMetadata
     /// <summary>
     /// Id for agent
     /// </summary>
+    [JsonPropertyName("name")]
     public ActorType Name { get; }
 
     /// <summary>
@@ -27,25 +29,30 @@ public sealed class AgentMetadata
     /// <summary>
     /// descr
     /// </summary>
+    [JsonPropertyName("description")]
     public string? Description { get; set; }
 
     /// <summary>
     /// version
     /// </summary>
+    [JsonPropertyName("version")]
     public string? Version { get; set; }
 
     /// <summary>
     /// If applicable, the instructions supplied to the agent.
     /// </summary>
+    [JsonPropertyName("instructions")]
     public string? Instructions { get; set; }
 
     /// <summary>
     /// The underlying model used by the agent
     /// </summary>
+    [JsonPropertyName("model")]
     public string? Model { get; set; }
 
     /// <summary>
     /// Custom metadata associated with the agent.
     /// </summary>
-    public IDictionary<string, object>? CustomMetadata { get; set; }
+    [JsonPropertyName("metadata")]
+    public IDictionary<string, object>? Metadata { get; set; }
 }
