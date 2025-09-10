@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runt
 from pydantic import BaseModel, Field
 
 from ._logging import get_logger
+from ._mcp import MCPTool
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import ToolProtocol
@@ -195,6 +196,25 @@ class BaseChatClient(AFBaseModel, ABC):
         """Turn the allowed input into a list of chat messages."""
         return prepare_messages(messages)
 
+    @staticmethod
+    def _normalize_tools(
+        tools: ToolProtocol
+        | MutableMapping[str, Any]
+        | Callable[..., Any]
+        | list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]]
+        | None = None,
+    ) -> list[ToolProtocol | dict[str, Any] | Callable[..., Any]]:
+        """Normalize the tools input to a list of tools."""
+        final_tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] = []
+        if not tools:
+            return final_tools
+        for tool in tools if isinstance(tools, list) else [tools]:  # type: ignore[reportUnknownType]
+            if isinstance(tool, MCPTool):
+                final_tools.extend(tool.functions)  # type: ignore
+                continue
+            final_tools.append(tool)  # type: ignore
+        return final_tools
+
     # region Internal methods to be implemented by the derived classes
 
     @abstractmethod
@@ -317,7 +337,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
             )
@@ -396,7 +416,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=tools,  # type: ignore
+                tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
                 **kwargs,
