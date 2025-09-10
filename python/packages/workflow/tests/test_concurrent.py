@@ -87,7 +87,7 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
             texts.append(msgs[-1].text if msgs else "")
         return " | ".join(sorted(texts))
 
-    wf = ConcurrentBuilder().participants([e1, e2]).with_custom_aggregator(summarize).build()
+    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize).build()
 
     completed: WorkflowCompletedEvent | None = None
     async for ev in wf.run_stream("prompt: custom"):

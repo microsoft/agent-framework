@@ -59,10 +59,10 @@ async def main() -> None:
         for r in results:
             try:
                 messages = getattr(r.agent_run_response, "messages", [])
-                final_text = messages[-1].text if messages else "(no content)"
+                final_text = messages[-1].text if messages and hasattr(messages[-1], "text") else "(no content)"
                 expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}:\n{final_text}")
-            except Exception:
-                expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}: (unreadable response)")
+            except Exception as e:
+                expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}: (error: {type(e).__name__}: {e})")
 
         # Ask the model to synthesize a concise summary of the experts' outputs
         system_msg = ChatMessage(
@@ -81,15 +81,12 @@ async def main() -> None:
     # Build with a custom aggregator callback function
     # - participants([...]) accepts AgentProtocol (agents) or Executor instances.
     #   Each participant becomes a parallel branch (fan-out) from an internal dispatcher.
-    # - with_custom_aggregator(...) overrides the default aggregator:
+    # - with_aggregator(...) overrides the default aggregator:
     #   • Default aggregator -> returns list[ChatMessage] (one user + one assistant per agent)
     #   • Custom callback    -> return value becomes WorkflowCompletedEvent.data (string here)
     #   The callback can be sync or async; it receives list[AgentExecutorResponse].
     workflow = (
-        ConcurrentBuilder()
-        .participants([researcher, marketer, legal])
-        .with_custom_aggregator(summarize_results)
-        .build()
+        ConcurrentBuilder().participants([researcher, marketer, legal]).with_aggregator(summarize_results).build()
     )
 
     completion: WorkflowCompletedEvent | None = None

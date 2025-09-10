@@ -78,10 +78,13 @@ class _AggregateAgentConversations(Executor):
             r = getattr(msg, "role", None)
             if r is None:
                 return False
-            try:
-                return r == role or (isinstance(r, str) and r.lower() == role.value)
-            except Exception:  # pragma: no cover - defensive
-                return False
+            # Normalize both r and role to lowercase strings for comparison
+            r_str = str(r).lower() if isinstance(r, str) or hasattr(r, "__str__") else r
+            role_str = getattr(role, "value", None)
+            if role_str is None:
+                role_str = str(role)
+            role_str = role_str.lower()
+            return r_str == role_str
 
         prompt_message: ChatMessage | None = None
         assistant_replies: list[ChatMessage] = []
@@ -226,7 +229,7 @@ class ConcurrentBuilder:
         self._participants = list(participants)
         return self
 
-    def with_custom_aggregator(self, aggregator: Executor | Callable[..., Any]) -> "ConcurrentBuilder":
+    def with_aggregator(self, aggregator: Executor | Callable[..., Any]) -> "ConcurrentBuilder":
         r"""Override the default aggregator with an Executor or a callback.
 
         - Executor: must handle `list[AgentExecutorResponse]` and add a
