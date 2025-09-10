@@ -4,7 +4,7 @@ import sys
 from collections.abc import MutableSequence, Sequence
 from typing import Any, Final
 
-from agent_framework import ChatMessage, Context, ContextProvider
+from agent_framework import ChatMessage, Context, ContextProvider, TextContent
 from agent_framework.exceptions import ServiceInitializationError
 from pydantic import PrivateAttr
 
@@ -145,9 +145,9 @@ class Mem0Provider(ContextProvider):
 
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
-        instructions = f"{self.context_prompt}\n{line_separated_memories}" if line_separated_memories else None
+        content = TextContent(f"{self.context_prompt}\n{line_separated_memories}") if line_separated_memories else None
 
-        return Context(instructions=instructions)
+        return Context(contents=[content] if content else None)
 
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided.

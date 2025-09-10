@@ -654,8 +654,8 @@ class ChatAgent(BaseAgent):
         messages: list[ChatMessage] = []
         if self.instructions:
             messages.append(ChatMessage(role=Role.SYSTEM, text=self.instructions))
-        if context and context.instructions:
-            messages.append(ChatMessage(role=Role.SYSTEM, text=context.instructions))
+        if context and context.contents:
+            messages.append(ChatMessage(role=Role.SYSTEM, contents=context.contents))
         if thread.message_store:
             messages.extend(await thread.message_store.list_messages() or [])
         messages.extend(input_messages or [])

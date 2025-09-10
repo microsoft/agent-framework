@@ -19,6 +19,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    Contents,
     Role,
     TextContent,
 )
@@ -282,16 +283,16 @@ async def test_chat_client_agent_author_name_is_used_from_response() -> None:
 
 # Mock context provider for testing
 class MockContextProvider(ContextProvider):
-    context_instructions: str | None = None
+    context_contents: list[Contents] | None = None
     thread_created_called: bool = False
     messages_adding_called: bool = False
     model_invoking_called: bool = False
     thread_id: str | None = None
     new_messages: list[ChatMessage] = []
 
-    def __init__(self, instructions: str | None = None) -> None:
+    def __init__(self, contents: list[Contents] | None = None) -> None:
         super().__init__()
-        self.context_instructions = instructions
+        self.context_contents = contents
         self.thread_created_called = False
         self.messages_adding_called = False
         self.model_invoking_called = False
@@ -312,12 +313,12 @@ class MockContextProvider(ContextProvider):
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         self.model_invoking_called = True
-        return Context(instructions=self.context_instructions)
+        return Context(contents=self.context_contents)
 
 
 async def test_chat_agent_context_providers_model_invoking(chat_client: ChatClientProtocol) -> None:
     """Test that context providers' model_invoking is called during agent run."""
-    mock_provider = MockContextProvider(instructions="Test context instructions")
+    mock_provider = MockContextProvider(contents=[TextContent("Test context instructions")])
     agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
 
     await agent.run("Hello")
@@ -356,11 +357,11 @@ async def test_chat_agent_context_providers_messages_adding(chat_client: ChatCli
 
 async def test_chat_agent_context_instructions_in_messages(chat_client: ChatClientProtocol) -> None:
     """Test that AI context instructions are included in messages."""
-    mock_provider = MockContextProvider(instructions="Context-specific instructions")
+    mock_provider = MockContextProvider(contents=[TextContent("Context-specific instructions")])
     agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions", context_providers=mock_provider)
 
     # We need to test the _prepare_thread_and_messages method directly
-    context = Context(instructions="Context-specific instructions")
+    context = Context(contents=[TextContent("Context-specific instructions")])
     _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=None, context=context, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
     )
@@ -378,7 +379,7 @@ async def test_chat_agent_context_instructions_in_messages(chat_client: ChatClie
 async def test_chat_agent_context_instructions_without_agent_instructions(chat_client: ChatClientProtocol) -> None:
     """Test that AI context instructions work when agent has no instructions."""
     agent = ChatAgent(chat_client=chat_client)  # No instructions
-    context = Context(instructions="Context-only instructions")
+    context = Context(contents=[TextContent("Context-only instructions")])
 
     _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=None, context=context, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
@@ -411,7 +412,7 @@ async def test_chat_agent_no_context_instructions(chat_client: ChatClientProtoco
 
 async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientProtocol) -> None:
     """Test that context providers work with run_stream method."""
-    mock_provider = MockContextProvider(instructions="Stream context instructions")
+    mock_provider = MockContextProvider(contents=[TextContent("Stream context instructions")])
     agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
 
     # Collect all stream updates
@@ -427,8 +428,8 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
 
 async def test_chat_agent_multiple_context_providers(chat_client: ChatClientProtocol) -> None:
     """Test that multiple context providers work together."""
-    provider1 = MockContextProvider(instructions="First provider instructions")
-    provider2 = MockContextProvider(instructions="Second provider instructions")
+    provider1 = MockContextProvider(contents=[TextContent("First provider instructions")])
+    provider2 = MockContextProvider(contents=[TextContent("Second provider instructions")])
 
     agent = ChatAgent(chat_client=chat_client, context_providers=[provider1, provider2])
 
@@ -446,8 +447,8 @@ async def test_chat_agent_multiple_context_providers(chat_client: ChatClientProt
 
 async def test_chat_agent_aggregate_context_provider_combines_instructions() -> None:
     """Test that AggregateContextProvider combines instructions from multiple providers."""
-    provider1 = MockContextProvider(instructions="First instruction")
-    provider2 = MockContextProvider(instructions="Second instruction")
+    provider1 = MockContextProvider(contents=[TextContent("First instruction")])
+    provider2 = MockContextProvider(contents=[TextContent("Second instruction")])
 
     aggregate = AggregateContextProvider()
     aggregate.providers.append(provider1)
@@ -456,7 +457,11 @@ async def test_chat_agent_aggregate_context_provider_combines_instructions() -> 
     # Test model_invoking combines instructions
     result = await aggregate.model_invoking([ChatMessage(role=Role.USER, text="Test")])
 
-    assert result.instructions == "First instruction\nSecond instruction"
+    assert result.contents
+    assert isinstance(result.contents[0], TextContent)
+    assert isinstance(result.contents[1], TextContent)
+    assert result.contents[0].text == "First instruction"
+    assert result.contents[1].text == "Second instruction"
 
 
 async def test_chat_agent_context_providers_with_thread_service_id() -> None:

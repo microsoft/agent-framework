@@ -8,7 +8,7 @@ from contextlib import AsyncExitStack
 from types import TracebackType
 
 from ._pydantic import AFBaseModel
-from ._types import ChatMessage
+from ._types import ChatMessage, Contents
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -27,9 +27,9 @@ class Context(AFBaseModel):
     This context is per invocation, and will not be stored as part of the chat history.
     """
 
-    instructions: str | None = None
+    contents: list[Contents] | None = None
     """
-    Any instructions to pass to the AI model in addition to any other prompts
+    Any content to pass to the AI model in addition to any other prompts
     that it may already have (in the case of an agent), or chat history that may already exist.
     """
 
@@ -146,7 +146,13 @@ class AggregateContextProvider(ContextProvider):
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         sub_contexts = await asyncio.gather(*[x.model_invoking(messages) for x in self.providers])
         combined_context = Context()
-        combined_context.instructions = "\n".join([ctx.instructions for ctx in sub_contexts if ctx.instructions])
+        # Flatten the list of lists and filter out None values
+        all_contents = []
+        for ctx in sub_contexts:
+            if ctx.contents:
+                all_contents.extend(ctx.contents)
+
+        combined_context.contents = all_contents if all_contents else None
         return combined_context
 
     async def __aenter__(self) -> "Self":
