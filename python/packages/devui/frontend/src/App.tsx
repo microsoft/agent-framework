@@ -1,158 +1,23 @@
 /**
- * DevUI App - Split-panel chat interface for agent debugging
- * Features: Agent switching, real-time chat, debug panel with events/traces/tools
+ * DevUI App - Minimal orchestrator for agent/workflow interactions
+ * Features: Entity selection, layout management, debug coordination
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { AgentSwitcher } from "@/components/main/agent-switcher";
-import { ChatRouter } from "@/components/main/chat-router";
-import { DebugPanel } from "@/components/main/debug-panel";
-import { ModeToggle } from "@/components/mode-toggle";
+import { AppHeader } from "@/components/shared/app-header";
+import { DebugPanel } from "@/components/shared/debug-panel";
+import { AgentView } from "@/components/agent/agent-view";
+import { WorkflowView } from "@/components/workflow/workflow-view";
 import { LoadingState } from "@/components/ui/loading-state";
 import { apiClient } from "@/services/api";
-import { Plus, Settings, ChevronLeft, GripVertical } from "lucide-react";
+import { ChevronLeft, GripVertical } from "lucide-react";
 import type {
   AgentInfo,
   WorkflowInfo,
-  ChatMessage,
   AppState,
-  ChatState,
-  RunAgentRequest,
+  DebugStreamEvent,
 } from "@/types";
-import type { AgentRunResponseUpdate } from "@/types/agent-framework";
-import {
-  isTextContent,
-  isFunctionCallContent,
-  isFunctionResultContent,
-} from "@/types/agent-framework";
-
-// Function call accumulator to handle streaming function arguments
-interface FunctionCallAccumulator {
-  [callId: string]: {
-    name: string;
-    arguments: string;
-    isComplete: boolean;
-  };
-}
-
-// Helper to extract text content from AgentRunResponseUpdate with proper function call accumulation
-function extractMessageContent(
-  update: AgentRunResponseUpdate,
-  functionCallAccumulator: { current: FunctionCallAccumulator }
-): string {
-  if (!update) return "";
-
-  // Use the text property if available (concatenated text from all TextContent)
-  if (update.text && typeof update.text === "string") {
-    console.log("✅ Found text property:", update.text);
-    return update.text;
-  }
-
-  // Fallback to manual extraction
-  if (!update.contents || !Array.isArray(update.contents)) {
-    console.log("❌ No contents array found");
-    return "";
-  }
-
-  const textParts: string[] = [];
-
-  for (const content of update.contents) {
-    if (isTextContent(content)) {
-      textParts.push(content.text);
-    } else if (isFunctionCallContent(content)) {
-      // Accumulate function call arguments by call_id
-      const callId = content.call_id;
-      const name = content.name || "";
-      const args = content.arguments || "";
-
-      if (!functionCallAccumulator.current[callId]) {
-        functionCallAccumulator.current[callId] = {
-          name,
-          arguments: "",
-          isComplete: false,
-        };
-      }
-
-      // Accumulate arguments
-      if (typeof args === "string") {
-        functionCallAccumulator.current[callId].arguments += args;
-      } else if (args !== null && args !== undefined) {
-        // If we get a complete object, stringify it
-        functionCallAccumulator.current[callId].arguments =
-          JSON.stringify(args);
-        functionCallAccumulator.current[callId].isComplete = true;
-      }
-
-      // Update name if provided (sometimes name comes later)
-      if (name) {
-        functionCallAccumulator.current[callId].name = name;
-      }
-
-      // Try to parse arguments to see if they're complete JSON
-      const accumulated = functionCallAccumulator.current[callId];
-      let isValidJson = false;
-      try {
-        if (accumulated.arguments.trim()) {
-          JSON.parse(accumulated.arguments);
-          isValidJson = true;
-          accumulated.isComplete = true;
-        }
-      } catch {
-        // Not complete JSON yet, continue accumulating
-      }
-
-      // Only show function call if we have complete arguments or it's marked complete
-      if (accumulated.isComplete && accumulated.name) {
-        textParts.push(`Calling ${accumulated.name}(${accumulated.arguments})`);
-        console.log("✅ Complete function call:", accumulated);
-      } else if (isValidJson && accumulated.name) {
-        textParts.push(`Calling ${accumulated.name}(${accumulated.arguments})`);
-        console.log("✅ Valid JSON function call:", accumulated);
-      }
-      // If incomplete, don't add anything to textParts yet
-    } else if (isFunctionResultContent(content)) {
-      // Tool results are already shown in the debug panel, so we don't include them in main chat
-      // textParts.push(`Tool result: ${content.result}`);
-    }
-  }
-
-  const result = textParts.join("\n");
-  return result;
-}
-
-// Helper to update rich message contents by accumulating text chunks
-function updateRichMessageContents(
-  existingContents: ChatMessage["contents"], 
-  newChunk: string
-): ChatMessage["contents"] {
-  if (!newChunk) return existingContents;
-
-  const updatedContents = [...existingContents];
-  
-  // Find existing text content to accumulate into
-  const textContentIndex = updatedContents.findIndex(content => content.type === "text");
-  
-  if (textContentIndex >= 0) {
-    // Update existing text content
-    const existingTextContent = updatedContents[textContentIndex];
-    if (existingTextContent.type === "text") {
-      updatedContents[textContentIndex] = {
-        ...existingTextContent,
-        text: (existingTextContent.text || "") + newChunk,
-      };
-    }
-  } else {
-    // Add new text content
-    updatedContents.push({
-      type: "text",
-      text: newChunk,
-    } as import("@/types/agent-framework").TextContent);
-  }
-  
-  return updatedContents;
-}
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>({
@@ -161,15 +26,7 @@ export default function App() {
     isLoading: true,
   });
 
-  const [chatState, setChatState] = useState<ChatState>({
-    messages: [],
-    isStreaming: false,
-    streamEvents: [],
-  });
-
-  const [workflowInfo, setWorkflowInfo] = useState<WorkflowInfo | null>(null);
-  const [workflowLoading, setWorkflowLoading] = useState(false);
-
+  const [debugEvents, setDebugEvents] = useState<DebugStreamEvent[]>([]);
   const [debugPanelOpen, setDebugPanelOpen] = useState(true);
   const [debugPanelWidth, setDebugPanelWidth] = useState(() => {
     // Initialize from localStorage or default to 320
@@ -177,9 +34,6 @@ export default function App() {
     return savedWidth ? parseInt(savedWidth, 10) : 320;
   });
   const [isResizing, setIsResizing] = useState(false);
-
-  // Function call accumulator for streaming function arguments
-  const functionCallAccumulator = useRef<FunctionCallAccumulator>({});
 
   // Initialize app - load agents and workflows
   useEffect(() => {
@@ -256,374 +110,22 @@ export default function App() {
     setDebugPanelOpen(false);
   }, []);
 
-  // Handle agent/workflow selection
-  const handleAgentSelect = useCallback(
-    async (item: AgentInfo | WorkflowInfo) => {
-      setAppState((prev) => ({
-        ...prev,
-        selectedAgent: item,
-        currentThread: undefined,
-      }));
+  // Handle entity selection
+  const handleEntitySelect = useCallback((item: AgentInfo | WorkflowInfo) => {
+    setAppState((prev) => ({
+      ...prev,
+      selectedAgent: item,
+      currentThread: undefined,
+    }));
 
-      // Clear chat when switching agents
-      setChatState({
-        messages: [],
-        isStreaming: false,
-        streamEvents: [],
-      });
-
-      // Clear function call accumulator
-      functionCallAccumulator.current = {};
-
-      // Load workflow info if it's a workflow
-      if (item.type === "workflow") {
-        setWorkflowLoading(true);
-        try {
-          const info = await apiClient.getWorkflowInfo(item.id);
-          setWorkflowInfo(info);
-        } catch (error) {
-          console.error("Failed to load workflow info:", error);
-          setWorkflowInfo(null);
-        } finally {
-          setWorkflowLoading(false);
-        }
-      } else {
-        setWorkflowInfo(null);
-        setWorkflowLoading(false);
-      }
-    },
-    []
-  );
-
-  // Handle new thread creation
-  const handleNewThread = useCallback(() => {
-    setAppState((prev) => ({ ...prev, currentThread: undefined }));
-    setChatState({
-      messages: [],
-      isStreaming: false,
-      streamEvents: [],
-    });
-
-    // Clear function call accumulator
-    functionCallAccumulator.current = {};
+    // Clear debug events when switching entities
+    setDebugEvents([]);
   }, []);
 
-  // Handle workflow data sending (structured input)
-  const handleSendWorkflowData = useCallback(
-    async (inputData: Record<string, unknown>) => {
-      if (!appState.selectedAgent || appState.selectedAgent.type !== "workflow")
-        return;
-
-      // Add user message showing the structured input
-      const userMessage: ChatMessage = {
-        id: `user-${Date.now()}`,
-        role: "user",
-        contents: [{
-          type: "text",
-          text: `Workflow Input:\n\`\`\`json\n${JSON.stringify(
-            inputData,
-            null,
-            2
-          )}\n\`\`\``,
-        }],
-        timestamp: new Date().toISOString(),
-      };
-
-      setChatState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, userMessage],
-        isStreaming: true,
-        streamEvents: [], // Clear previous events for new conversation
-      }));
-
-      // Create assistant message placeholder
-      const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        contents: [],
-        timestamp: new Date().toISOString(),
-        streaming: true,
-      };
-
-      setChatState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, assistantMessage],
-      }));
-
-      try {
-        const request = { input_data: inputData };
-
-        // Use workflow-specific API streaming
-        const streamGenerator = apiClient.streamWorkflowExecution(
-          appState.selectedAgent.id,
-          request
-        );
-
-        for await (const event of streamGenerator) {
-          // Add event to debug stream
-          setChatState((prev) => ({
-            ...prev,
-            streamEvents: [...prev.streamEvents, event],
-          }));
-
-          // Update chat message if it's a content update
-          if (event.type === "workflow_event" && event.event) {
-            const eventData = event.event.data;
-            let contentUpdate = "";
-
-            if (typeof eventData === "string") {
-              contentUpdate = eventData;
-            } else if (eventData && typeof eventData === "object") {
-              try {
-                contentUpdate = JSON.stringify(eventData, null, 2);
-              } catch {
-                contentUpdate = "[Event data]";
-              }
-            }
-
-            if (contentUpdate) {
-              setChatState((prev) => ({
-                ...prev,
-                messages: prev.messages.map((msg) =>
-                  msg.id === assistantMessage.id
-                    ? { ...msg, contents: updateRichMessageContents(msg.contents, contentUpdate + "\n") }
-                    : msg
-                ),
-              }));
-            }
-          }
-
-          // Handle completion
-          if (event.type === "completion") {
-            setChatState((prev) => ({
-              ...prev,
-              isStreaming: false,
-              messages: prev.messages.map((msg) =>
-                msg.id === assistantMessage.id
-                  ? { ...msg, streaming: false }
-                  : msg
-              ),
-            }));
-            break;
-          }
-
-          // Handle errors
-          if (event.type === "error") {
-            setChatState((prev) => ({
-              ...prev,
-              isStreaming: false,
-              messages: prev.messages.map((msg) =>
-                msg.id === assistantMessage.id
-                  ? {
-                      ...msg,
-                      content: `Error: ${event.error}`,
-                      streaming: false,
-                    }
-                  : msg
-              ),
-            }));
-            break;
-          }
-        }
-      } catch (error) {
-        console.error("Workflow execution failed:", error);
-        setChatState((prev) => ({
-          ...prev,
-          isStreaming: false,
-          messages: prev.messages.map((msg) =>
-            msg.id === assistantMessage.id
-              ? {
-                  ...msg,
-                  content: `Error: ${
-                    error instanceof Error ? error.message : "Unknown error"
-                  }`,
-                  streaming: false,
-                }
-              : msg
-          ),
-        }));
-      }
-    },
-    [appState.selectedAgent]
-  );
-
-  // Handle message sending (for agents)
-  const handleSendMessage = useCallback(
-    async (messages: RunAgentRequest["messages"]) => {
-      if (!appState.selectedAgent) return;
-
-
-      // Convert to ChatMessage format for UI state
-      let userMessageContents: import("@/types/agent-framework").Contents[];
-      if (typeof messages === "string") {
-        userMessageContents = [{
-          type: "text",
-          text: messages,
-        } as import("@/types/agent-framework").TextContent];
-      } else {
-        // Cast the contents to the proper Contents type
-        userMessageContents = messages.flatMap(msg => msg.contents) as import("@/types/agent-framework").Contents[];
-      }
-
-      // Add user message to UI state
-      const userMessage: ChatMessage = {
-        id: `user-${Date.now()}`,
-        role: "user",
-        contents: userMessageContents,
-        timestamp: new Date().toISOString(),
-      };
-
-      setChatState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, userMessage],
-        isStreaming: true,
-        streamEvents: [], // Clear previous events for new conversation
-      }));
-
-      // Create assistant message placeholder
-      const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        contents: [],
-        timestamp: new Date().toISOString(),
-        streaming: true,
-      };
-
-      setChatState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, assistantMessage],
-      }));
-
-      try {
-        const request = {
-          messages, // Use the correct field name!
-          thread_id:
-            chatState.messages.length > 0
-              ? appState.currentThread?.id
-              : undefined,
-          options: { capture_traces: true },
-        };
-
-        const isWorkflow = appState.selectedAgent.type === "workflow";
-
-        if (isWorkflow) {
-          // For workflows, this shouldn't be called - use handleSendWorkflowData instead
-          console.warn(
-            "handleSendMessage called for workflow - this is unexpected"
-          );
-          return;
-        }
-
-        // Use agent-specific API streaming
-        const streamGenerator = apiClient.streamAgentExecution(
-          appState.selectedAgent.id,
-          request
-        );
-
-        for await (const event of streamGenerator) {
-          // Add event to debug stream
-          setChatState((prev) => ({
-            ...prev,
-            streamEvents: [...prev.streamEvents, event],
-          }));
-
-          // Store thread_id when first received
-          if (event.thread_id && !appState.currentThread) {
-            setAppState((prev) => ({
-              ...prev,
-              currentThread: {
-                id: event.thread_id!,
-                agent_id: appState.selectedAgent!.id,
-                created_at: new Date().toISOString(),
-                message_count: 0,
-              },
-            }));
-          }
-
-          // Update chat message if it's a content update
-          if (event.type === "agent_run_update" && event.update) {
-            const newChunk = extractMessageContent(
-              event.update,
-              functionCallAccumulator
-            );
-            if (newChunk) {
-              setChatState((prev) => ({
-                ...prev,
-                messages: prev.messages.map((msg) =>
-                  msg.id === assistantMessage.id
-                    ? {
-                        ...msg,
-                        contents: updateRichMessageContents(msg.contents, newChunk),
-                      }
-                    : msg
-                ),
-              }));
-            }
-          }
-
-          // Handle completion
-          if (event.type === "completion") {
-            setChatState((prev) => ({
-              ...prev,
-              isStreaming: false,
-              messages: prev.messages.map((msg) =>
-                msg.id === assistantMessage.id
-                  ? { ...msg, streaming: false }
-                  : msg
-              ),
-            }));
-            break;
-          }
-
-          // Handle errors
-          if (event.type === "error") {
-            setChatState((prev) => ({
-              ...prev,
-              isStreaming: false,
-              messages: prev.messages.map((msg) =>
-                msg.id === assistantMessage.id
-                  ? {
-                      ...msg,
-                      content: `Error: ${event.error}`,
-                      streaming: false,
-                    }
-                  : msg
-              ),
-            }));
-            break;
-          }
-        }
-      } catch (error) {
-        console.error("Streaming error:", error);
-        setChatState((prev) => ({
-          ...prev,
-          isStreaming: false,
-          streamEvents: [
-            ...prev.streamEvents,
-            {
-              type: "error",
-              error: error instanceof Error ? error.message : "Unknown error",
-              timestamp: new Date().toISOString(),
-            },
-          ],
-          messages: prev.messages.map((msg) =>
-            msg.id === assistantMessage.id
-              ? {
-                  ...msg,
-                  content: `Error: ${
-                    error instanceof Error
-                      ? error.message
-                      : "Failed to get response"
-                  }`,
-                  streaming: false,
-                }
-              : msg
-          ),
-        }));
-      }
-    },
-    [appState.selectedAgent, appState.currentThread, chatState.messages]
-  );
+  // Handle debug events from active view
+  const handleDebugEvent = useCallback((event: DebugStreamEvent) => {
+    setDebugEvents((prev) => [...prev, event]);
+  }, []);
 
   // Show loading state while initializing
   if (appState.isLoading) {
@@ -633,7 +135,6 @@ export default function App() {
         <header className="flex h-14 items-center gap-4 border-b px-4">
           <div className="w-64 h-9 bg-muted animate-pulse rounded-md" />
           <div className="flex items-center gap-2 ml-auto">
-            <div className="w-24 h-8 bg-muted animate-pulse rounded-md" />
             <div className="w-8 h-8 bg-muted animate-pulse rounded-md" />
             <div className="w-8 h-8 bg-muted animate-pulse rounded-md" />
           </div>
@@ -653,22 +154,19 @@ export default function App() {
   if (appState.error) {
     return (
       <div className="h-screen flex flex-col bg-background">
-        {/* Top Bar */}
-        <header className="flex h-14 items-center gap-4 border-b px-4">
-          <div className="w-64 h-9 bg-muted animate-pulse rounded-md opacity-50" />
-          <div className="flex items-center gap-2 ml-auto">
-            <ModeToggle />
-            <Button variant="ghost" size="sm">
-              <Settings className="h-4 w-4" />
-            </Button>
-          </div>
-        </header>
+        <AppHeader
+          agents={[]}
+          workflows={[]}
+          selectedItem={undefined}
+          onSelect={() => {}}
+          isLoading={false}
+        />
 
         {/* Error Content */}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-4 max-w-md">
             <div className="text-destructive text-lg font-medium">
-              Failed to load agents
+              Failed to load entities
             </div>
             <p className="text-muted-foreground text-sm">{appState.error}</p>
             <Button onClick={() => window.location.reload()} variant="outline">
@@ -688,26 +186,21 @@ export default function App() {
   ) {
     return (
       <div className="h-screen flex flex-col bg-background">
-        {/* Top Bar */}
-        <header className="flex h-14 items-center gap-4 border-b px-4">
-          <div className="text-sm text-muted-foreground">
-            No agents available
-          </div>
-          <div className="flex items-center gap-2 ml-auto">
-            <ModeToggle />
-            <Button variant="ghost" size="sm">
-              <Settings className="h-4 w-4" />
-            </Button>
-          </div>
-        </header>
+        <AppHeader
+          agents={[]}
+          workflows={[]}
+          selectedItem={undefined}
+          onSelect={() => {}}
+          isLoading={false}
+        />
 
         {/* Empty State Content */}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-4 max-w-md">
-            <div className="text-lg font-medium">No agents configured</div>
+            <div className="text-lg font-medium">No entities configured</div>
             <p className="text-muted-foreground text-sm">
               No agents or workflows were found in your configuration. Please
-              check your setup and ensure agents are properly configured.
+              check your setup and ensure entities are properly configured.
             </p>
             <Button onClick={() => window.location.reload()} variant="outline">
               Retry
@@ -720,51 +213,35 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-background max-h-screen">
-      {/* Top Bar */}
-      <header className="flex h-14 items-center gap-4 border-b px-4">
-        <div className="font-semibold">Dev UI</div>
-        <AgentSwitcher
-          agents={appState.agents}
-          workflows={appState.workflows}
-          selectedItem={appState.selectedAgent}
-          onSelect={handleAgentSelect}
-          isLoading={appState.isLoading}
-        />
-
-        <div className="flex items-center gap-2 ml-auto">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleNewThread}
-            disabled={!appState.selectedAgent}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            New Thread
-          </Button>
-
-          <Separator orientation="vertical" className="h-6" />
-
-          <ModeToggle />
-          <Button variant="ghost" size="sm">
-            <Settings className="h-4 w-4" />
-          </Button>
-        </div>
-      </header>
+      <AppHeader
+        agents={appState.agents}
+        workflows={appState.workflows}
+        selectedItem={appState.selectedAgent}
+        onSelect={handleEntitySelect}
+        isLoading={appState.isLoading}
+      />
 
       {/* Main Content - Split Panel */}
-      <div className="flex flex-1 overflow-hidden ">
-        {/* Left Panel - Chat */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Panel - Main View */}
         <div className="flex-1 min-w-0">
-          <ChatRouter
-            selectedItem={appState.selectedAgent}
-            workflowInfo={workflowInfo}
-            workflowLoading={workflowLoading}
-            messages={chatState.messages}
-            debugEvents={chatState.streamEvents}
-            onSendMessage={handleSendMessage}
-            onSendWorkflowData={handleSendWorkflowData}
-            isStreaming={chatState.isStreaming}
-          />
+          {appState.selectedAgent ? (
+            appState.selectedAgent.type === "agent" ? (
+              <AgentView
+                selectedAgent={appState.selectedAgent as AgentInfo}
+                onDebugEvent={handleDebugEvent}
+              />
+            ) : (
+              <WorkflowView
+                selectedWorkflow={appState.selectedAgent as WorkflowInfo}
+                onDebugEvent={handleDebugEvent}
+              />
+            )
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground">
+              Select an agent or workflow to get started.
+            </div>
+          )}
         </div>
 
         {/* Resize Handle */}
@@ -777,7 +254,8 @@ export default function App() {
             onDoubleClick={handleDoubleClick}
           >
             <div className="absolute inset-y-0 -left-1 -right-1 flex items-center justify-center">
-              <GripVertical className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+              {/* <GripVertical className="h-4 w-4 text-muted-foreground group-hover:text-foreground" /> */}
+              <div className="h-12 rounded-lg bg-primary   w-2    "></div>
             </div>
           </div>
         )}
@@ -803,8 +281,8 @@ export default function App() {
             style={{ width: `${debugPanelWidth}px` }}
           >
             <DebugPanel
-              events={chatState.streamEvents}
-              isStreaming={chatState.isStreaming}
+              events={debugEvents}
+              isStreaming={false} // Each view manages its own streaming state
             />
           </div>
         )}

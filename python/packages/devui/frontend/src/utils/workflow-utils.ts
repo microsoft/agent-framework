@@ -11,6 +11,14 @@ export interface WorkflowDumpExecutor {
   config?: Record<string, unknown>;
 }
 
+interface RawExecutorData {
+  type_?: string;
+  type?: string;
+  name?: string;
+  description?: string;
+  config?: Record<string, unknown>;
+}
+
 export interface WorkflowDumpConnection {
   source: string;
   target: string;
@@ -117,7 +125,7 @@ export function convertWorkflowDumpToEdges(
 function getExecutorsFromDump(workflowDump: Record<string, unknown>): WorkflowDumpExecutor[] {
   // First check if executors is an object (like in the actual dump structure)
   if (workflowDump.executors && typeof workflowDump.executors === "object" && !Array.isArray(workflowDump.executors)) {
-    const executorsObj = workflowDump.executors as Record<string, any>;
+    const executorsObj = workflowDump.executors as Record<string, RawExecutorData>;
     return Object.entries(executorsObj).map(([id, executor]) => ({
       id,
       type: executor.type_ || executor.type || "executor",
@@ -145,12 +153,13 @@ function getExecutorsFromDump(workflowDump: Record<string, unknown>): WorkflowDu
   const executors: WorkflowDumpExecutor[] = [];
   Object.entries(workflowDump).forEach(([key, value]) => {
     if (typeof value === "object" && value !== null && ("type" in value || "type_" in value)) {
+      const rawExecutor = value as RawExecutorData;
       executors.push({
         id: key,
-        type: (value as any).type_ || (value as any).type || "executor",
-        name: (value as any).name || key,
-        description: (value as any).description,
-        config: (value as any).config,
+        type: rawExecutor.type_ || rawExecutor.type || "executor",
+        name: rawExecutor.name || key,
+        description: rawExecutor.description,
+        config: rawExecutor.config,
       });
     }
   });

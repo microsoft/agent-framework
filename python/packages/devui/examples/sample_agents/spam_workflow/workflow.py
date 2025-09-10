@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Spam Detection Workflow Sample for DevUI
+"""Spam Detection Workflow Sample for DevUI
 
 The following sample demonstrates a comprehensive 5-step workflow with multiple executors
 that process, analyze, detect spam, and handle email messages. This workflow illustrates
@@ -9,7 +8,7 @@ complex branching logic and realistic processing delays to demonstrate the workf
 
 Workflow Steps:
 1. Email Preprocessor - Cleans and prepares the email
-2. Content Analyzer - Analyzes email content and structure  
+2. Content Analyzer - Analyzes email content and structure
 3. Spam Detector - Determines if the message is spam
 4a. Spam Handler - Processes spam messages (quarantine, log, remove)
 4b. Message Responder - Handles legitimate messages (validate, respond)
@@ -33,17 +32,17 @@ from agent_framework.workflow import (
 @dataclass
 class EmailContent:
     """A data class to hold the processed email content."""
-    
+
     original_message: str
     cleaned_message: str
     word_count: int
     has_suspicious_patterns: bool = False
 
 
-@dataclass 
+@dataclass
 class ContentAnalysis:
     """A data class to hold content analysis results."""
-    
+
     email_content: EmailContent
     sentiment_score: float
     contains_links: bool
@@ -68,7 +67,7 @@ class SpamDetectorResponse:
 @dataclass
 class ProcessingResult:
     """A data class to hold the final processing result."""
-    
+
     original_message: str
     action_taken: str
     processing_time: float
@@ -81,25 +80,25 @@ class EmailPreprocessor(Executor):
     @handler
     async def handle_email(self, email: str, ctx: WorkflowContext[EmailContent]) -> None:
         """Clean and preprocess the email message."""
-        print(f"📧 Step 1: Preprocessing email message...")
+        print("📧 Step 1: Preprocessing email message...")
         print(f"   Original: {email}")
         await asyncio.sleep(1.5)  # Simulate preprocessing time
-        
+
         # Simulate email cleaning
         cleaned = email.strip().lower()
         word_count = len(email.split())
-        
+
         # Check for suspicious patterns
         suspicious_patterns = ["urgent", "limited time", "act now", "free money"]
         has_suspicious = any(pattern in cleaned for pattern in suspicious_patterns)
-        
+
         result = EmailContent(
             original_message=email,
             cleaned_message=cleaned,
             word_count=word_count,
-            has_suspicious_patterns=has_suspicious
+            has_suspicious_patterns=has_suspicious,
         )
-        
+
         print(f"   ✅ Preprocessing complete - {word_count} words, suspicious patterns: {has_suspicious}")
         await ctx.send_message(result)
 
@@ -108,20 +107,16 @@ class ContentAnalyzer(Executor):
     """Step 2: An executor that analyzes email content and structure."""
 
     @handler
-    async def handle_email_content(
-        self, 
-        email_content: EmailContent, 
-        ctx: WorkflowContext[ContentAnalysis]
-    ) -> None:
+    async def handle_email_content(self, email_content: EmailContent, ctx: WorkflowContext[ContentAnalysis]) -> None:
         """Analyze the email content for various indicators."""
-        print(f"🔍 Step 2: Analyzing email content...")
+        print("🔍 Step 2: Analyzing email content...")
         await asyncio.sleep(2.0)  # Simulate analysis time
-        
+
         # Simulate content analysis
         sentiment_score = 0.5 if email_content.has_suspicious_patterns else 0.8
         contains_links = "http" in email_content.cleaned_message or "www" in email_content.cleaned_message
         has_attachments = "attachment" in email_content.cleaned_message
-        
+
         # Build risk indicators
         risk_indicators = []
         if email_content.has_suspicious_patterns:
@@ -132,15 +127,15 @@ class ContentAnalyzer(Executor):
             risk_indicators.append("has_attachments")
         if email_content.word_count < 10:
             risk_indicators.append("too_short")
-        
+
         analysis = ContentAnalysis(
             email_content=email_content,
             sentiment_score=sentiment_score,
             contains_links=contains_links,
             has_attachments=has_attachments,
-            risk_indicators=risk_indicators
+            risk_indicators=risk_indicators,
         )
-        
+
         print(f"   📊 Analysis complete - Sentiment: {sentiment_score:.2f}, Risk indicators: {len(risk_indicators)}")
         await ctx.send_message(analysis)
 
@@ -154,48 +149,41 @@ class SpamDetector(Executor):
         self._spam_keywords = spam_keywords
 
     @handler
-    async def handle_analysis(
-        self, 
-        analysis: ContentAnalysis, 
-        ctx: WorkflowContext[SpamDetectorResponse]
-    ) -> None:
+    async def handle_analysis(self, analysis: ContentAnalysis, ctx: WorkflowContext[SpamDetectorResponse]) -> None:
         """Determine if the message is spam based on content analysis."""
-        print(f"🚨 Step 3: Detecting spam...")
+        print("🚨 Step 3: Detecting spam...")
         await asyncio.sleep(1.8)  # Simulate detection time
-        
+
         # Check for spam keywords
         email_text = analysis.email_content.cleaned_message
         keyword_matches = [kw for kw in self._spam_keywords if kw in email_text]
-        
+
         # Calculate spam probability
         spam_score = 0.0
         spam_reasons = []
-        
+
         if keyword_matches:
             spam_score += 0.4
             spam_reasons.append(f"spam_keywords: {keyword_matches}")
-        
+
         if analysis.email_content.has_suspicious_patterns:
             spam_score += 0.3
             spam_reasons.append("suspicious_patterns")
-        
+
         if len(analysis.risk_indicators) >= 3:
             spam_score += 0.2
             spam_reasons.append("high_risk_indicators")
-        
+
         if analysis.sentiment_score < 0.4:
             spam_score += 0.1
             spam_reasons.append("negative_sentiment")
-        
+
         is_spam = spam_score >= 0.5
-        
+
         result = SpamDetectorResponse(
-            analysis=analysis,
-            is_spam=is_spam,
-            confidence_score=spam_score,
-            spam_reasons=spam_reasons
+            analysis=analysis, is_spam=is_spam, confidence_score=spam_score, spam_reasons=spam_reasons
         )
-        
+
         print(f"   🎯 Detection complete - Spam: {is_spam}, Confidence: {spam_score:.2f}")
         await ctx.send_message(result)
 
@@ -213,23 +201,23 @@ class SpamHandler(Executor):
         if not spam_result.is_spam:
             raise RuntimeError("Message is not spam, cannot process with spam handler.")
 
-        print(f"🛡️  Step 4a: Handling spam message...")
+        print("🛡️  Step 4a: Handling spam message...")
         await asyncio.sleep(2.2)  # Simulate spam handling time
-        
+
         # Simulate spam handling actions
-        print(f"   📋 Quarantining message")
+        print("   📋 Quarantining message")
         print(f"   📝 Logging spam attempt - Confidence: {spam_result.confidence_score:.2f}")
-        print(f"   🚫 Blocking sender")
-        print(f"   📊 Updating spam database")
-        
+        print("   🚫 Blocking sender")
+        print("   📊 Updating spam database")
+
         result = ProcessingResult(
             original_message=spam_result.analysis.email_content.original_message,
             action_taken="quarantined_and_logged",
             processing_time=2.2,
-            status="spam_handled"
+            status="spam_handled",
         )
-        
-        print(f"   ✅ Spam handling complete")
+
+        print("   ✅ Spam handling complete")
         await ctx.send_message(result)
 
 
@@ -246,23 +234,23 @@ class MessageResponder(Executor):
         if spam_result.is_spam:
             raise RuntimeError("Message is spam, cannot respond with message responder.")
 
-        print(f"✉️  Step 4b: Responding to legitimate message...")
+        print("✉️  Step 4b: Responding to legitimate message...")
         await asyncio.sleep(2.5)  # Simulate response time
-        
+
         # Simulate message response actions
-        print(f"   📧 Generating appropriate response")
-        print(f"   🔍 Validating sender credentials")
-        print(f"   📨 Sending acknowledgment")
-        print(f"   📁 Filing in inbox")
-        
+        print("   📧 Generating appropriate response")
+        print("   🔍 Validating sender credentials")
+        print("   📨 Sending acknowledgment")
+        print("   📁 Filing in inbox")
+
         result = ProcessingResult(
             original_message=spam_result.analysis.email_content.original_message,
             action_taken="responded_and_filed",
             processing_time=2.5,
-            status="message_processed"
+            status="message_processed",
         )
-        
-        print(f"   ✅ Response complete")
+
+        print("   ✅ Response complete")
         await ctx.send_message(result)
 
 
@@ -276,24 +264,24 @@ class FinalProcessor(Executor):
         ctx: WorkflowContext[None],
     ) -> None:
         """Complete the workflow with final processing and logging."""
-        print(f"🏁 Step 5: Final processing and cleanup...")
+        print("🏁 Step 5: Final processing and cleanup...")
         await asyncio.sleep(1.5)  # Simulate final processing time
-        
+
         # Simulate final processing actions
-        print(f"   📊 Updating processing metrics")
-        print(f"   🧹 Cleaning temporary files")
-        print(f"   📈 Recording performance statistics")
-        print(f"   💾 Saving audit trail")
-        
+        print("   📊 Updating processing metrics")
+        print("   🧹 Cleaning temporary files")
+        print("   📈 Recording performance statistics")
+        print("   💾 Saving audit trail")
+
         total_time = result.processing_time + 1.5
-        
+
         completion_message = (
             f"Workflow completed successfully! "
             f"Action: {result.action_taken}, "
             f"Status: {result.status}, "
             f"Total time: {total_time:.1f}s"
         )
-        
+
         print(f"   🎉 {completion_message}")
         await ctx.add_event(WorkflowCompletedEvent(completion_message))
 
@@ -303,7 +291,7 @@ spam_keywords = ["spam", "advertisement", "offer", "click here", "winner", "cong
 
 # Create all the executors for the 5-step workflow
 email_preprocessor = EmailPreprocessor(id="email_preprocessor")
-content_analyzer = ContentAnalyzer(id="content_analyzer") 
+content_analyzer = ContentAnalyzer(id="content_analyzer")
 spam_detector = SpamDetector(spam_keywords, id="spam_detector")
 spam_handler = SpamHandler(id="spam_handler")
 message_responder = MessageResponder(id="message_responder")
@@ -342,14 +330,14 @@ async def main():
         "Can you please review the attached document and send feedback?",
         "Short msg",  # Test very short message
     ]
-    
+
     print("🚀 Testing Enhanced 5-Step Spam Detection Workflow")
     print("=" * 60)
-    
+
     for i, message in enumerate(test_messages, 1):
         print(f"\n📨 Test Case {i}: '{message}'")
         print("-" * 60)
-        
+
         try:
             async for event in workflow.run_stream(message):
                 if isinstance(event, WorkflowCompletedEvent):
@@ -358,9 +346,9 @@ async def main():
                     print(f"📋 Event: {event}")
         except Exception as e:
             print(f"❌ Error: {e}")
-        
+
         print("\n" + "=" * 60)
-        
+
         # Add a small delay between test cases for readability
         await asyncio.sleep(0.5)
 

@@ -1,5 +1,5 @@
 /**
- * AgentSwitcher - High-quality dropdown for selecting agents/workflows
+ * EntitySelector - High-quality dropdown for selecting agents/workflows
  * Features: Type indicators, tool counts, keyboard navigation, search
  */
 
@@ -18,7 +18,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ChevronDown, Bot, Workflow, FolderOpen, Database } from "lucide-react";
 import type { AgentInfo, WorkflowInfo } from "@/types";
 
-interface AgentSwitcherProps {
+interface EntitySelectorProps {
   agents: AgentInfo[];
   workflows: WorkflowInfo[];
   selectedItem?: AgentInfo | WorkflowInfo;
@@ -34,13 +34,13 @@ const getSourceIcon = (source: "directory" | "in_memory") => {
   return source === "directory" ? FolderOpen : Database;
 };
 
-export function AgentSwitcher({
+export function EntitySelector({
   agents,
   workflows,
   selectedItem,
   onSelect,
   isLoading = false,
-}: AgentSwitcherProps) {
+}: EntitySelectorProps) {
   const [open, setOpen] = useState(false);
 
   const allItems = [...agents, ...workflows].sort(
@@ -53,7 +53,7 @@ export function AgentSwitcher({
   };
 
   const TypeIcon = selectedItem ? getTypeIcon(selectedItem.type) : Bot;
-  const displayName = selectedItem?.name || selectedItem?.id || "Select Agent";
+  const displayName = selectedItem?.name || selectedItem?.id || "Select Entity";
   const itemCount =
     selectedItem?.type === "workflow"
       ? (selectedItem as WorkflowInfo).executors?.length || 0
@@ -177,7 +177,7 @@ export function AgentSwitcher({
         {allItems.length === 0 && (
           <DropdownMenuItem disabled>
             <div className="text-center text-muted-foreground py-2">
-              {isLoading ? "Loading agents..." : "No agents found"}
+              {isLoading ? "Loading entities..." : "No entities found"}
             </div>
           </DropdownMenuItem>
         )}

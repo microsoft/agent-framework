@@ -158,7 +158,7 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
   return (
     <div
       className={cn(
-        "group relative w-56 bg-card dark:bg-card rounded-lg border-2 transition-all duration-200 cursor-pointer",
+        "group relative w-56 bg-card dark:bg-card rounded border-2 transition-all duration-200 cursor-pointer",
         config.borderColor,
         selected ? "ring-2 ring-blue-500 ring-offset-2" : "",
         isRunning ? config.glow : "shadow-sm hover:shadow-md",
@@ -236,7 +236,7 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
 
         {/* Running animation overlay */}
         {isRunning && (
-          <div className="absolute inset-0 rounded-lg border-2 border-blue-500/30 dark:border-blue-400/30 animate-pulse pointer-events-none" />
+          <div className="absolute inset-0 rounded border-2 border-blue-500/30 dark:border-blue-400/30 animate-pulse pointer-events-none" />
         )}
       </div>
     </div>

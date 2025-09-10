@@ -514,7 +514,6 @@ function TraceSpanItem({ event }: { event: DebugStreamEvent }) {
   }
 
   const span = event.trace_span;
-  console.log("Rendering TraceSpanItem for span:", span);
   return (
     <div className="border rounded p-3">
       <div className="flex flex-col gap-2 mb-2">

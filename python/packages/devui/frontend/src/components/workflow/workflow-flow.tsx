@@ -105,7 +105,7 @@ export function WorkflowFlow({
   if (!workflowDump) {
     return (
       <div
-        className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 ${className}`}
+        className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700 ${className}`}
       >
         <div className="text-center text-gray-500 dark:text-gray-400">
           <div className="text-lg font-medium mb-2">No Workflow Data</div>
@@ -118,7 +118,7 @@ export function WorkflowFlow({
   if (initialNodes.length === 0) {
     return (
       <div
-        className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 ${className}`}
+        className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700 ${className}`}
       >
         <div className="text-center text-gray-500 dark:text-gray-400">
           <div className="text-lg font-medium mb-2">No Executors Found</div>

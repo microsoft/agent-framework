@@ -12,7 +12,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../src/devui/ui",
+    outDir: "../agent_framework_devui/ui",
     emptyOutDir: true,
   },
 });

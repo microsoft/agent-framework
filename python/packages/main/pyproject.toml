@@ -45,6 +45,9 @@ workflow = [
 runtime = [
     "agent-framework-runtime"
 ]
+devui = [
+    "agent-framework-devui"
+]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

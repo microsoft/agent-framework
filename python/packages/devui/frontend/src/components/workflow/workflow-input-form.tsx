@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Send, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { JSONSchemaProperty } from "@/types";
@@ -222,7 +222,7 @@ export function WorkflowInputForm({
   className,
 }: WorkflowInputFormProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Initialize form with default values
   useEffect(() => {
@@ -243,18 +243,20 @@ export function WorkflowInputForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // For simple string input types, wrap in object structure for backend API
+    // Simplified submission logic
     if (inputSchema.type === "string") {
       onSubmit({ input: formData.value || "" });
-    } else if (
-      inputSchema.type === "object" &&
-      Object.keys(inputSchema.properties || {}).length === 1
-    ) {
-      // For single-field objects (enhanced from basic types), wrap the field value
-      const fieldName = Object.keys(inputSchema.properties || {})[0];
-      onSubmit({ [fieldName]: formData[fieldName] || "" });
+    } else if (inputSchema.type === "object") {
+      const properties = inputSchema.properties || {};
+      const fieldNames = Object.keys(properties);
+      
+      if (fieldNames.length === 1) {
+        const fieldName = fieldNames[0];
+        onSubmit({ [fieldName]: formData[fieldName] || "" });
+      } else {
+        onSubmit(formData);
+      }
     } else {
-      // For complex objects, pass the entire form data
       onSubmit(formData);
     }
   };
@@ -266,189 +268,131 @@ export function WorkflowInputForm({
     }));
   };
 
-  // Handle simple string input (most common case)
-  if (inputSchema.type === "string") {
-    return (
-      <Card className={cn("border-t border-border", className)}>
-        <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">Run Workflow</CardTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="p-2"
-            >
-              {isExpanded ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className={cn("space-y-4", !isExpanded && "pb-4")}>
-          {isExpanded && (
-            <div className="text-sm text-muted-foreground">
-              Input Type:{" "}
-              <code className="bg-muted px-1 py-0.5 rounded">
-                {inputTypeName}
-              </code>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                value={typeof formData.value === "string" ? formData.value : ""}
-                onChange={(e) => updateField("value", e.target.value)}
-                placeholder={
-                  inputSchema.description || "Enter workflow input..."
-                }
-                disabled={isSubmitting}
-                className="flex-1"
-              />
-              <Button
-                type="submit"
-                disabled={
-                  isSubmitting ||
-                  typeof formData.value !== "string" ||
-                  !formData.value.trim()
-                }
-                size="default"
-              >
-                <Send className="h-4 w-4 mr-2" />
-                Run
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Check if it's an object schema with a single field (enhanced from basic type)
+  // Determine form layout
   const properties = inputSchema.properties || {};
   const fieldNames = Object.keys(properties);
+  const isSimpleInput = inputSchema.type === "string" || 
+    (inputSchema.type === "object" && fieldNames.length === 1);
+  
+  const primaryField = inputSchema.type === "string" 
+    ? { name: "value", schema: inputSchema, placeholder: inputSchema.description || "Enter workflow input..." }
+    : inputSchema.type === "object" && fieldNames.length === 1
+    ? { name: fieldNames[0], schema: properties[fieldNames[0]], placeholder: properties[fieldNames[0]].description || `Enter ${fieldNames[0]}...` }
+    : null;
 
-  // If it's an object with a single field, treat it as a simple input with field name
-  if (inputSchema.type === "object" && fieldNames.length === 1) {
-    const fieldName = fieldNames[0];
-    const fieldSchema = properties[fieldName];
-    const placeholder = fieldSchema.description || `Enter ${fieldName}...`;
-
-    return (
-      <Card className={cn("border-t border-border", className)}>
-        <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">Run Workflow</CardTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="p-2"
-            >
-              {isExpanded ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className={cn("space-y-4", !isExpanded && "pb-4")}>
-          {isExpanded && (
-            <div className="text-sm text-muted-foreground">
-              Input Type:{" "}
-              <code className="bg-muted px-1 py-0.5 rounded">
-                {inputTypeName}
-              </code>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                value={
-                  typeof formData[fieldName] === "string"
-                    ? formData[fieldName]
-                    : ""
-                }
-                onChange={(e) => updateField(fieldName, e.target.value)}
-                placeholder={placeholder}
-                disabled={isSubmitting}
-                className="flex-1"
-              />
+  return (
+    <div className={cn("h-full flex flex-col", className)}>
+      <Card className="h-full flex flex-col">
+        <div className="border-b border-border px-4 py-3 bg-muted flex-shrink-0">
+          <div className="flex items-center justify-between mb-2">
+            <CardTitle className="text-sm">Run Workflow</CardTitle>
+            {!isSimpleInput && fieldNames.length > 1 && (
               <Button
-                type="submit"
-                disabled={
-                  isSubmitting ||
-                  typeof formData[fieldName] !== "string" ||
-                  !formData[fieldName].trim()
-                }
-                size="default"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="text-xs"
               >
-                <Send className="h-4 w-4 mr-2" />
-                Run
+                {showAdvanced ? (
+                  <>Hide Fields <ChevronUp className="h-3 w-3 ml-1" /></>
+                ) : (
+                  <>Show All <ChevronDown className="h-3 w-3 ml-1" /></>
+                )}
               </Button>
+            )}
+          </div>
+          
+          <div className="text-xs text-muted-foreground mb-3">
+            <strong>Type:</strong>{" "}
+            <code className="bg-muted-foreground/20 px-1 py-0.5 rounded">
+              {inputTypeName}
+            </code>
+            {inputSchema.type === "object" && (
+              <span className="ml-2">
+                ({fieldNames.length} field{fieldNames.length !== 1 ? 's' : ''})
+              </span>
+            )}
+          </div>
+
+          {/* Run Button - Always visible at top */}
+          <Button
+            type="submit"
+            form="workflow-form"
+            disabled={
+              isSubmitting ||
+              (isSimpleInput && primaryField && (
+                typeof formData[primaryField.name] !== "string" ||
+                !(formData[primaryField.name] as string).trim()
+              ))
+            }
+            className="w-full"
+            size="default"
+          >
+            <Send className="h-4 w-4 mr-2" />
+            {isSubmitting ? "Running..." : "Run Workflow"}
+          </Button>
+        </div>
+
+        <CardContent className="flex-1 p-4 overflow-hidden">
+          <form id="workflow-form" onSubmit={handleSubmit} className="h-full">
+            <div className="h-full overflow-y-auto space-y-3">
+              {/* Simple input */}
+              {isSimpleInput && primaryField && (
+                <div className="space-y-2">
+                  <Label htmlFor={primaryField.name} className="text-sm font-medium">
+                    {primaryField.name === "value" ? "Input" : primaryField.name}
+                  </Label>
+                  <Input
+                    id={primaryField.name}
+                    value={
+                      typeof formData[primaryField.name] === "string"
+                        ? (formData[primaryField.name] as string)
+                        : ""
+                    }
+                    onChange={(e) => updateField(primaryField.name, e.target.value)}
+                    placeholder={primaryField.placeholder}
+                    disabled={isSubmitting}
+                  />
+                  {primaryField.schema.description && (
+                    <p className="text-xs text-muted-foreground">
+                      {primaryField.schema.description}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Complex form fields */}
+              {!isSimpleInput && (
+                <div className="space-y-3">
+                  {fieldNames.slice(0, showAdvanced ? fieldNames.length : 2).map((fieldName) => (
+                    <FormField
+                      key={fieldName}
+                      name={fieldName}
+                      schema={properties[fieldName] as JSONSchemaProperty}
+                      value={formData[fieldName]}
+                      onChange={(value) => updateField(fieldName, value)}
+                    />
+                  ))}
+                  
+                  {!showAdvanced && fieldNames.length > 2 && (
+                    <div className="text-center">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowAdvanced(true)}
+                        className="text-xs text-muted-foreground"
+                      >
+                        +{fieldNames.length - 2} more fields
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </form>
         </CardContent>
       </Card>
-    );
-  }
-
-  // Handle complex object inputs
-  const complexProperties = inputSchema.properties || {};
-
-  return (
-    <Card className={cn("border-t border-border", className)}>
-      <CardHeader className="pb-4">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Run Workflow</CardTitle>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-2"
-          >
-            {isExpanded ? (
-              <ChevronUp className="h-4 w-4" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="text-sm text-muted-foreground">
-          Input Type:{" "}
-          <code className="bg-muted px-1 py-0.5 rounded">{inputTypeName}</code>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className={cn("space-y-4", !isExpanded && "hidden")}>
-            {Object.entries(complexProperties).map(
-              ([fieldName, fieldSchema]) => (
-                <FormField
-                  key={fieldName}
-                  name={fieldName}
-                  schema={fieldSchema as JSONSchemaProperty}
-                  value={formData[fieldName]}
-                  onChange={(value) => updateField(fieldName, value)}
-                />
-              )
-            )}
-          </div>
-
-          <div className="flex justify-end pt-4 border-t">
-            <Button type="submit" disabled={isSubmitting} size="default">
-              <Send className="h-4 w-4 mr-2" />
-              {isSubmitting ? "Running..." : "Run Workflow"}
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+    </div>
   );
 }

@@ -26,10 +26,10 @@ function TextContentRenderer({ content, isStreaming, className }: RenderProps) {
 }
 
 function DataContentRenderer({ content, className }: RenderProps) {
-  if (content.type !== "data") return null;
-
   const [imageError, setImageError] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  if (content.type !== "data") return null;
 
   // Extract data URI and media type
   const dataUri = typeof content.data === "string" ? content.data : "";
@@ -91,9 +91,9 @@ function DataContentRenderer({ content, className }: RenderProps) {
 }
 
 function FunctionCallRenderer({ content, className }: RenderProps) {
-  if (!isFunctionCallContent(content)) return null;
-
   const [isExpanded, setIsExpanded] = useState(false);
+
+  if (!isFunctionCallContent(content)) return null;
 
   let parsedArgs;
   try {
@@ -132,9 +132,9 @@ function FunctionCallRenderer({ content, className }: RenderProps) {
 }
 
 function FunctionResultRenderer({ content, className }: RenderProps) {
-  if (!isFunctionResultContent(content)) return null;
-
   const [isExpanded, setIsExpanded] = useState(false);
+
+  if (!isFunctionResultContent(content)) return null;
 
   return (
     <div className={`my-2 p-3 border rounded-lg bg-green-50 ${className || ""}`}>
@@ -181,10 +181,11 @@ function ErrorContentRenderer({ content, className }: RenderProps) {
 }
 
 function UriContentRenderer({ content, className }: RenderProps) {
+  const [imageError, setImageError] = useState(false);
+
   if (content.type !== "uri") return null;
 
   const isImage = content.mime_type?.startsWith("image/");
-  const [imageError, setImageError] = useState(false);
 
   if (isImage && !imageError) {
     return (
