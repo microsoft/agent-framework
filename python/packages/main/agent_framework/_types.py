@@ -55,6 +55,7 @@ KNOWN_MEDIA_TYPES = [
     "application/pdf",
     "application/xml",
     "audio/mpeg",
+    "audio/mp3",
     "audio/ogg",
     "audio/wav",
     "image/apng",
@@ -724,7 +725,7 @@ class DataContent(BaseContent):
             raise ValueError(f"Unknown media type: {media_type}")
         return uri
 
-    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
@@ -782,11 +783,13 @@ class UriContent(BaseContent):
             **kwargs,
         )
 
-    def has_top_level_media_type(self, top_level_media_type: str) -> bool:
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
-def _has_top_level_media_type(media_type: str | None, top_level_media_type: str) -> bool:
+def _has_top_level_media_type(
+    media_type: str | None, top_level_media_type: Literal["application", "audio", "image", "text"]
+) -> bool:
     if media_type is None:
         return False
 

@@ -564,6 +564,55 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     ) -> dict[str, Any]:
         """Parse contents into the openai format."""
         match content:
+            case TextContent():
+                return {
+                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
+                    "text": content.text,
+                }
+            case TextReasoningContent():
+                ret: dict[str, Any] = {
+                    "type": "reasoning",
+                    "summary": {
+                        "type": "summary_text",
+                        "text": content.text,
+                    },
+                }
+                if content.additional_properties is not None:
+                    if status := content.additional_properties.get("status"):
+                        ret["status"] = status
+                    if reasoning_text := content.additional_properties.get("reasoning_text"):
+                        ret["content"] = {"type": "reasoning_text", "text": reasoning_text}
+                    if encrypted_content := content.additional_properties.get("encrypted_content"):
+                        ret["encrypted_content"] = encrypted_content
+                return ret
+            case DataContent() | UriContent():
+                if content.has_top_level_media_type("image"):
+                    return {
+                        "type": "input_image",
+                        "image_url": content.uri,
+                        "detail": content.additional_properties.get("detail", "auto")
+                        if content.additional_properties
+                        else "auto",
+                        "file_id": content.additional_properties.get("file_id", None)
+                        if content.additional_properties
+                        else None,
+                    }
+                if content.has_top_level_media_type("audio"):
+                    if content.media_type and "wav" in content.media_type:
+                        format = "wav"
+                    elif content.media_type and "mp3" in content.media_type:
+                        format = "mp3"
+                    else:
+                        logger.warning("Unsupported audio media type: %s", content.media_type)
+                        return {}
+                    return {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": content.uri,
+                            "format": format,
+                        },
+                    }
+                return {}
             case FunctionCallContent():
                 return {
                     "call_id": content.call_id,
@@ -598,14 +647,14 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     "approval_request_id": content.id,
                     "approve": content.approved,
                 }
-            case TextContent():
+            case HostedFileContent():
                 return {
-                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
-                    "text": content.text,
+                    "type": "input_file",
+                    "file_id": content.file_id,
                 }
-            # TODO(peterychang): We'll probably need to specialize the other content types as well
-            case _:
-                return content.model_dump(exclude_none=True)
+            case _:  # should catch UsageDetails and ErrorContent and HostedVectorStoreContent
+                logger.debug("Unsupported content type passed (type: %s)", type(content))
+                return {}
 
     # region Response creation methods
 
@@ -724,13 +773,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     additional_properties=additional_properties,
                                 )
                             )
-                    else:
-                        contents.append(
-                            TextReasoningContent(
-                                text="",
-                                raw_representation=item,
-                            )
-                        )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     if item.outputs:
                         for code_output in item.outputs:
