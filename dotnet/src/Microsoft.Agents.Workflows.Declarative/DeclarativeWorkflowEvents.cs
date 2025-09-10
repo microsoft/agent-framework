@@ -16,7 +16,7 @@ public class ConversationUpdateEvent(string executorid, string conversationId) :
 }
 
 /// <summary>
-/// Event that indicates a declarative action is been invoked.
+/// Event that indicates a declarative action has been invoked.
 /// </summary>
 public class DeclarativeActionInvokeEvent(string actionId, DialogAction action) : WorkflowEvent(action)
 {
@@ -26,7 +26,7 @@ public class DeclarativeActionInvokeEvent(string actionId, DialogAction action) 
     public string ActionId => actionId;
 
     /// <summary>
-    /// The declarative action action type name.
+    /// The declarative action type name.
     /// </summary>
     public string ActionType => action.GetType().Name;
 }
@@ -42,7 +42,7 @@ public class DeclarativeActionCompleteEvent(string actionId, DialogAction action
     public string ActionId => actionId;
 
     /// <summary>
-    /// The declarative action action type name.
+    /// The declarative action type name.
     /// </summary>
     public string ActionType => action.GetType().Name;
 }
