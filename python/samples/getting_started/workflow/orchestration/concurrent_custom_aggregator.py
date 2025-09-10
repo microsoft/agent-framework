@@ -79,6 +79,12 @@ async def main() -> None:
         return response.messages[-1].text if response.messages else ""
 
     # Build with a custom aggregator callback function
+    # - participants([...]) accepts AgentProtocol (agents) or Executor instances.
+    #   Each participant becomes a parallel branch (fan-out) from an internal dispatcher.
+    # - with_custom_aggregator(...) overrides the default aggregator:
+    #   • Default aggregator -> returns list[ChatMessage] (one user + one assistant per agent)
+    #   • Custom callback    -> return value becomes WorkflowCompletedEvent.data (string here)
+    #   The callback can be sync or async; it receives list[AgentExecutorResponse].
     workflow = (
         ConcurrentBuilder()
         .participants([researcher, marketer, legal])

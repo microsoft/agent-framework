@@ -158,26 +158,26 @@ class _CallbackAggregator(Executor):
 class ConcurrentBuilder:
     r"""High-level builder for concurrent agent workflows.
 
-    - participants([...]) accepts a list of AgentProtocol (recommended) or AgentExecutor.
-    - build() wires dispatcher -> fan-out -> participant(s) -> fan-in -> aggregator.
-    - with_custom_aggregator(...) lets you override the aggregator with an Executor or callback.
+    - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor.
+    - `build()` wires: dispatcher -> fan-out -> participants -> fan-in -> aggregator.
+    - `with_custom_aggregator(...)` overrides the default aggregator with an Executor or callback.
 
     Usage:
-
     ```python
-    from agent_framework import ChatMessage, Role
     from agent_framework.workflow import ConcurrentBuilder
 
+    # Minimal: use default aggregator (returns list[ChatMessage])
     workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
 
 
-    # Or with a custom aggregator (executor or callback)
-    def my_agg(results):
-        # results is list[AgentExecutorResponse]
-        return "\n\n".join(r.agent_run_response.messages[-1].text for r in results)
+    # Custom aggregator via callback (sync or async). The callback receives
+    # list[AgentExecutorResponse] and its return value becomes
+    # WorkflowCompletedEvent.data
+    def summarize(results):
+        return " | ".join(r.agent_run_response.messages[-1].text for r in results)
 
 
-    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(my_agg).build()
+    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(summarize).build()
     ```
     """
 
@@ -186,6 +186,24 @@ class ConcurrentBuilder:
         self._aggregator: Executor | None = None
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "ConcurrentBuilder":
+        r"""Define the parallel participants for this concurrent workflow.
+
+        Accepts AgentProtocol instances (e.g., created by a chat client) or Executor
+        instances. Each participant is wired as a parallel branch using fan-out edges
+        from an internal dispatcher.
+
+        Raises:
+            ValueError: if `participants` is empty or contains duplicates
+            TypeError: if any entry is not AgentProtocol or Executor
+
+        Example:
+        ```python
+        wf = ConcurrentBuilder().participants([researcher_agent, marketer_agent, legal_agent]).build()
+
+        # Mixing agent(s) and executor(s) is supported
+        wf2 = ConcurrentBuilder().participants([researcher_agent, my_custom_executor]).build()
+        ```
+        """
         if not participants:
             raise ValueError("participants cannot be empty")
 
@@ -209,6 +227,26 @@ class ConcurrentBuilder:
         return self
 
     def with_custom_aggregator(self, aggregator: Executor | Callable[..., Any]) -> "ConcurrentBuilder":
+        r"""Override the default aggregator with an Executor or a callback.
+
+        - Executor: must handle `list[AgentExecutorResponse]` and add a
+          `WorkflowCompletedEvent` to the context.
+        - Callback: sync or async callable with one of the signatures:
+          `(results: list[AgentExecutorResponse]) -> Any | None` or
+          `(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None`.
+          If the callback returns a non-None value, it becomes the
+          `WorkflowCompletedEvent.data`.
+
+        Example:
+        ```python
+        # Callback-based aggregator (string result)
+        async def summarize(results):
+            return " | ".join(r.agent_run_response.messages[-1].text for r in results)
+
+
+        wf = ConcurrentBuilder().participants([a1, a2, a3]).with_custom_aggregator(summarize).build()
+        ```
+        """
         if isinstance(aggregator, Executor):
             self._aggregator = aggregator
         elif callable(aggregator):
@@ -218,6 +256,26 @@ class ConcurrentBuilder:
         return self
 
     def build(self) -> Workflow:
+        r"""Build and validate the concurrent workflow.
+
+        Wiring pattern:
+        - Dispatcher (internal) fans out the input to all `participants`
+        - Fan-in aggregator collects `AgentExecutorResponse` objects
+        - Aggregator emits a `WorkflowCompletedEvent` with either:
+          - list[ChatMessage] (default aggregator: one user + one assistant per agent)
+          - custom payload from the provided callback/executor
+
+        Returns:
+            Workflow: a ready-to-run workflow instance
+
+        Raises:
+            ValueError: if no participants were defined
+
+        Example:
+        ```python
+        workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
+        ```
+        """
         if not self._participants:
             raise ValueError("No participants provided. Call .participants([...]) first.")
 
