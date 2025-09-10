@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how use Image Multi-Modality with an AI agent.
+// This sample shows how to use Image Multi-Modality with an AI agent.
 
 using System;
 using Azure.AI.Agents.Persistent;
