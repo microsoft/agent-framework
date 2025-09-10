@@ -324,14 +324,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
+        ICancelableChatClient cancelableChatClient = client.GetService<ICancelableChatClient>()!;
 
-        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
+        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = cancelableChatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
 
         var update = (await streamingResponse.ElementAtAsync(0));
 
         // Act
-        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(update!.ResponseId!, new() { ConversationId = update.ConversationId });
+        NewChatResponse? response = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(update!.ResponseId!, new() { ConversationId = update.ConversationId });
 
         // Assert
         Assert.NotNull(response);

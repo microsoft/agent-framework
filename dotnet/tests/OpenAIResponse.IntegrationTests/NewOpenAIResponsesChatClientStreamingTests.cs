@@ -341,14 +341,14 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             AwaitLongRunCompletion = false
         };
 
-        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
+        ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;
 
-        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
+        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = cancelableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
 
         var update = (await streamingResponse.ElementAtAsync(0));
 
         // Act
-        NewChatResponse? response = (NewChatResponse?)await runnableChatClient.CancelRunAsync(update.ResponseId!);
+        NewChatResponse? response = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(update.ResponseId!);
 
         // Assert
         Assert.NotNull(response);

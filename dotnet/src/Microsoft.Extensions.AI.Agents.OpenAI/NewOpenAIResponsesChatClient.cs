@@ -27,7 +27,7 @@ namespace Microsoft.Extensions.AI;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an <see cref="OpenAIResponseClient"/>.</summary>
 [ExcludeFromCodeCoverage]
-internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
+internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
 {
     /// <summary>Type info for serializing and deserializing arbitrary JSON objects.</summary>
     private static readonly JsonTypeInfo s_jsonTypeInfo = AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object));
@@ -123,7 +123,7 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
     }
 
     /// <inheritdoc />
-    public async Task<ChatResponse?> CancelRunAsync(string id, ChatCancelRunOptions? options = null, CancellationToken cancellationToken = default)
+    public async Task<ChatResponse?> CancelResponseAsync(string id, CancelResponseOptions? options = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(id))
         {

@@ -255,12 +255,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             AwaitLongRunCompletion = false
         };
 
-        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
+        ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;
 
-        NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
+        NewChatResponse response = (NewChatResponse)await cancelableChatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
-        NewChatResponse? cancelResponse = (NewChatResponse?)await runnableChatClient.CancelRunAsync(response.ResponseId!);
+        NewChatResponse? cancelResponse = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(response.ResponseId!);
 
         // Assert
         Assert.NotNull(cancelResponse);

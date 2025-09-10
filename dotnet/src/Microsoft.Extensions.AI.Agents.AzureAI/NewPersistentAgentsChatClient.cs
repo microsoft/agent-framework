@@ -21,7 +21,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Azure.AI.Agents.Persistent
 {
     /// <summary>Represents an <see cref="IChatClient"/> for an Azure.AI.Agents.Persistent <see cref="PersistentAgentsClient"/>.</summary>
-    internal partial class NewPersistentAgentsChatClient : ILongRunningChatClient
+    internal partial class NewPersistentAgentsChatClient : ICancelableChatClient
     {
         /// <summary>The name of the chat client provider.</summary>
         private const string ProviderName = "azure";
@@ -882,7 +882,7 @@ namespace Azure.AI.Agents.Persistent
             }
         }
 
-        public async Task<ChatResponse?> CancelRunAsync(string id, ChatCancelRunOptions? options = null, CancellationToken cancellationToken = default)
+        public async Task<ChatResponse?> CancelResponseAsync(string id, CancelResponseOptions? options = null, CancellationToken cancellationToken = default)
         {
             Throw.IfNullOrEmpty(id);
             Throw.IfNullOrEmpty(options?.ConversationId);
