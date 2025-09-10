@@ -30,6 +30,9 @@ dependencies = [
     "opentelemetry-api ~= 1.24",
     "opentelemetry-sdk ~= 1.24",
     "mcp>=1.12",
+    "azure-monitor-opentelemetry>=1.7.0",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b41",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
 ]
 
 [project.optional-dependencies]

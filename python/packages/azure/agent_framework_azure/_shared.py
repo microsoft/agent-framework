@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Final
 from agent_framework._pydantic import AFBaseSettings, HTTPsUrl
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._shared import OpenAIBase
-from agent_framework.telemetry import USER_AGENT_KEY
+from agent_framework.telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureOpenAI
 from pydantic import ConfigDict, SecretStr, model_validator, validate_call
@@ -168,7 +168,7 @@ class AzureOpenAISettings(AFBaseSettings):
 class AzureOpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
@@ -212,7 +212,9 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         """
         # Merge APP_INFO into the headers if it exists
         merged_headers = dict(copy(default_headers)) if default_headers else {}
-
+        if APP_INFO:
+            merged_headers.update(APP_INFO)
+            merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
         if not client:
             # If the client is None, the api_key is none, the ad_token is none, and the ad_token_provider is none,
             # then we will attempt to get the ad_token using the default endpoint specified in the Azure OpenAI
