@@ -24,7 +24,7 @@ ChatMessage message = new(ChatRole.User, [
 
 var thread = agent.GetNewThread();
 
-await foreach (var update in agent.RunStreamingAsync(message))
+await foreach (var update in agent.RunStreamingAsync(message, thread))
 {
     Console.WriteLine(update);
 }
