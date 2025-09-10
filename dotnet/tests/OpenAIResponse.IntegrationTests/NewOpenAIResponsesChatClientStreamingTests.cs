@@ -63,8 +63,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Assert
         if (awaitRunCompletion)
         {
-            Assert.DoesNotContain(NewResponseStatus.Queued, statuses);
             Assert.Empty(statuses);
+            Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
         }
         else
         {
@@ -355,31 +355,6 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.Empty(response.Messages);
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Canceled, response.Status);
-    }
-
-    [Fact]
-    public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
-    {
-        // Arrange
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
-
-        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = runnableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
-
-        var update = (await streamingResponse.ElementAtAsync(0));
-
-        // Act
-        ChatResponse? response = await runnableChatClient.DeleteRunAsync(update.ResponseId!);
-
-        // Assert
-        Assert.NotNull(response);
-        Assert.Empty(response.Messages);
-        Assert.NotNull(response.ResponseId);
-        Assert.True(((ResponseDeletionResult)response.RawRepresentation!).Deleted);
     }
 
     public void Dispose()

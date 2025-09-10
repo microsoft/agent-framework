@@ -269,29 +269,6 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         Assert.Equal(NewResponseStatus.Canceled, cancelResponse.Status);
     }
 
-    [Fact]
-    public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
-    {
-        // Arrange
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        ILongRunningChatClient runnableChatClient = this._chatClient.GetService<ILongRunningChatClient>()!;
-
-        NewChatResponse response = (NewChatResponse)await runnableChatClient.GetResponseAsync("What is the capital of France?", options);
-
-        // Act
-        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync(response.ResponseId!);
-
-        // Assert
-        Assert.NotNull(deleteResponse);
-        Assert.Empty(deleteResponse.Messages);
-        Assert.NotNull(deleteResponse.ResponseId);
-        Assert.True(((ResponseDeletionResult)deleteResponse.RawRepresentation!).Deleted);
-    }
-
     public void Dispose()
     {
         this._chatClient?.Dispose();

@@ -261,26 +261,6 @@ public sealed class NewPersistentAgentsChatClientTests
         Assert.True(cancelResponse.Status == NewResponseStatus.Canceling || cancelResponse.Status == NewResponseStatus.Canceled);
     }
 
-    [Fact]
-    public async Task DeleteRunAsync_WhenCalled_DeletesRunAsync()
-    {
-        // Arrange
-        using var client = await CreateChatClientAsync();
-
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        ILongRunningChatClient runnableChatClient = client.GetService<ILongRunningChatClient>()!;
-
-        // Act
-        ChatResponse? deleteResponse = await runnableChatClient.DeleteRunAsync("");  // Deletion of runs is not supported
-
-        // Assert
-        Assert.Null(deleteResponse);
-    }
-
     private static async Task<IChatClient> CreateChatClientAsync(bool? awaitRun = null)
     {
         PersistentAgentsClient persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());

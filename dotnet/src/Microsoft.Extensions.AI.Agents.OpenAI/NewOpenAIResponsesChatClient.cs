@@ -136,20 +136,6 @@ internal sealed class NewOpenAIResponsesChatClient : ILongRunningChatClient
         return FromOpenAIResponse(openAIResponse, openAIOptions: new ResponseCreationOptions { Background = true });
     }
 
-    /// <inheritdoc />
-    public async Task<ChatResponse?> DeleteRunAsync(string id, ChatDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        _ = Throw.IfNull(id);
-
-        var openAIResponse = (await _responseClient.DeleteResponseAsync(id, cancellationToken).ConfigureAwait(false)).Value;
-
-        return new()
-        {
-            ResponseId = openAIResponse.Id,
-            RawRepresentation = openAIResponse,
-        };
-    }
-
     internal ChatResponse FromOpenAIResponse(OpenAIResponse openAIResponse, ResponseCreationOptions openAIOptions)
     {
         // Convert and return the results.

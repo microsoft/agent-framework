@@ -28,13 +28,4 @@ public interface ILongRunningChatClient : IChatClient
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>The <see cref="ChatResponse"/> representing result of the cancellation if supported; otherwise, <see langword="null"/>.</returns>
     Task<ChatResponse?> CancelRunAsync(string id, ChatCancelRunOptions? options = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Deletes a long-running chat operation.
-    /// </summary>
-    /// <param name="id">The unique identifier of the long-running operation to delete.</param>
-    /// <param name="options">Optional parameters for deleting the long-running operation.</param>
-    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    /// <returns>The <see cref="ChatResponse"/> representing result of the cancellation if supported; otherwise, <see langword="null"/>.</returns>
-    Task<ChatResponse?> DeleteRunAsync(string id, ChatDeleteRunOptions? options = null, CancellationToken cancellationToken = default);
 }

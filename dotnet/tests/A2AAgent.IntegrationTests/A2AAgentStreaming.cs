@@ -174,28 +174,6 @@ public sealed class A2AAgentStreaming
         Assert.Equal(NewResponseStatus.Canceled, response.Status);
     }
 
-    [Fact]
-    public async Task DeleteRunAsync_WhenCalled_CancelsRunAsync()
-    {
-        // Arrange
-        AIAgent agent = await this.CreateA2AAgentAsync();
-
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        IAsyncEnumerable<AgentRunResponseUpdate> streamingResponse = agent.RunStreamingAsync("What is the capital of France?", options: options);
-
-        var update = (await streamingResponse.ElementAtAsync(0));
-
-        // Act
-        AgentRunResponse? response = await agent.DeleteRunAsync(update.ResponseId!);
-
-        // Assert
-        Assert.Null(response); // A2A does not support deletion, so we expect null
-    }
-
     private async Task<AIAgent> CreateA2AAgentAsync(bool? awaitRunCompletion = null)
     {
         A2ACardResolver a2ACardResolver = new(new Uri("http://localhost:5048"));

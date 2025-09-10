@@ -908,11 +908,6 @@ namespace Azure.AI.Agents.Persistent
             return new[] { CreateChatResponseUpdate(run, new NewChatOptions { AwaitLongRunCompletion = false }) }.NewToChatResponse();
         }
 
-        public Task<ChatResponse?> DeleteRunAsync(string id, ChatDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult<ChatResponse?>(null);
-        }
-
         [JsonSerializable(typeof(JsonElement))]
         [JsonSerializable(typeof(JsonNode))]
         [JsonSerializable(typeof(JsonObject))]
