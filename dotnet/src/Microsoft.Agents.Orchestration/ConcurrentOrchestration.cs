@@ -61,10 +61,13 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
         this.ResumeAsync(messages, new AgentRunResponse?[this.Agents.Count], context, cancellationToken);
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.ConcurrentState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
-        return this.ResumeAsync(state.Messages, state.Completed, context, cancellationToken);
+
+        // Append the new messages to the checkpoint state
+        List<ChatMessage> allMessages = [.. state.Messages, .. newMessages];
+        return this.ResumeAsync(allMessages, state.Completed, context, cancellationToken);
     }
 
     /// <inheritdoc />

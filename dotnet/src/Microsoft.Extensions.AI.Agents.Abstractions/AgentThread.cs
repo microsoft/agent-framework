@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -106,23 +105,6 @@ public class AgentThread
             }
 
             this._messageStore = Throw.IfNull(value);
-        }
-    }
-
-    /// <summary>
-    /// Retrieves any messages stored in the <see cref="IChatMessageStore"/> of the thread, otherwise returns an empty collection.
-    /// </summary>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>The messages from the <see cref="IChatMessageStore"/> in ascending chronological order, with the oldest message first.</returns>
-    public virtual async IAsyncEnumerable<ChatMessage> GetMessagesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        if (this._messageStore is not null)
-        {
-            var messages = await this._messageStore!.GetMessagesAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var message in messages)
-            {
-                yield return message;
-            }
         }
     }
 

@@ -88,56 +88,6 @@ public class AgentThreadTests
 
     #endregion Constructor and Property Tests
 
-    #region GetMessagesAsync Tests
-
-    [Fact]
-    public async Task GetMessagesAsyncReturnsEmptyListWhenNoStoreAsync()
-    {
-        // Arrange
-        var thread = new AgentThread();
-
-        // Act
-        var messages = await ToListAsync(thread.GetMessagesAsync(CancellationToken.None));
-
-        // Assert
-        Assert.Empty(messages);
-    }
-
-    [Fact]
-    public async Task GetMessagesAsyncReturnsEmptyListWhenAgentServiceIdAsync()
-    {
-        // Arrange
-        var thread = new AgentThread { ConversationId = "thread-123" };
-
-        // Act
-        var messages = await ToListAsync(thread.GetMessagesAsync(CancellationToken.None));
-
-        // Assert
-        Assert.Empty(messages);
-    }
-
-    [Fact]
-    public async Task GetMessagesAsyncReturnsMessagesFromStoreAsync()
-    {
-        // Arrange
-        var store = new InMemoryChatMessageStore
-        {
-            new ChatMessage(ChatRole.User, "Hello"),
-            new ChatMessage(ChatRole.Assistant, "Hi there!")
-        };
-        var thread = new AgentThread { MessageStore = store };
-
-        // Act
-        var messages = await ToListAsync(thread.GetMessagesAsync(CancellationToken.None));
-
-        // Assert
-        Assert.Equal(2, messages.Count);
-        Assert.Equal("Hello", messages[0].Text);
-        Assert.Equal("Hi there!", messages[1].Text);
-    }
-
-    #endregion GetMessagesAsync Tests
-
     #region OnNewMessagesAsync Tests
 
     [Fact]
