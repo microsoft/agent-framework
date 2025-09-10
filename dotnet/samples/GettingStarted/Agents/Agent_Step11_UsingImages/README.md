@@ -6,15 +6,14 @@ This sample demonstrates how to use image multi-modality with an AI agent. It sh
 
 - Creating a persistent AI agent with vision capabilities
 - Sending both text and image content to an agent in a single message
-- Using `DataContent` to include base64-encoded images
+- Using `UriContent` to Uri referenced images
 - Processing multimodal input (text + image) with an AI agent
 - Proper cleanup of agent resources (thread and agent deletion)
 
 ## Key features
 
 - **Vision Agent**: Creates an agent specifically instructed to analyze images
-- **Multimodal Input**: Combines text questions with image data in a single message
-- **Base64 Image Encoding**: Demonstrates how to include images as data URIs
+- **Multimodal Input**: Combines text questions with image uri in a single message
 - **Azure AI Foundry Integration**: Uses persistent agents for server-side processing
 
 ## Prerequisites
@@ -22,7 +21,7 @@ This sample demonstrates how to use image multi-modality with an AI agent. It sh
 Before running this sample, ensure you have:
 
 1. An Azure AI Foundry project set up
-2. A compatible model deployment (e.g., gpt-4o-mini or gpt-4-vision)
+2. A compatible model deployment (e.g., gpt-4o)
 3. Azure CLI installed and authenticated
 
 ## Environment Variables
