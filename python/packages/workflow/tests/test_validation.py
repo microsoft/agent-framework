@@ -318,7 +318,7 @@ def test_logging_for_missing_input_types(caplog: Any) -> None:
 
     class NoInputTypesExecutor(Executor):
         # Handler without type annotation for input parameter
-        async def handle_message(self, message: Any, ctx: WorkflowContext) -> None:
+        async def handle_message(self, message: Any, ctx: WorkflowContext[Any]) -> None:
             await ctx.send_message("processed")
 
         def _discover_handlers(self) -> None:
@@ -581,7 +581,7 @@ def test_handler_ctx_missing_annotation_raises() -> None:
 def test_handler_ctx_unsubscripted_workflow_context_raises() -> None:
     class BadExecutor(Executor):
         @handler
-        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # missing T
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # type: ignore # missing T
             pass
 
     start = StringExecutor(id="s")

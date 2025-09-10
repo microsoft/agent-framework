@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 /// </summary>
 internal static class A2AMessageExtensions
 {
-    public static ChatMessage ToChatMessage(this Message message)
+    internal static ChatMessage ToChatMessage(this Message message)
     {
         List<AIContent>? aiContents = null;
 
