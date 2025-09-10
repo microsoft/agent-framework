@@ -13,6 +13,16 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_completed_event import ResponseCompletedEvent
+from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
+from openai.types.responses.response_function_call_arguments_delta_event import ResponseFunctionCallArgumentsDeltaEvent
+from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
+from openai.types.responses.response_output_refusal import ResponseOutputRefusal
+from openai.types.responses.response_output_text import ResponseOutputText
+from openai.types.responses.response_reasoning_summary_text_delta_event import ResponseReasoningSummaryTextDeltaEvent
+from openai.types.responses.response_reasoning_summary_text_done_event import ResponseReasoningSummaryTextDoneEvent
+from openai.types.responses.response_reasoning_text_delta_event import ResponseReasoningTextDeltaEvent
+from openai.types.responses.response_reasoning_text_done_event import ResponseReasoningTextDoneEvent
 from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
@@ -922,7 +932,19 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case "response.output_text.delta":
                 contents.append(TextContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case "response.completed":
+            case ResponseReasoningTextDeltaEvent():
+                contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
+                metadata.update(self._get_metadata_from_response(event))
+            case ResponseReasoningTextDoneEvent():
+                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
+                metadata.update(self._get_metadata_from_response(event))
+            case ResponseReasoningSummaryTextDeltaEvent():
+                contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
+                metadata.update(self._get_metadata_from_response(event))
+            case ResponseReasoningSummaryTextDoneEvent():
+                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
+                metadata.update(self._get_metadata_from_response(event))
+            case "response.completed" | ResponseCompletedEvent():
                 conversation_id = event.response.id if chat_options.store is True else None
                 model = event.response.model
                 if event.response.usage:
