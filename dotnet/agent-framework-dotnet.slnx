@@ -83,13 +83,29 @@
     <File Path="../workflows/README.md" />
     <File Path="../workflows/wttr.json" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Foundational/">
-    <Project Path="samples/GettingStarted/Workflows/Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Foundational/02_Streaming/02_Streaming.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
-  </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/SharedStates/">
     <Project Path="samples/GettingStarted/Workflows/SharedStates/SharedStates.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/Loop/">
+    <Project Path="samples/GettingStarted/Workflows/Loop/Loop.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/Agents/">
+    <Project Path="samples/GettingStarted/Workflows/Agents/CustomAgentExecutors/CustomAgentExecutors.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Agents/FoundryAgent/FoundryAgent.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/Checkpoint/">
+    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndRehydrate/CheckpointAndRehydrate.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointWithHumanInTheLoop/CheckpointWithHumanInTheLoop.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/HumanInTheLoop/">
+    <Project Path="samples/GettingStarted/Workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/Workflows/_Foundational/">
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/02_Streaming/02_Streaming.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
   </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/" />
   <Folder Name="/Samples/SemanticKernelMigration/AzureAIFoundry/">

@@ -35,7 +35,7 @@ public static class Program
         Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
-            if (evt is ExecutorCompleteEvent executorComplete)
+            if (evt is ExecutorCompletedEvent executorComplete)
             {
                 Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
             }

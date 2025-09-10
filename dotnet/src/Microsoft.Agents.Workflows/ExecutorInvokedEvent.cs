@@ -7,4 +7,4 @@ namespace Microsoft.Agents.Workflows;
 /// </summary>
 /// <param name="executorId">The unique identifier of the executor being invoked.</param>
 /// <param name="message">The invocation message.</param>
-public sealed class ExecutorInvokeEvent(string executorId, object message) : ExecutorEvent(executorId, data: message);
+public sealed class ExecutorInvokedEvent(string executorId, object message) : ExecutorEvent(executorId, data: message);

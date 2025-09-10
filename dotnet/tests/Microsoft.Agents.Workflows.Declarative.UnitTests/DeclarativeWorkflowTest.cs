@@ -208,20 +208,20 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertExecutionCount(int expectedCount)
     {
-        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokeEvent)]);
-        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorCompleteEvent)]);
+        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokedEvent)]);
+        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorCompletedEvent)]);
     }
 
     private void AssertNotExecuted(string executorId)
     {
-        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorInvokeEvent>(), e => e.ExecutorId == executorId);
-        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorCompleteEvent>(), e => e.ExecutorId == executorId);
+        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
+        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
     }
 
     private void AssertExecuted(string executorId)
     {
-        Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokeEvent>(), e => e.ExecutorId == executorId);
-        Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompleteEvent>(), e => e.ExecutorId == executorId);
+        Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
+        Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
     }
 
     private void AssertMessage(string message)
@@ -244,7 +244,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToImmutableList();
         foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
         {
-            if (workflowEvent is ExecutorInvokeEvent invokeEvent)
+            if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
                 DeclarativeExecutorResult? message = invokeEvent.Data as DeclarativeExecutorResult;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
