@@ -395,7 +395,7 @@ beginDialog:
                       displayName: Create new Plan Prompt
                       conversationId: =Topic.InternalConversationId
                       agent:
-                        name: =Env.FOUNDRY_AGENT_RESEARCHANALYST
+                        name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
                       output:
                         messages: Topic.Plan
                       input:
