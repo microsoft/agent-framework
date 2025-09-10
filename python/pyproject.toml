@@ -125,7 +125,7 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pytest.ini_options]
-testpaths = 'tests'
+testpaths = '**/tests'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -133,7 +133,7 @@ filterwarnings = []
 timeout = 120
 markers = [
     "azure: marks tests as Azure provider specific",
-    "foundry: marks tests as Foundry provider specific", 
+    "foundry: marks tests as Foundry provider specific",
     "openai: marks tests as OpenAI provider specific",
 ]
 
