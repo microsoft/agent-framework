@@ -22,6 +22,7 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.Description);
         Assert.Null(options.ChatOptions);
         Assert.Null(options.ChatMessageStoreFactory);
+        Assert.Null(options.AIContextProviderFactory);
     }
 
     [Fact]
@@ -39,6 +40,7 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.Instructions);
         Assert.Null(options.Description);
         Assert.Null(options.ChatOptions);
+        Assert.Null(options.AIContextProviderFactory);
     }
 
     [Fact]
@@ -163,11 +165,13 @@ public class ChatClientAgentOptionsTests
         const string Description = "Test description";
         var tools = new List<AITool> { AIFunctionFactory.Create(() => "test") };
         static IChatMessageStore ChatMessageStoreFactory() => new Mock<IChatMessageStore>().Object;
+        static AIContextProvider AIContextProviderFactory() => new Mock<AIContextProvider>().Object;
 
         var original = new ChatClientAgentOptions(Instructions, Name, Description, tools)
         {
             Id = "test-id",
-            ChatMessageStoreFactory = ChatMessageStoreFactory
+            ChatMessageStoreFactory = ChatMessageStoreFactory,
+            AIContextProviderFactory = AIContextProviderFactory
         };
 
         // Act
@@ -180,6 +184,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.Instructions, clone.Instructions);
         Assert.Equal(original.Description, clone.Description);
         Assert.Same(original.ChatMessageStoreFactory, clone.ChatMessageStoreFactory);
+        Assert.Same(original.AIContextProviderFactory, clone.AIContextProviderFactory);
 
         // ChatOptions should be cloned, not the same reference
         Assert.NotSame(original.ChatOptions, clone.ChatOptions);
@@ -209,5 +214,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.Instructions, clone.Instructions);
         Assert.Equal(original.Description, clone.Description);
         Assert.Null(clone.ChatOptions);
+        Assert.Null(clone.ChatMessageStoreFactory);
+        Assert.Null(clone.AIContextProviderFactory);
     }
 }

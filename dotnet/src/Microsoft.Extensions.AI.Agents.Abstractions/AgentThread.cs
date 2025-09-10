@@ -27,7 +27,12 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Gets or sets the id of the current thread to support cases where the thread is owned by the agent service.
+    /// Gets or sets the ID of the thread.
+    /// </summary>
+    public string? Id { get; set; }
+
+    /// <summary>
+    /// Gets or sets the ID of the underlying service thread to support cases where the chat history is stored by the agent service.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -109,6 +114,11 @@ public class AgentThread
     }
 
     /// <summary>
+    /// Gets or sets the <see cref="AIContextProvider"/> used by this thread to provide additional context to the AI model before each invocation.
+    /// </summary>
+    public AIContextProvider? AIContextProvider { get; set; }
+
+    /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
@@ -141,6 +151,11 @@ public class AgentThread
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
     protected internal virtual async Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
+        if (this.AIContextProvider is not null)
+        {
+            await this.AIContextProvider.MessagesAddingAsync(newMessages, this.Id, cancellationToken).ConfigureAwait(false);
+        }
+
         switch (this)
         {
             case { ConversationId: not null }:

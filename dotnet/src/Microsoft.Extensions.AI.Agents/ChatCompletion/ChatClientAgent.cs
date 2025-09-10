@@ -203,7 +203,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
     {
-        var thread = new AgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() };
+        var thread = new AgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(), AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke() };
         return thread;
     }
 
@@ -349,6 +349,33 @@ public sealed class ChatClientAgent : AIAgent
             threadMessages.AddRange(await thread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
         }
 
+        // If we have an AIContextProvider, we should get context from it, and update our
+        // messages and options with the additional context.
+        if (thread.AIContextProvider is not null)
+        {
+            var aiContext = await thread.AIContextProvider.ModelInvokingAsync(inputMessages, thread.Id, cancellationToken).ConfigureAwait(false);
+            if (aiContext.Messages is { Count: > 0 })
+            {
+                threadMessages.AddRange(aiContext.Messages);
+            }
+
+            if (aiContext.AIFunctions is { Count: > 0 })
+            {
+                chatOptions ??= new();
+                chatOptions.Tools ??= [];
+                foreach (AIFunction function in aiContext.AIFunctions)
+                {
+                    chatOptions.Tools.Add(function);
+                }
+            }
+
+            if (aiContext.Instructions is not null)
+            {
+                chatOptions ??= new();
+                chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
+            }
+        }
+
         // Add the input messages to the end of thread messages.
         threadMessages.AddRange(inputMessages);
 
@@ -392,6 +419,14 @@ public sealed class ChatClientAgent : AIAgent
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
         {
+            // If the caller hasn't set the thread id to a custom value
+            // we can update it to be the same as the conversation id,
+            // so that it always has a thread id.
+            if (thread.Id is null || thread.Id == thread.ConversationId)
+            {
+                thread.Id = responseConversationId;
+            }
+
             // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
             // so we should update the thread with the new id.
             thread.ConversationId = responseConversationId;

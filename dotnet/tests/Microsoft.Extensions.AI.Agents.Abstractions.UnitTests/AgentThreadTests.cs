@@ -26,6 +26,20 @@ public class AgentThreadTests
     }
 
     [Fact]
+    public void SetIdRoundtrips()
+    {
+        // Arrange
+        var thread = new AgentThread();
+        var id = "test-thread-id";
+
+        // Act
+        thread.Id = id;
+
+        // Assert
+        Assert.Equal(id, thread.Id);
+    }
+
+    [Fact]
     public void SetConversationIdRoundtrips()
     {
         // Arrange
@@ -126,6 +140,36 @@ public class AgentThreadTests
         Assert.Equal(2, store.Count);
         Assert.Equal("Hello", store[0].Text);
         Assert.Equal("Hi there!", store[1].Text);
+    }
+
+    [Fact]
+    public async Task OnNewMesssagesAsyncPassesMessagesToAIContextProviderAsync()
+    {
+        // Arrange
+        var providerMock = new Mock<AIContextProvider>();
+        var store = new InMemoryChatMessageStore();
+        var thread = new AgentThread
+        {
+            Id = "thread-123",
+            MessageStore = store,
+            AIContextProvider = providerMock.Object
+        };
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.Assistant, "Hi there!")
+        };
+
+        // Act
+        await thread.OnNewMessagesAsync(messages, CancellationToken.None);
+
+        // Assert
+        providerMock.Verify(
+            m => m.MessagesAddingAsync(
+                It.Is<IReadOnlyCollection<ChatMessage>>(msgs => msgs.Count == 2 && msgs.First().Text == "Hello" && msgs.Last().Text == "Hi there!"),
+                "thread-123",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     #endregion OnNewMessagesAsync Tests
