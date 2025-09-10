@@ -91,8 +91,13 @@ internal abstract class WorkflowActionExecutor :
 
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
-    protected async ValueTask AssignAsync(PropertyPath targetPath, FormulaValue result, IWorkflowContext context)
+    protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context)
     {
+        if (targetPath is null)
+        {
+            return;
+        }
+
         if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
         {
             throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");

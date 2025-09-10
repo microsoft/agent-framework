@@ -24,6 +24,13 @@ public abstract class WorkflowAgentProvider
     /// <returns>A task that represents the asynchronous operation. The task result contains the <see cref="AIAgent"/> associated
     /// with the specified <paramref name="agentId"/>. Returns <see langword="null"/> if no agent is found.</returns>
     public abstract Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously creates a new conversation and returns its unique identifier.
+    /// </summary>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+    /// <returns></returns>
+    public abstract Task<string> CreateConversationAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -37,6 +44,13 @@ public abstract class WorkflowAgentProvider
 public sealed class FoundryAgentProvider(string projectEndpoint, TokenCredential? projectCredentials = null, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
     private PersistentAgentsClient? _agentsClient;
+
+    /// <inheritdoc/>
+    public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
+    {
+        PersistentAgentThread conversation = await this.GetAgentsClient().Threads.CreateThreadAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        return conversation.Id;
+    }
 
     /// <inheritdoc/>
     public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)

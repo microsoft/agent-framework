@@ -192,11 +192,46 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.RestartAfter(item.Id.Value, parentId);
     }
 
-    protected override void Visit(AnswerQuestionWithAI item)
+    protected override void Visit(CreateConversation item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
+        this.ContinueWith(new CreateConversationExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
+    }
+
+    protected override void Visit(AddConversationMessage item)
+    {
+        this.Trace(item);
+
+        this.ContinueWith(new AddConversationMessageExecutor(item, this._workflowState));
+    }
+
+    protected override void Visit(CopyConversationMessages item)
+    {
+        this.Trace(item);
+
+        this.ContinueWith(new CopyConversationMessagesExecutor(item, this._workflowState));
+    }
+
+    protected override void Visit(InvokeAzureAgent item)
+    {
+        this.Trace(item);
+
+        this.ContinueWith(new InvokeAzureAgentExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
+    }
+
+    protected override void Visit(RetrieveConversationMessage item)
+    {
+        this.Trace(item);
+
+        this.ContinueWith(new RetrieveConversationMessageExecutor(item, this._workflowState));
+    }
+
+    protected override void Visit(RetrieveConversationMessages item)
+    {
+        this.Trace(item);
+
+        this.ContinueWith(new RetrieveConversationMessagesExecutor(item, this._workflowState));
     }
 
     protected override void Visit(SetVariable item)
@@ -204,6 +239,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         this.ContinueWith(new SetVariableExecutor(item, this._workflowState));
+    }
+
+    protected override void Visit(SetMultipleVariables item)
+    {
+        throw new NotImplementedException();
     }
 
     protected override void Visit(SetTextVariable item)
@@ -256,6 +296,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     }
 
     #region Not supported
+
+    protected override void Visit(AnswerQuestionWithAI item)
+    {
+        this.NotSupported(item);
+    }
 
     protected override void Visit(DeleteActivity item)
     {
