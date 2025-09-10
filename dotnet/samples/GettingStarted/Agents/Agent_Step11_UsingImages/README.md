@@ -1,6 +1,6 @@
 # Using Images with AI Agents
 
-This sample demonstrates how to use image multi-modality with an AI agent. It shows how to create a vision-enabled agent that can analyze and describe images using Azure AI Foundry's persistent agents.
+This sample demonstrates how to use image multi-modality with an AI agent. It shows how to create a vision-enabled agent that can analyze and describe images using Azure OpenAI.
 
 ## What this sample demonstrates
 
@@ -8,19 +8,18 @@ This sample demonstrates how to use image multi-modality with an AI agent. It sh
 - Sending both text and image content to an agent in a single message
 - Using `UriContent` to Uri referenced images
 - Processing multimodal input (text + image) with an AI agent
-- Proper cleanup of agent resources (thread and agent deletion)
 
 ## Key features
 
 - **Vision Agent**: Creates an agent specifically instructed to analyze images
 - **Multimodal Input**: Combines text questions with image uri in a single message
-- **Azure AI Foundry Integration**: Uses persistent agents for server-side processing
+- **Azure OpenAI Integration**: Uses AzureOpenAI LLM agents
 
 ## Prerequisites
 
 Before running this sample, ensure you have:
 
-1. An Azure AI Foundry project set up
+1. An Azure OpenAI project set up
 2. A compatible model deployment (e.g., gpt-4o)
 3. Azure CLI installed and authenticated
 
