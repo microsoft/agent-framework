@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.Orchestration;
@@ -8,4 +9,5 @@ namespace Microsoft.Agents.Orchestration;
 [JsonSerializable(typeof(ConcurrentOrchestration.ConcurrentState))]
 [JsonSerializable(typeof(GroupChatOrchestration.GroupChatState))]
 [JsonSerializable(typeof(HandoffOrchestration.HandoffState))]
+[JsonSerializable(typeof(JsonElement))]
 internal sealed partial class OrchestrationJsonContext : JsonSerializerContext;
