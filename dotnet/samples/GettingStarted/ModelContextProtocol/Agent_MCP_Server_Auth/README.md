@@ -21,32 +21,13 @@ The sample shows:
 - A running TestOAuthServer (for OAuth authentication), see [Start the Test OAuth Server](https://github.com/modelcontextprotocol/csharp-sdk/tree/main/samples/ProtectedMcpClient#step-1-start-the-test-oauth-server)
 - A running ProtectedMCPServer (for MCP services), see [Start the Protected MCP Server](https://github.com/modelcontextprotocol/csharp-sdk/tree/main/samples/ProtectedMcpClient#step-2-start-the-protected-mcp-server)
  
-## Configuring Secrets or Environment Variables
+## Configuring Environment Variables
 
-The example requires credentials to access OpenAI.
+Set the following environment variables:
 
-If you have set up those credentials as secrets within Secret Manager or through environment variables for other samples from the solution in which this project is found, they will be re-used.
-
-### To set your secrets with Secret Manager
-
-```text
-cd dotnet/samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server_Auth
-
-dotnet user-secrets init
-
-dotnet user-secrets set "OpenAI:ChatModelId" "..."
-dotnet user-secrets set "OpenAI:ApiKey" "..."
- "..."
-```
-
-### To set your secrets with environment variables
-
-Use these names:
-
-```text
-# OpenAI
-OpenAI__ChatModelId
-OpenAI__ApiKey
+```powershell
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
 ## Setup and Running
