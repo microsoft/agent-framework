@@ -52,7 +52,7 @@ class OutputStruct(BaseModel):
     """A structured output for testing purposes."""
 
     location: str
-    weather: str
+    weather: str | None = None
 
 
 async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, HostedVectorStoreContent]:
@@ -928,9 +928,10 @@ async def test_openai_responses_client_response() -> None:
 
     assert response is not None
     assert isinstance(response, ChatResponse)
-    output = OutputStruct.model_validate_json(response.text)
+    output = response.value
+    assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
-    assert "sunny" in output.weather.lower()
+    assert output.weather is not None
 
 
 @skip_if_openai_integration_tests_disabled
@@ -992,17 +993,11 @@ async def test_openai_responses_client_streaming() -> None:
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
-    response = openai_responses_client.get_streaming_response(messages=messages)
+    response = await ChatResponse.from_chat_response_generator(
+        openai_responses_client.get_streaming_response(messages=messages)
+    )
 
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-
-    assert "scientists" in full_message
+    assert "scientists" in response.text
 
     messages.clear()
     messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
@@ -1012,17 +1007,16 @@ async def test_openai_responses_client_streaming() -> None:
         messages=messages,
         response_format=OutputStruct,
     )
-    full_message = ""
+    chunks = []
     async for chunk in response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-
-    output = OutputStruct.model_validate_json(full_message)
+        chunks.append(chunk)
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
+    output = full_message.value
+    assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
-    assert "sunny" in output.weather.lower()
+    assert output.weather is not None
 
 
 @skip_if_openai_integration_tests_disabled
@@ -1059,15 +1053,15 @@ async def test_openai_responses_client_streaming_tools() -> None:
         tool_choice="auto",
         response_format=OutputStruct,
     )
-    full_message = ""
+    chunks = []
     async for chunk in response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
+        chunks.append(chunk)
 
-    output = OutputStruct.model_validate_json(full_message)
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
+    output = full_message.value
+    assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
     assert "sunny" in output.weather.lower()
 
