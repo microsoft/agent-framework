@@ -3,7 +3,6 @@
 using System;
 using System.Linq;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents.Hosting.Builders;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,7 +24,7 @@ public static class HostApplicationBuilderAgentExtensions
     /// <param name="instructions">The instructions for the agent.</param>
     /// <returns>The configured host application builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
-    public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions)
+    public static IHostApplicationBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
@@ -41,7 +40,7 @@ public static class HostApplicationBuilderAgentExtensions
     /// <param name="chatClient">The chat client which the agent will use for inference.</param>
     /// <returns>The configured host application builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
-    public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, IChatClient chatClient)
+    public static IHostApplicationBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, IChatClient chatClient)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
@@ -58,7 +57,7 @@ public static class HostApplicationBuilderAgentExtensions
     /// <param name="chatClientServiceKey">The key to use when resolving the chat client from the service provider. If null, a non-keyed service will be resolved.</param>
     /// <returns>The configured host application builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
-    public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, string description, object? chatClientServiceKey)
+    public static IHostApplicationBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, string description, object? chatClientServiceKey)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
@@ -78,7 +77,7 @@ public static class HostApplicationBuilderAgentExtensions
     /// <param name="chatClientServiceKey">The key to use when resolving the chat client from the service provider. If null, a non-keyed service will be resolved.</param>
     /// <returns>The configured host application builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="instructions"/> is null.</exception>
-    public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, object? chatClientServiceKey)
+    public static IHostApplicationBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, object? chatClientServiceKey)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
@@ -98,7 +97,7 @@ public static class HostApplicationBuilderAgentExtensions
     /// <returns>The configured host application builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="createAgentDelegate"/> is null.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the agent factory delegate returns null or an invalid AI agent instance.</exception>
-    public static IAIAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, AIAgent> createAgentDelegate)
+    public static IHostApplicationBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, AIAgent> createAgentDelegate)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
@@ -120,7 +119,7 @@ public static class HostApplicationBuilderAgentExtensions
         return builder.AddAgentActor(name);
     }
 
-    private static IAIAgentHostingBuilder AddAgentActor(this IHostApplicationBuilder builder, string name)
+    private static IHostApplicationBuilder AddAgentActor(this IHostApplicationBuilder builder, string name)
     {
         Throw.IfNull(builder);
 
@@ -128,18 +127,15 @@ public static class HostApplicationBuilderAgentExtensions
         var agentHostBuilder = GetAgentRegistry(builder);
         agentHostBuilder.AgentNames.Add(name);
 
-        var actorType = new ActorType(name);
-
         // Add the actor runtime and register the agent actor type.
         var actorBuilder = builder.AddActorRuntime();
         actorBuilder.AddActorType(
-            actorType,
+            new ActorType(name),
             (sp, ctx) => new AgentActor(
                 sp.GetRequiredKeyedService<AIAgent>(name),
                 ctx,
                 sp.GetRequiredService<ILogger<AgentActor>>()));
-
-        return AIAgentHostingBuilder.PrepareAgentBuilder(builder.Services, actorType);
+        return builder;
     }
 
     private static LocalAgentRegistry GetAgentRegistry(IHostApplicationBuilder builder)
