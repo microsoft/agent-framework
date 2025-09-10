@@ -288,7 +288,7 @@ async def main():
     _logger = logger.opt(colors=True)
 
     # Iterate over the tasks
-    for task in tasks[8:20]:  # Test with first tasks
+    for task in tasks[9:20]:  # Test with first tasks
         _logger.info(f"<red>Testing task #{task.id}</red>")
         _logger.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")
 
