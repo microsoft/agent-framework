@@ -165,15 +165,24 @@ HTTP_USER_AGENT: Final[str] = "agent-framework-python"
 AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"  # type: ignore[has-type]
 
 
-def prepend_agent_framework_to_user_agent(headers: dict[str, Any]) -> dict[str, Any]:
+def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None) -> dict[str, Any]:
     """Prepend "agent-framework" to the User-Agent in the headers.
+
+    When user agent telemetry is disabled, through the AZURE_TELEMETRY_DISABLED environment variable,
+    the User-Agent header will not include the agent-framework information, it will be sent back as is,
+    or as a empty dict when None is passed.
 
     Args:
         headers: The existing headers dictionary.
 
     Returns:
+        A new dict with "User-Agent" set to "agent-framework-python/{version}" if headers is None.
         The modified headers dictionary with "agent-framework-python/{version}" prepended to the User-Agent.
     """
+    if not IS_TELEMETRY_ENABLED:
+        return headers or {}
+    if not headers:
+        return {USER_AGENT_KEY: AGENT_FRAMEWORK_USER_AGENT}
     headers[USER_AGENT_KEY] = (
         f"{AGENT_FRAMEWORK_USER_AGENT} {headers[USER_AGENT_KEY]}"
         if USER_AGENT_KEY in headers
