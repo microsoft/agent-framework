@@ -106,7 +106,7 @@ internal sealed class Program
             }
             else if (evt is DeclarativeActionCompleteEvent actionComplete)
             {
-                Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionInvoked.ActionType}]");
+                Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionComplete.ActionType}]");
             }
             else if (evt is ExecutorFailureEvent executorFailure)
             {
