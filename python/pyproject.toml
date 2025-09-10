@@ -9,7 +9,6 @@ dependencies = [
     "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-workflow",
-    "agent-framework-devui",
 ]
 
 [dependency-groups]
@@ -65,8 +64,9 @@ exclude = [ "packages/agent_framework_project.egg-info" ]
 agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
 agent-framework-foundry = { workspace = true }
-agent-framework-workflow = { workspace = true }
+agent-framework-mem0 = { workspace = true }
 agent-framework-runtime = { workspace = true }
+agent-framework-workflow = { workspace = true }
 agent-framework-devui = { workspace = true }
 
 [tool.ruff]
