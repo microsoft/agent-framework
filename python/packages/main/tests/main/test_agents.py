@@ -195,7 +195,8 @@ class MockContextProvider(ContextProvider):
     thread_created_called: bool = False
     messages_adding_called: bool = False
     model_invoking_called: bool = False
-    thread_id: str | None = None
+    thread_created_thread_id: str | None = None
+    messages_adding_thread_id: str | None = None
     new_messages: list[ChatMessage] = []
 
     def __init__(self, contents: list[Contents] | None = None) -> None:
@@ -204,16 +205,17 @@ class MockContextProvider(ContextProvider):
         self.thread_created_called = False
         self.messages_adding_called = False
         self.model_invoking_called = False
-        self.thread_id = None
+        self.thread_created_thread_id = None
+        self.messages_adding_thread_id = None
         self.new_messages = []
 
     async def thread_created(self, thread_id: str | None) -> None:
         self.thread_created_called = True
-        self.thread_id = thread_id
+        self.thread_created_thread_id = thread_id
 
     async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
         self.messages_adding_called = True
-        self.thread_id = thread_id
+        self.messages_adding_thread_id = thread_id
         if isinstance(new_messages, ChatMessage):
             self.new_messages.append(new_messages)
         else:
@@ -249,7 +251,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Cha
     await agent.run("Hello")
 
     assert mock_provider.thread_created_called
-    assert mock_provider.thread_id == "test-thread-id"
+    assert mock_provider.thread_created_thread_id == "test-thread-id"
 
 
 async def test_chat_agent_context_providers_messages_adding(chat_client: ChatClientProtocol) -> None:
@@ -391,4 +393,4 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
 
     # messages_adding should be called with the service thread ID from response
     assert mock_provider.messages_adding_called
-    assert mock_provider.thread_id == "service-thread-123"  # Updated thread ID from response
+    assert mock_provider.messages_adding_thread_id == "service-thread-123"  # Updated thread ID from response
