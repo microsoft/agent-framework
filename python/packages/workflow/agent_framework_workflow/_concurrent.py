@@ -1,0 +1,233 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+import inspect
+import logging
+from collections.abc import Callable, Sequence
+from typing import Any
+
+from agent_framework import AgentProtocol, ChatMessage, Role
+
+from ._events import WorkflowCompletedEvent
+from ._executor import AgentExecutorRequest, AgentExecutorResponse, Executor, handler
+from ._workflow import Workflow, WorkflowBuilder
+from ._workflow_context import WorkflowContext
+
+logger = logging.getLogger(__name__)
+
+"""Concurrent builder for agent-only fan-out/fan-in workflows.
+
+This module provides a high-level, agent-focused API to quickly assemble a
+parallel workflow with:
+- a default dispatcher that broadcasts the input to all agent participants
+- a default aggregator that combines all agent conversations and completes the workflow
+
+Notes:
+- Participants should be AgentProtocol instances (e.g., created via a client create_agent API).
+- A custom aggregator can be provided as:
+  - an Executor instance (it should handle list[AgentExecutorResponse] and add a WorkflowCompletedEvent), or
+  - a callback function with signature:
+        def cb(results: list[AgentExecutorResponse]) -> Any | None
+        def cb(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None
+    If the callback returns a non-None value, it is sent as the data of a WorkflowCompletedEvent.
+    If it returns None, the callback may have already emitted a completion event via ctx.
+"""
+
+
+class _DispatchToAllParticipants(Executor):
+    """Broadcasts input to all downstream participants (via fan-out edges)."""
+
+    @handler
+    async def from_request(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        # No explicit target: edge routing delivers to all connected participants.
+        await ctx.send_message(request)
+
+    @handler
+    async def from_str(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        request = AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True)
+        await ctx.send_message(request)
+
+    @handler
+    async def from_message(self, message: ChatMessage, ctx: WorkflowContext[AgentExecutorRequest]) -> None:  # type: ignore[name-defined]
+        request = AgentExecutorRequest(messages=[message], should_respond=True)
+        await ctx.send_message(request)
+
+    @handler
+    async def from_messages(self, messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:  # type: ignore[name-defined]
+        request = AgentExecutorRequest(messages=list(messages), should_respond=True)
+        await ctx.send_message(request)
+
+
+class _AggregateAgentConversations(Executor):
+    """Aggregates agent responses and completes with combined ChatMessages.
+
+    Emits a list[ChatMessage] shaped as:
+      [ single_user_prompt?, agent1_final_assistant, agent2_final_assistant, ... ]
+
+    - Extracts a single user prompt (first user message seen across results).
+    - For each result, selects the final assistant message (prefers agent_run_response.messages).
+    - Avoids duplicating the same user message per agent.
+    """
+
+    @handler
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+        if not results:
+            logger.error("Concurrent aggregator received empty results list")
+            raise ValueError("Aggregation failed: no results provided")
+
+        def _is_role(msg: Any, role: Role) -> bool:
+            r = getattr(msg, "role", None)
+            if r is None:
+                return False
+            try:
+                return r == role or (isinstance(r, str) and r.lower() == role.value)
+            except Exception:  # pragma: no cover - defensive
+                return False
+
+        prompt_message: ChatMessage | None = None
+        assistant_replies: list[ChatMessage] = []
+
+        for r in results:
+            resp_messages = list(getattr(r.agent_run_response, "messages", []) or [])
+            conv = r.full_conversation if r.full_conversation is not None else resp_messages
+
+            logger.debug(
+                f"Aggregating executor {getattr(r, 'executor_id', '<unknown>')}: "
+                f"{len(resp_messages)} response msgs, {len(conv)} conversation msgs"
+            )
+
+            # Capture a single user prompt (first encountered across any conversation)
+            if prompt_message is None:
+                found_user = next((m for m in conv if _is_role(m, Role.USER)), None)
+                if found_user is not None:
+                    prompt_message = found_user
+
+            # Pick the final assistant message from the response; fallback to conversation search
+            final_assistant = next((m for m in reversed(resp_messages) if _is_role(m, Role.ASSISTANT)), None)
+            if final_assistant is None:
+                final_assistant = next((m for m in reversed(conv) if _is_role(m, Role.ASSISTANT)), None)
+
+            if final_assistant is not None:
+                assistant_replies.append(final_assistant)
+            else:
+                logger.warning(
+                    f"No assistant reply found for executor {getattr(r, 'executor_id', '<unknown>')}; skipping"
+                )
+
+        if not assistant_replies:
+            logger.error(f"Aggregation failed: no assistant replies found across {len(results)} results")
+            raise RuntimeError("Aggregation failed: no assistant replies found")
+
+        output: list[ChatMessage] = []
+        if prompt_message is not None:
+            output.append(prompt_message)
+        else:
+            logger.warning("No user prompt found in any conversation; emitting assistants only")
+        output.extend(assistant_replies)
+
+        await ctx.add_event(WorkflowCompletedEvent(data=output))
+
+
+class _CallbackAggregator(Executor):
+    """Wraps a Python callback as an aggregator.
+
+    The callback can be sync or async and with either signature:
+      - (results: list[AgentExecutorResponse]) -> Any | None
+      - (results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None
+
+    If the callback returns a non-None value, it is wrapped in a WorkflowCompletedEvent.
+    """
+
+    def __init__(self, callback: Callable[..., Any], id: str | None = None) -> None:
+        super().__init__(id)
+        self._callback = callback
+        self._param_count = len(inspect.signature(callback).parameters)
+
+    @handler
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+        # Call according to provided signature
+        ret = self._callback(results, ctx) if self._param_count >= 2 else self._callback(results)
+
+        if inspect.isawaitable(ret):  # Support async callbacks
+            ret = await ret  # type: ignore[assignment]
+
+        # If the callback returned a value, finalize the workflow with it
+        if ret is not None:
+            await ctx.add_event(WorkflowCompletedEvent(ret))
+
+
+class ConcurrentBuilder:
+    r"""High-level builder for concurrent agent workflows.
+
+    - participants([...]) accepts a list of AgentProtocol (recommended) or AgentExecutor.
+    - build() wires dispatcher -> fan-out -> participant(s) -> fan-in -> aggregator.
+    - with_custom_aggregator(...) lets you override the aggregator with an Executor or callback.
+
+    Usage:
+
+    ```python
+    from agent_framework import ChatMessage, Role
+    from agent_framework.workflow import ConcurrentBuilder
+
+    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
+
+
+    # Or with a custom aggregator (executor or callback)
+    def my_agg(results):
+        # results is list[AgentExecutorResponse]
+        return "\n\n".join(r.agent_run_response.messages[-1].text for r in results)
+
+
+    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(my_agg).build()
+    ```
+    """
+
+    def __init__(self) -> None:
+        self._participants: list[AgentProtocol | Executor] = []
+        self._aggregator: Executor | None = None
+
+    def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "ConcurrentBuilder":
+        if not participants:
+            raise ValueError("participants cannot be empty")
+
+        # Defensive duplicate detection
+        seen_agent_ids: set[int] = set()
+        seen_executor_ids: set[str] = set()
+        for p in participants:
+            if isinstance(p, Executor):
+                if p.id in seen_executor_ids:
+                    raise ValueError(f"Duplicate executor participant detected: id '{p.id}'")
+                seen_executor_ids.add(p.id)
+            elif isinstance(p, AgentProtocol):
+                pid = id(p)
+                if pid in seen_agent_ids:
+                    raise ValueError("Duplicate agent participant detected (same agent instance provided twice)")
+                seen_agent_ids.add(pid)
+            else:
+                raise TypeError(f"participants must be AgentProtocol or Executor instances; got {type(p).__name__}")
+
+        self._participants = list(participants)
+        return self
+
+    def with_custom_aggregator(self, aggregator: Executor | Callable[..., Any]) -> "ConcurrentBuilder":
+        if isinstance(aggregator, Executor):
+            self._aggregator = aggregator
+        elif callable(aggregator):
+            self._aggregator = _CallbackAggregator(aggregator)
+        else:
+            raise TypeError("aggregator must be an Executor or a callable")
+        return self
+
+    def build(self) -> Workflow:
+        if not self._participants:
+            raise ValueError("No participants provided. Call .participants([...]) first.")
+
+        dispatcher = _DispatchToAllParticipants(id="dispatcher")
+        aggregator = self._aggregator or _AggregateAgentConversations(id="aggregator")
+
+        builder = WorkflowBuilder()
+        return (
+            builder.set_start_executor(dispatcher)
+            .add_fan_out_edges(dispatcher, list(self._participants))
+            .add_fan_in_edges(list(self._participants), aggregator)
+            .build()
+        )
