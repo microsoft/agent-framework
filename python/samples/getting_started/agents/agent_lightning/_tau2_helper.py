@@ -1,5 +1,8 @@
 # type: ignore
 
+import json
+
+from pydantic import BaseModel
 from tau2.environment.tool import Tool
 from tau2.data_model.message import (
     APICompatibleMessage,
@@ -76,10 +79,18 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
 
         # Handle function results as separate ToolMessage instances
         for fr in function_results:
+            if isinstance(fr.result, BaseModel):
+                content = fr.result.model_dump_json()
+            elif isinstance(fr.result, dict) or isinstance(fr.result, list):
+                content = json.dumps(fr.result)
+            elif fr.result is None:
+                content = None
+            else:
+                content = str(fr.result)
             tool_msg = ToolMessage(
                 id=fr.call_id,
                 role="tool",
-                content=str(fr.result) if fr.result is not None else None,
+                content=content,
                 requestor="assistant",  # Most tool calls come from assistant
                 error=fr.exception is not None,
             )

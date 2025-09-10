@@ -179,10 +179,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             if choice.finish_reason:
                 finish_reason = FinishReason(value=choice.finish_reason)
             contents: list[Contents] = []
-            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
-                contents.extend(parsed_tool_calls)
             if text_content := self._parse_text_from_choice(choice):
                 contents.append(text_content)
+            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
+                contents.extend(parsed_tool_calls)
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
