@@ -326,7 +326,7 @@ def mock_chat_client():
     return MockChatClient
 
 
-@pytest.mark.parametrize("sensitive", [True, False], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_instrumentation_enabled(mock_chat_client, otel_settings):
     """Test that when diagnostics are enabled, telemetry is applied."""
     client = use_telemetry(mock_chat_client)()
@@ -346,7 +346,7 @@ async def test_instrumentation_enabled(mock_chat_client, otel_settings):
         assert mock_log_messages.call_count == (2 if otel_settings.enable_sensitive_data else 0)
 
 
-@pytest.mark.parametrize("sensitive", [True, False], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_streaming_response_with_otel(mock_chat_client, otel_settings):
     """Test streaming telemetry through the use_telemetry decorator."""
     client = use_telemetry(mock_chat_client)()
@@ -503,7 +503,7 @@ def mock_chat_client_agent():
     return MockChatClientAgent
 
 
-@pytest.mark.parametrize("sensitive", [True, False], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_instrumentation_enabled(mock_chat_client_agent: AgentProtocol, otel_settings):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
@@ -520,7 +520,7 @@ async def test_agent_instrumentation_enabled(mock_chat_client_agent: AgentProtoc
         assert mock_logger.info.call_count == (2 if otel_settings.enable_sensitive_data else 0)
 
 
-@pytest.mark.parametrize("sensitive", [True, False], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     mock_chat_client_agent: AgentProtocol, otel_settings
 ):

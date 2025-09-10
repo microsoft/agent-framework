@@ -407,7 +407,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             tool_args["file_ids"] = []
                             for tool_input in tool.inputs:
                                 if isinstance(tool_input, HostedFileContent):
-                                    tool_args["file_ids"].append(tool_input.file_id)
+                                    tool_args["file_ids"].append(tool_input.file_id)  # type: ignore[attr-defined]
                             if not tool_args["file_ids"]:
                                 tool_args.pop("file_ids")
                         response_tools.append(
