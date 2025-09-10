@@ -68,7 +68,7 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
             return;
         }
 
-        await this.RaiseInvocationEventAsync(context).ConfigureAwait(false);
+        await this.RaiseInvocationEventAsync(context, message.ExecutorId).ConfigureAwait(false);
 
         await this.State.RestoreAsync(context, default).ConfigureAwait(false);
 
@@ -126,7 +126,7 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
         return exception is null ? new(message) : new(message, exception);
     }
 
-    protected ValueTask RaiseInvocationEventAsync(IWorkflowContext context) => context.AddEventAsync(new DeclarativeActionInvokeEvent(this.Id, this.Model));
+    protected ValueTask RaiseInvocationEventAsync(IWorkflowContext context, string? priorEventId = null) => context.AddEventAsync(new DeclarativeActionInvokeEvent(this.Id, this.Model, priorEventId));
 
     protected ValueTask RaiseCompletionEventAsync(IWorkflowContext context) => context.AddEventAsync(new DeclarativeActionCompleteEvent(this.Id, this.Model));
 }

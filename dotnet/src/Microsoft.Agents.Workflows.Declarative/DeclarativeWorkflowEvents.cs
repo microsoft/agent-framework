@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative;
@@ -18,7 +19,7 @@ public class ConversationUpdateEvent(string executorid, string conversationId) :
 /// <summary>
 /// Event that indicates a declarative action has been invoked.
 /// </summary>
-public class DeclarativeActionInvokeEvent(string actionId, DialogAction action) : WorkflowEvent(action)
+public class DeclarativeActionInvokeEvent(string actionId, DialogAction action, string? priorActionId) : WorkflowEvent(action)
 {
     /// <summary>
     /// The declarative action id.
@@ -29,6 +30,16 @@ public class DeclarativeActionInvokeEvent(string actionId, DialogAction action) 
     /// The declarative action type name.
     /// </summary>
     public string ActionType => action.GetType().Name;
+
+    /// <summary>
+    /// Identifier of the parent action.
+    /// </summary>
+    public string? ParentActionId => action.GetParentId();
+
+    /// <summary>
+    /// Identifier of the previous action.
+    /// </summary>
+    public string? PriorActionId => priorActionId;
 }
 
 /// <summary>
@@ -37,7 +48,7 @@ public class DeclarativeActionInvokeEvent(string actionId, DialogAction action) 
 public class DeclarativeActionCompleteEvent(string actionId, DialogAction action) : WorkflowEvent(action)
 {
     /// <summary>
-    /// The declarative action id.
+    /// The declarative action identifier.
     /// </summary>
     public string ActionId => actionId;
 
@@ -45,4 +56,9 @@ public class DeclarativeActionCompleteEvent(string actionId, DialogAction action
     /// The declarative action type name.
     /// </summary>
     public string ActionType => action.GetType().Name;
+
+    /// <summary>
+    /// Identifier of the parent action.
+    /// </summary>
+    public string? ParentActionId => action.GetParentId();
 }
