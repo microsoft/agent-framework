@@ -237,7 +237,7 @@ class DirectoryScanner:
                 from .utils.workflow import extract_workflow_input_info, generate_mermaid_diagram
 
                 # Extract workflow-specific information
-                workflow_dump = obj.model_dump() if hasattr(obj, "model_dump") else {}
+                # Pass the actual workflow object instead of serialized dump
                 mermaid_diagram = generate_mermaid_diagram(obj)
                 input_info = extract_workflow_input_info(obj)
 
@@ -249,7 +249,7 @@ class DirectoryScanner:
                     executors=tools,
                     has_env=(Path(module_path) / ".env").exists(),
                     module_path=module_path,
-                    workflow_dump=workflow_dump,
+                    workflow_dump=obj,
                     mermaid_diagram=mermaid_diagram,
                     input_schema=input_info["input_schema"],
                     input_type_name=input_info["input_type_name"],

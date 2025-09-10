@@ -45,7 +45,12 @@ class AgentFrameworkDebugServer:
     """
 
     def __init__(
-        self, agents_dir: Optional[str] = None, enable_cors: bool = True, cors_origins: Optional[List[str]] = None
+        self, 
+        agents_dir: Optional[str] = None, 
+        enable_cors: bool = True, 
+        cors_origins: Optional[List[str]] = None,
+        telemetry_mode: str = "framework",
+        include_sensitive_data: bool = False
     ) -> None:
         """Initialize the debug server.
 
@@ -53,16 +58,59 @@ class AgentFrameworkDebugServer:
             agents_dir: Optional directory to scan for agents
             enable_cors: Whether to enable CORS middleware
             cors_origins: List of allowed CORS origins
+            telemetry_mode: Telemetry collection mode (none|framework|workflow|all)
+            include_sensitive_data: Whether to include sensitive data in traces
         """
         self.registry = AgentRegistry(agents_dir)
         self.session_manager = SessionManager()
-        self.execution_engine = ExecutionEngine()
         self.enable_cors = enable_cors
         self.cors_origins = cors_origins or ["*"]
         self.tracing_manager = TracingManager()
+        
+        # Configure telemetry based on CLI flags
+        self.telemetry_config = self._parse_telemetry_config(telemetry_mode, include_sensitive_data)
+        
+        # Initialize execution engine with telemetry config
+        self.execution_engine = ExecutionEngine(telemetry_config=self.telemetry_config)
 
         # Thread ID mapping for in-memory threads
         self._thread_ids: Dict[int, str] = {}
+
+    def _parse_telemetry_config(self, telemetry_mode: str, include_sensitive_data: bool) -> Dict[str, bool]:
+        """Parse telemetry mode into configuration flags.
+        
+        Args:
+            telemetry_mode: One of 'none', 'framework', 'workflow', 'all'
+            include_sensitive_data: Whether to include sensitive data in traces
+            
+        Returns:
+            Dictionary with telemetry configuration flags
+        """
+        config = {
+            'enable_framework_traces': False,
+            'enable_workflow_traces': False,
+            'enable_sensitive_data': include_sensitive_data,
+        }
+        
+        if telemetry_mode == "framework":
+            config['enable_framework_traces'] = True
+        elif telemetry_mode == "workflow":
+            config['enable_workflow_traces'] = True
+        elif telemetry_mode == "all":
+            config['enable_framework_traces'] = True
+            config['enable_workflow_traces'] = True
+        # 'none' keeps all flags False
+        
+        # Set environment variables for Agent Framework components
+        import os
+        if config['enable_framework_traces']:
+            os.environ['AGENT_FRAMEWORK_ENABLE_OTEL'] = 'true'
+        if config['enable_workflow_traces']:
+            os.environ['AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL'] = 'true'
+        if config['enable_sensitive_data']:
+            os.environ['AGENT_FRAMEWORK_ENABLE_SENSITIVE_DATA'] = 'true'
+            
+        return config
 
     def _dummy_trace_callback(self, event: DebugStreamEvent) -> None:
         """Dummy callback for initial tracing setup."""
@@ -306,7 +354,6 @@ class AgentFrameworkDebugServer:
                 async for event in self.execution_engine.execute_workflow_streaming(
                     workflow=workflow_obj,
                     input_data=request.input_data,
-                    capture_traces=True,
                     tracing_manager=self.tracing_manager,
                 ):
                     events.append(event)
@@ -365,7 +412,6 @@ class AgentFrameworkDebugServer:
                         message=converted_messages,
                         thread=thread,
                         thread_id=thread_id,  # Pass thread_id to execution engine
-                        capture_traces=request.options.get("capture_traces", True) if request.options else True,
                         tracing_manager=self.tracing_manager,  # Pass tracing manager for real-time trace streaming
                     ):
                         yield f"data: {event.model_dump_json()}\n\n"
@@ -394,7 +440,6 @@ class AgentFrameworkDebugServer:
                     async for event in self.execution_engine.execute_workflow_streaming(
                         workflow=workflow_obj,
                         input_data=request.input_data,
-                        capture_traces=True,
                         tracing_manager=self.tracing_manager,
                     ):
                         yield f"data: {event.model_dump_json()}\n\n"

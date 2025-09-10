@@ -4,13 +4,14 @@
 
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 # Import required types with proper type handling
 if TYPE_CHECKING:
     # For type checking, import the real types
     from agent_framework import AgentRunResponseUpdate
     from agent_framework_workflow._events import WorkflowEvent
+    from agent_framework_workflow._workflow import Workflow
 else:
     # At runtime, try to import but fallback gracefully
     try:
@@ -22,6 +23,11 @@ else:
         from agent_framework_workflow._events import WorkflowEvent
     except ImportError:
         WorkflowEvent = Dict[str, Any]
+    
+    try:
+        from agent_framework_workflow._workflow import Workflow
+    except ImportError:
+        Workflow = Dict[str, Any]
 
 
 class AgentInfo(BaseModel):
@@ -50,13 +56,21 @@ class WorkflowInfo(BaseModel):
     module_path: Optional[str] = None
 
     # Workflow structure
-    workflow_dump: Dict[str, Any]
+    workflow_dump: "Workflow"
     mermaid_diagram: Optional[str] = None
 
     # Input specification
     input_schema: Dict[str, Any]  # JSON Schema for workflow input
     input_type_name: str  # Human-readable input type name
     start_executor_id: str
+    
+    @field_serializer("workflow_dump")
+    def serialize_workflow_dump(self, workflow: "Workflow") -> Dict[str, Any]:
+        """Serialize workflow object to dictionary for JSON response."""
+        if hasattr(workflow, "model_dump"):
+            return workflow.model_dump()
+        # Fallback for backward compatibility
+        return workflow if isinstance(workflow, dict) else {}
 
 
 class RunAgentRequest(BaseModel):
@@ -67,7 +81,6 @@ class RunAgentRequest(BaseModel):
 
     messages: Union[str, List[Dict[str, Any]]]
     thread_id: Optional[str] = None
-    options: Optional[Dict[str, Any]] = None
 
 
 class RunWorkflowRequest(BaseModel):
@@ -128,12 +141,22 @@ class DebugStreamEvent(BaseModel):
     event: Optional[Union[WorkflowEvent, Dict[str, Any]]] = None  # Accept WorkflowEvent instance or serialized dict
     trace_span: Optional[TraceSpan] = None  # Real-time trace span
     # Workflow structure data (minimal)
-    workflow_dump: Optional[Dict[str, Any]] = None
+    workflow_dump: Optional["Workflow"] = None
     mermaid_diagram: Optional[str] = None
     timestamp: str
     debug_metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     thread_id: Optional[str] = None  # Thread ID for session tracking
+    
+    @field_serializer("workflow_dump")
+    def serialize_workflow_dump_debug(self, workflow: Optional["Workflow"]) -> Optional[Dict[str, Any]]:
+        """Serialize workflow object to dictionary for JSON response."""
+        if workflow is None:
+            return None
+        if hasattr(workflow, "model_dump"):
+            return workflow.model_dump()
+        # Fallback for backward compatibility
+        return workflow if isinstance(workflow, dict) else {}
 
 
 class HealthResponse(BaseModel):

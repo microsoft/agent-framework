@@ -46,9 +46,17 @@ class ExecutionEngine:
     This ensures zero maintenance burden while preserving all framework capabilities.
     """
 
-    def __init__(self) -> None:
-        """Initialize the execution engine."""
-        pass
+    def __init__(self, telemetry_config: Optional[Dict[str, bool]] = None) -> None:
+        """Initialize the execution engine.
+        
+        Args:
+            telemetry_config: Optional telemetry configuration from server
+        """
+        self.telemetry_config = telemetry_config or {
+            'enable_framework_traces': True,
+            'enable_workflow_traces': False,
+            'enable_sensitive_data': False,
+        }
 
     async def execute_agent_streaming(
         self,
@@ -56,7 +64,6 @@ class ExecutionEngine:
         message: Union[str, List[Any]],
         thread: Optional["AgentThread"] = None,
         thread_id: Optional[str] = None,
-        capture_traces: bool = True,
         tracing_manager: Optional["TracingManager"] = None,
     ) -> AsyncGenerator[DebugStreamEvent, None]:
         """Execute agent and yield native AgentRunResponseUpdate wrapped in debug envelope.
@@ -66,7 +73,6 @@ class ExecutionEngine:
             message: The message to send to the agent
             thread: Optional conversation thread
             thread_id: Optional thread identifier for session tracking
-            capture_traces: Whether to capture debug metadata
             tracing_manager: Optional tracing manager for span streaming
 
         Yields:
@@ -76,7 +82,8 @@ class ExecutionEngine:
         trace_events = []
 
         # Set up tracing with callback to collect trace events
-        if tracing_manager and thread_id and capture_traces:
+        enable_traces = self.telemetry_config.get('enable_framework_traces', False)
+        if tracing_manager and thread_id and enable_traces:
 
             def collect_trace_event(trace_event: DebugStreamEvent):
                 trace_events.append(trace_event)
@@ -117,7 +124,7 @@ class ExecutionEngine:
                                     update=update,  # Native AgentRunResponseUpdate - no modification
                                     timestamp=self._get_timestamp(),
                                     thread_id=thread_id,
-                                    debug_metadata=self._get_debug_metadata(update) if capture_traces else None,
+                                    debug_metadata=self._get_debug_metadata(update) if enable_traces else None,
                                 )
 
                             # Mark span as successful after processing all updates
@@ -144,7 +151,7 @@ class ExecutionEngine:
                                 update=update,  # Native AgentRunResponseUpdate - no modification
                                 timestamp=self._get_timestamp(),
                                 thread_id=thread_id,
-                                debug_metadata=self._get_debug_metadata(update) if capture_traces else None,
+                                debug_metadata=self._get_debug_metadata(update) if enable_traces else None,
                             )
                     except Exception as e:
                         logger.error(f"Error in agent execution fallback: {e}")
@@ -163,7 +170,7 @@ class ExecutionEngine:
                             update=update,  # Native AgentRunResponseUpdate - no modification
                             timestamp=self._get_timestamp(),
                             thread_id=thread_id,
-                            debug_metadata=self._get_debug_metadata(update) if capture_traces else None,
+                            debug_metadata=self._get_debug_metadata(update) if enable_traces else None,
                         )
                 except Exception as e:
                     logger.error(f"Error in agent execution without tracing: {e}")
@@ -184,7 +191,6 @@ class ExecutionEngine:
         self,
         workflow: "Workflow",
         input_data: Union[str, Dict[str, Any]],
-        capture_traces: bool = True,
         tracing_manager: Optional["TracingManager"] = None,
     ) -> AsyncGenerator[DebugStreamEvent, None]:
         """Execute workflow and yield native WorkflowEvent wrapped in debug envelope.
@@ -192,7 +198,6 @@ class ExecutionEngine:
         Args:
             workflow: The Agent Framework workflow to execute
             input_data: The input data for the workflow (string or structured dict)
-            capture_traces: Whether to capture debug metadata
             tracing_manager: Optional tracing manager for span streaming
 
         Yields:
@@ -202,7 +207,8 @@ class ExecutionEngine:
         trace_events = []
 
         # Set up tracing with callback to collect trace events
-        if tracing_manager and capture_traces:
+        enable_traces = self.telemetry_config.get('enable_workflow_traces', False)
+        if tracing_manager and enable_traces:
 
             def collect_trace_event(trace_event: DebugStreamEvent):
                 trace_events.append(trace_event)
@@ -213,7 +219,7 @@ class ExecutionEngine:
             # First, send workflow structure information (minimal - just raw dump)
             try:
                 yield DebugStreamEvent(
-                    type="workflow_structure", workflow_dump=workflow.model_dump(), timestamp=self._get_timestamp()
+                    type="workflow_structure", workflow_dump=workflow, timestamp=self._get_timestamp()
                 )
             except Exception as e:
                 logger.warning(f"Could not generate workflow structure: {e}")
@@ -226,17 +232,15 @@ class ExecutionEngine:
                 parsed_input = self._parse_workflow_input(workflow, input_data)
 
             # Create a span for workflow execution if tracing is enabled
-            if tracing_manager and capture_traces:
+            if tracing_manager and enable_traces:
                 try:
                     from opentelemetry import trace
 
                     tracer = trace.get_tracer("devui.execution")
 
-                    input_str = str(input_data)[:100] + "..." if len(str(input_data)) > 100 else str(input_data)
-
                     with tracer.start_as_current_span(
                         f"workflow_execution.{getattr(workflow, 'name', 'unknown')}",
-                        attributes={"workflow_name": getattr(workflow, "name", "unknown"), "input_data": input_str},
+                        attributes={"workflow_name": getattr(workflow, "name", "unknown"), "input_data": str(input_data)[:100] + "..." if len(str(input_data)) > 100 else str(input_data)},
                     ) as span:
                         try:
                             # Execute workflow using framework's native streaming
@@ -252,7 +256,7 @@ class ExecutionEngine:
                                     type="workflow_event",
                                     event=self._serialize_workflow_event(event),  # Convert to serializable format
                                     timestamp=self._get_timestamp(),
-                                    debug_metadata=self._get_debug_metadata(event) if capture_traces else None,
+                                    debug_metadata=self._get_debug_metadata(event) if enable_traces else None,
                                 )
 
                             # Mark span as successful
@@ -279,7 +283,7 @@ class ExecutionEngine:
                                 type="workflow_event",
                                 event=self._serialize_workflow_event(event),  # Convert to serializable format
                                 timestamp=self._get_timestamp(),
-                                debug_metadata=self._get_debug_metadata(event) if capture_traces else None,
+                                debug_metadata=self._get_debug_metadata(event) if enable_traces else None,
                             )
                     except Exception as e:
                         logger.error(f"Error in workflow execution fallback: {e}")
@@ -297,7 +301,7 @@ class ExecutionEngine:
                             type="workflow_event",
                             event=self._serialize_workflow_event(event),  # Convert to serializable format
                             timestamp=self._get_timestamp(),
-                            debug_metadata=self._get_debug_metadata(event) if capture_traces else None,
+                            debug_metadata=self._get_debug_metadata(event) if enable_traces else None,
                         )
                 except Exception as e:
                     logger.error(f"Error in workflow execution without tracing: {e}")
@@ -335,6 +339,7 @@ class ExecutionEngine:
             metadata["framework_timestamp"] = obj.timestamp
 
         return metadata
+
 
     def _parse_structured_workflow_input(self, workflow: "Workflow", input_data: Dict[str, Any]) -> Any:
         """Parse structured input data for workflow execution.

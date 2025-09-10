@@ -8,41 +8,8 @@ from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpd
 
 from agent_framework_devui._discovery import DirectoryScanner
 
-
-class MockAgent(AgentProtocol):
-    """Mock agent implementing AgentProtocol for testing."""
-
-    def __init__(self, name: str = "TestAgent", agent_id: str = "test_agent") -> None:
-        self._name = name
-        self._description = f"Test agent: {name}"
-        self._id = agent_id
-
-    @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        return self._name
-
-    @property
-    def description(self) -> str | None:
-        return self._description
-
-    async def run(self, messages: Any = None, *, thread: Any = None, **kwargs: Any) -> AgentRunResponse:
-        return AgentRunResponse(messages=[])
-
-    async def run_stream(
-        self, messages: Any = None, *, thread: Any = None, **kwargs: Any
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        yield AgentRunResponseUpdate(contents=[])
-
-    def get_new_thread(self) -> AgentThread:
-        return Mock()
+# Import shared test utilities
+from .test_utils import MockAgent
 
 
 class MockWorkflow:
@@ -71,7 +38,7 @@ def test_find_agent_in_module_success() -> None:
 
     # Create mock module with agent variable
     mock_module = types.ModuleType("test_module")
-    mock_module.agent = MockAgent("TestAgent")
+    setattr(mock_module, "agent", MockAgent("TestAgent"))
 
     # Should find the agent
     result = scanner._find_agent_in_module(mock_module)
@@ -87,7 +54,7 @@ def test_find_workflow_in_module_success() -> None:
 
     # Create mock module with workflow variable
     mock_module = types.ModuleType("test_module")
-    mock_module.workflow = MockWorkflow("TestWorkflow")
+    setattr(mock_module, "workflow", MockWorkflow("TestWorkflow"))
 
     # Should find the workflow
     result = scanner._find_agent_in_module(mock_module)
@@ -103,8 +70,8 @@ def test_find_agent_wrong_variable_name() -> None:
 
     # Create mock module with wrong variable name
     mock_module = types.ModuleType("test_module")
-    mock_module.my_agent = MockAgent("TestAgent")  # Wrong name!
-    mock_module.some_workflow = MockWorkflow("TestWorkflow")  # Wrong name!
+    setattr(mock_module, "my_agent", MockAgent("TestAgent"))  # Wrong name!
+    setattr(mock_module, "some_workflow", MockWorkflow("TestWorkflow"))  # Wrong name!
 
     # Should not find anything
     result = scanner._find_agent_in_module(mock_module)
@@ -126,7 +93,7 @@ def test_find_agent_missing_methods() -> None:
             self.name = "test_name"
             # Missing run_stream method!
 
-    mock_module.agent = BadAgent()
+    setattr(mock_module, "agent", BadAgent())
 
     # Should not find it
     result = scanner._find_agent_in_module(mock_module)
@@ -139,8 +106,8 @@ def test_find_agent_missing_methods() -> None:
             self.name = "test_workflow"
             # Missing run_stream method!
 
-    mock_module.workflow = BadWorkflow()
-    mock_module.agent = None  # Clear agent
+    setattr(mock_module, "workflow", BadWorkflow())
+    setattr(mock_module, "agent", None)  # Clear agent
 
     # Should not find it
     result = scanner._find_agent_in_module(mock_module)

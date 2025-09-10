@@ -1,83 +1,15 @@
 """Tests for AgentRegistry functionality."""
 
-from collections.abc import AsyncIterable
-from typing import List
 from unittest.mock import Mock, patch
 
 import pytest
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread
 from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowContext, handler
 
 from agent_framework_devui._models import AgentInfo, WorkflowInfo
 from agent_framework_devui._registry import AgentRegistry
 
-
-class MockAgent(AgentProtocol):
-    """Mock agent implementing AgentProtocol for testing."""
-
-    def __init__(self, name: str = "TestAgent", tools: List | None = None, agent_id: str = "test_agent"):
-        self._name = name
-        self._description = f"Test agent: {name}"
-        self._id = agent_id
-        self.tools = tools if tools is not None else []
-        self.chat_options = Mock()
-        self.chat_options.tools = self.tools
-
-    @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        return self._name
-
-    @property
-    def description(self) -> str | None:
-        return self._description
-
-    async def run(self, messages=None, *, thread=None, **kwargs) -> AgentRunResponse:
-        return AgentRunResponse(messages=[])
-
-    async def run_stream(self, messages=None, *, thread=None, **kwargs) -> AsyncIterable[AgentRunResponseUpdate]:
-        yield AgentRunResponseUpdate(contents=[])
-
-    def get_new_thread(self) -> AgentThread:
-        return Mock()
-
-
-class MockExecutor(Executor):
-    """Mock executor for testing."""
-
-    def __init__(self, exec_id: str):
-        # Properly initialize via parent constructor
-        super().__init__(id=exec_id)
-
-    @handler
-    async def mock_handler(self, message: str, ctx: WorkflowContext[str]) -> None:
-        """Mock handler that accepts string input."""
-        pass
-
-
-def create_mock_workflow(name: str = "TestWorkflow"):
-    """Create a real workflow for testing instead of trying to mock the complex Workflow class."""
-    executor1 = MockExecutor("executor1")
-    executor2 = MockExecutor("executor2")
-
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
-
-    # Real workflows don't have name/description fields in the Pydantic model
-    # The registry will get None for these, which is expected behavior
-
-    return workflow
-
-
-def mock_tool_function():
-    """Mock tool function for testing."""
-    pass
+# Import shared test utilities
+from .test_utils import MockAgent, MockExecutor, create_mock_workflow, mock_tool_function
 
 
 @pytest.mark.asyncio
@@ -121,9 +53,12 @@ async def test_register_workflow():
     assert workflows[0].id == "test_workflow"
     assert workflows[0].name is None  # Real workflows don't have name field
     assert workflows[0].source == "in_memory"
-    # Should have schema extraction working
+    # Should have schema extraction working - enhanced schema for string input
     assert workflows[0].input_type_name == "str"
-    assert workflows[0].input_schema["type"] == "string"
+    assert workflows[0].input_schema["type"] == "object"
+    assert "properties" in workflows[0].input_schema
+    assert "message" in workflows[0].input_schema["properties"]
+    assert workflows[0].input_schema["properties"]["message"]["type"] == "string"
 
 
 @pytest.mark.asyncio
@@ -174,9 +109,9 @@ async def test_workflow_executor_extraction():
     workflows = registry.list_workflows()
     assert len(workflows) == 1
     assert workflows[0].workflow_dump is not None
-    assert "executors" in workflows[0].workflow_dump
+    assert hasattr(workflows[0].workflow_dump, "executors")
     # Check executor IDs in the workflow dump
-    executors = workflows[0].workflow_dump["executors"]
+    executors = workflows[0].workflow_dump.executors
     executor_ids = list(executors.keys())
     assert "executor1" in executor_ids
     assert "executor2" in executor_ids
@@ -219,7 +154,7 @@ async def test_remove_items():
 @pytest.mark.asyncio
 async def test_mixed_sources():
     """Test registry with both in-memory and directory sources."""
-    with patch("devui.discovery.DirectoryScanner") as mock_scanner_class:
+    with patch("agent_framework_devui._discovery.DirectoryScanner") as mock_scanner_class:
         # Setup mock directory scanner
         mock_scanner = Mock()
         mock_scanner.discover_entities.return_value = [
@@ -255,7 +190,7 @@ async def test_mixed_sources():
 @pytest.mark.asyncio
 async def test_cache_clearing():
     """Test cache clearing functionality."""
-    with patch("devui.discovery.DirectoryScanner") as mock_scanner_class:
+    with patch("agent_framework_devui._discovery.DirectoryScanner") as mock_scanner_class:
         mock_scanner = Mock()
         mock_scanner_class.return_value = mock_scanner
 
@@ -299,7 +234,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from agent_framework.workflow import WorkflowContext, handler
-from devui.models import WorkflowInfo
+from agent_framework_devui._models import WorkflowInfo
 from pydantic import BaseModel, Field
 
 
@@ -413,7 +348,11 @@ async def test_workflow_string_input_schema():
     assert workflow_info.id == "string_workflow"
     assert workflow_info.input_type_name == "str"
     assert workflow_info.start_executor_id == "string_exec"
-    assert workflow_info.input_schema["type"] == "string"
+    # Enhanced schema for string input should be an object with message property
+    assert workflow_info.input_schema["type"] == "object"
+    assert "properties" in workflow_info.input_schema
+    assert "message" in workflow_info.input_schema["properties"]
+    assert workflow_info.input_schema["properties"]["message"]["type"] == "string"
 
 
 @pytest.mark.asyncio
@@ -466,8 +405,9 @@ async def test_workflow_info_structure():
 
     # Should have workflow dump
     assert workflow_info.workflow_dump is not None
-    assert isinstance(workflow_info.workflow_dump, dict)
-    assert "executors" in workflow_info.workflow_dump
+    # With proper typing, workflow_dump is now a Workflow instance that has model_dump() method
+    assert hasattr(workflow_info.workflow_dump, "executors")
+    assert hasattr(workflow_info.workflow_dump, "start_executor_id")
 
     # Should have input schema info
     assert workflow_info.input_schema is not None

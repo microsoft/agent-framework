@@ -36,6 +36,8 @@ def debug(
     port: int = 8080,
     auto_open: bool = False,
     host: str = "127.0.0.1",
+    telemetry_mode: str = "framework",
+    include_sensitive_data: bool = False,
 ) -> None:
     """Launch Agent Framework debug UI with type-safe agent/workflow registration.
 
@@ -49,6 +51,8 @@ def debug(
         port: Port to run the debug server on
         auto_open: Whether to automatically open browser
         host: Host to bind the server to
+        telemetry_mode: Telemetry collection mode (none|framework|workflow|all)
+        include_sensitive_data: Whether to include sensitive data in traces
 
     Example:
         ```python
@@ -65,8 +69,14 @@ def debug(
     """
     import uvicorn
 
-    # Create server instance
-    server = DebugServer(agents_dir=agents_dir, port=port, host=host)
+    # Create server instance with telemetry configuration
+    server = DebugServer(
+        agents_dir=agents_dir, 
+        port=port, 
+        host=host,
+        telemetry_mode=telemetry_mode,
+        include_sensitive_data=include_sensitive_data
+    )
 
     # Register in-memory agents and workflows
     if agents:
@@ -87,15 +97,28 @@ class DebugServer:
     Provides fine-grained control over the debug server for advanced use cases.
     """
 
-    def __init__(self, agents_dir: Optional[str] = None, port: int = 8080, host: str = "127.0.0.1") -> None:
+    def __init__(
+        self, 
+        agents_dir: Optional[str] = None, 
+        port: int = 8080, 
+        host: str = "127.0.0.1",
+        telemetry_mode: str = "framework",
+        include_sensitive_data: bool = False
+    ) -> None:
         """Initialize debug server.
 
         Args:
             agents_dir: Optional directory to scan for agents
             port: Port to run server on
             host: Host to bind server to
+            telemetry_mode: Telemetry collection mode (none|framework|workflow|all)
+            include_sensitive_data: Whether to include sensitive data in traces
         """
-        self._server = AgentFrameworkDebugServer(agents_dir=agents_dir)
+        self._server = AgentFrameworkDebugServer(
+            agents_dir=agents_dir,
+            telemetry_mode=telemetry_mode,
+            include_sensitive_data=include_sensitive_data
+        )
         self.port = port
         self.host = host
         self._app: Optional["FastAPI"] = None
@@ -167,6 +190,15 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=8080, help="Port to run server on (default: 8080)")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind server to (default: 127.0.0.1)")
     parser.add_argument("--no-open", action="store_true", help="Don't automatically open browser")
+    
+    # Telemetry configuration
+    parser.add_argument(
+        "--telemetry", 
+        choices=["none", "framework", "workflow", "all"], 
+        default="framework",
+        help="Enable telemetry collection (default: framework)"
+    )
+    parser.add_argument("--sensitive-data", action="store_true", help="Include sensitive data in traces")
 
     args = parser.parse_args()
 
@@ -190,9 +222,19 @@ def main():
         print("   See documentation for directory structure requirements")
 
     print(f"🚀 Starting devui on http://{args.host}:{args.port}")
+    print(f"📊 Telemetry mode: {args.telemetry}")
+    if args.sensitive_data:
+        print("⚠️  Sensitive data collection enabled")
 
-    # Launch debug UI
-    debug(agents_dir=agents_dir, port=args.port, host=args.host, auto_open=not args.no_open)
+    # Launch debug UI with telemetry configuration
+    debug(
+        agents_dir=agents_dir, 
+        port=args.port, 
+        host=args.host, 
+        auto_open=not args.no_open,
+        telemetry_mode=args.telemetry,
+        include_sensitive_data=args.sensitive_data
+    )
 
 
 # Export main public API

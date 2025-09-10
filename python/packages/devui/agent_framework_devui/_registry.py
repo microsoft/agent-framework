@@ -163,7 +163,7 @@ class AgentRegistry:
                     executors=extract_workflow_executors(workflow),
                     has_env=False,
                     module_path=None,
-                    workflow_dump=workflow.model_dump(),
+                    workflow_dump=workflow,
                     mermaid_diagram=generate_mermaid_diagram(workflow),
                     input_schema=input_info["input_schema"],
                     input_type_name=input_info["input_type_name"],
