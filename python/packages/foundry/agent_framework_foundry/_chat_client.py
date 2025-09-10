@@ -27,7 +27,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.telemetry import use_telemetry
+from agent_framework.telemetry import prepend_agent_framework_to_user_agent, use_telemetry
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -93,6 +93,8 @@ class FoundrySettings(AFBaseSettings):
 
 
 TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
+
+HEADERS = prepend_agent_framework_to_user_agent()
 
 
 @use_function_invocation
@@ -281,7 +283,11 @@ class FoundryChatClient(BaseChatClient):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name = self.agent_name
-            args = {"model": self.ai_model_id, "name": agent_name}
+            args = {
+                "model": self.ai_model_id,
+                "name": agent_name,
+                "headers": HEADERS,
+            }
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
@@ -317,7 +323,11 @@ class FoundryChatClient(BaseChatClient):
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
             await self.client.agents.runs.submit_tool_outputs_stream(  # type: ignore[reportUnknownMemberType]
-                thread_run.thread_id, tool_run_id, tool_outputs=tool_outputs, event_handler=handler
+                thread_run.thread_id,
+                tool_run_id,
+                tool_outputs=tool_outputs,
+                event_handler=handler,
+                headers=HEADERS,
             )
             # Pass the handler to the stream to continue processing
             stream = handler  # type: ignore
@@ -331,6 +341,7 @@ class FoundryChatClient(BaseChatClient):
             stream = await self.client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
                 final_thread_id,
                 agent_id=agent_id,
+                headers=HEADERS,
                 **run_options,
             )
 
@@ -341,7 +352,9 @@ class FoundryChatClient(BaseChatClient):
         if thread_id is None:
             return None
 
-        async for run in self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):
+        async for run in self.client.agents.runs.list(
+            thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING, headers=HEADERS
+        ):  # type: ignore[reportUnknownMemberType]
             if run.status not in [
                 RunStatus.COMPLETED,
                 RunStatus.CANCELLED,
@@ -358,7 +371,7 @@ class FoundryChatClient(BaseChatClient):
         if thread_id is not None:
             if thread_run is not None:
                 # There was an active run; we need to cancel it before starting a new run.
-                await self.client.agents.runs.cancel(thread_id, thread_run.id)
+                await self.client.agents.runs.cancel(thread_id, thread_run.id, headers=HEADERS)
 
             return thread_id
 
@@ -366,6 +379,7 @@ class FoundryChatClient(BaseChatClient):
         thread = await self.client.agents.threads.create(
             tool_resources=run_options.get("tool_resources"),
             metadata=run_options.get("metadata"),
+            headers=HEADERS,
         )
         thread_id = thread.id
         # workaround for: https://github.com/Azure/azure-sdk-for-python/issues/42805
@@ -378,6 +392,7 @@ class FoundryChatClient(BaseChatClient):
                 role=msg.role,
                 content=msg.content,
                 metadata=msg.metadata,
+                headers=HEADERS,
             )
         # and remove until here.
         return thread_id
@@ -501,7 +516,7 @@ class FoundryChatClient(BaseChatClient):
     async def _cleanup_agent_if_needed(self) -> None:
         """Clean up the agent if we created it."""
         if self._should_delete_agent and self.agent_id is not None:
-            await self.client.agents.delete_agent(self.agent_id)
+            await self.client.agents.delete_agent(self.agent_id, headers=HEADERS)
             self.agent_id = None
             self._should_delete_agent = False
 
