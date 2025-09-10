@@ -387,6 +387,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        base_url: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -404,6 +405,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             async_client: An existing client to use. (Optional)
             instruction_role: The role to use for 'instruction' messages, for example,
                 "system" or "developer". If not provided, the default is "system".
+            base_url: The optional base URL to use. If provided will override the standard value for a OpenAI connector.
             env_file_path: Use the environment settings file as a fallback
                 to environment variables. (Optional)
             env_file_encoding: The encoding of the environment settings file. (Optional)
@@ -436,6 +438,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            base_url=base_url,
         )
 
     @classmethod
