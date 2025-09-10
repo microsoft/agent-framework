@@ -84,7 +84,7 @@ jobs:
       - name: Test main samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -n logical --dist loadfile --dist worksteal -m "openai"
+        run: uv run pytest tests/samples/ -m "openai"
         working-directory: ./python
       - name: Move coverage file
         run: |
@@ -152,7 +152,7 @@ jobs:
       - name: Test azure samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -n logical --dist loadfile --dist worksteal -m "azure"
+        run: uv run pytest tests/samples/ -m "azure"
         working-directory: ./python
       - name: Move coverage file
         run: |
@@ -219,7 +219,7 @@ jobs:
       - name: Test foundry samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -n logical --dist loadfile --dist worksteal -m "foundry"
+        run: uv run pytest tests/samples/ -m "foundry"
         working-directory: ./python
       - name: Move coverage file
         run: |
