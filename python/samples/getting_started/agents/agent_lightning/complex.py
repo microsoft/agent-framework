@@ -3,9 +3,7 @@
 import asyncio
 import uuid
 from loguru import logger
-from typing import Optional, List
 from pydantic import Field
-from openai import OpenAI
 
 from tau2.domains.airline.environment import get_environment, get_tasks
 from tau2.data_model.tasks import Task
@@ -14,7 +12,7 @@ from tau2.evaluator.evaluator import evaluate_simulation, EvaluationType
 from tau2.utils.utils import get_now
 from tau2.user.user_simulator import get_global_user_sim_guidelines, STOP, TRANSFER, OUT_OF_SCOPE
 
-from agent_framework import ChatAgent, ChatMessage, Contents, Role, AgentRunResponse
+from agent_framework import ChatAgent, ChatMessage, Role, AgentRunResponse
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.workflow import (
     Executor,
@@ -28,6 +26,7 @@ from agent_framework.workflow import (
 )
 
 from _tau2_helper import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
+from _af_helper import _log_messages, _flip_messages, SlidingWindowChatMessageList
 
 
 # Agent instructions matching tau2's LLMAgent
@@ -43,99 +42,6 @@ Try to be helpful and always follow the policy. Always make sure you generate va
 
 # Default first message from agent (matching tau2)
 DEFAULT_FIRST_AGENT_MESSAGE = "Hi! How can I help you today?"
-
-
-def _flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
-    """Flip the messages from assistant to user and vice versa."""
-    def filter_out_function_calls(messages: list[Contents]) -> list[Contents]:
-        return [content for content in messages if content.type != "function_call"]
-
-    flipped_messages = []
-    for msg in messages:
-        if msg.role == Role.ASSISTANT:
-            # Flip assistant to user
-            contents = filter_out_function_calls(msg.contents)
-            if contents:
-                flipped_msg = ChatMessage(
-                    role=Role.USER,
-                    # The function calls will cause 400 when role is user
-                    contents=contents,
-                    author_name=msg.author_name,
-                    message_id=msg.message_id
-                )
-                flipped_messages.append(flipped_msg)
-        elif msg.role == Role.USER:
-            # Flip user to assistant
-            flipped_msg = ChatMessage(
-                role=Role.ASSISTANT,
-                contents=msg.contents,
-                author_name=msg.author_name,
-                message_id=msg.message_id
-            )
-            flipped_messages.append(flipped_msg)
-        elif msg.role == Role.TOOL:
-            # Skip tool messages
-            pass
-        else:
-            # Keep other roles as-is (system, tool, etc.)
-            flipped_messages.append(msg)
-    return flipped_messages
-
-
-def _log_messages(messages: list[ChatMessage]) -> None:
-    """Log messages with colored output based on role and content type."""
-    _logger = logger.opt(colors=True)
-    for msg in messages:
-        # Handle different content types
-        if hasattr(msg, 'contents') and msg.contents:
-            for content in msg.contents:
-                if hasattr(content, 'type'):
-                    if content.type == 'text':
-                        if msg.role == Role.SYSTEM:
-                            _logger.info(f"<cyan>[SYSTEM]</cyan> {content.text}")
-                        elif msg.role == Role.USER:
-                            _logger.info(f"<green>[USER]</green> {content.text}")
-                        elif msg.role == Role.ASSISTANT:
-                            _logger.info(f"<blue>[ASSISTANT]</blue> {content.text}")
-                        elif msg.role == Role.TOOL:
-                            _logger.info(f"<yellow>[TOOL]</yellow> {content.text}")
-                        else:
-                            _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {content.text}")
-                    elif content.type == 'function_call':
-                        _logger.info(f"<yellow>[TOOL_CALL]</yellow> 🔧 {content.name}({content.arguments})")
-                    elif content.type == 'function_result':
-                        _logger.info(f"<yellow>[TOOL_RESULT]</yellow> 🔨 ID:{content.call_id} -> {content.result}")
-                    else:
-                        _logger.info(f"<magenta>[{msg.role.value.upper()}] ({content.type})</magenta> {str(content)}")
-                else:
-                    # Fallback for content without type
-                    text_content = str(content)
-                    if msg.role == Role.SYSTEM:
-                        _logger.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
-                    elif msg.role == Role.USER:
-                        _logger.info(f"<green>[USER]</green> {text_content}")
-                    elif msg.role == Role.ASSISTANT:
-                        _logger.info(f"<blue>[ASSISTANT]</blue> {text_content}")
-                    elif msg.role == Role.TOOL:
-                        _logger.info(f"<yellow>[TOOL]</yellow> {text_content}")
-                    else:
-                        _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
-        elif hasattr(msg, 'text') and msg.text:
-            # Handle simple text messages
-            if msg.role == Role.SYSTEM:
-                _logger.info(f"<cyan>[SYSTEM]</cyan> {msg.text}")
-            elif msg.role == Role.USER:
-                _logger.info(f"<green>[USER]</green> {msg.text}")
-            elif msg.role == Role.ASSISTANT:
-                _logger.info(f"<blue>[ASSISTANT]</blue> {msg.text}")
-            elif msg.role == Role.TOOL:
-                _logger.info(f"<yellow>[TOOL]</yellow> {msg.text}")
-            else:
-                _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {msg.text}")
-        else:
-            # Fallback for other message formats
-            _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {str(msg)}")
-
 
 
 class ConversationOrchestrator(Executor):
@@ -258,7 +164,15 @@ async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
 </policy>"""
 
     assistant_chat_client = OpenAIChatClient(ai_model_id=model)
-    assistant = ChatAgent(chat_client=assistant_chat_client, instructions=assistant_system_prompt, tools=ai_functions)
+    assistant = ChatAgent(
+        chat_client=assistant_chat_client,
+        instructions=assistant_system_prompt,
+        tools=ai_functions,
+        temperature=0.0,
+        chat_message_store_factory=lambda: SlidingWindowChatMessageList(
+            system_message=assistant_system_prompt, tool_definitions=[tool.openai_schema for tool in tools]
+        ),
+    )
 
     # 2. Create user simulator as another ChatAgent
     # Get user simulator guidelines (without tools for now as requested)
@@ -274,6 +188,7 @@ async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
     user_simulator = ChatAgent(
         chat_client=user_chat_client,
         instructions=user_sim_system_prompt,
+        temperature=0.0,
         # No tools for user simulator as requested
     )
 
@@ -287,22 +202,22 @@ async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
         WorkflowBuilder()
         .set_start_executor(orchestrator)  # Start with orchestrator
         .add_edge(orchestrator, assistant_executor)  # Orchestrator -> Assistant
-        .add_edge(assistant_executor, orchestrator)  # Assistant -> Orchestrator  
-        .add_edge(orchestrator, user_executor)       # Orchestrator -> User
-        .add_edge(user_executor, orchestrator)       # User -> Orchestrator
+        .add_edge(assistant_executor, orchestrator)  # Assistant -> Orchestrator
+        .add_edge(orchestrator, user_executor)  # Orchestrator -> User
+        .add_edge(user_executor, orchestrator)  # User -> Orchestrator
         .build()
     )
 
     # 5. Start workflow with hardcoded greeting
     logger.info(f"Starting workflow with hardcoded greeting: '{DEFAULT_FIRST_AGENT_MESSAGE}'")
-    
+
     # Create initial greeting response to kick off the conversation
     initial_greeting = AgentExecutorResponse(
         executor_id="assistant_agent",
         agent_run_response=AgentRunResponse(messages=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)]),
-        full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)]
+        full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)],
     )
-    
+
     events = await workflow.run(initial_greeting)
 
     # 6. Extract completed event
@@ -363,7 +278,7 @@ async def main():
 
     agentops.init()
 
-    # Test the implementation
+    # Test the environment
     env = get_environment()
     tasks = get_tasks()
 
@@ -372,7 +287,8 @@ async def main():
 
     _logger = logger.opt(colors=True)
 
-    for task in tasks[:3]:  # Test with first tasks
+    # Iterate over the tasks
+    for task in tasks[8:20]:  # Test with first tasks
         _logger.info(f"<red>Testing task #{task.id}</red>")
         _logger.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")
 
