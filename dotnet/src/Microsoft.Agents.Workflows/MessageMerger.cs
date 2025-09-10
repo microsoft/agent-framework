@@ -130,7 +130,7 @@ internal class MessageMerger
         return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
     }
 
-    public AgentRunResponse ComputeMerged(string primaryResponseId)
+    public AgentRunResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
     {
         List<ChatMessage> messages = [];
         Dictionary<string, AgentRunResponse> responses = new();
@@ -175,7 +175,9 @@ internal class MessageMerger
         return new AgentRunResponse(messages)
         {
             ResponseId = primaryResponseId,
-            AgentId = agentIds.SingleOrDefault(),
+            AgentId = primaryAgentId
+                   ?? primaryAgentName
+                   ?? (agentIds.Count == 1 ? agentIds.First() : null),
             CreatedAt = DateTimeOffset.Now,
             Usage = usage,
             AdditionalProperties = additionalProperties

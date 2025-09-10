@@ -16,7 +16,7 @@ public class MessageMergerTests
     public static string TestAuthorName2 => "Assistant2";
 
     [Fact]
-    public void Test_MessegeMerger_AssemblesMessage()
+    public void Test_MessageMerger_AssemblesMessage()
     {
         DateTimeOffset creationTime = DateTimeOffset.UtcNow;
         string responseId = Guid.NewGuid().ToString("N");
@@ -24,7 +24,7 @@ public class MessageMergerTests
 
         MessageMerger merger = new();
 
-        foreach (AgentRunResponseUpdate update in "Hello Agent Framwork Workflows!".ToAgentRunStream(authorName: TestAuthorName1, agentId: TestAgentId1, messageId: messageId, createdAt: creationTime, responseId: responseId))
+        foreach (AgentRunResponseUpdate update in "Hello Agent Framework Workflows!".ToAgentRunStream(authorName: TestAuthorName1, agentId: TestAgentId1, messageId: messageId, createdAt: creationTime, responseId: responseId))
         {
             merger.AddUpdate(update);
         }
