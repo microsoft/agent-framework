@@ -27,12 +27,12 @@ public sealed class BingSearchConfiguration
     /// <param name="props">Properties for this instance.</param>
     internal BingSearchConfiguration(IDictionary<string, object> props) : this()
     {
-        ConnectionId = props.GetValueOrDefault<string>("connectionId") ?? throw new ArgumentException("Properties must contain a property named: connectionId", nameof(props));
-        InstanceName = props.GetValueOrDefault<string>("instanceName") ?? throw new ArgumentException("Properties must contain a property named: instanceName", nameof(props));
-        Market = props.GetValueOrDefault<string?>("market");
-        SetLang = props.GetValueOrDefault<string?>("setLang");
-        Count = props.GetValueOrDefault<object?>("count");
-        Freshness = props.GetValueOrDefault<string?>("freshness");
+        this.ConnectionId = props.GetValueOrDefault<string>("connectionId") ?? throw new ArgumentException("Properties must contain a property named: connectionId", nameof(props));
+        this.InstanceName = props.GetValueOrDefault<string>("instanceName") ?? throw new ArgumentException("Properties must contain a property named: instanceName", nameof(props));
+        this.Market = props.GetValueOrDefault<string?>("market");
+        this.SetLang = props.GetValueOrDefault<string?>("setLang");
+        this.Count = props.GetValueOrDefault<object?>("count");
+        this.Freshness = props.GetValueOrDefault<string?>("freshness");
     }
     
     /// <summary>

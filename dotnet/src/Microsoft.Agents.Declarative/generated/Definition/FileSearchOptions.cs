@@ -26,8 +26,8 @@ public sealed class FileSearchOptions
     /// <param name="props">Properties for this instance.</param>
     internal FileSearchOptions(IDictionary<string, object> props) : this()
     {
-        MaxNumResults = props.GetValueOrDefault<object?>("maxNumResults");
-        RankingOptions = props.GetValueOrDefault<FileSearchRankingOptions?>("rankingOptions");
+        this.MaxNumResults = props.GetValueOrDefault<object?>("maxNumResults");
+        this.RankingOptions = props.GetValueOrDefault<FileSearchRankingOptions?>("rankingOptions");
     }
     
     /// <summary>

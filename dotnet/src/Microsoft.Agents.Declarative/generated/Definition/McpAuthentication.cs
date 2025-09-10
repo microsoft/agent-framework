@@ -27,8 +27,8 @@ public sealed class McpAuthentication
     /// <param name="props">Properties for this instance.</param>
     internal McpAuthentication(IDictionary<string, object> props) : this()
     {
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Credentials = props.GetValueOrDefault<Dictionary<string, object>>("credentials") ?? throw new ArgumentException("Properties must contain a property named: credentials", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Credentials = props.GetValueOrDefault<Dictionary<string, object>>("credentials") ?? throw new ArgumentException("Properties must contain a property named: credentials", nameof(props));
     }
     
     /// <summary>

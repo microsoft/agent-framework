@@ -28,10 +28,10 @@ public sealed class AgentOutput
     /// <param name="props">Properties for this instance.</param>
     internal AgentOutput(IDictionary<string, object> props) : this()
     {
-        Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Description = props.GetValueOrDefault<string?>("description");
-        Required = props.GetValueOrDefault<bool?>("required");
+        this.Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Description = props.GetValueOrDefault<string?>("description");
+        this.Required = props.GetValueOrDefault<bool?>("required");
     }
     
     /// <summary>

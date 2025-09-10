@@ -27,8 +27,8 @@ public sealed class FileSearchRankingOptions
     /// <param name="props">Properties for this instance.</param>
     internal FileSearchRankingOptions(IDictionary<string, object> props) : this()
     {
-        Ranker = props.GetValueOrDefault<string>("ranker") ?? throw new ArgumentException("Properties must contain a property named: ranker", nameof(props));
-        ScoreThreshold = props.GetValueOrDefault<float>("scoreThreshold");
+        this.Ranker = props.GetValueOrDefault<string>("ranker") ?? throw new ArgumentException("Properties must contain a property named: ranker", nameof(props));
+        this.ScoreThreshold = props.GetValueOrDefault<float>("scoreThreshold");
     }
     
     /// <summary>

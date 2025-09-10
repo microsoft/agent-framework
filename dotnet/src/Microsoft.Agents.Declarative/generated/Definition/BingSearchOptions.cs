@@ -27,7 +27,7 @@ public sealed class BingSearchOptions
     /// <param name="props">Properties for this instance.</param>
     internal BingSearchOptions(IDictionary<string, object> props) : this()
     {
-        Configurations = props.GetValueOrDefault<IList<BingSearchConfiguration>>("configurations") ?? throw new ArgumentException("Properties must contain a property named: configurations", nameof(props));
+        this.Configurations = props.GetValueOrDefault<IList<BingSearchConfiguration>>("configurations") ?? throw new ArgumentException("Properties must contain a property named: configurations", nameof(props));
     }
     
     /// <summary>

@@ -53,8 +53,8 @@ public sealed class Model
     /// <param name="props">Properties for this instance.</param>
     internal Model(IDictionary<string, object> props) : this()
     {
-        Id = props.GetValueOrDefault<string>("id") ?? throw new ArgumentException("Properties must contain a property named: id", nameof(props));
-        Connection = props.GetValueOrDefault<Connection?>("connection");
+        this.Id = props.GetValueOrDefault<string>("id") ?? throw new ArgumentException("Properties must contain a property named: id", nameof(props));
+        this.Connection = props.GetValueOrDefault<Connection?>("connection");
     }
     
     /// <summary>

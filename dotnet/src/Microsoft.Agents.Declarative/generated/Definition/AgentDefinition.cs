@@ -32,19 +32,19 @@ public sealed class AgentDefinition
     /// <param name="props">Properties for this instance.</param>
     internal AgentDefinition(IDictionary<string, object> props) : this()
     {
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Id = props.GetValueOrDefault<string?>("id");
-        Version = props.GetValueOrDefault<string?>("version");
-        Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
-        Description = props.GetValueOrDefault<string?>("description");
-        Metadata = props.GetValueOrDefault<Dictionary<string, object>?>("metadata");
-        Model = props.GetValueOrDefault<Model>("model") ?? throw new ArgumentException("Properties must contain a property named: model", nameof(props));
-        Inputs = props.GetValueOrDefault<IList<AgentInput>?>("inputs");
-        Outputs = props.GetValueOrDefault<IList<AgentOutput>?>("outputs");
-        Tools = props.GetValueOrDefault<IList<Tool>?>("tools");
-        Template = props.GetValueOrDefault<Template?>("template");
-        Instructions = props.GetValueOrDefault<string?>("instructions");
-        AdditionalInstructions = props.GetValueOrDefault<string?>("additional_instructions");
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Id = props.GetValueOrDefault<string?>("id");
+        this.Version = props.GetValueOrDefault<string?>("version");
+        this.Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
+        this.Description = props.GetValueOrDefault<string?>("description");
+        this.Metadata = props.GetValueOrDefault<Dictionary<string, object>?>("metadata");
+        this.Model = props.GetValueOrDefault<Model>("model") ?? throw new ArgumentException("Properties must contain a property named: model", nameof(props));
+        this.Inputs = props.GetValueOrDefault<IList<AgentInput>?>("inputs");
+        this.Outputs = props.GetValueOrDefault<IList<AgentOutput>?>("outputs");
+        this.Tools = props.GetValueOrDefault<IList<Tool>?>("tools");
+        this.Template = props.GetValueOrDefault<Template?>("template");
+        this.Instructions = props.GetValueOrDefault<string?>("instructions");
+        this.AdditionalInstructions = props.GetValueOrDefault<string?>("additional_instructions");
     }
     
     /// <summary>

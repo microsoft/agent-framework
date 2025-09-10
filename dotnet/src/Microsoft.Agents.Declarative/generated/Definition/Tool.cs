@@ -27,10 +27,10 @@ public abstract class Tool
     /// <param name="props">Properties for this instance.</param>
     internal Tool(IDictionary<string, object> props) : this()
     {
-        Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Description = props.GetValueOrDefault<string?>("description");
-        Bindings = props.GetValueOrDefault<IList<Binding>?>("bindings");
+        this.Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Description = props.GetValueOrDefault<string?>("description");
+        this.Bindings = props.GetValueOrDefault<IList<Binding>?>("bindings");
     }
     
     /// <summary>

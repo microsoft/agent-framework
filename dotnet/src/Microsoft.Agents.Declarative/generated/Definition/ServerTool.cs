@@ -31,8 +31,8 @@ public sealed class ServerTool : Tool
     /// <param name="props">Properties for this instance.</param>
     internal ServerTool(IDictionary<string, object> props) : this()
     {
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Options = props.GetValueOrDefault<Dictionary<string, object>>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Options = props.GetValueOrDefault<Dictionary<string, object>>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
     }
     
     /// <summary>

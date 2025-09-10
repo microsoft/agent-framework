@@ -27,8 +27,8 @@ public sealed class FunctionTool : Tool
     /// <param name="props">Properties for this instance.</param>
     internal FunctionTool(IDictionary<string, object> props) : this()
     {
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Parameters = props.GetValueOrDefault<IList<Parameter>>("parameters") ?? throw new ArgumentException("Properties must contain a property named: parameters", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Parameters = props.GetValueOrDefault<IList<Parameter>>("parameters") ?? throw new ArgumentException("Properties must contain a property named: parameters", nameof(props));
     }
     
     /// <summary>

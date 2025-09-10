@@ -29,10 +29,10 @@ public sealed class Connection
     /// <param name="props">Properties for this instance.</param>
     internal Connection(IDictionary<string, object> props) : this()
     {
-        Provider = props.GetValueOrDefault<string>("provider") ?? throw new ArgumentException("Properties must contain a property named: provider", nameof(props));
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Endpoint = props.GetValueOrDefault<string>("endpoint") ?? throw new ArgumentException("Properties must contain a property named: endpoint", nameof(props));
-        Options = props.GetValueOrDefault<Dictionary<string, object>?>("options");
+        this.Provider = props.GetValueOrDefault<string>("provider") ?? throw new ArgumentException("Properties must contain a property named: provider", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Endpoint = props.GetValueOrDefault<string>("endpoint") ?? throw new ArgumentException("Properties must contain a property named: endpoint", nameof(props));
+        this.Options = props.GetValueOrDefault<Dictionary<string, object>?>("options");
     }
     
     /// <summary>

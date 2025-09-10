@@ -27,8 +27,8 @@ public sealed class Binding
     /// <param name="props">Properties for this instance.</param>
     internal Binding(IDictionary<string, object> props) : this()
     {
-        Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
-        Input = props.GetValueOrDefault<string>("input") ?? throw new ArgumentException("Properties must contain a property named: input", nameof(props));
+        this.Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
+        this.Input = props.GetValueOrDefault<string>("input") ?? throw new ArgumentException("Properties must contain a property named: input", nameof(props));
     }
     
     /// <summary>

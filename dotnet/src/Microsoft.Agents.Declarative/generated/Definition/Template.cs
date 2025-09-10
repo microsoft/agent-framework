@@ -41,10 +41,10 @@ public sealed class Template
     /// <param name="props">Properties for this instance.</param>
     internal Template(IDictionary<string, object> props) : this()
     {
-        Format = props.GetValueOrDefault<string>("format") ?? throw new ArgumentException("Properties must contain a property named: format", nameof(props));
-        Parser = props.GetValueOrDefault<string>("parser") ?? throw new ArgumentException("Properties must contain a property named: parser", nameof(props));
-        Strict = props.GetValueOrDefault<bool?>("strict");
-        Options = props.GetValueOrDefault<Dictionary<string, object>?>("options");
+        this.Format = props.GetValueOrDefault<string>("format") ?? throw new ArgumentException("Properties must contain a property named: format", nameof(props));
+        this.Parser = props.GetValueOrDefault<string>("parser") ?? throw new ArgumentException("Properties must contain a property named: parser", nameof(props));
+        this.Strict = props.GetValueOrDefault<bool?>("strict");
+        this.Options = props.GetValueOrDefault<Dictionary<string, object>?>("options");
     }
     
     /// <summary>

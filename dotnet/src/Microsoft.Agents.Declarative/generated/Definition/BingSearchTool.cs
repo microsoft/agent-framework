@@ -27,8 +27,8 @@ public sealed class BingSearchTool : Tool
     /// <param name="props">Properties for this instance.</param>
     internal BingSearchTool(IDictionary<string, object> props) : this()
     {
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Options = props.GetValueOrDefault<BingSearchOptions>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Options = props.GetValueOrDefault<BingSearchOptions>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
     }
     
     /// <summary>

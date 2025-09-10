@@ -28,8 +28,8 @@ public sealed class FileSearchTool : Tool
     /// <param name="props">Properties for this instance.</param>
     internal FileSearchTool(IDictionary<string, object> props) : this()
     {
-        Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
-        Options = props.GetValueOrDefault<FileSearchOptions>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
+        this.Type = props.GetValueOrDefault<string>("type") ?? throw new ArgumentException("Properties must contain a property named: type", nameof(props));
+        this.Options = props.GetValueOrDefault<FileSearchOptions>("options") ?? throw new ArgumentException("Properties must contain a property named: options", nameof(props));
     }
     
     /// <summary>

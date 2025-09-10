@@ -27,10 +27,10 @@ public sealed class McpToolOptions
     /// <param name="props">Properties for this instance.</param>
     internal McpToolOptions(IDictionary<string, object> props) : this()
     {
-        Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
-        Url = props.GetValueOrDefault<string>("url") ?? throw new ArgumentException("Properties must contain a property named: url", nameof(props));
-        Allowed = props.GetValueOrDefault<IList<string>>("allowed") ?? throw new ArgumentException("Properties must contain a property named: allowed", nameof(props));
-        Authentication = props.GetValueOrDefault<McpAuthentication>("authentication") ?? throw new ArgumentException("Properties must contain a property named: authentication", nameof(props));
+        this.Name = props.GetValueOrDefault<string>("name") ?? throw new ArgumentException("Properties must contain a property named: name", nameof(props));
+        this.Url = props.GetValueOrDefault<string>("url") ?? throw new ArgumentException("Properties must contain a property named: url", nameof(props));
+        this.Allowed = props.GetValueOrDefault<IList<string>>("allowed") ?? throw new ArgumentException("Properties must contain a property named: allowed", nameof(props));
+        this.Authentication = props.GetValueOrDefault<McpAuthentication>("authentication") ?? throw new ArgumentException("Properties must contain a property named: authentication", nameof(props));
     }
     
     /// <summary>
