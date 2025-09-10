@@ -54,14 +54,16 @@ def _flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
     for msg in messages:
         if msg.role == Role.ASSISTANT:
             # Flip assistant to user
-            flipped_msg = ChatMessage(
-                role=Role.USER,
-                # The function calls will cause 400 when role is user
-                contents=filter_out_function_calls(msg.contents),
-                author_name=msg.author_name,
-                message_id=msg.message_id
-            )
-            flipped_messages.append(flipped_msg)
+            contents = filter_out_function_calls(msg.contents)
+            if contents:
+                flipped_msg = ChatMessage(
+                    role=Role.USER,
+                    # The function calls will cause 400 when role is user
+                    contents=contents,
+                    author_name=msg.author_name,
+                    message_id=msg.message_id
+                )
+                flipped_messages.append(flipped_msg)
         elif msg.role == Role.USER:
             # Flip user to assistant
             flipped_msg = ChatMessage(
@@ -156,22 +158,18 @@ class ConversationOrchestrator(Executor):
         is_from_user = response.executor_id == "user_simulator"
 
         logger.opt(colors=True).info(
-            f"<bold>Orchestrator step {self.step_count}: Received the following response from "
+            f"<bold>[Step {self.step_count}] Received the following response from "
             f"{'<blue>assistant</blue>' if is_from_agent else '<green>user</green>'}</bold>, "
             f"routing to {'<green>user</green>' if is_from_agent else '<blue>assistant</blue>'}:"
         )
         _log_messages(response.agent_run_response.messages)
 
-        # Store messages in trajectory
-        if response.full_conversation:
-            self.trajectory.extend(response.full_conversation)
-        else:
-            self.trajectory.extend(response.agent_run_response.messages)
-
         # Check stop conditions based on sender
         response_text = response.agent_run_response.text
 
         if is_from_agent:
+            self.trajectory.extend(response.agent_run_response.messages)
+
             # Check for agent stop conditions
             if self._is_agent_stop(response_text):
                 logger.info("Agent requested stop - terminating conversation")
@@ -193,6 +191,10 @@ class ConversationOrchestrator(Executor):
             )
 
         elif is_from_user:
+            # Convert user simulator's assistant messages to user messages for the agent
+            agent_messages = _flip_messages(response.agent_run_response.messages)
+            self.trajectory.extend(agent_messages)
+
             # Check for user stop conditions
             if self._is_user_stop(response_text):
                 logger.info(f"User requested stop with message: '{response_text}' - terminating conversation")
@@ -204,9 +206,6 @@ class ConversationOrchestrator(Executor):
                     )
                 )
                 return
-
-            # Convert user simulator's assistant messages to user messages for the agent
-            agent_messages = _flip_messages(response.agent_run_response.messages)
 
             logger.info(f"Orchestrator has flipped the roles and will route the user response to the assistant.")
 
@@ -265,16 +264,11 @@ async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
     # Get user simulator guidelines (without tools for now as requested)
     user_sim_guidelines = get_global_user_sim_guidelines(use_tools=False)
 
-    # Get the user's initial message/reason for call
-    user_initial_msg = f"Hello, {task.user_scenario.instructions.reason_for_call}"
-
     user_sim_system_prompt = f"""{user_sim_guidelines}
 
 <scenario>
 {task.user_scenario.instructions}
-</scenario>
-
-The user's initial message will be: {user_initial_msg}"""
+</scenario>"""
 
     user_chat_client = OpenAIChatClient(ai_model_id=model)
     user_simulator = ChatAgent(
@@ -314,7 +308,8 @@ The user's initial message will be: {user_initial_msg}"""
     # 6. Extract completed event
     completed_event = events.get_completed_event()
 
-    logger.info(f"Workflow completed with {len(orchestrator.trajectory)} messages: {completed_event}")
+    logger.opt(colors=True).info(f"<green>WORKFLOW COMPLETED WITH {len(orchestrator.trajectory)} MESSAGES:</green>")
+    _log_messages(orchestrator.trajectory)
 
     if completed_event and completed_event.data:
         result = {
@@ -329,7 +324,7 @@ The user's initial message will be: {user_initial_msg}"""
             "termination_reason": orchestrator.termination_reason,
         }
 
-    logger.info(f"Final result: {len(result['messages'])} messages, termination: {result['termination_reason']}")
+    logger.info(f"FINAL RESULT: {len(result['messages'])} messages, termination: {result['termination_reason']}")
     return result
 
 
@@ -337,7 +332,7 @@ def criteria(task_input: Task, task_output: dict) -> float:
     """Evaluate the agent's performance using the existing evaluation system."""
 
     messages = task_output["messages"]
-    termination_reason = task_output.get("termination_reason", TerminationReason.AGENT_STOP)
+    termination_reason = task_output.get("termination_reason", TerminationReason.TOO_MANY_ERRORS)
 
     # Convert Agent framework messages to tau2 Message objects
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
@@ -375,19 +370,21 @@ async def main():
     logger.info(f"Found {len(tasks)} tasks in the dataset")
     logger.info(f"Environment has {len(env.get_tools())} tools: {', '.join([tool.name for tool in env.get_tools()])}")
 
-    for task in tasks[:1]:  # Test with first task
-        logger.info(f"Testing task {task.id}")
-        logger.info(f"Purpose: {task.description.purpose}")
+    _logger = logger.opt(colors=True)
+
+    for task in tasks[:3]:  # Test with first tasks
+        _logger.info(f"<red>Testing task #{task.id}</red>")
+        _logger.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")
 
         if task.user_scenario and task.user_scenario.instructions:
-            logger.info(f"User scenario: {task.user_scenario.instructions.reason_for_call}")
+            _logger.info(f"<cyan>User scenario:</cyan> {task.user_scenario.instructions.reason_for_call}")
 
         result = await loop(task, "gpt-4o-mini")
-        logger.info(f"Agent result - Termination: {result.get('termination_reason')}")
-        logger.info(f"Number of messages: {len(result['messages'])}")
+        _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
+        _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
 
         reward = criteria(task, result)
-        logger.info(f"Final reward: {reward}")
+        _logger.info(f"<cyan>Final reward:</cyan> {reward}")
 
 
 if __name__ == "__main__":

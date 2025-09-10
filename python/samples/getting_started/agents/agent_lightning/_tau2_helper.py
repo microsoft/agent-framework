@@ -1,6 +1,7 @@
 # type: ignore
 
 import json
+from copy import deepcopy
 
 from pydantic import BaseModel
 from tau2.environment.tool import Tool
@@ -21,7 +22,13 @@ def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction:
 
     # Create a wrapper function that calls the tau2 tool
     def wrapped_func(**kwargs):
-        return tau2_tool(**kwargs)
+        result = tau2_tool(**kwargs)
+        # Sometimes the result is not copied and modified afterwards, so we need to copy it
+        if isinstance(result, BaseModel):
+            result = result.model_copy(deep=True)
+        else:
+            result = deepcopy(result)
+        return result
 
     # Use the existing params BaseModel from tau2 tool
     return AIFunction(
