@@ -114,6 +114,8 @@ async def agent(task_input: Task, openai: OpenAI, model: str, max_turns: int = 2
 
 
 async def main():
+    import agentops
+    agentops.init()
     # Test the implementation without OpenAI API calls
     env = get_environment()
     tasks = get_tasks()
