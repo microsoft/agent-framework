@@ -32,6 +32,8 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
     {
     }
 
+    protected override bool IsDiscreteAction => false;
+
     public bool IsMatch(ConditionItem conditionItem, object? result)
     {
         if (result is not ActionExecutorResult message)
@@ -72,5 +74,10 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         }
 
         return Steps.Else(this.Model);
+    }
+
+    public async ValueTask DoneAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
     }
 }

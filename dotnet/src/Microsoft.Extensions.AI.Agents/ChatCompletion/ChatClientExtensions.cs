@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -18,13 +19,13 @@ internal static class ChatClientExtensions
             chatBuilder.UseAgentInvocation();
         }
 
-        if (chatClient.GetService<FunctionInvokingChatClient>() is null && chatClient.GetService<NewFunctionInvokingChatClient>() is null)
+        if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {
             _ = chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 
-                return new NewFunctionInvokingChatClient(innerClient, loggerFactory, services);
+                return new FunctionInvokingChatClient(innerClient, loggerFactory, services);
             });
         }
 
@@ -33,17 +34,9 @@ internal static class ChatClientExtensions
         if (options?.ChatOptions?.Tools is { Count: > 0 })
         {
             // When tools are provided in the constructor, set the tools for the whole lifecycle of the chat client
-            var newFunctionService = agentChatClient.GetService<NewFunctionInvokingChatClient>();
-            var oldFunctionService = agentChatClient.GetService<FunctionInvokingChatClient>();
-
-            if (newFunctionService is not null)
-            {
-                newFunctionService.AdditionalTools = options.ChatOptions.Tools;
-            }
-            else
-            {
-                oldFunctionService!.AdditionalTools = options.ChatOptions.Tools;
-            }
+            var functionService = agentChatClient.GetService<FunctionInvokingChatClient>();
+            Debug.Assert(functionService is not null, "FunctionInvokingChatClient should be registered in the chat client.");
+            functionService!.AdditionalTools = options.ChatOptions.Tools;
         }
 
         return agentChatClient;

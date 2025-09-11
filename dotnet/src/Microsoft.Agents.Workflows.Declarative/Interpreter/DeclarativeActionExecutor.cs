@@ -57,6 +57,8 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     protected WorkflowFormulaState State { get; }
 
+    protected virtual bool IsDiscreteAction => true;
+
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
@@ -65,6 +67,8 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             Debug.WriteLine($"DISABLED {this.GetType().Name} [{this.Id}]");
             return;
         }
+
+        await this.RaiseInvocationEventAsync(context, message.ExecutorId).ConfigureAwait(false);
 
         // Restore state from context if not already initialized.
         await this.State.RestoreAsync(context, cancellationToken: default).ConfigureAwait(false);
@@ -84,6 +88,13 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         {
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
             throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
+        }
+        finally
+        {
+            if (this.IsDiscreteAction)
+            {
+                await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
+            }
         }
     }
 
@@ -116,4 +127,8 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         string message = $"Unexpected workflow failure during {this.Model.GetType().Name} [{this.Id}]: {text}";
         return exception is null ? new(message) : new(message, exception);
     }
+
+    protected ValueTask RaiseInvocationEventAsync(IWorkflowContext context, string? priorEventId = null) => context.AddEventAsync(new DeclarativeActionInvokeEvent(this.Id, this.Model, priorEventId));
+
+    protected ValueTask RaiseCompletionEventAsync(IWorkflowContext context) => context.AddEventAsync(new DeclarativeActionCompleteEvent(this.Id, this.Model));
 }

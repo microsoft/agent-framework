@@ -9,6 +9,7 @@ see the [Getting Started Steps](../GettingStartedSteps/README.md) samples.
 ## Prerequisites
 
 See the README.md for each sample for the prerequisites for that sample.
+
 ## Samples
 
 |Sample|Description|
@@ -17,6 +18,8 @@ See the README.md for each sample for the prerequisites for that sample.
 |[Creating an AIAgent with AzureFoundry](./Agent_With_AzureFoundry/)|This sample demonstrates how to create an Azure Foundry agent and expose it as an AIAgent|
 |[Creating an AIAgent with Azure OpenAI ChatCompletion](./Agent_With_AzureOpenAIChatCompletion/)|This sample demonstrates how to create an AIAgent using Azure OpenAI ChatCompletion as the underlying inference service|
 |[Creating an AIAgent with Azure OpenAI Responses](./Agent_With_AzureOpenAIResponses/)|This sample demonstrates how to create an AIAgent using Azure OpenAI Responses as the underlying inference service|
+|[Creating an AIAgent with a custom implementation](./Agent_With_CustomImplementation/)|This sample demonstrates how to create an AIAgent with a custom implementation|
+|[Creating an AIAgent with Ollama](./Agent_With_Ollama/)|This sample demonstrates how to create an AIAgent using Ollama as the underlying inference service|
 |[Creating an AIAgent with ONNX](./Agent_With_ONNX/)|This sample demonstrates how to create an AIAgent using ONNX as the underlying inference service|
 |[Creating an AIAgent with OpenAI ChatCompletion](./Agent_With_OpenAIChatCompletion/)|This sample demonstrates how to create an AIAgent using OpenAI ChatCompletion as the underlying inference service|
 |[Creating an AIAgent with OpenAI Responses](./Agent_With_OpenAIResponses/)|This sample demonstrates how to create an AIAgent using OpenAI Responses as the underlying inference service|

@@ -20,4 +20,4 @@ Please help reviewers and future users, providing the following information:
 - [ ] The code builds clean without any errors or warnings
 - [ ] The PR follows the [Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)
 - [ ] All unit tests pass, and I have added new tests where possible
-- [ ] I didn't break anyone :smile:
+- [ ] **Is this a breaking change?** If yes, add "[BREAKING]" prefix to the title of the PR.

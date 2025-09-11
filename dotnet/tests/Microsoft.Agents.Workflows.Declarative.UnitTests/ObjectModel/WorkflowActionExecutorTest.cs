@@ -31,6 +31,8 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         workflowBuilder.AddEdge(workflowExecutor, executor);
         StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<WorkflowFormulaState>(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
+        Assert.Contains(events, e => e is DeclarativeActionInvokeEvent);
+        Assert.Contains(events, e => e is DeclarativeActionCompleteEvent);
         return events;
     }
 
