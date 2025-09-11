@@ -13,16 +13,17 @@ public static class AgentChatClientBuilderExtensions
     /// </summary>
     /// <remarks>This works by adding an instance of <see cref="AgentInvokedChatClient"/> with default options.</remarks>
     /// <param name="builder">The <see cref="ChatClientBuilder"/> being used to build the chat pipeline.</param>
+    /// <param name="agent">The agent handling the chat client.</param>
     /// <returns>The supplied <paramref name="builder"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
-    public static ChatClientBuilder UseAgentInvocation(
-        this ChatClientBuilder builder)
+    public static ChatClientBuilder UseAgentInvocation(this ChatClientBuilder builder, ChatClientAgent agent)
     {
         _ = Throw.IfNull(builder);
+        _ = Throw.IfNull(agent);
 
         return builder.Use((innerClient, services) =>
         {
-            return new AgentInvokedChatClient(innerClient);
+            return new AgentInvokedChatClient(agent, innerClient);
         });
     }
 }

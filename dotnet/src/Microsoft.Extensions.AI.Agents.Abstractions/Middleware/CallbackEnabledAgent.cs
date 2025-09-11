@@ -44,7 +44,7 @@ public sealed class CallbackEnabledAgent : AIAgent
     {
         _ = Throw.IfNull(serviceType);
 
-        return serviceKey is null && serviceType.IsInstanceOfType(this)
+        return serviceKey is null && serviceType == typeof(CallbackEnabledAgent)
             ? this
             : this._innerAgent.GetService(serviceType, serviceKey);
     }

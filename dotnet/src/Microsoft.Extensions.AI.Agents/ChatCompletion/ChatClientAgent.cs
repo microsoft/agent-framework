@@ -68,7 +68,7 @@ public sealed class ChatClientAgent : AIAgent
         this._chatClientType = chatClient.GetType();
 
         // If the user has not opted out of using our default decorators, we wrap the chat client.
-        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient(options);
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient(this, options);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
