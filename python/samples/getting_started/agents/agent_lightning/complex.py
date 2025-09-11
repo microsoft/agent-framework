@@ -292,7 +292,7 @@ async def loop(task: Task, assistant_config: AgentConfiguration, user_config: Ag
     return result
 
 
-def criteria(task_input: Task, task_output: dict) -> float:
+def criteria(task_input: Task, task_output: dict, return_reward_info: bool = False) -> float:
     """Evaluate the agent's performance using the existing evaluation system."""
 
     messages = task_output["messages"]
@@ -319,7 +319,10 @@ def criteria(task_input: Task, task_output: dict) -> float:
 
     logger.info(f"Evaluation completed - Reward: {reward_info.reward}, Info: {reward_info}")
 
-    return reward_info.reward
+    if return_reward_info:
+        return reward_info
+    else:
+        return reward_info.reward
 
 
 async def main():

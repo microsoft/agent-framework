@@ -5,6 +5,7 @@ conda install -y numpy pandas packaging ninja ipython ipykernel wheel setuptools
 pip install --no-cache-dir torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 pip install --no-cache-dir flash-attn --no-build-isolation
 pip install --no-cache-dir vllm
+pip install --no-cache-dir verl==0.5.0
 
 # gcr-llm-proxy
 git clone git@github.com:ultmaster/gcr-llm-proxy
