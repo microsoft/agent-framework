@@ -1487,3 +1487,145 @@ def test_service_response_exception_includes_original_error_details() -> None:
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
     assert original_error_message in exception_message
+
+
+def test_get_streaming_response_with_response_format() -> None:
+    """Test get_streaming_response with response_format."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="Test streaming with format")]
+
+    # It will fail due to invalid API key, but exercises the code path
+    with pytest.raises(ServiceResponseException):
+
+        async def run_streaming():
+            async for _ in client.get_streaming_response(messages=messages, response_format=OutputStruct):
+                pass
+
+        asyncio.run(run_streaming())
+
+
+def test_openai_content_parser_image_content() -> None:
+    """Test _openai_content_parser with image content variations."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test image content with detail parameter and file_id
+    image_content_with_detail = UriContent(
+        uri="https://example.com/image.jpg",
+        media_type="image/jpeg",
+        additional_properties={"detail": "high", "file_id": "file_123"},
+    )
+    result = client._openai_content_parser(Role.USER, image_content_with_detail, {})  # type: ignore
+    assert result["type"] == "input_image"
+    assert result["image_url"] == "https://example.com/image.jpg"
+    assert result["detail"] == "high"
+    assert result["file_id"] == "file_123"
+
+    # Test image content without additional properties (defaults)
+    image_content_basic = UriContent(uri="https://example.com/basic.png", media_type="image/png")
+    result = client._openai_content_parser(Role.USER, image_content_basic, {})  # type: ignore
+    assert result["type"] == "input_image"
+    assert result["detail"] == "auto"
+    assert result["file_id"] is None
+
+
+def test_openai_content_parser_audio_content() -> None:
+    """Test _openai_content_parser with audio content variations."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test WAV audio content
+    wav_content = UriContent(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
+    result = client._openai_content_parser(Role.USER, wav_content, {})  # type: ignore
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["data"] == "data:audio/wav;base64,abc123"
+    assert result["input_audio"]["format"] == "wav"
+
+    # Test MP3 audio content
+    mp3_content = UriContent(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
+    result = client._openai_content_parser(Role.USER, mp3_content, {})  # type: ignore
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["format"] == "mp3"
+
+
+def test_openai_content_parser_unsupported_content() -> None:
+    """Test _openai_content_parser with unsupported content types."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test unsupported audio format
+    unsupported_audio = UriContent(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
+    result = client._openai_content_parser(Role.USER, unsupported_audio, {})  # type: ignore
+    assert result == {}
+
+    # Test non-media content
+    text_uri_content = UriContent(uri="https://example.com/document.txt", media_type="text/plain")
+    result = client._openai_content_parser(Role.USER, text_uri_content, {})  # type: ignore
+    assert result == {}
+
+
+def test_create_streaming_response_content_code_interpreter() -> None:
+    """Test _create_streaming_response_content with code_interpreter_call."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event_image = MagicMock()
+    mock_event_image.type = "response.output_item.added"
+    mock_item_image = MagicMock()
+    mock_item_image.type = "code_interpreter_call"
+    mock_image_output = MagicMock()
+    mock_image_output.type = "image"
+    mock_image_output.url = "https://example.com/plot.png"
+    mock_item_image.outputs = [mock_image_output]
+    mock_item_image.code = None
+    mock_event_image.item = mock_item_image
+
+    result = client._create_streaming_response_content(mock_event_image, chat_options, function_call_ids)  # type: ignore
+    assert len(result.contents) == 1
+    assert isinstance(result.contents[0], UriContent)
+    assert result.contents[0].uri == "https://example.com/plot.png"
+    assert result.contents[0].media_type == "image"
+
+
+def test_create_streaming_response_content_reasoning() -> None:
+    """Test _create_streaming_response_content with reasoning content."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event_reasoning = MagicMock()
+    mock_event_reasoning.type = "response.output_item.added"
+    mock_item_reasoning = MagicMock()
+    mock_item_reasoning.type = "reasoning"
+    mock_reasoning_content = MagicMock()
+    mock_reasoning_content.text = "Analyzing the problem step by step..."
+    mock_item_reasoning.content = [mock_reasoning_content]
+    mock_item_reasoning.summary = ["Problem analysis summary"]
+    mock_event_reasoning.item = mock_item_reasoning
+
+    result = client._create_streaming_response_content(mock_event_reasoning, chat_options, function_call_ids)  # type: ignore
+    assert len(result.contents) == 1
+    assert isinstance(result.contents[0], TextReasoningContent)
+    assert result.contents[0].text == "Analyzing the problem step by step..."
+    if result.contents[0].additional_properties:
+        assert result.contents[0].additional_properties["summary"] == "Problem analysis summary"
+
+
+def test_openai_content_parser_text_reasoning_comprehensive() -> None:
+    """Test _openai_content_parser with TextReasoningContent all additional properties."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test TextReasoningContent with all additional properties
+    comprehensive_reasoning = TextReasoningContent(
+        text="Comprehensive reasoning summary",
+        additional_properties={
+            "status": "in_progress",
+            "reasoning_text": "Step-by-step analysis",
+            "encrypted_content": "secure_data_456",
+        },
+    )
+    result = client._openai_content_parser(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
+    assert result["type"] == "reasoning"
+    assert result["summary"]["text"] == "Comprehensive reasoning summary"
+    assert result["status"] == "in_progress"
+    assert result["content"]["type"] == "reasoning_text"
+    assert result["content"]["text"] == "Step-by-step analysis"
+    assert result["encrypted_content"] == "secure_data_456"
