@@ -79,7 +79,8 @@ async def main(model: str):
             "user": user_config,
             "judge": judge_config,
         }
-        _logger.info(f"<cyan>Final evaluation:</cyan> {reward}")
+        reward_str = str(reward).replace('<', r'\<')
+        _logger.info(f"<cyan>Final evaluation:</cyan> {reward_str}")
 
         result_fp.write(json.dumps(to_dumpable(task, result), default=str) + "\n")
 
