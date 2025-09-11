@@ -50,7 +50,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return await thread.GetMessagesAsync().ToListAsync();
+        return thread.MessageStore is null ? [] : (await thread.MessageStore.GetMessagesAsync()).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -70,7 +70,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         IList<AITool>? aiTools = null)
     {
         return Task.FromResult(new ChatClientAgent(
-            this._openAIResponseClient.AsNewIChatClient(),
+            this._openAIResponseClient.AsIChatClient(),
             options: new()
             {
                 Name = name,
