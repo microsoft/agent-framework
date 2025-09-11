@@ -47,5 +47,5 @@ PYTHONUNBUFFERED=1 python -m agentlightning.verl \
     trainer.experiment_name=${EXPERIMENT_NAME} \
     trainer.nnodes=1 \
     trainer.save_freq=256 \
-    trainer.test_freq=8 \
-    trainer.total_epochs=5
+    trainer.test_freq=4 \
+    trainer.total_epochs=10
