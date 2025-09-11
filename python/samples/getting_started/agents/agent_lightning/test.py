@@ -14,6 +14,7 @@ def to_dumpable(task: Task, result: dict) -> dict:
     return {
         "id": task.id,
         "evaluation": result['evaluation'].model_dump(),
+        "config": result['config'],
         "termination_reason": result['termination_reason'].value,
         "messages": [m.model_dump() for m in result['messages']],
         "task": task.model_dump(),
@@ -73,6 +74,11 @@ async def main(model: str):
 
         reward = criteria(task, result, return_reward_info=True)
         result['evaluation'] = reward
+        result['config'] = {
+            "assistant": assistant_config,
+            "user": user_config,
+            "judge": judge_config,
+        }
         _logger.info(f"<cyan>Final evaluation:</cyan> {reward}")
 
         result_fp.write(json.dumps(to_dumpable(task, result)) + "\n")
