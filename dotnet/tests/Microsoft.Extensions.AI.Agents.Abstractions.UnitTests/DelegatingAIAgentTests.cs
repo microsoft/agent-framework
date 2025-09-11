@@ -194,7 +194,7 @@ public class DelegatingAIAgentTests
         var innerAgentMock = new Mock<AIAgent>();
         innerAgentMock
             .Setup(x => x.RunStreamingAsync(expectedMessages, expectedThread, expectedOptions, expectedCancellationToken))
-            .Returns(YieldAsync(expectedResults));
+            .Returns(ToAsyncEnumerableAsync(expectedResults));
 
         var delegatingAgent = new TestDelegatingAIAgent(innerAgentMock.Object);
 
@@ -289,15 +289,6 @@ public class DelegatingAIAgentTests
         foreach (var value in values)
         {
             yield return value;
-        }
-    }
-
-    private static async IAsyncEnumerable<T> YieldAsync<T>(IEnumerable<T> input)
-    {
-        await Task.Yield();
-        foreach (var item in input)
-        {
-            yield return item;
         }
     }
 
