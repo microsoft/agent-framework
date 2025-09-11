@@ -12,7 +12,6 @@ from agent_framework import (
     Contents,
     Role,
     TextContent,
-    TextReasoningContent,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
@@ -47,10 +46,10 @@ class CopilotStudioSettings(AFBaseSettings):
 
     env_prefix: ClassVar[str] = "COPILOTSTUDIOAGENT__"
 
-    environment_id: str | None = None
-    agent_identifier: str | None = None
-    client_id: str | None = None
-    tenant_id: str | None = None
+    environmentid: str | None = None
+    schemaname: str | None = None
+    agentappid: str | None = None
+    tenantid: str | None = None
 
 
 class CopilotStudioAgent(BaseAgent):
@@ -88,55 +87,55 @@ class CopilotStudioAgent(BaseAgent):
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        if not client:
-            try:
-                copilot_studio_settings = CopilotStudioSettings(
-                    environment_id=environment_id,
-                    agent_identifier=agent_identifier,
-                    client_id=client_id,
-                    tenant_id=tenant_id,
-                    env_file_path=env_file_path,
-                    env_file_encoding=env_file_encoding,
-                )
-            except ValidationError as ex:
-                raise ServiceInitializationError("Failed to create Copilot Studio settings.", ex) from ex
+        try:
+            copilot_studio_settings = CopilotStudioSettings(
+                environmentid=environment_id,
+                schemaname=agent_identifier,
+                agentappid=client_id,
+                tenantid=tenant_id,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to create Copilot Studio settings.", ex) from ex
 
+        if not client:
             if not settings:
-                if not copilot_studio_settings.environment_id:
+                if not copilot_studio_settings.environmentid:
                     raise ServiceInitializationError(
                         "Copilot Studio environment ID is required. Set via 'environment_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__ENVIRONMENTID' environment variable."
                     )
-                if not copilot_studio_settings.agent_identifier:
+                if not copilot_studio_settings.schemaname:
                     raise ServiceInitializationError(
                         "Copilot Studio agent identifier/schema name is required. Set via 'agent_identifier' parameter "
                         "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
                     )
 
                 settings = ConnectionSettings(
-                    environment_id=copilot_studio_settings.environment_id,
-                    agent_identifier=copilot_studio_settings.agent_identifier,
+                    environment_id=copilot_studio_settings.environmentid,
+                    agent_identifier=copilot_studio_settings.schemaname,
                     cloud=cloud,
                     copilot_agent_type=agent_type,
                     custom_power_platform_cloud=custom_power_platform_cloud,
                 )
 
             if not token:
-                if not copilot_studio_settings.client_id:
+                if not copilot_studio_settings.agentappid:
                     raise ServiceInitializationError(
                         "Copilot Studio client ID is required. Set via 'client_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__AGENTAPPID' environment variable."
                     )
 
-                if not copilot_studio_settings.tenant_id:
+                if not copilot_studio_settings.tenantid:
                     raise ServiceInitializationError(
                         "Copilot Studio tenant ID is required. Set via 'tenant_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__TENANTID' environment variable."
                     )
 
                 token = acquire_token(
-                    client_id=copilot_studio_settings.client_id,
-                    tenant_id=copilot_studio_settings.tenant_id,
+                    client_id=copilot_studio_settings.agentappid,
+                    tenant_id=copilot_studio_settings.tenantid,
                     username=username,
                     token_cache=token_cache,
                     scopes=scopes,
@@ -147,10 +146,10 @@ class CopilotStudioAgent(BaseAgent):
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
             settings=settings,  # type: ignore[reportCallIssue]
-            environment_id=copilot_studio_settings.environment_id,  # type: ignore[reportCallIssue]
-            agent_identifier=copilot_studio_settings.agent_identifier,  # type: ignore[reportCallIssue]
-            client_id=copilot_studio_settings.client_id,  # type: ignore[reportCallIssue]
-            tenant_id=copilot_studio_settings.tenant_id,  # type: ignore[reportCallIssue]
+            environment_id=copilot_studio_settings.environmentid,  # type: ignore[reportCallIssue]
+            agent_identifier=copilot_studio_settings.schemaname,  # type: ignore[reportCallIssue]
+            client_id=copilot_studio_settings.agentappid,  # type: ignore[reportCallIssue]
+            tenant_id=copilot_studio_settings.tenantid,  # type: ignore[reportCallIssue]
             token=token,  # type: ignore[reportCallIssue]
             cloud=cloud,  # type: ignore[reportCallIssue]
             agent_type=agent_type,  # type: ignore[reportCallIssue]
@@ -199,7 +198,7 @@ class CopilotStudioAgent(BaseAgent):
         response_messages: list[ChatMessage] = []
         response_id: str | None = None
 
-        async for message in self._process_activities(activities):
+        async for message in self._process_activities(activities, streaming=False):
             response_messages.append(message)
             if not response_id:
                 response_id = message.message_id
@@ -238,7 +237,7 @@ class CopilotStudioAgent(BaseAgent):
 
         activities = self.client.ask_question(question, thread.service_thread_id)
 
-        async for message in self._process_activities(activities):
+        async for message in self._process_activities(activities, streaming=True):
             yield AgentRunResponseUpdate(
                 role=message.role,
                 contents=message.contents,
@@ -261,14 +260,14 @@ class CopilotStudioAgent(BaseAgent):
 
         return conversation_id
 
-    async def _process_activities(self, activities: AsyncIterable[Activity]) -> AsyncIterable[ChatMessage]:
+    async def _process_activities(
+        self, activities: AsyncIterable[Activity], streaming: bool
+    ) -> AsyncIterable[ChatMessage]:
         async for activity in activities:
-            if activity.type == "message":
+            if (activity.type == "message" and activity.text and not streaming) or (
+                activity.type == "typing" and activity.text and streaming
+            ):
                 yield self._create_chat_message_from_activity(activity, [TextContent(activity.text)])
-                break
-            elif activity.type == "typing" or activity.type == "event":
-                yield self._create_chat_message_from_activity(activity, [TextReasoningContent(activity.text)])
-                break
 
     def _create_chat_message_from_activity(
         self, activity: Activity, contents: MutableSequence[Contents]
