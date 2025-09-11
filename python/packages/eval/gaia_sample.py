@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.eval.gaia import GAIA, Task, Prediction, Evaluation
+from agent_framework.eval.gaia import GAIA, Task, Prediction, Evaluation, GAIATelemetryConfig
 from azure.identity.aio import AzureCliCredential
 
 async def run_task(task: Task) -> Prediction:
@@ -32,8 +32,20 @@ async def evaluate_task(task: Task, prediction: Prediction) -> Evaluation:
 
 
 async def main() -> None:
-    # Create the GAIA benchmark runner with default settings and evaluation function.
-    runner = GAIA(evaluator=evaluate_task)
+    # Configure telemetry for tracing
+    telemetry_config = GAIATelemetryConfig(
+        enable_tracing=True,  # Enable OpenTelemetry tracing
+        # Optional: Configure external endpoints
+        # otlp_endpoint="http://localhost:4317",  # For Aspire Dashboard or other OTLP endpoints
+        # application_insights_connection_string="your_connection_string",  # For Azure Monitor
+        # enable_live_metrics=True,  # Enable Azure Monitor live metrics
+        # Configure local file tracing
+        trace_to_file=True,  # Export traces to local file
+        file_path="gaia_benchmark_traces.jsonl",  # Custom file path for traces
+    )
+    
+    # Create the GAIA benchmark runner with telemetry configuration
+    runner = GAIA(evaluator=evaluate_task, telemetry_config=telemetry_config)
 
     # Run the benchmark with the task runner.
     # By default, this will check for locally cached benchmark data and checkout
@@ -45,7 +57,7 @@ async def main() -> None:
         parallel=2, # Number of parallel tasks to run
         timeout=60, # Timeout per task in seconds
         out="gaia_results_level1.jsonl", # Output file to save results (optional)
-        traces_out="gaia_results_level1_traces", # Directory to save detailed OTel traces by task ID (optional)
+        traces_out="gaia_results_level1_traces", # Directory to save detailed task traces (optional)
     )
 
     # Print the results.

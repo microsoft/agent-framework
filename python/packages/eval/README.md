@@ -27,17 +27,35 @@ export HF_TOKEN="hf\*..." # must have access to gaia-benchmark/GAIA
 Create a Python script (e.g., `run_gaia.py`) with the following content:
 
 ```python
-from agent_framework.eval.gaia import GAIA, Task, Prediction
+from agent_framework.eval.gaia import GAIA, Task, Prediction, GAIATelemetryConfig
 
 async def run_task(task: Task) -> Prediction:
     return Prediction(prediction="answer here", messages=[])
 
 async def main() -> None:
-    runner = GAIA(evaluator=evaluate_task)
+    # Optional: Enable telemetry for detailed tracing
+    telemetry_config = GAIATelemetryConfig(
+        enable_tracing=True,
+        trace_to_file=True,
+        file_path="gaia_traces.jsonl"
+    )
+
+    runner = GAIA(telemetry_config=telemetry_config)
     await runner.run(run_task, level=1, max_n=5, parallel=2)
 ```
 
 See the [full example](gaia_sample.py) for details.
+
+### Telemetry and Tracing
+
+The GAIA benchmark runner supports comprehensive OpenTelemetry tracing to monitor agent performance and benchmark execution. This includes support for:
+
+- **External endpoints**: Aspire Dashboard, Azure Monitor/Application Insights, and other OTLP-compatible systems
+- **Local file export**: Export traces to local files for offline analysis
+- **Detailed metrics**: Task-level timing, accuracy, error tracking, and more
+- **Zero overhead**: When disabled, uses NoOpTracer with no performance impact
+
+For detailed configuration and usage instructions, see [TELEMETRY.md](TELEMETRY.md).
 
 ### Run the evaluation
 
