@@ -34,7 +34,7 @@ beginDialog:
     - kind: SetVariable
       id: set_project
       variable: Topic.Project
-      value: =System.LastMessage.Text
+      value: =System.LastMessageText
 
     - kind: InvokeAzureAgent
       id: question_student

@@ -45,7 +45,7 @@ internal sealed class Program
 
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         DeclarativeWorkflowOptions options =
-            new(new FoundryAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
+            new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
             {
                 Configuration = this.Configuration
             };

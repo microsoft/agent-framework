@@ -174,6 +174,16 @@ public class FormulaValueExtensionsTests
             }
             """,
             formulaValue.Format().Replace(Environment.NewLine, "\n"));
+
+        Dictionary<string, int> source =
+            new()
+            {
+                ["FieldA"] = 1,
+                ["FieldB"] = 2,
+                ["FieldC"] = 3
+            };
+        FormulaValue formula = source.ToFormulaValue();
+        Assert.IsType<RecordValue>(formula, exactMatch: false);
     }
 
     [Fact]

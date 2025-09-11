@@ -203,14 +203,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new AddConversationMessageExecutor(item, this._workflowState));
+        this.ContinueWith(new AddConversationMessageExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
     }
 
     protected override void Visit(CopyConversationMessages item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new CopyConversationMessagesExecutor(item, this._workflowState));
+        this.ContinueWith(new CopyConversationMessagesExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
     }
 
     protected override void Visit(InvokeAzureAgent item)
@@ -224,14 +224,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new RetrieveConversationMessageExecutor(item, this._workflowState));
+        this.ContinueWith(new RetrieveConversationMessageExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
     }
 
     protected override void Visit(RetrieveConversationMessages item)
     {
         this.Trace(item);
 
-        this.ContinueWith(new RetrieveConversationMessagesExecutor(item, this._workflowState));
+        this.ContinueWith(new RetrieveConversationMessagesExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
     }
 
     protected override void Visit(SetVariable item)
@@ -243,7 +243,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(SetMultipleVariables item)
     {
-        throw new NotImplementedException();
+        this.Trace(item);
+
+        this.ContinueWith(new SetMultipleVariablesExecutor(item, this._workflowState));
     }
 
     protected override void Visit(SetTextVariable item)

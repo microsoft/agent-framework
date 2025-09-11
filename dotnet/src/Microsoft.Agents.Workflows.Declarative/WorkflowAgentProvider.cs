@@ -1,12 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Net.Http;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents.Persistent;
-using Azure.Core;
-using Azure.Core.Pipeline;
-using Azure.Identity;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Declarative;
@@ -30,51 +27,39 @@ public abstract class WorkflowAgentProvider
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>The conversation identifier</returns>
     public abstract Task<string> CreateConversationAsync(CancellationToken cancellationToken = default);
-}
 
-/// <summary>
-/// Provides functionality to interact with Foundry agents within a specified project context.
-/// </summary>
-/// <remarks>This class is used to retrieve and manage AI agents associated with a Foundry project.  It requires a
-/// project endpoint and credentials to authenticate requests.</remarks>
-/// <param name="projectEndpoint">The endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
-/// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
-/// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
-public sealed class FoundryAgentProvider(string projectEndpoint, TokenCredential? projectCredentials = null, HttpClient? httpClient = null) : WorkflowAgentProvider
-{
-    private PersistentAgentsClient? _agentsClient;
+    /// <summary>
+    /// Creates a new message in the specified conversation.
+    /// </summary>
+    /// <param name="conversationId">The identifier of the target conversation.</param>
+    /// <param name="conversationMessage">The message being added.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+    public abstract Task CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default);
 
-    /// <inheritdoc/>
-    public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
-    {
-        PersistentAgentThread conversation = await this.GetAgentsClient().Threads.CreateThreadAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        return conversation.Id;
-    }
+    /// <summary>
+    /// Retrieves a specific message from a conversation.
+    /// </summary>
+    /// <param name="conversationId">The identifier of the target conversation.</param>
+    /// <param name="messageId">The identifier of the target message.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+    /// <returns>The requested message</returns>
+    public abstract Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default);
 
-    /// <inheritdoc/>
-    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
-    {
-        AIAgent agent = await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken).ConfigureAwait(false);
-
-        return agent;
-    }
-
-    private PersistentAgentsClient GetAgentsClient()
-    {
-        if (this._agentsClient is null)
-        {
-            PersistentAgentsAdministrationClientOptions clientOptions = new();
-
-            if (httpClient is not null)
-            {
-                clientOptions.Transport = new HttpClientTransport(httpClient);
-            }
-
-            PersistentAgentsClient newClient = new(projectEndpoint, projectCredentials ?? new DefaultAzureCredential(), clientOptions);
-
-            Interlocked.CompareExchange(ref this._agentsClient, newClient, null);
-        }
-
-        return this._agentsClient;
-    }
+    /// <summary>
+    /// Retrieves a set of messages from a conversation.
+    /// </summary>
+    /// <param name="conversationId">The identifier of the target conversation.</param>
+    /// <param name="limit">A limit on the number of objects to be returned. Limit can range between 1 and 100, and the default is 20.</param>
+    /// <param name="after">A cursor for use in pagination. after is an object ID that defines your place in the list.</param>
+    /// <param name="before">A cursor for use in pagination. before is an object ID that defines your place in the list.</param>
+    /// <param name="newestFirst">Provide records in descending order when true.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+    /// <returns>The requested messages</returns>
+    public abstract IAsyncEnumerable<ChatMessage> GetMessagesAsync(
+        string conversationId,
+        int? limit = null,
+        string? after = null,
+        string? before = null,
+        bool newestFirst = false,
+        CancellationToken cancellationToken = default);
 }

@@ -69,7 +69,7 @@ beginDialog:
       id: setVariable_NZ2u0l
       displayName: Set Task
       variable: Topic.InputTask
-      value: =System.LastMessage.Text
+      value: =System.LastMessageText
 
     - kind: SetVariable
       id: setVariable_10u2ZN

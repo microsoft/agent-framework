@@ -9,12 +9,22 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 
 internal sealed class UserMessage : ReflectionFunction
 {
-    public static class Fields
+    public static class Fields // %%% MOVE (not specific to this function)
     {
-        public const string Role = "role";
-        public const string Content = "content";
-        public const string ContentType = "type";
-        public const string ContentValue = "value";
+        public const string Id = nameof(Id);
+        public const string ConversationId = nameof(ConversationId);
+        public const string AgentId = nameof(AgentId);
+        public const string RunId = nameof(RunId);
+        public const string Role = nameof(Role);
+        public const string Author = nameof(Author);
+        public const string Content = nameof(Content);
+        public const string ContentType = nameof(ContentType);
+        public const string ContentValue = nameof(ContentValue);
+        public const string Metadata = nameof(Metadata);
+        //public const string Role = "role"; // %%% TEST && REMOVE
+        //public const string Content = "content";
+        //public const string ContentType = "type";
+        //public const string ContentValue = "value";
     }
 
     public static class ContentTypes
