@@ -7,8 +7,6 @@ export BASE_MODEL=Qwen/Qwen2.5-1.5B-Instruct
 export ROLLOUT_TP_SIZE=1
 export EXPERIMENT_NAME="tau2_$(date +%Y%m%d%H%M%S)"
 export PROJECT_NAME=AgentZero
-echo "project_name=${PROJECT_NAME}" >> $GITHUB_OUTPUT
-echo "run_name=${EXPERIMENT_NAME}" >> $GITHUB_OUTPUT
 
 PYTHONUNBUFFERED=1 python -m agentlightning.verl \
     agentlightning.port=9991 \
