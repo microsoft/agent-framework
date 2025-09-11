@@ -181,37 +181,6 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings["default_headers"]
 
 
-def test_filter_options_method(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that the _filter_options method filters out None values correctly."""
-    client = OpenAIResponsesClient()
-
-    # Test with a mix of None and non-None values
-    filtered = client._filter_options(  # type: ignore
-        include=["usage"],
-        instructions="Test instruction",
-        max_tokens=None,
-        temperature=0.7,
-        seed=None,
-        model="test-model",
-        store=True,
-        top_p=None,
-    )
-
-    # Should only contain non-None values
-    expected = {
-        "include": ["usage"],
-        "instructions": "Test instruction",
-        "temperature": 0.7,
-        "model": "test-model",
-        "store": True,
-    }
-
-    assert filtered == expected
-    assert "max_tokens" not in filtered
-    assert "seed" not in filtered
-    assert "top_p" not in filtered
-
-
 def test_get_response_with_invalid_input() -> None:
     """Test get_response with invalid inputs to trigger exception handling."""
 
@@ -972,7 +941,7 @@ async def test_openai_responses_client_response_tools() -> None:
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming() -> None:
-    """Test Azure OpenAI chat completion responses."""
+    """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
     assert isinstance(openai_responses_client, ChatClientProtocol)
@@ -1156,7 +1125,6 @@ async def test_openai_responses_client_web_search_streaming() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
-@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_responses_client_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
@@ -1181,7 +1149,6 @@ async def test_openai_responses_client_file_search() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
-@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_responses_client_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
@@ -1420,6 +1387,81 @@ async def test_openai_responses_client_run_level_tool_isolation():
         # Should NOT use the weather tool since it was only run-level in previous call
         # Call count should still be 1 (no additional calls)
         assert call_count == 1
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_chat_options_run_level() -> None:
+    """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response.",
+            max_tokens=100,
+            temperature=0.7,
+            top_p=0.9,
+            seed=123,
+            user="comprehensive-test-user",
+            tools=[get_weather],
+            tool_choice="auto",
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
+    """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+        max_tokens=100,
+        temperature=0.7,
+        top_p=0.9,
+        seed=123,
+        user="comprehensive-test-user",
+        tools=[get_weather],
+        tool_choice="auto",
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response.",
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
+    """Integration test for HostedMCPTool with OpenAI Response Agent using Microsoft Learn MCP."""
+    # Use the same MCP server as the Foundry example
+    mcp_tool = HostedMCPTool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        description="A Microsoft Learn MCP server for documentation questions",
+        approval_mode="never_require",
+    )
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=[mcp_tool],
+    ) as agent:
+        # Use the same query as the Foundry example
+        response = await agent.run(
+            "How to create an Azure storage account using az cli?",
+            max_tokens=200,
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # Should contain Azure-related content since it's asking about Azure CLI
+        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 
 
 def test_service_response_exception_includes_original_error_details() -> None:
