@@ -385,6 +385,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         self,
         ai_model_id: str | None = None,
         api_key: str | None = None,
+        base_url: str | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
@@ -398,6 +399,8 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             ai_model_id: OpenAI model name, see
                 https://platform.openai.com/docs/models
             api_key: The optional API key to use. If provided will override,
+                the env vars or .env file value.
+            base_url: The optional base URL to use. If provided will override,
                 the env vars or .env file value.
             org_id: The optional org ID to use. If provided will override,
                 the env vars or .env file value.
@@ -413,6 +416,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         try:
             openai_settings = OpenAISettings(
                 api_key=SecretStr(api_key) if api_key else None,
+                base_url=base_url,
                 org_id=org_id,
                 chat_model_id=ai_model_id,
                 env_file_path=env_file_path,
@@ -434,6 +438,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         super().__init__(
             ai_model_id=openai_settings.chat_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            base_url=openai_settings.base_url if openai_settings.base_url else None,
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,

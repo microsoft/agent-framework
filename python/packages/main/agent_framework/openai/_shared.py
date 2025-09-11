@@ -81,6 +81,8 @@ class OpenAISettings(AFBaseSettings):
     Attributes:
         api_key: OpenAI API key, see https://platform.openai.com/account/api-keys
             (Env var OPENAI_API_KEY)
+        base_url: The base URL for the OpenAI API.
+            (Env var OPENAI_BASE_URL)
         org_id: This is usually optional unless your account belongs to multiple organizations.
             (Env var OPENAI_ORG_ID)
         chat_model_id: The OpenAI chat model ID to use, for example, gpt-3.5-turbo or gpt-4.
@@ -109,6 +111,7 @@ class OpenAISettings(AFBaseSettings):
     env_prefix: ClassVar[str] = "OPENAI_"
 
     api_key: SecretStr | None = None
+    base_url: str | None = None
     org_id: str | None = None
     chat_model_id: str | None = None
     responses_model_id: str | None = None
@@ -137,6 +140,7 @@ class OpenAIConfigMixin(OpenAIBase):
         self,
         ai_model_id: str = Field(min_length=1),
         api_key: str | None = Field(min_length=1),
+        base_url: str | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
@@ -153,6 +157,7 @@ class OpenAIConfigMixin(OpenAIBase):
                 Default to a preset value.
             api_key (str): OpenAI API key for authentication.
                 Must be non-empty. (Optional)
+            base_url (str): Base URL for the OpenAI API. (Optional)
             org_id (str): OpenAI organization ID. This is optional
                 unless the account belongs to multiple organizations.
             default_headers (Mapping[str, str]): Default headers
@@ -174,6 +179,7 @@ class OpenAIConfigMixin(OpenAIBase):
                 raise ServiceInitializationError("Please provide an api_key")
             client = AsyncOpenAI(
                 api_key=api_key,
+                base_url=base_url,
                 organization=org_id,
                 default_headers=merged_headers,
             )
