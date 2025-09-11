@@ -67,6 +67,7 @@ from ._runner_context import (
     Message,
     RunnerContext,
 )
+from ._sequential import SequentialBuilder
 from ._validation import (
     EdgeDuplicationError,
     GraphConnectivityError,
@@ -131,6 +132,7 @@ __all__ = [
     "RequestInfoMessage",
     "RequestResponse",
     "RunnerContext",
+    "SequentialBuilder",
     "StandardMagenticManager",
     "SubWorkflowRequestInfo",
     "SubWorkflowResponse",

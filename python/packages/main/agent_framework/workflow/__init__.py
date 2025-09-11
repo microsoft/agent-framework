@@ -57,6 +57,7 @@ _IMPORTS = [
     "RequestInfoEvent",
     "StandardMagenticManager",
     "ConcurrentBuilder",
+    "SequentialBuilder",
 ]
 
 
