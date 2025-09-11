@@ -13,16 +13,6 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
-from openai.types.responses.response_completed_event import ResponseCompletedEvent
-from openai.types.responses.response_content_part_added_event import ResponseContentPartAddedEvent
-from openai.types.responses.response_function_call_arguments_delta_event import ResponseFunctionCallArgumentsDeltaEvent
-from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
-from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-from openai.types.responses.response_output_text import ResponseOutputText
-from openai.types.responses.response_reasoning_summary_text_delta_event import ResponseReasoningSummaryTextDeltaEvent
-from openai.types.responses.response_reasoning_summary_text_done_event import ResponseReasoningSummaryTextDoneEvent
-from openai.types.responses.response_reasoning_text_delta_event import ResponseReasoningTextDeltaEvent
-from openai.types.responses.response_reasoning_text_done_event import ResponseReasoningTextDoneEvent
 from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
@@ -772,10 +762,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     TextContent(text=message_content.refusal, raw_representation=message_content)
                                 )
                 case "reasoning":  # ResponseOutputReasoning
-                    if item.content:
+                    if hasattr(item, "content") and item.content:
                         for index, reasoning_content in enumerate(item.content):
                             additional_properties = None
-                            if item.summary and index < len(item.summary):
+                            if hasattr(item, "summary") and item.summary and index < len(item.summary):
                                 additional_properties = {"summary": item.summary[index]}
                             contents.append(
                                 TextReasoningContent(
@@ -785,7 +775,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 )
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
-                    if item.outputs:
+                    if hasattr(item, "outputs") and item.outputs:
                         for code_output in item.outputs:
                             if code_output.type == "logs":
                                 contents.append(TextContent(text=code_output.logs, raw_representation=item))
@@ -798,16 +788,16 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                         media_type="image",
                                     )
                                 )
-                    elif item.code:
+                    elif hasattr(item, "code") and item.code:
                         # fallback if no output was returned is the code:
                         contents.append(TextContent(text=item.code, raw_representation=item))
                 case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
                         FunctionCallContent(
-                            call_id=item.call_id if item.call_id else "",
-                            name=item.name,
-                            arguments=item.arguments,
-                            additional_properties={"fc_id": item.id},
+                            call_id=item.call_id if hasattr(item, "call_id") and item.call_id else "",
+                            name=item.name if hasattr(item, "name") else "",
+                            arguments=item.arguments if hasattr(item, "arguments") else "",
+                            additional_properties={"fc_id": item.id} if hasattr(item, "id") else {},
                             raw_representation=item,
                         )
                     )
@@ -932,19 +922,19 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case "response.output_text.delta":
                 contents.append(TextContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case ResponseReasoningTextDeltaEvent():
+            case "response.reasoning_text.delta":
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case ResponseReasoningTextDoneEvent():
+            case "response.reasoning_text.done":
                 contents.append(TextReasoningContent(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case ResponseReasoningSummaryTextDeltaEvent():
+            case "response.reasoning_summary_text.delta":
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case ResponseReasoningSummaryTextDoneEvent():
+            case "response.reasoning_summary_text.done":
                 contents.append(TextReasoningContent(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case "response.completed" | ResponseCompletedEvent():
+            case "response.completed":
                 conversation_id = event.response.id if chat_options.store is True else None
                 model = event.response.model
                 if event.response.usage:
@@ -984,7 +974,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             )
                         )
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
-                        if event_item.outputs:
+                        if hasattr(event_item, "outputs") and event_item.outputs:
                             for code_output in event_item.outputs:
                                 if code_output.type == "logs":
                                     contents.append(TextContent(text=code_output.logs, raw_representation=event_item))
@@ -997,14 +987,18 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                             media_type="image",
                                         )
                                     )
-                        elif event_item.code:
+                        elif hasattr(event_item, "code") and event_item.code:
                             # fallback if no output was returned is the code:
                             contents.append(TextContent(text=event_item.code, raw_representation=event_item))
                     case "reasoning":  # ResponseOutputReasoning
-                        if event_item.content:
+                        if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
                                 additional_properties = None
-                                if event_item.summary and index < len(event_item.summary):
+                                if (
+                                    hasattr(event_item, "summary")
+                                    and event_item.summary
+                                    and index < len(event_item.summary)
+                                ):
                                     additional_properties = {"summary": event_item.summary[index]}
                                 contents.append(
                                     TextReasoningContent(
