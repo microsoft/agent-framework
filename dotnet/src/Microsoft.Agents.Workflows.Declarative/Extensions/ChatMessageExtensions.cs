@@ -16,7 +16,7 @@ internal static class ChatMessageExtensions
         RecordValue.NewRecordFromFields(message.GetMessageFields());
 
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
-        FormulaValue.NewTable(null!, messages.Select(message => message.ToRecord()));
+        FormulaValue.NewTable(s_messageRecordType, messages.Select(message => message.ToRecord()));
 
     public static IEnumerable<ChatMessage> ToChatMessages(this DataValue messages)
     {
@@ -44,7 +44,11 @@ internal static class ChatMessageExtensions
         {
             if (message is RecordDataValue record)
             {
-                ChatMessage? convertedMessage = record.Properties["Value"].ToChatMessage();
+                if (record.Properties.Count == 1 && record.Properties.TryGetValue("Value", out DataValue? singleColumn))
+                {
+                    record = singleColumn as RecordDataValue ?? record;
+                }
+                ChatMessage? convertedMessage = record.ToChatMessage();
                 if (convertedMessage is not null)
                 {
                     yield return convertedMessage;
@@ -186,7 +190,7 @@ internal static class ChatMessageExtensions
         yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormulaValue());
         yield return new NamedValue(TypeSchema.Message.Fields.Content, TableValue.NewTable(s_contentRecordType, message.GetContentRecords()));
         yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormulaValue());
-        yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToRecord());
     }
 
     private static IEnumerable<RecordValue> GetContentRecords(this ChatMessage message) =>
@@ -209,9 +213,33 @@ internal static class ChatMessageExtensions
             yield return new NamedValue(TypeSchema.Message.Fields.ContentValue, value.ToFormulaValue());
         }
     }
+    private static RecordValue ToRecord(this AdditionalPropertiesDictionary? value)
+    {
+        return FormulaValue.NewRecordFromFields(GetFields());
+
+        IEnumerable<NamedValue> GetFields()
+        {
+            if (value is not null)
+            {
+                foreach (string key in value.Keys)
+                {
+                    yield return new NamedValue(key, value[key].ToFormulaValue());
+                }
+            }
+        }
+    }
 
     private static readonly RecordType s_contentRecordType =
         RecordType.Empty()
             .Add(TypeSchema.Message.Fields.ContentType, FormulaType.String)
             .Add(TypeSchema.Message.Fields.ContentValue, FormulaType.String);
+
+    private static readonly RecordType s_messageRecordType =
+        RecordType.Empty()
+            .Add(TypeSchema.Message.Fields.Id, FormulaType.String)
+            .Add(TypeSchema.Message.Fields.Role, FormulaType.String)
+            .Add(TypeSchema.Message.Fields.Author, FormulaType.String)
+            .Add(TypeSchema.Message.Fields.Content, s_contentRecordType.ToTable())
+            .Add(TypeSchema.Message.Fields.Text, FormulaType.String)
+            .Add(TypeSchema.Message.Fields.Metadata, RecordType.Empty());
 }

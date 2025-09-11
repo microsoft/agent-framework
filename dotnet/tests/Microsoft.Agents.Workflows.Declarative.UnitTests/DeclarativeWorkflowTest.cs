@@ -226,7 +226,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertMessage(string message)
     {
-        Assert.Contains(this.WorkflowEvents.OfType<AgentRunResponseEvent>(), e => string.Equals(e.Response.Messages[0].Text.Trim(), message, StringComparison.Ordinal));
+        Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
     }
 
     private Task RunWorkflow(string workflowPath) => this.RunWorkflow<string>(workflowPath, string.Empty);

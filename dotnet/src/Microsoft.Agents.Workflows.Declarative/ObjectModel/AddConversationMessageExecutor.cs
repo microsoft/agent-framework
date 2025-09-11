@@ -19,10 +19,11 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
         StringExpression conversationExpression = Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
         string conversationId = this.State.ExpressionEngine.GetValue(conversationExpression).Value;
 
-        await agentProvider.CreateMessageAsync(
-            conversationId,
-            new ChatMessage(this.GetRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() },
-            cancellationToken).ConfigureAwait(false);
+        ChatMessage newMessage = new(this.GetRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
+
+        await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
+
+        await this.AssignAsync(this.Model.Message?.Path, newMessage.ToRecord(), context).ConfigureAwait(false);
 
         return default;
     }

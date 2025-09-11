@@ -140,6 +140,8 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential? 
         return
            new ChatMessage(new ChatRole(message.Role.ToString()), [.. GetContent()])
            {
+               MessageId = message.Id,
+               CreatedAt = message.CreatedAt,
                AdditionalProperties = GetMetadata()
            };
 
