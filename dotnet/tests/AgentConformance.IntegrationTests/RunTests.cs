@@ -44,6 +44,7 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
 
         // Assert
         Assert.NotNull(response);
+        Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
         Assert.Equal(agent.Id, response.AgentId);
     }
@@ -61,6 +62,7 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
 
         // Assert
         Assert.NotNull(response);
+        Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
     }
 
@@ -82,6 +84,7 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
 
         // Assert
         Assert.NotNull(response);
+        Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
     }
 
