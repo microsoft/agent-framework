@@ -357,7 +357,7 @@ public sealed class ChatClientAgent : AIAgent
         // messages and options with the additional context.
         if (thread.AIContextProvider is not null)
         {
-            var aiContext = await thread.AIContextProvider.ModelInvokingAsync(inputMessages, thread.Id, cancellationToken).ConfigureAwait(false);
+            var aiContext = await thread.AIContextProvider.InvokingAsync(inputMessages, thread.Id, cancellationToken).ConfigureAwait(false);
             if (aiContext.Messages is { Count: > 0 })
             {
                 threadMessages.AddRange(aiContext.Messages);

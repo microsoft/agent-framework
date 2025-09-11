@@ -39,7 +39,7 @@ public class AggregateAIContextProviderTests
     }
 
     [Fact]
-    public async Task ModelInvokingAsync_AggregatesContextsFromProvidersAsync()
+    public async Task InvokingAsync_AggregatesContextsFromProvidersAsync()
     {
         // Arrange
         var context1 = new AIContext
@@ -58,9 +58,9 @@ public class AggregateAIContextProviderTests
         var mockProvider1 = new Mock<AIContextProvider>();
         var mockProvider2 = new Mock<AIContextProvider>();
 
-        mockProvider1.Setup(p => p.ModelInvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), "thread-1234", It.IsAny<CancellationToken>()))
+        mockProvider1.Setup(p => p.InvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), "thread-1234", It.IsAny<CancellationToken>()))
             .ReturnsAsync(context1);
-        mockProvider2.Setup(p => p.ModelInvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), "thread-1234", It.IsAny<CancellationToken>()))
+        mockProvider2.Setup(p => p.InvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), "thread-1234", It.IsAny<CancellationToken>()))
             .ReturnsAsync(context2);
 
         var aggregate = new AggregateAIContextProvider();
@@ -68,7 +68,7 @@ public class AggregateAIContextProviderTests
         aggregate.Add(mockProvider2.Object);
 
         // Act
-        var result = await aggregate.ModelInvokingAsync(new List<ChatMessage>() { new(ChatRole.User, "Hello") }, "thread-1234");
+        var result = await aggregate.InvokingAsync(new List<ChatMessage>() { new(ChatRole.User, "Hello") }, "thread-1234");
 
         // Assert
         Assert.Equal($"Instruction1{Environment.NewLine}Instruction2", result.Instructions);
@@ -81,13 +81,13 @@ public class AggregateAIContextProviderTests
     }
 
     [Fact]
-    public async Task ModelInvokingAsync_WithNoProviders_ReturnsEmptyContextAsync()
+    public async Task InvokingAsync_WithNoProviders_ReturnsEmptyContextAsync()
     {
         // Arrange
         var aggregate = new AggregateAIContextProvider();
 
         // Act
-        var result = await aggregate.ModelInvokingAsync(new List<ChatMessage>(), null);
+        var result = await aggregate.InvokingAsync(new List<ChatMessage>(), null);
 
         // Assert
         Assert.Null(result.Instructions);

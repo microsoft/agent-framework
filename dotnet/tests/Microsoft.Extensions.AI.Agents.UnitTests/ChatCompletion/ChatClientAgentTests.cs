@@ -520,7 +520,7 @@ public class ChatClientAgentTests
 
         var mockProvider = new Mock<AIContextProvider>();
         mockProvider
-            .Setup(p => p.ModelInvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AIContext
             {
                 Messages = [new(ChatRole.System, "context provider message")],
@@ -544,7 +544,7 @@ public class ChatClientAgentTests
         Assert.Equal(2, capturedTools.Count);
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");
-        mockProvider.Verify(p => p.ModelInvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -576,7 +576,7 @@ public class ChatClientAgentTests
 
         var mockProvider = new Mock<AIContextProvider>();
         mockProvider
-            .Setup(p => p.ModelInvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AIContext());
 
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
@@ -592,7 +592,7 @@ public class ChatClientAgentTests
         Assert.Equal(ChatRole.User, capturedMessages[0].Role);
         Assert.Single(capturedTools);
         Assert.Contains(capturedTools, t => t.Name == "base function");
-        mockProvider.Verify(p => p.ModelInvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

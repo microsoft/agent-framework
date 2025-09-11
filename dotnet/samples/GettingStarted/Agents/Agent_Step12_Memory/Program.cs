@@ -91,7 +91,7 @@ namespace SampleApp
             }
         }
 
-        public override ValueTask<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
         {
             StringBuilder instructions = new();
 

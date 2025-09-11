@@ -32,7 +32,7 @@ public sealed class AggregateAIContextProvider : AIContextProvider, IList<AICont
     }
 
     /// <inheritdoc />
-    public override async ValueTask<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
     {
         if (this._providers.Count == 0)
         {
@@ -47,7 +47,7 @@ public sealed class AggregateAIContextProvider : AIContextProvider, IList<AICont
         foreach (var provider in this._providers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var subContext = await provider.ModelInvokingAsync(newMessages, agentThreadId, cancellationToken).ConfigureAwait(false);
+            var subContext = await provider.InvokingAsync(newMessages, agentThreadId, cancellationToken).ConfigureAwait(false);
 
             if (subContext == null)
             {
