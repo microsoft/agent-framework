@@ -81,7 +81,7 @@ async def main(model: str):
         }
         _logger.info(f"<cyan>Final evaluation:</cyan> {reward}")
 
-        result_fp.write(json.dumps(to_dumpable(task, result)) + "\n")
+        result_fp.write(json.dumps(to_dumpable(task, result), default=str) + "\n")
 
 
 if __name__ == "__main__":
