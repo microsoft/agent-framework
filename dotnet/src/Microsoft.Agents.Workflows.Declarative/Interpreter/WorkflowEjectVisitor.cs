@@ -29,7 +29,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     public List<string> Executors { get; }
     public List<string> Instances { get; }
 
-    protected override void Visit(ActionScope item)
+    protected override void Visit(ActionScope item) // %%% TODO
     {
         this.Trace(item);
 
@@ -55,7 +55,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         //}
     }
 
-    public override void VisitConditionItem(ConditionItem item)
+    public override void VisitConditionItem(ConditionItem item) // %%% TODO
     {
         this.Trace(item);
 
@@ -83,7 +83,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         //}
     }
 
-    protected override void Visit(ConditionGroup item)
+    protected override void Visit(ConditionGroup item) // %%% TODO
     {
         this.Trace(item);
 
@@ -124,7 +124,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate(item.ActionId.Value, item.GetId()).TransformText()); // %%% RESTART
     }
 
-    protected override void Visit(Foreach item)
+    protected override void Visit(Foreach item) // %%% TODO
     {
         this.Trace(item);
 
@@ -146,7 +146,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         //}
     }
 
-    protected override void Visit(BreakLoop item)
+    protected override void Visit(BreakLoop item) // %%% TODO
     {
         this.Trace(item);
 
@@ -160,7 +160,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         //}
     }
 
-    protected override void Visit(ContinueLoop item)
+    protected override void Visit(ContinueLoop item) // %%% TODO
     {
         this.Trace(item);
 
@@ -183,7 +183,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH AND RESTART
     }
 
-    protected override void Visit(AnswerQuestionWithAI item)
+    protected override void Visit(AnswerQuestionWithAI item) // %%% TODO
     {
         this.Trace(item);
 
@@ -199,14 +199,14 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
-    protected override void Visit(SetTextVariable item)
+    protected override void Visit(SetTextVariable item) // %%% TODO
     {
         this.Trace(item);
 
         //this.ContinueWith(new SetTextVariableExecutor(item, this._workflowState));
     }
 
-    protected override void Visit(ClearAllVariables item)
+    protected override void Visit(ClearAllVariables item) // %%% TODO
     {
         this.Trace(item);
 
@@ -222,21 +222,21 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
-    protected override void Visit(EditTable item)
+    protected override void Visit(EditTable item) // %%% TODO
     {
         this.Trace(item);
 
         //this.ContinueWith(new EditTableExecutor(item, this._workflowState));
     }
 
-    protected override void Visit(EditTableV2 item)
+    protected override void Visit(EditTableV2 item) // %%% TODO
     {
         this.Trace(item);
 
         //this.ContinueWith(new EditTableV2Executor(item, this._workflowState));
     }
 
-    protected override void Visit(ParseValue item)
+    protected override void Visit(ParseValue item) // %%% TODO
     {
         this.Trace(item);
 
