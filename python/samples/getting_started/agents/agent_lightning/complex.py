@@ -1,10 +1,11 @@
-# type: ignore
-
 import asyncio
+import os
+from typing import TypedDict
 import uuid
 from loguru import logger
 from pydantic import Field
 
+import tau2.evaluator.evaluator_nl_assertions as evaluator_nl_assertions
 from tau2.domains.airline.environment import get_environment, get_tasks
 from tau2.data_model.tasks import Task
 from tau2.data_model.simulation import SimulationRun, TerminationReason
@@ -142,15 +143,33 @@ class ConversationOrchestrator(Executor):
         return STOP in text or TRANSFER in text or OUT_OF_SCOPE in text
 
 
-async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
+class AgentConfiguration(TypedDict):
+    model: str
+    temperature: float
+    base_url: str
+    api_key: str
+    sliding_window: int
+
+
+async def loop(task: Task, assistant_config: AgentConfiguration, user_config: AgentConfiguration, judge_config: AgentConfiguration, max_steps: int = 100) -> dict:
     """Complex workflow-based agent implementation."""
 
     logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")
+    logger.info(f"Assistant config: {assistant_config}")
+    logger.info(f"User config: {user_config}")
+    logger.info(f"Judge config: {judge_config}")
 
     # Get environment and tools
     env = get_environment()
     tools = env.get_tools()
     policy = env.get_policy()
+
+    # Set the model needed by judge
+    evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS = judge_config['model']
+    evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS_ARGS = {
+        "temperature": judge_config['temperature'],
+        # base url and api key not supported here
+    }
 
     # Convert tau2 tools to AIFunction format
     ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools]
@@ -163,14 +182,20 @@ async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
 {policy}
 </policy>"""
 
-    assistant_chat_client = OpenAIChatClient(ai_model_id=model)
+    assistant_chat_client = OpenAIChatClient(
+        ai_model_id=assistant_config['model'],
+        base_url=assistant_config['base_url'],
+        api_key=assistant_config['api_key'],
+    )
     assistant = ChatAgent(
         chat_client=assistant_chat_client,
         instructions=assistant_system_prompt,
         tools=ai_functions,
-        temperature=0.0,
+        temperature=assistant_config['temperature'],
         chat_message_store_factory=lambda: SlidingWindowChatMessageList(
-            system_message=assistant_system_prompt, tool_definitions=[tool.openai_schema for tool in tools]
+            system_message=assistant_system_prompt,
+            tool_definitions=[tool.openai_schema for tool in tools],
+            max_tokens=assistant_config['sliding_window']
         ),
     )
 
@@ -184,12 +209,21 @@ async def loop(task: Task, model: str, max_steps: int = 100) -> dict:
 {task.user_scenario.instructions}
 </scenario>"""
 
-    user_chat_client = OpenAIChatClient(ai_model_id=model)
+    user_chat_client = OpenAIChatClient(
+        ai_model_id=user_config['model'],
+        base_url=user_config['base_url'],
+        api_key=user_config['api_key'],
+    )
     user_simulator = ChatAgent(
         chat_client=user_chat_client,
         instructions=user_sim_system_prompt,
-        temperature=0.0,
+        temperature=user_config['temperature'],
         # No tools for user simulator as requested
+        chat_message_store_factory=(lambda: SlidingWindowChatMessageList(
+            system_message=user_sim_system_prompt,
+            tool_definitions=[],  # No tools for user simulator
+            max_tokens=user_config['sliding_window']
+        )) if user_config['sliding_window'] > 0 else None,
     )
 
     # 3. Create standard AgentExecutors
@@ -300,6 +334,33 @@ async def main():
 
     _logger = logger.opt(colors=True)
 
+    proxy_base_url = os.getenv("PROXY_OPENAI_BASE_URL")
+    proxy_api_key = os.getenv("PROXY_OPENAI_API_KEY")
+    assert proxy_base_url is not None, "PROXY_OPENAI_BASE_URL must be set"
+    assert proxy_api_key is not None, "PROXY_OPENAI_API_KEY must be set"
+
+    assistant_config = AgentConfiguration(
+        model="gpt-4.1-mini",
+        temperature=0.0,
+        base_url=proxy_base_url,
+        api_key=proxy_api_key,
+        sliding_window=4000,
+    )
+    user_config = AgentConfiguration(
+        model="gpt-4o-mini",
+        temperature=0.0,
+        base_url=proxy_base_url,
+        api_key=proxy_api_key,
+        sliding_window=0,  # No sliding window for user simulator
+    )
+    judge_config = AgentConfiguration(
+        model="gpt-4o-mini",
+        temperature=0.0,
+        base_url=proxy_base_url,
+        api_key=proxy_api_key,
+        sliding_window=0,  # Not used for judge
+    )
+
     # Iterate over the tasks
     for task in tasks[10:20]:  # Test with first tasks
         _logger.info(f"<red>Testing task #{task.id}</red>")
@@ -308,7 +369,7 @@ async def main():
         if task.user_scenario and task.user_scenario.instructions:
             _logger.info(f"<cyan>User scenario:</cyan> {task.user_scenario.instructions.reason_for_call}")
 
-        result = await loop(task, "gpt-4o-mini")
+        result = await loop(task, assistant_config, user_config, judge_config, max_steps=100)
         _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
         _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
 

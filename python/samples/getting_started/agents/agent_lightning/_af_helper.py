@@ -121,7 +121,12 @@ class SlidingWindowChatMessageList(ChatMessageList):
         self.truncate_messages()
 
     def truncate_messages(self) -> None:
-        while self.get_token_count() > self.max_tokens:
+        while len(self._messages) > 0 and self.get_token_count() > self.max_tokens:
+            logger.warning("Messages exceed max tokens. Truncating oldest message.")
+            self.pop(0)
+        # Remove leading tool messages
+        while len(self._messages) > 0 and self._messages[0].role == Role.TOOL:
+            logger.warning("Removing leading tool message because tool result cannot be the first message.")
             self.pop(0)
 
     def get_token_count(self) -> int:
