@@ -73,7 +73,7 @@ namespace SampleApp
     /// </summary>
     internal sealed class UserInfoMemory(IChatClient chatClient, UserInfo userInfo) : AIContextProvider
     {
-        public override async Task MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((userInfo.UserName == null || userInfo.UserAge == null) && newMessages.Any(x => x.Role == ChatRole.User))
@@ -91,7 +91,7 @@ namespace SampleApp
             }
         }
 
-        public override Task<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override ValueTask<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
         {
             StringBuilder instructions = new();
 
@@ -106,7 +106,7 @@ namespace SampleApp
                 "Ask the user for their age and politely decline to answer any questions until they provide it." :
                 $"The user's age is {userInfo.UserAge}.");
 
-            return Task.FromResult(new AIContext
+            return new ValueTask<AIContext>(new AIContext
             {
                 Instructions = instructions.ToString()
             });

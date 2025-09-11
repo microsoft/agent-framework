@@ -16,7 +16,7 @@ public class AIContextProviderTests
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>(new List<ChatMessage>());
         var task = provider.MessagesAddingAsync(messages, "thread1");
-        Assert.True(task.IsCompleted);
+        Assert.Equal(default, task);
     }
 
     [Fact]
@@ -32,28 +32,28 @@ public class AIContextProviderTests
     {
         var provider = new TestAIContextProvider();
         var element = default(JsonElement);
-        var task = provider.DeserializeAsync(element);
-        Assert.True(task.IsCompleted);
+        var actual = provider.DeserializeAsync(element);
+        Assert.Equal(default, actual);
     }
 
     private sealed class TestAIContextProvider : AIContextProvider
     {
-        public override Task<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override ValueTask<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new AIContext());
+            return default;
         }
 
-        public override async Task MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
         {
             await base.MessagesAddingAsync(newMessages, agentThreadId, cancellationToken);
         }
 
-        protected internal override async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        protected internal override async ValueTask<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             return await base.SerializeAsync(jsonSerializerOptions, cancellationToken);
         }
 
-        protected internal override async Task DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        protected internal override async ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             await base.DeserializeAsync(serializedState, jsonSerializerOptions, cancellationToken);
         }

@@ -2,7 +2,6 @@
 
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,33 +16,39 @@ public sealed class AggregateAIContextProvider : AIContextProvider, IList<AICont
     private readonly List<AIContextProvider> _providers = new();
 
     /// <inheritdoc />
-    public override async Task MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
     {
         if (this._providers.Count == 0)
         {
             return;
         }
 
-        await Task.WhenAll(this._providers.Select(x => x.MessagesAddingAsync(newMessages, agentThreadId, cancellationToken))).ConfigureAwait(false);
+        // Notify all the sub providers of new messages in serial.
+        foreach (var provider in this._providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await provider.MessagesAddingAsync(newMessages, agentThreadId, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc />
-    public override async Task<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
     {
         if (this._providers.Count == 0)
         {
             return new AIContext();
         }
 
-        // Invoke the downstream providers in parallel.
-        var subContexts = await Task.WhenAll(this._providers.Select(x => x.ModelInvokingAsync(newMessages, agentThreadId, cancellationToken))).ConfigureAwait(false);
-
-        // Aggregate all the sub-contexts into a single context.
+        // Invoke all the sub providers in serial and
+        // aggregate all the sub-contexts into a single context.
         List<AITool>? allTools = null;
         List<ChatMessage>? allMessages = null;
         StringBuilder? allInstructions = null;
-        foreach (var subContext in subContexts)
+        foreach (var provider in this._providers)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            var subContext = await provider.ModelInvokingAsync(newMessages, agentThreadId, cancellationToken).ConfigureAwait(false);
+
             if (subContext == null)
             {
                 continue;

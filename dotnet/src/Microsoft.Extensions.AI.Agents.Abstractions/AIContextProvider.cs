@@ -27,9 +27,9 @@ public abstract class AIContextProvider
     /// <param name="agentThreadId">The ID of the <see cref="AgentThread"/>.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
-    public virtual Task MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public virtual ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
     {
-        return Task.CompletedTask;
+        return default;
     }
 
     /// <summary>
@@ -41,7 +41,7 @@ public abstract class AIContextProvider
     /// <param name="agentThreadId">The ID of the <see cref="AgentThread"/>.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been rendered and returned.</returns>
-    public abstract Task<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default);
+    public abstract ValueTask<AIContext> ModelInvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
@@ -49,9 +49,9 @@ public abstract class AIContextProvider
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    protected internal virtual Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected internal virtual ValueTask<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(default(JsonElement));
+        return default;
     }
 
     /// <summary>
@@ -61,8 +61,8 @@ public abstract class AIContextProvider
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask"/> that completes when the state has been deserialized.</returns>
-    protected internal virtual Task DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected internal virtual ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return Task.CompletedTask;
+        return default;
     }
 }

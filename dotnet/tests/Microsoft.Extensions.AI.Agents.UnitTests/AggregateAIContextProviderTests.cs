@@ -21,10 +21,10 @@ public class AggregateAIContextProviderTests
         var mockProvider2 = new Mock<AIContextProvider>();
 
         mockProvider1.Setup(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask)
+            .Returns(default(ValueTask))
             .Verifiable();
         mockProvider2.Setup(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask)
+            .Returns(default(ValueTask))
             .Verifiable();
 
         aggregate.Add(mockProvider1.Object);
