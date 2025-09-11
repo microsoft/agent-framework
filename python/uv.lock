@@ -69,6 +69,9 @@ azure = [
 foundry = [
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+redis = [
+    { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 runtime = [
     { name = "agent-framework-runtime", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -80,6 +83,7 @@ workflow = [
 requires-dist = [
     { name = "agent-framework-azure", marker = "extra == 'azure'", editable = "packages/azure" },
     { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
+    { name = "agent-framework-redis", marker = "extra == 'redis'", editable = "packages/redis" },
     { name = "agent-framework-runtime", marker = "extra == 'runtime'", editable = "packages/runtime" },
     { name = "agent-framework-workflow", marker = "extra == 'workflow'", editable = "packages/workflow" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.7.0" },
@@ -93,7 +97,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
-provides-extras = ["azure", "foundry", "workflow", "runtime"]
+provides-extras = ["azure", "foundry", "redis", "workflow", "runtime"]
 
 [[package]]
 name = "agent-framework-azure"

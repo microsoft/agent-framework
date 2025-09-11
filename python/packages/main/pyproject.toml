@@ -42,6 +42,9 @@ azure = [
 foundry = [
     "agent-framework-foundry"
 ]
+redis = [
+    "agent-framework-redis"
+]
 workflow = [
     "agent-framework-workflow"
 ]
