@@ -112,7 +112,7 @@ class RedisProvider(ContextProvider):
         # Nothing special to do for Redis client; keep for symmetry with Mem0Provider
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         # No-op; indexes/keys remain unless `close()` is called explicitly.
         return None
 
