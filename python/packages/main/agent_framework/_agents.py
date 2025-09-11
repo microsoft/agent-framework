@@ -3,7 +3,6 @@
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
@@ -12,6 +11,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import MCPTool
+from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, ToolProtocol
@@ -137,12 +137,13 @@ class BaseAgent(AFBaseModel):
        name: The name of the agent, can be None.
        description: The description of the agent.
        display_name: The display name of the agent, which is either the name or id.
-
+       context_providers: The collection of multiple context providers to include during agent invocation.
     """
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
+    context_providers: AggregateContextProvider | None = None
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -214,6 +215,7 @@ class ChatAgent(BaseAgent):
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
+        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a ChatAgent.
@@ -248,6 +250,7 @@ class ChatAgent(BaseAgent):
             additional_properties: additional properties to include in the request.
             chat_message_store_factory: factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
+            context_providers: The collection of multiple context providers to include during agent invocation.
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
@@ -258,6 +261,8 @@ class ChatAgent(BaseAgent):
 
         kwargs.update(additional_properties or {})
 
+        aggregate_context_providers = self._prepare_context_providers(context_providers)
+
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
         normalized_tools = [] if tools is None else tools if isinstance(tools, list) else [tools]
@@ -266,6 +271,7 @@ class ChatAgent(BaseAgent):
         args: dict[str, Any] = {
             "chat_client": chat_client,
             "chat_message_store_factory": chat_message_store_factory,
+            "context_providers": aggregate_context_providers,
             "chat_options": ChatOptions(
                 ai_model_id=model,
                 frequency_penalty=frequency_penalty,
@@ -301,12 +307,16 @@ class ChatAgent(BaseAgent):
     async def __aenter__(self) -> "Self":
         """Async context manager entry.
 
-        If either the chat_client or the local_mcp_tools are context managers,
+        If any of the chat_client, local_mcp_tools, or context_providers are context managers,
         they will be entered into the async exit stack to ensure proper cleanup.
 
         This list might be extended in the future.
         """
-        for context_manager in chain([self.chat_client], self._local_mcp_tools):
+        context_managers = [self.chat_client, *self._local_mcp_tools]
+        if self.context_providers:
+            context_managers.append(self.context_providers)
+
+        for context_manager in context_managers:
             if isinstance(context_manager, AbstractAsyncContextManager):
                 await self._async_exit_stack.enter_async_context(context_manager)
         return self
@@ -388,7 +398,10 @@ class ChatAgent(BaseAgent):
                 will only be passed to functions that are called.
         """
         input_messages = self._normalize_messages(messages)
-        thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        context = await self.context_providers.model_invoking(input_messages) if self.context_providers else None
+        thread, thread_messages = await self._prepare_thread_and_messages(
+            thread=thread, context=context, input_messages=input_messages
+        )
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -440,6 +453,10 @@ class ChatAgent(BaseAgent):
         # to avoid inconsistent messages state in the thread.
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
+
+        if self.context_providers:
+            await self.context_providers.thread_created(response.conversation_id)
+            await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
 
         return AgentRunResponse(
             messages=response.messages,
@@ -509,7 +526,10 @@ class ChatAgent(BaseAgent):
 
         """
         input_messages = self._normalize_messages(messages)
-        thread, thread_messages = await self._prepare_thread_and_messages(thread=thread, input_messages=input_messages)
+        context = await self.context_providers.model_invoking(input_messages) if self.context_providers else None
+        thread, thread_messages = await self._prepare_thread_and_messages(
+            thread=thread, context=context, input_messages=input_messages
+        )
         agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
 
@@ -575,6 +595,10 @@ class ChatAgent(BaseAgent):
         await self._notify_thread_of_new_messages(thread, input_messages)
         await self._notify_thread_of_new_messages(thread, response.messages)
 
+        if self.context_providers:
+            await self.context_providers.thread_created(response.conversation_id)
+            await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
+
     def get_new_thread(self) -> AgentThread:
         message_store: ChatMessageStore | None = None
 
@@ -617,12 +641,14 @@ class ChatAgent(BaseAgent):
         self,
         *,
         thread: AgentThread | None,
+        context: Context | None,
         input_messages: list[ChatMessage] | None = None,
     ) -> tuple[AgentThread, list[ChatMessage]]:
         """Prepare the messages for agent execution.
 
         Args:
             thread: The conversation thread.
+            context: Context to include in messages.
             input_messages: Messages to process.
 
         Returns:
@@ -636,6 +662,8 @@ class ChatAgent(BaseAgent):
         messages: list[ChatMessage] = []
         if self.instructions:
             messages.append(ChatMessage(role=Role.SYSTEM, text=self.instructions))
+        if context and context.contents:
+            messages.append(ChatMessage(role=Role.SYSTEM, contents=context.contents))
         if thread.message_store:
             messages.extend(await thread.message_store.list_messages() or [])
         messages.extend(input_messages or [])
@@ -658,3 +686,18 @@ class ChatAgent(BaseAgent):
 
     def _get_agent_name(self) -> str:
         return self.name or "UnnamedAgent"
+
+    def _prepare_context_providers(
+        self,
+        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
+    ) -> AggregateContextProvider | None:
+        if not context_providers:
+            return None
+
+        if isinstance(context_providers, AggregateContextProvider):
+            return context_providers
+
+        if isinstance(context_providers, ContextProvider):
+            return AggregateContextProvider([context_providers])
+
+        return AggregateContextProvider(context_providers)

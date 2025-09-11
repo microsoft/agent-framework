@@ -37,8 +37,8 @@ internal static class Step3EntryPoint
                     string workflowResult = workflowCompleteEvt.Data!.ToString()!;
                     writer.WriteLine($"Result: {workflowResult}");
                     return workflowResult;
-                case ExecutorCompleteEvent executorCompleteEvt:
-                    writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
+                case ExecutorCompletedEvent executorCompletedEvt:
+                    writer.WriteLine($"'{executorCompletedEvt.ExecutorId}: {executorCompletedEvt.Data}");
                     break;
             }
         }
