@@ -91,7 +91,7 @@
     <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="2025.8.2-1" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250625-1002" />
     <!-- Test -->
-    <PackageVersion Include="FluentAssertions" Version="8.5.0" />
+    <PackageVersion Include="FluentAssertions" Version="8.6.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
     <PackageVersion Include="xunit" Version="2.9.3" />
