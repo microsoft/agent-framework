@@ -7,6 +7,7 @@ from collections.abc import MutableSequence, Sequence
 from typing import Any, Final, Literal
 
 from agent_framework import ChatMessage, Context, ContextProvider, TextContent
+from agent_framework.exceptions import ServiceInitializationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -30,6 +31,13 @@ class RedisProvider(ContextProvider):
     index_name: str = "chat_history"
     prefix: str = "memory"
 
+    # Partitioning / filters (mirrors Mem0 provider semantics)
+    application_id: str | None = None
+    agent_id: str | None = None
+    thread_id: str | None = None
+    user_id: str | None = None
+    scope_to_per_operation_thread_id: bool = False
+
     # Retrieval modes / knobs
     sequential: bool = False
     top_k: int = 10
@@ -49,6 +57,8 @@ class RedisProvider(ContextProvider):
     # ---- Internal state ----
     _message_history: Any = None  # MessageHistory | SemanticMessageHistory
     _redis_client: Any = None
+    _per_operation_thread_id: str | None = None
+    _current_prefix: str | None = None
 
     def __init__(
         self,
@@ -56,6 +66,11 @@ class RedisProvider(ContextProvider):
         redis_url: str = "redis://localhost:6379",
         index_name: str = "chat_history",
         prefix: str = "memory",
+        application_id: str | None = None,
+        agent_id: str | None = None,
+        thread_id: str | None = None,
+        user_id: str | None = None,
+        scope_to_per_operation_thread_id: bool = False,
         sequential: bool = False,
         top_k: int = 10,
         distance_threshold: float = 0.7,
@@ -69,6 +84,11 @@ class RedisProvider(ContextProvider):
             redis_url=redis_url,  # type: ignore[reportCallIssue]
             index_name=index_name,  # type: ignore[reportCallIssue]
             prefix=prefix,  # type: ignore[reportCallIssue]
+            application_id=application_id,  # type: ignore[reportCallIssue]
+            agent_id=agent_id,  # type: ignore[reportCallIssue]
+            thread_id=thread_id,  # type: ignore[reportCallIssue]
+            user_id=user_id,  # type: ignore[reportCallIssue]
+            scope_to_per_operation_thread_id=scope_to_per_operation_thread_id,  # type: ignore[reportCallIssue]
             sequential=sequential,  # type: ignore[reportCallIssue]
             top_k=top_k,  # type: ignore[reportCallIssue]
             distance_threshold=distance_threshold,  # type: ignore[reportCallIssue]
@@ -81,19 +101,10 @@ class RedisProvider(ContextProvider):
 
         # Initialize Redis client and history implementation
         self._redis_client = Redis.from_url(url=self.redis_url)  # type: ignore[reportUnknownMemberType]
-        if self.sequential:
-            self._message_history = MessageHistory(
-                name=self.index_name, prefix=self.prefix, redis_client=self._redis_client
-            )
-        else:
-            vectorizer = HFTextVectorizer(model=self.model_name, dtype=self.datatype)
-            self._message_history = SemanticMessageHistory(
-                name=self.index_name,
-                prefix=self.prefix,
-                vectorizer=vectorizer,
-                distance_threshold=self.distance_threshold,
-                redis_client=self._redis_client,
-            )
+        # initialize per-operation thread id holder
+        self._per_operation_thread_id = None
+        # Create history with partition-aware prefix
+        self._ensure_history()
 
     # ---------- Lifecycle ----------
 
@@ -106,13 +117,21 @@ class RedisProvider(ContextProvider):
         return None
 
     async def thread_created(self, thread_id: str | None = None) -> None:
-        # No per-thread state by default; override if you add thread-level partitioning.
-        return None
+        # Track per-operation thread id when requested and adjust partition
+        self._validate_per_operation_thread_id(thread_id)
+        self._per_operation_thread_id = self._per_operation_thread_id or thread_id
+        self._ensure_history()
+        return
 
     # ---------- Ingestion ----------
 
     async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Placeholder."""
+        """Ingest messages into the partitioned Redis history."""
+        self._validate_filters()
+        self._validate_per_operation_thread_id(thread_id)
+        self._per_operation_thread_id = self._per_operation_thread_id or thread_id
+        self._ensure_history()
+
         messages_list = [new_messages] if isinstance(new_messages, ChatMessage) else list(new_messages)
 
         for message in messages_list:
@@ -120,8 +139,15 @@ class RedisProvider(ContextProvider):
             if role in {"user", "assistant", "system"}:
                 text = message.text
                 if text and text.strip():
-                    # Store MIME in metadata for round-trip compatibility
-                    meta = {"mime_type": "text/plain", "role": role}
+                    # Store MIME in metadata for round-trip compatibility and include partition info
+                    meta = {
+                        "mime_type": "text/plain",
+                        "role": role,
+                        "application_id": self.application_id,
+                        "agent_id": self.agent_id,
+                        "user_id": self.user_id,
+                        "thread_id": self._effective_thread_id,
+                    }
                     self._message_history.add_message(
                         {"role": role, "content": text, "metadata": serialize(meta)}  # type: ignore[reportArgumentType]
                     )
@@ -130,6 +156,8 @@ class RedisProvider(ContextProvider):
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Recall relevant or recent memories and return as a single instruction block."""
+        self._validate_filters()
+        self._ensure_history()
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
         input_text = "\n".join(m.text for m in messages_list if m and m.text and m.text.strip())
 
@@ -169,7 +197,16 @@ class RedisProvider(ContextProvider):
 
     async def add(self, *, text: str, metadata: dict[str, Any] | None = None) -> None:
         """Convenience method to add a single user-text memory with optional metadata."""
-        md = {"mime_type": "text/plain", **(metadata or {})}
+        self._validate_filters()
+        self._ensure_history()
+        md = {
+            "mime_type": "text/plain",
+            "application_id": self.application_id,
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+            "thread_id": self._effective_thread_id,
+            **(metadata or {}),
+        }
         role = md.get("role", "user")
         md["role"] = role
         self._message_history.add_message(
@@ -188,6 +225,8 @@ class RedisProvider(ContextProvider):
 
         Returns raw RedisVL records (dicts) for maximum flexibility.
         """
+        self._validate_filters()
+        self._ensure_history()
         if sequential or (sequential is None and self.sequential):
             return list(self._get_recent(top_k or self.top_k))
         return list(
@@ -200,10 +239,12 @@ class RedisProvider(ContextProvider):
 
     async def clear(self) -> None:
         """Clear all entries from the underlying message history while preserving index structures."""
+        self._ensure_history()
         self._message_history.clear()
 
     async def close(self) -> None:
         """Placeholder."""
+        self._ensure_history()
         self._message_history.delete()
 
     # ---------- Internal helpers ----------
@@ -218,3 +259,65 @@ class RedisProvider(ContextProvider):
             distance_threshold=distance_threshold,
             raw=False,
         )
+
+    # ---------- Partition helpers ----------
+
+    @property
+    def _effective_thread_id(self) -> str | None:
+        return self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id
+
+    def _compute_partition_prefix(self) -> str:
+        parts: list[str] = [self.prefix]
+        if self.application_id:
+            parts.append(f"app:{self.application_id}")
+        if self.agent_id:
+            parts.append(f"agent:{self.agent_id}")
+        if self.user_id:
+            parts.append(f"user:{self.user_id}")
+        if tid := self._effective_thread_id:
+            parts.append(f"thread:{tid}")
+        return ":".join(parts)
+
+    def _ensure_history(self) -> None:
+        desired_prefix = self._compute_partition_prefix()
+        if self._message_history is not None and self._current_prefix == desired_prefix:
+            return
+        # (Re)create history with desired prefix
+        if self.sequential:
+            self._message_history = MessageHistory(
+                name=self.index_name, prefix=desired_prefix, redis_client=self._redis_client
+            )
+        else:
+            vectorizer = HFTextVectorizer(model=self.model_name, dtype=self.datatype)
+            self._message_history = SemanticMessageHistory(
+                name=self.index_name,
+                prefix=desired_prefix,
+                vectorizer=vectorizer,
+                distance_threshold=self.distance_threshold,
+                redis_client=self._redis_client,
+            )
+        self._current_prefix = desired_prefix
+
+    def _validate_filters(self) -> None:
+        if (
+            not self.agent_id
+            and not self.user_id
+            and not self.application_id
+            and not self.thread_id
+            and not (self.scope_to_per_operation_thread_id and self._per_operation_thread_id)
+        ):
+            raise ServiceInitializationError(
+                "At least one of the filters: agent_id, user_id, application_id, or thread_id is required."
+            )
+
+    def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
+        if (
+            self.scope_to_per_operation_thread_id
+            and thread_id
+            and self._per_operation_thread_id
+            and thread_id != self._per_operation_thread_id
+        ):
+            raise ValueError(
+                "RedisProvider can only be used with one thread at a time "
+                "when scope_to_per_operation_thread_id is True."
+            )

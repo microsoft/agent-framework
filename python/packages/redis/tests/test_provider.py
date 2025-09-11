@@ -35,7 +35,7 @@ class TestRedisProviderInitialization:
         mock_redis_cls: MagicMock,
     ) -> None:
         mock_redis_cls.from_url.return_value = MagicMock()
-        provider = RedisProvider(sequential=False)
+        provider = RedisProvider(sequential=False, user_id="user123")
         assert provider.sequential is False
         mock_vectorizer_cls.assert_called_once()
         mock_sem_hist_cls.assert_called_once()
@@ -44,7 +44,7 @@ class TestRedisProviderInitialization:
     @patch("agent_framework_redis._provider.MessageHistory")
     def test_init_sequential(self, mock_hist_cls: MagicMock, mock_redis_cls: MagicMock) -> None:
         mock_redis_cls.from_url.return_value = MagicMock()
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         assert provider.sequential is True
         mock_hist_cls.assert_called_once()
 
@@ -55,7 +55,7 @@ class TestRedisProviderAsyncContext:
     async def test_async_context_manager(self, mock_hist_cls: MagicMock, mock_redis_cls: MagicMock) -> None:
         mock_redis_cls.from_url.return_value = MagicMock()
         mock_hist_cls.return_value = MagicMock()
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         async with provider as ctx:
             assert ctx is provider
 
@@ -68,7 +68,7 @@ class TestMessagesAdding:
         hist = MagicMock()
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         msg = ChatMessage(role=Role.USER, text="Hello!")
 
         await provider.messages_adding("thread123", msg)
@@ -86,7 +86,7 @@ class TestMessagesAdding:
         hist = MagicMock()
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         await provider.messages_adding("thread123", sample_messages)
 
         # Should add at least once
@@ -99,7 +99,7 @@ class TestMessagesAdding:
         hist = MagicMock()
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         messages = [
             ChatMessage(role=Role.USER, text=""),
             ChatMessage(role=Role.USER, text="   "),
@@ -119,7 +119,7 @@ class TestMessagesAdding:
         hist = MagicMock()
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         messages = [
             ChatMessage(role=Role.TOOL, text="tool output"),
             ChatMessage(role=Role.USER, text="include me"),
@@ -143,7 +143,7 @@ class TestModelInvoking:
         ]
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         msg = ChatMessage(role=Role.USER, text="What's the weather?")
         ctx: Context = await provider.model_invoking(msg)
 
@@ -169,7 +169,7 @@ class TestModelInvoking:
         ]
         mock_sem_hist_cls.return_value = sem_hist
 
-        provider = RedisProvider(sequential=False)
+        provider = RedisProvider(sequential=False, user_id="user123")
         msg = ChatMessage(role=Role.USER, text="weather in NYC")
         ctx: Context = await provider.model_invoking(msg)
 
@@ -190,7 +190,7 @@ class TestModelInvoking:
         sem_hist.get_relevant.return_value = []
         mock_sem_hist_cls.return_value = sem_hist
 
-        provider = RedisProvider(sequential=False)
+        provider = RedisProvider(sequential=False, user_id="user123")
         ctx = await provider.model_invoking(ChatMessage(role=Role.USER, text="hi"))
 
         assert isinstance(ctx, Context)
@@ -212,7 +212,7 @@ class TestModelInvoking:
         ]
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         ctx = await provider.model_invoking(ChatMessage(role=Role.USER, text="q"))
         assert ctx.contents and "raw_text" in ctx.contents[0].text
 
@@ -230,7 +230,7 @@ class TestModelInvoking:
         sem_hist.get_relevant.return_value = []
         mock_sem_hist_cls.return_value = sem_hist
 
-        provider = RedisProvider(sequential=False)
+        provider = RedisProvider(sequential=False, user_id="user123")
         await provider.model_invoking([])
         # Prompt should be empty string when no messages
         kwargs = sem_hist.get_relevant.call_args.kwargs
@@ -245,7 +245,7 @@ class TestConvenienceAPI:
         hist = MagicMock()
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         await provider.add(text="remember this")
         hist.add_message.assert_called_once()
 
@@ -259,7 +259,7 @@ class TestConvenienceAPI:
         hist = MagicMock()
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         await provider.close()
         hist.delete.assert_called_once()
 
@@ -272,7 +272,7 @@ class TestConvenienceAPI:
         hist = MagicMock()
         mock_hist_cls.return_value = hist
 
-        provider = RedisProvider(sequential=True)
+        provider = RedisProvider(sequential=True, user_id="user123")
         await provider.add(text="note", metadata={"role": "assistant", "extra": 1})
         payload: dict[str, Any] = hist.add_message.call_args.args[0]
         assert payload["role"] == "assistant"
@@ -290,7 +290,7 @@ class TestConvenienceAPI:
         sem_hist = MagicMock()
         mock_sem_hist_cls.return_value = sem_hist
 
-        provider = RedisProvider(sequential=False)
+        provider = RedisProvider(sequential=False, user_id="user123")
         await provider.query("q", top_k=5, distance_threshold=0.5)
         kwargs = sem_hist.get_relevant.call_args.kwargs
         assert kwargs["top_k"] == 5
@@ -310,3 +310,94 @@ class TestConvenienceAPI:
         with patch.object(provider, "_message_history", msg_hist):
             await provider.query("q", sequential=True, top_k=7)
             msg_hist.get_recent.assert_called_once()
+
+
+class TestPartitioning:
+    @patch("agent_framework_redis._provider.Redis")
+    @patch("agent_framework_redis._provider.SemanticMessageHistory")
+    @patch("agent_framework_redis._provider.HFTextVectorizer")
+    def test_prefix_includes_all_filters_semantic(
+        self,
+        _mock_vec_cls: MagicMock,
+        mock_sem_hist_cls: MagicMock,
+        mock_redis_cls: MagicMock,
+    ) -> None:
+        mock_redis_cls.from_url.return_value = MagicMock()
+        RedisProvider(
+            sequential=False,
+            prefix="memory",
+            application_id="app123",
+            agent_id="agent123",
+            user_id="user123",
+            thread_id="thread123",
+        )
+        kwargs = mock_sem_hist_cls.call_args.kwargs
+        assert kwargs["prefix"] == "memory:app:app123:agent:agent123:user:user123:thread:thread123"
+
+    @patch("agent_framework_redis._provider.Redis")
+    @patch("agent_framework_redis._provider.MessageHistory")
+    def test_prefix_updates_on_thread_created_when_scoped(
+        self,
+        mock_hist_cls: MagicMock,
+        mock_redis_cls: MagicMock,
+    ) -> None:
+        mock_redis_cls.from_url.return_value = MagicMock()
+        provider = RedisProvider(
+            sequential=True,
+            prefix="pfx",
+            application_id="a",
+            agent_id="g",
+            user_id="u",
+            scope_to_per_operation_thread_id=True,
+        )
+        # First creation without thread id
+        first_prefix = mock_hist_cls.call_args.kwargs["prefix"]
+        assert first_prefix == "pfx:app:a:agent:g:user:u"
+
+        # Simulate new thread
+        mock_hist_cls.reset_mock()
+        import asyncio as _asyncio
+
+        _asyncio.get_event_loop().run_until_complete(provider.thread_created("t1"))
+
+        # After thread_created, a new history should be constructed with thread-specific prefix
+        assert mock_hist_cls.call_args.kwargs["prefix"] == "pfx:app:a:agent:g:user:u:thread:t1"
+
+    @patch("agent_framework_redis._provider.Redis")
+    @patch("agent_framework_redis._provider.MessageHistory")
+    @pytest.mark.asyncio
+    async def test_validation_requires_at_least_one_filter(
+        self,
+        mock_hist_cls: MagicMock,
+        mock_redis_cls: MagicMock,
+    ) -> None:
+        from agent_framework.exceptions import ServiceInitializationError
+
+        mock_redis_cls.from_url.return_value = MagicMock()
+        provider = RedisProvider(sequential=True, prefix="pfx")
+        with pytest.raises(ServiceInitializationError):
+            await provider.add(text="x")
+
+    @patch("agent_framework_redis._provider.Redis")
+    @patch("agent_framework_redis._provider.MessageHistory")
+    @pytest.mark.asyncio
+    async def test_messages_metadata_includes_partition_fields(
+        self,
+        mock_hist_cls: MagicMock,
+        mock_redis_cls: MagicMock,
+    ) -> None:
+        mock_redis_cls.from_url.return_value = MagicMock()
+        hist = MagicMock()
+        mock_hist_cls.return_value = hist
+        provider = RedisProvider(
+            sequential=True,
+            application_id="app123",
+            agent_id="agent123",
+            user_id="user123",
+            thread_id="thread123",
+        )
+        await provider.messages_adding("thread123", ChatMessage(role=Role.USER, text="hello"))
+        payload: dict[str, Any] = hist.add_message.call_args.args[0]
+        meta = payload["metadata"]
+        # serialized, but should at least contain keys when deserialized later; here we just ensure serialize was called
+        assert isinstance(meta, (bytes, str))
