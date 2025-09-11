@@ -10,18 +10,17 @@ import random
 import re
 import string
 import time
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-from collections.abc import Iterable
+from typing import Any
 
 import orjson
 from huggingface_hub import snapshot_download
+from opentelemetry.trace import NoOpTracer, SpanKind, get_tracer
 from tqdm import tqdm
-from opentelemetry.trace import NoOpTracer, get_tracer, SpanKind, get_current_span
-from opentelemetry.util.types import Attributes
 
-from ._types import Evaluation, Prediction, Task, TaskResult, TaskRunner, Evaluator
+from ._types import Evaluation, Evaluator, Prediction, Task, TaskResult, TaskRunner
 
 __all__ = ["GAIA", "gaia_scorer", "Task", "Prediction", "Evaluation", "TaskResult", "GAIATelemetryConfig"]
 

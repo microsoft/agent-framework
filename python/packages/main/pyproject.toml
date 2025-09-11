@@ -48,8 +48,8 @@ workflow = [
 runtime = [
     "agent-framework-runtime"
 ]
-eval = [
-    "agent-framework-eval"
+experimental = [
+    "agent-framework-experimental"
 ]
 
 [tool.uv]

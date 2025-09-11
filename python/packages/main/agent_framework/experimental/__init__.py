@@ -3,8 +3,8 @@
 import importlib
 from typing import Any
 
-PACKAGE_NAME = "agent_framework_eval"
-PACKAGE_EXTRA = "eval"
+PACKAGE_NAME = "agent_framework_experimental"
+PACKAGE_EXTRA = "experimental"
 _IMPORTS = ["__version__"]
 
 

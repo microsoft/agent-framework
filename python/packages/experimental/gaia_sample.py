@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.eval.gaia import GAIA, Task, Prediction, Evaluation, GAIATelemetryConfig
+from agent_framework.experimental.gaia import GAIA, Task, Prediction, Evaluation, GAIATelemetryConfig
 from azure.identity.aio import AzureCliCredential
 
 async def run_task(task: Task) -> Prediction:

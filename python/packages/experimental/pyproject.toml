@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-eval"
-description = "Evaluation tools and benchmarks for Microsoft Agent Framework."
+name = "agent-framework-experimental"
+description = "Experimental module for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,17 +36,17 @@ gaia = [
 ]
 
 [project.scripts]
-gaia_viewer = "agent_framework_eval.gaia:viewer_main"
+gaia_viewer = "agent_framework_experimental.gaia:viewer_main"
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["agent_framework_eval"]
+packages = ["agent_framework_experimental"]
 
 [tool.setuptools.package-data]
-agent_framework_eval = ["py.typed"]
+agent_framework_experimental = ["py.typed"]
 
 [tool.ruff]
 line-length = 120
@@ -73,7 +73,7 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 implicit_reexport = true
-packages = ["agent_framework_eval"]
+packages = ["agent_framework_experimental"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

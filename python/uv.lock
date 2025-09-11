@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
@@ -25,7 +25,7 @@ supported-markers = [
 members = [
     "agent-framework",
     "agent-framework-azure",
-    "agent-framework-eval",
+    "agent-framework-experimental",
     "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-project",
@@ -66,8 +66,8 @@ dependencies = [
 azure = [
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-eval = [
-    { name = "agent-framework-eval", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+experimental = [
+    { name = "agent-framework-experimental", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 foundry = [
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -82,7 +82,7 @@ workflow = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-azure", marker = "extra == 'azure'", editable = "packages/azure" },
-    { name = "agent-framework-eval", marker = "extra == 'eval'", editable = "packages/eval" },
+    { name = "agent-framework-experimental", marker = "extra == 'experimental'", editable = "packages/experimental" },
     { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
     { name = "agent-framework-runtime", marker = "extra == 'runtime'", editable = "packages/runtime" },
     { name = "agent-framework-workflow", marker = "extra == 'workflow'", editable = "packages/workflow" },
@@ -97,7 +97,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
-provides-extras = ["azure", "foundry", "workflow", "runtime", "eval"]
+provides-extras = ["azure", "foundry", "workflow", "runtime", "experimental"]
 
 [[package]]
 name = "agent-framework-azure"
@@ -115,9 +115,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agent-framework-eval"
+name = "agent-framework-experimental"
 version = "0.1.0b1"
-source = { editable = "packages/eval" }
+source = { editable = "packages/experimental" }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -187,7 +187,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-eval", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-experimental", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-workflow", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -232,7 +232,7 @@ dev = [
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
     { name = "agent-framework-azure", editable = "packages/azure" },
-    { name = "agent-framework-eval", editable = "packages/eval" },
+    { name = "agent-framework-experimental", editable = "packages/experimental" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-workflow", editable = "packages/workflow" },
@@ -3648,8 +3648,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/2f/104c0a3c778d7c2ab8190e9db4f62f0b6957b53c9d87db77c284b69f33ea/pyzmq-27.1.0-cp312-abi3-win32.whl", hash = "sha256:250e5436a4ba13885494412b3da5d518cd0d3a278a1ae640e113c073a5f88edd", size = 559184, upload-time = "2025-09-08T23:08:15.163Z" },
     { url = "https://files.pythonhosted.org/packages/fc/7f/a21b20d577e4100c6a41795842028235998a643b1ad406a6d4163ea8f53e/pyzmq-27.1.0-cp312-abi3-win_amd64.whl", hash = "sha256:9ce490cf1d2ca2ad84733aa1d69ce6855372cb5ce9223802450c9b2a7cba0ccf", size = 619480, upload-time = "2025-09-08T23:08:17.192Z" },
     { url = "https://files.pythonhosted.org/packages/78/c2/c012beae5f76b72f007a9e91ee9401cb88c51d0f83c6257a03e785c81cc2/pyzmq-27.1.0-cp312-abi3-win_arm64.whl", hash = "sha256:75a2f36223f0d535a0c919e23615fc85a1e23b71f40c7eb43d7b1dedb4d8f15f", size = 552993, upload-time = "2025-09-08T23:08:18.926Z" },
-    { url = "https://files.pythonhosted.org/packages/60/cb/84a13459c51da6cec1b7b1dc1a47e6db6da50b77ad7fd9c145842750a011/pyzmq-27.1.0-cp313-cp313-android_24_arm64_v8a.whl", hash = "sha256:93ad4b0855a664229559e45c8d23797ceac03183c7b6f5b4428152a6b06684a5", size = 1122436, upload-time = "2025-09-08T23:08:20.801Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/b6/94414759a69a26c3dd674570a81813c46a078767d931a6c70ad29fc585cb/pyzmq-27.1.0-cp313-cp313-android_24_x86_64.whl", hash = "sha256:fbb4f2400bfda24f12f009cba62ad5734148569ff4949b1b6ec3b519444342e6", size = 1156301, upload-time = "2025-09-08T23:08:22.47Z" },
     { url = "https://files.pythonhosted.org/packages/a5/ad/15906493fd40c316377fd8a8f6b1f93104f97a752667763c9b9c1b71d42d/pyzmq-27.1.0-cp313-cp313t-macosx_10_15_universal2.whl", hash = "sha256:e343d067f7b151cfe4eb3bb796a7752c9d369eed007b91231e817071d2c2fec7", size = 1341197, upload-time = "2025-09-08T23:08:24.286Z" },
     { url = "https://files.pythonhosted.org/packages/14/1d/d343f3ce13db53a54cb8946594e567410b2125394dafcc0268d8dda027e0/pyzmq-27.1.0-cp313-cp313t-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:08363b2011dec81c354d694bdecaef4770e0ae96b9afea70b3f47b973655cc05", size = 897275, upload-time = "2025-09-08T23:08:26.063Z" },
     { url = "https://files.pythonhosted.org/packages/69/2d/d83dd6d7ca929a2fc67d2c3005415cdf322af7751d773524809f9e585129/pyzmq-27.1.0-cp313-cp313t-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d54530c8c8b5b8ddb3318f481297441af102517602b569146185fa10b63f4fa9", size = 660469, upload-time = "2025-09-08T23:08:27.623Z" },

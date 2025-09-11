@@ -3,9 +3,9 @@
 import importlib
 from typing import Any
 
-PACKAGE_NAME = "agent_framework_eval.gaia"
-PACKAGE_EXTRA = "eval"
-_IMPORTS = ["GAIA", "Task", "Prediction", "Evaluation", "TaskResult", "gaia_scorer"]
+PACKAGE_NAME = "agent_framework_experimental.gaia"
+PACKAGE_EXTRA = "experimental"
+_IMPORTS = ["GAIA", "Task", "Prediction", "Evaluation", "TaskResult", "gaia_scorer", "GAIATelemetryConfig"]
 
 
 def __getattr__(name: str) -> Any:
