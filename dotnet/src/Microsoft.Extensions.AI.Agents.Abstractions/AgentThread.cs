@@ -27,11 +27,6 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Gets or sets the ID of the thread.
-    /// </summary>
-    public string? Id { get; set; }
-
-    /// <summary>
     /// Gets or sets the ID of the underlying service thread to support cases where the chat history is stored by the agent service.
     /// </summary>
     /// <remarks>
@@ -153,7 +148,7 @@ public class AgentThread
     {
         if (this.AIContextProvider is not null)
         {
-            await this.AIContextProvider.MessagesAddingAsync(newMessages, this.Id, cancellationToken).ConfigureAwait(false);
+            await this.AIContextProvider.MessagesAddingAsync(newMessages, cancellationToken).ConfigureAwait(false);
         }
 
         switch (this)

@@ -420,78 +420,6 @@ public class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync sets the Id on the thread when the service returns a conversation id.
-    /// </summary>
-    [Fact]
-    public async Task RunAsyncSetsIdOnThreadWhenConversationIdReturnedByChatClientAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
-        AgentThread thread = new();
-
-        // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], thread);
-
-        // Assert
-        Assert.Equal("ConvId", thread.Id);
-    }
-
-    /// <summary>
-    /// Verify that RunAsync sets the Id on the thread when the service returns a conversation id,
-    /// and when the Id is the same as the ConversationId.
-    /// </summary>
-    [Fact]
-    public async Task RunAsyncSetsIdOnThreadWhenConversationIdReturnedByChatClientAndIdSameAsConversationIdAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId2" });
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
-        AgentThread thread = new();
-        thread.Id = thread.ConversationId = "ConvId1";
-
-        // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], thread);
-
-        // Assert
-        Assert.Equal("ConvId2", thread.Id);
-    }
-
-    /// <summary>
-    /// Verify that RunAsync does not set the Id on the thread if it is already set.
-    /// </summary>
-    [Fact]
-    public async Task RunAsyncDoesNotSetIdOnThreadWhenAlreadySetAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
-        AgentThread thread = new();
-        thread.Id = "existing-id";
-
-        // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], thread);
-
-        // Assert
-        Assert.Equal("existing-id", thread.Id);
-    }
-
-    /// <summary>
     /// Verify that RunAsync invokes any provided AIContextProvider and uses the result.
     /// </summary>
     [Fact]
@@ -520,7 +448,7 @@ public class ChatClientAgentTests
 
         var mockProvider = new Mock<AIContextProvider>();
         mockProvider
-            .Setup(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AIContext
             {
                 Messages = [new(ChatRole.System, "context provider message")],
@@ -544,7 +472,7 @@ public class ChatClientAgentTests
         Assert.Equal(2, capturedTools.Count);
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");
-        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -576,7 +504,7 @@ public class ChatClientAgentTests
 
         var mockProvider = new Mock<AIContextProvider>();
         mockProvider
-            .Setup(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AIContext());
 
         ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
@@ -592,7 +520,7 @@ public class ChatClientAgentTests
         Assert.Equal(ChatRole.User, capturedMessages[0].Role);
         Assert.Single(capturedTools);
         Assert.Contains(capturedTools, t => t.Name == "base function");
-        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

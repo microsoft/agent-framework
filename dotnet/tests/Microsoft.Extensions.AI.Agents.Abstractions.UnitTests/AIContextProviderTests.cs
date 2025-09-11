@@ -15,7 +15,7 @@ public class AIContextProviderTests
     {
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>(new List<ChatMessage>());
-        var task = provider.MessagesAddingAsync(messages, "thread1");
+        var task = provider.MessagesAddingAsync(messages);
         Assert.Equal(default, task);
     }
 
@@ -38,14 +38,14 @@ public class AIContextProviderTests
 
     private sealed class TestAIContextProvider : AIContextProvider
     {
-        public override ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
         {
             return default;
         }
 
-        public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+        public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
         {
-            await base.MessagesAddingAsync(newMessages, agentThreadId, cancellationToken);
+            await base.MessagesAddingAsync(newMessages, cancellationToken);
         }
 
         protected internal override async ValueTask<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)

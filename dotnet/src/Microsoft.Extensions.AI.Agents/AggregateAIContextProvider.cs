@@ -16,7 +16,7 @@ public sealed class AggregateAIContextProvider : AIContextProvider, IList<AICont
     private readonly List<AIContextProvider> _providers = new();
 
     /// <inheritdoc />
-    public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         if (this._providers.Count == 0)
         {
@@ -27,12 +27,12 @@ public sealed class AggregateAIContextProvider : AIContextProvider, IList<AICont
         foreach (var provider in this._providers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await provider.MessagesAddingAsync(newMessages, agentThreadId, cancellationToken).ConfigureAwait(false);
+            await provider.MessagesAddingAsync(newMessages, cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <inheritdoc />
-    public override async ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         if (this._providers.Count == 0)
         {
@@ -47,7 +47,7 @@ public sealed class AggregateAIContextProvider : AIContextProvider, IList<AICont
         foreach (var provider in this._providers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var subContext = await provider.InvokingAsync(newMessages, agentThreadId, cancellationToken).ConfigureAwait(false);
+            var subContext = await provider.InvokingAsync(newMessages, cancellationToken).ConfigureAwait(false);
 
             if (subContext == null)
             {

@@ -26,20 +26,6 @@ public class AgentThreadTests
     }
 
     [Fact]
-    public void SetIdRoundtrips()
-    {
-        // Arrange
-        var thread = new AgentThread();
-        var id = "test-thread-id";
-
-        // Act
-        thread.Id = id;
-
-        // Assert
-        Assert.Equal(id, thread.Id);
-    }
-
-    [Fact]
     public void SetConversationIdRoundtrips()
     {
         // Arrange
@@ -150,7 +136,6 @@ public class AgentThreadTests
         var store = new InMemoryChatMessageStore();
         var thread = new AgentThread
         {
-            Id = "thread-123",
             MessageStore = store,
             AIContextProvider = providerMock.Object
         };
@@ -167,7 +152,6 @@ public class AgentThreadTests
         providerMock.Verify(
             m => m.MessagesAddingAsync(
                 It.Is<IReadOnlyCollection<ChatMessage>>(msgs => msgs.Count == 2 && msgs.First().Text == "Hello" && msgs.Last().Text == "Hi there!"),
-                "thread-123",
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }

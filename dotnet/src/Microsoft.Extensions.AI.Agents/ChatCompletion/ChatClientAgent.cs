@@ -357,7 +357,7 @@ public sealed class ChatClientAgent : AIAgent
         // messages and options with the additional context.
         if (thread.AIContextProvider is not null)
         {
-            var aiContext = await thread.AIContextProvider.InvokingAsync(inputMessages, thread.Id, cancellationToken).ConfigureAwait(false);
+            var aiContext = await thread.AIContextProvider.InvokingAsync(inputMessages, cancellationToken).ConfigureAwait(false);
             if (aiContext.Messages is { Count: > 0 })
             {
                 threadMessages.AddRange(aiContext.Messages);
@@ -423,14 +423,6 @@ public sealed class ChatClientAgent : AIAgent
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
         {
-            // If the caller hasn't set the thread id to a custom value
-            // we can update it to be the same as the conversation id,
-            // so that it always has a thread id.
-            if (thread.Id is null || thread.Id == thread.ConversationId)
-            {
-                thread.Id = responseConversationId;
-            }
-
             // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
             // so we should update the thread with the new id.
             thread.ConversationId = responseConversationId;

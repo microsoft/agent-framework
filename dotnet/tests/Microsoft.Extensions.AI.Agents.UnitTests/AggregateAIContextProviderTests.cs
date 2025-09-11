@@ -20,10 +20,10 @@ public class AggregateAIContextProviderTests
         var mockProvider1 = new Mock<AIContextProvider>();
         var mockProvider2 = new Mock<AIContextProvider>();
 
-        mockProvider1.Setup(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockProvider1.Setup(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask))
             .Verifiable();
-        mockProvider2.Setup(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockProvider2.Setup(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask))
             .Verifiable();
 
@@ -31,11 +31,11 @@ public class AggregateAIContextProviderTests
         aggregate.Add(mockProvider2.Object);
 
         // Act
-        await aggregate.MessagesAddingAsync(new List<ChatMessage>(), null);
+        await aggregate.MessagesAddingAsync(new List<ChatMessage>());
 
         // Assert
-        mockProvider1.Verify(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        mockProvider2.Verify(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider1.Verify(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider2.Verify(p => p.MessagesAddingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -58,9 +58,9 @@ public class AggregateAIContextProviderTests
         var mockProvider1 = new Mock<AIContextProvider>();
         var mockProvider2 = new Mock<AIContextProvider>();
 
-        mockProvider1.Setup(p => p.InvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), "thread-1234", It.IsAny<CancellationToken>()))
+        mockProvider1.Setup(p => p.InvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(context1);
-        mockProvider2.Setup(p => p.InvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), "thread-1234", It.IsAny<CancellationToken>()))
+        mockProvider2.Setup(p => p.InvokingAsync(It.Is<IEnumerable<ChatMessage>>(x => x.First().Text == "Hello"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(context2);
 
         var aggregate = new AggregateAIContextProvider();
@@ -68,7 +68,7 @@ public class AggregateAIContextProviderTests
         aggregate.Add(mockProvider2.Object);
 
         // Act
-        var result = await aggregate.InvokingAsync(new List<ChatMessage>() { new(ChatRole.User, "Hello") }, "thread-1234");
+        var result = await aggregate.InvokingAsync(new List<ChatMessage>() { new(ChatRole.User, "Hello") });
 
         // Assert
         Assert.Equal($"Instruction1{Environment.NewLine}Instruction2", result.Instructions);
@@ -87,7 +87,7 @@ public class AggregateAIContextProviderTests
         var aggregate = new AggregateAIContextProvider();
 
         // Act
-        var result = await aggregate.InvokingAsync(new List<ChatMessage>(), null);
+        var result = await aggregate.InvokingAsync(new List<ChatMessage>());
 
         // Assert
         Assert.Null(result.Instructions);

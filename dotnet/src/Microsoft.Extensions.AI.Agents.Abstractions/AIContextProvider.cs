@@ -24,10 +24,9 @@ public abstract class AIContextProvider
     /// Inheritors can use this method to update their context based on the new message.
     /// </remarks>
     /// <param name="newMessages">The new messages.</param>
-    /// <param name="agentThreadId">The ID of the <see cref="AgentThread"/>.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
-    public virtual ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default)
+    public virtual ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         return default;
     }
@@ -38,10 +37,9 @@ public abstract class AIContextProvider
     /// and they should return any context that should be passed to the Model/Agent/etc.
     /// </summary>
     /// <param name="newMessages">The most recent messages that the Model/Agent/etc. is being invoked with.</param>
-    /// <param name="agentThreadId">The ID of the <see cref="AgentThread"/>.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been rendered and returned.</returns>
-    public abstract ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, string? agentThreadId, CancellationToken cancellationToken = default);
+    public abstract ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
