@@ -14,7 +14,7 @@ beginDialog:
     - kind: SetVariable
       id: setvar_userinput
       variable: Topic.UserInput
-      value: =System.LastMessageText
+      value: =System.LastMessage.Text
 
     # Capture environment variable
     - kind: SetVariable

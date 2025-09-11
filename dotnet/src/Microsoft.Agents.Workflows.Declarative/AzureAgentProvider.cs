@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -9,7 +10,6 @@ using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Core.Pipeline;
 using Azure.Identity;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
@@ -25,6 +25,15 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
 public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential? projectCredentials = null, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
+    private static readonly Dictionary<string, MessageRole> s_roleMap =
+        new()
+        {
+            [ChatRole.User.Value.ToUpperInvariant()] = MessageRole.User,
+            [ChatRole.Assistant.Value.ToUpperInvariant()] = MessageRole.Agent,
+            [ChatRole.System.Value.ToUpperInvariant()] = new MessageRole(ChatRole.System.Value),
+            [ChatRole.Tool.Value.ToUpperInvariant()] = new MessageRole(ChatRole.Tool.Value),
+        };
+
     private PersistentAgentsClient? _agentsClient;
 
     /// <inheritdoc/>
@@ -37,8 +46,43 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential? 
     /// <inheritdoc/>
     public override async Task CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
-        //await this.GetAgentsClient().Messages.CreateMessageAsync(conversationId, conversationMessage, cancellationToken).ConfigureAwait(false); // %%% TODO
-        await Task.Delay(0, cancellationToken).ConfigureAwait(false);
+        await this.GetAgentsClient().Messages.CreateMessageAsync(
+            conversationId,
+            role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
+            contentBlocks: GetContent(),
+            attachments: null,
+            metadata: GetMetadata(),
+            cancellationToken).ConfigureAwait(false);
+
+        Dictionary<string, string>? GetMetadata()
+        {
+            if (conversationMessage.AdditionalProperties is null)
+            {
+                return null;
+            }
+
+            return conversationMessage.AdditionalProperties.ToDictionary(prop => prop.Key, prop => prop.Value?.ToString() ?? string.Empty);
+        }
+
+        IEnumerable<MessageInputContentBlock> GetContent()
+        {
+            foreach (AIContent content in conversationMessage.Contents)
+            {
+                MessageInputContentBlock? contentBlock =
+                    content switch
+                    {
+                        TextContent textContent => new MessageInputTextBlock(textContent.Text),
+                        HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
+                        UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
+                        _ => null // Unsupported content type
+                    };
+
+                if (contentBlock is not null)
+                {
+                    yield return contentBlock;
+                }
+            }
+        }
     }
 
     /// <inheritdoc/>
@@ -53,7 +97,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential? 
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
         PersistentThreadMessage message = await this.GetAgentsClient().Messages.GetMessageAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
-        return message.ToChatMessage();
+        return ToChatMessage(message);
     }
 
     /// <inheritdoc/>
@@ -68,7 +112,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential? 
         ListSortOrder order = newestFirst ? ListSortOrder.Ascending : ListSortOrder.Descending;
         await foreach (PersistentThreadMessage message in this.GetAgentsClient().Messages.GetMessagesAsync(conversationId, runId: null, limit, order, after, before, cancellationToken).ConfigureAwait(false))
         {
-            yield return message.ToChatMessage();
+            yield return ToChatMessage(message);
         }
     }
 
@@ -89,5 +133,43 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential? 
         }
 
         return this._agentsClient;
+    }
+
+    private static ChatMessage ToChatMessage(PersistentThreadMessage message)
+    {
+        return
+           new ChatMessage(new ChatRole(message.Role.ToString()), [.. GetContent()])
+           {
+               AdditionalProperties = GetMetadata()
+           };
+
+        IEnumerable<AIContent> GetContent()
+        {
+            foreach (MessageContent contentItem in message.ContentItems)
+            {
+                AIContent? content =
+                    contentItem switch
+                    {
+                        MessageTextContent textContent => new TextContent(textContent.Text),
+                        MessageImageFileContent imageContent => new HostedFileContent(imageContent.FileId),
+                        _ => null // Unsupported content type
+                    };
+
+                if (content is not null)
+                {
+                    yield return content;
+                }
+            }
+        }
+
+        AdditionalPropertiesDictionary? GetMetadata()
+        {
+            if (message.Metadata is null)
+            {
+                return null;
+            }
+
+            return new AdditionalPropertiesDictionary(message.Metadata.Select(m => new KeyValuePair<string, object?>(m.Key, m.Value)));
+        }
     }
 }

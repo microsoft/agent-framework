@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Azure.AI.Agents.Persistent;
 using Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -86,56 +85,6 @@ internal static class ChatMessageExtensions
 
     public static ChatMessage ToChatMessage(this StringDataValue message) => new(ChatRole.User, message.Value);
 
-    public static ChatMessage ToChatMessage(this PersistentThreadMessage message)
-    {
-        return
-           new ChatMessage(new ChatRole(message.Role.ToString()), [.. GetContent()])
-           {
-               AdditionalProperties = GetMetadata()
-           };
-
-        IEnumerable<AIContent> GetContent() // %%% TODO
-        {
-            //foreach (MessageContent itemContent in message.ContentItems)
-            //{
-            //    // Process text content
-            //    if (itemContent is MessageTextContent textContent)
-            //    {
-            //        content.Items.Add(new TextContent(textContent.Text));
-
-            //        foreach (MessageTextAnnotation annotation in textContent.Annotations)
-            //        {
-            //            AnnotationContent? annotationItem = GenerateAnnotationContent(annotation);
-            //            if (annotationItem != null)
-            //            {
-            //                content.Items.Add(annotationItem);
-            //            }
-            //            else
-            //            {
-            //                logger?.LogAzureAIAgentUnknownAnnotation(nameof(GenerateMessageContent), message.RunId, message.ThreadId, annotation.GetType());
-            //            }
-            //        }
-            //    }
-            //    // Process image content
-            //    else if (itemContent is MessageImageFileContent imageContent)
-            //    {
-            //        content.Items.Add(new FileReferenceContent(imageContent.FileId));
-            //    }
-            //}
-            yield break;
-        }
-
-        AdditionalPropertiesDictionary? GetMetadata()
-        {
-            if (message.Metadata is null)
-            {
-                return null;
-            }
-
-            return new AdditionalPropertiesDictionary(message.Metadata.Select(m => new KeyValuePair<string, object?>(m.Key, m.Value)));
-        }
-    }
-
     public static AdditionalPropertiesDictionary? ToMetadata(this RecordDataValue? metadata)
     {
         if (metadata is null)
@@ -181,7 +130,7 @@ internal static class ChatMessageExtensions
 
     private static ChatRole GetRole(this RecordDataValue message)
     {
-        StringDataValue? roleValue = message.GetProperty<StringDataValue>(UserMessage.Fields.Role);
+        StringDataValue? roleValue = message.GetProperty<StringDataValue>(TypeSchema.Message.Fields.Role);
         if (roleValue is null || string.IsNullOrWhiteSpace(roleValue.Value))
         {
             return ChatRole.User;
@@ -198,21 +147,21 @@ internal static class ChatMessageExtensions
 
     private static IEnumerable<AIContent> GetContent(this RecordDataValue message)
     {
-        TableDataValue? content = message.GetProperty<TableDataValue>(UserMessage.Fields.Content);
+        TableDataValue? content = message.GetProperty<TableDataValue>(TypeSchema.Message.Fields.Content);
         if (content is not null)
         {
             foreach (RecordDataValue contentItem in content.Values)
             {
-                StringDataValue? contentValue = contentItem?.GetProperty<StringDataValue>(UserMessage.Fields.ContentValue);
+                StringDataValue? contentValue = contentItem?.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentValue);
                 if (contentValue is null || string.IsNullOrWhiteSpace(contentValue.Value))
                 {
                     continue;
                 }
                 yield return
-                    contentItem?.GetProperty<StringDataValue>(UserMessage.Fields.ContentType)?.Value switch
+                    contentItem?.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentType)?.Value switch
                     {
-                        UserMessage.ContentTypes.ImageUrl => new UriContent(contentValue.Value, "image/*"),
-                        UserMessage.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
+                        TypeSchema.Message.ContentTypes.ImageUrl => new UriContent(contentValue.Value, "image/*"),
+                        TypeSchema.Message.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
                         _ => new TextContent(contentValue.Value)
                     };
             }
@@ -232,20 +181,12 @@ internal static class ChatMessageExtensions
 
     private static IEnumerable<NamedValue> GetMessageFields(this ChatMessage message)
     {
-        yield return new NamedValue(UserMessage.Fields.Id, message.MessageId.ToFormulaValue());
-        yield return new NamedValue(UserMessage.Fields.Role, message.Role.Value.ToFormulaValue());
-        yield return new NamedValue(UserMessage.Fields.Author, message.AuthorName.ToFormulaValue());
-
-        ChatResponse? rawMessage = message.RawRepresentation as ChatResponse; // %%% IS VALID ???
-        if (rawMessage is not null)
-        {
-            yield return new NamedValue(UserMessage.Fields.ConversationId, rawMessage.ConversationId.ToFormulaValue());
-            //yield return new NamedValue(UserMessage.Fields.AgentId, rawMessage.???.ToFormulaValue());
-            //yield return new NamedValue(UserMessage.Fields.RunId, rawMessage.???.ToFormulaValue());
-        }
-
-        yield return new NamedValue(UserMessage.Fields.Content, TableValue.NewTable(s_contentRecordType, message.GetContentRecords()));
-        yield return new NamedValue(UserMessage.Fields.Metadata, message.AdditionalProperties.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Content, TableValue.NewTable(s_contentRecordType, message.GetContentRecords()));
+        yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToFormulaValue());
     }
 
     private static IEnumerable<RecordValue> GetContentRecords(this ChatMessage message) =>
@@ -256,21 +197,21 @@ internal static class ChatMessageExtensions
         return
             content switch
             {
-                UriContent uriContent => CreateContentRecord(UserMessage.ContentTypes.ImageUrl, uriContent.Uri.ToString()),
-                HostedFileContent fileContent => CreateContentRecord(UserMessage.ContentTypes.ImageFile, fileContent.FileId),
-                TextContent textContent => CreateContentRecord(UserMessage.ContentTypes.Text, textContent.Text),
+                UriContent uriContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageUrl, uriContent.Uri.ToString()),
+                HostedFileContent fileContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageFile, fileContent.FileId),
+                TextContent textContent => CreateContentRecord(TypeSchema.Message.ContentTypes.Text, textContent.Text),
                 _ => []
             };
 
-        static IEnumerable<NamedValue> CreateContentRecord(string type, string value) // %%% ENUM ???
+        static IEnumerable<NamedValue> CreateContentRecord(string type, string value)
         {
-            yield return new NamedValue(UserMessage.Fields.ContentType, type.ToFormulaValue());
-            yield return new NamedValue(UserMessage.Fields.ContentValue, value.ToFormulaValue());
+            yield return new NamedValue(TypeSchema.Message.Fields.ContentType, type.ToFormulaValue());
+            yield return new NamedValue(TypeSchema.Message.Fields.ContentValue, value.ToFormulaValue());
         }
     }
 
     private static readonly RecordType s_contentRecordType =
         RecordType.Empty()
-            .Add(UserMessage.Fields.ContentType, FormulaType.String) // %%% ENUM ???
-            .Add(UserMessage.Fields.ContentValue, FormulaType.String);
+            .Add(TypeSchema.Message.Fields.ContentType, FormulaType.String)
+            .Add(TypeSchema.Message.Fields.ContentValue, FormulaType.String);
 }
