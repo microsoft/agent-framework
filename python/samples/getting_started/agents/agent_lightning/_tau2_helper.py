@@ -3,7 +3,9 @@
 import json
 from copy import deepcopy
 from typing import Any
+from collections.abc import Mapping
 
+import numpy as np
 from pydantic import BaseModel
 from tau2.environment.tool import Tool
 from tau2.data_model.message import (
@@ -112,3 +114,25 @@ def _dump_function_result(result: Any) -> Any:
         return None
     else:
         return result
+
+
+def _to_native(obj):
+    """Convert data retrieved from Panquet to data usable in AGL server."""
+    # 1) Arrays -> list (then recurse)
+    if isinstance(obj, np.ndarray):
+        return _to_native(obj.tolist())
+
+    # 2) NumPy scalar types -> Python scalars
+    if isinstance(obj, np.generic):
+        return _to_native(obj.item())
+
+    # 3) Dict-like -> dict
+    if isinstance(obj, Mapping):
+        return {_to_native(k): _to_native(v) for k, v in obj.items()}
+
+    # 4) Lists/Tuples/Sets -> list
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_native(x) for x in obj]
+
+    # 5) Anything else: leave as-is
+    return obj

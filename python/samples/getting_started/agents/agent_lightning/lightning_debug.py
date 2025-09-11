@@ -1,24 +1,32 @@
+# type: ignore
+
 import os
-from agentlightning import LitAgent, Trainer
+import pandas as pd
+from loguru import logger
+from agentlightning import LitAgent, DevTaskLoader, Trainer, LLM, configure_logger
 from agentlightning.types import NamedResources, TaskInput
-from complex import loop, AgentConfiguration
+from tau2.data_model.tasks import Task as Tau2Task
+from complex import criteria, loop, AgentConfiguration
+
+from _tau2_helper import _to_native
+
+proxy_base_url = os.getenv("PROXY_OPENAI_BASE_URL")
+proxy_api_key = os.getenv("PROXY_OPENAI_API_KEY")
 
 
 class Tau2Agent(LitAgent):
-    
+
     async def training_rollout_async(self, task: dict, rollout_id: str, resources: dict) -> float:
-        proxy_base_url = os.getenv("PROXY_OPENAI_BASE_URL")
-        proxy_api_key = os.getenv("PROXY_OPENAI_API_KEY")
         assert proxy_base_url is not None, "PROXY_OPENAI_BASE_URL must be set"
         assert proxy_api_key is not None, "PROXY_OPENAI_API_KEY must be set"
 
         main_llm = resources["main_llm"]
 
         assistant_config = AgentConfiguration(
-            model=main_llm.sampling_parameters["model"],
+            model=main_llm.model,
             temperature=main_llm.sampling_parameters["temperature"],
             base_url=main_llm.endpoint,
-            api_key="dummy",
+            api_key=proxy_api_key if main_llm.endpoint == proxy_base_url else "dummy",
             sliding_window=4000,
         )
         user_config = AgentConfiguration(
@@ -36,16 +44,35 @@ class Tau2Agent(LitAgent):
             sliding_window=0,  # Not used for judge
         )
 
-        task_obj = Task(**task)
+        task_obj = Tau2Task.model_validate(task)
+        _logger = logger.opt(colors=True)
+        _logger.info(f"<cyan>[TASK]\n{str(task_obj)}</cyan>")
         result = await loop(task_obj, assistant_config, user_config, judge_config, max_steps=100)
-        return result
+        _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
+        _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
+
+        reward = criteria(task_obj, result)
+        _logger.info(f"<cyan>Final reward:</cyan> {reward}")
+        return reward
 
     async def validation_rollout_async(self, task: dict, rollout_id: str, resources: dict) -> float:
         return await self.training_rollout_async(task, rollout_id, resources)
 
 
-if __name__ == "__main__":
-    trainer = Trainer(n_workers=1)
-    agent = Tau2Agent()
-    trainer.fit(agent)
+def dev_task_loader() -> DevTaskLoader:
+    dataset = pd.read_parquet("data/tasks_train.parquet")
+    tasks = [_to_native(row.to_dict()) for _, row in dataset.iterrows()]
 
+    return DevTaskLoader(
+        tasks=tasks,
+        resources={
+            "main_llm": LLM(endpoint=proxy_base_url, model="gpt-4.1-mini", sampling_parameters={"temperature": 0.0}),
+        },
+    )
+
+
+if __name__ == "__main__":
+    configure_logger()
+    trainer = Trainer(n_workers=1, dev=True, max_tasks=10)
+    agent = Tau2Agent(trained_agents="assistant_agent")
+    trainer.fit(agent, "http://localhost:9999/", dev_task_loader())
