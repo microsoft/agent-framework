@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import argparse
 from loguru import logger
 from tau2.domains.airline.environment import get_environment, get_tasks
 from tau2.data_model.tasks import Task
@@ -19,7 +20,7 @@ def to_dumpable(task: Task, result: dict) -> dict:
     }
 
 
-async def main(model: str = "gpt-4.1-mini"):
+async def main(model: str):
     result_fp = open(f"results/{model}.jsonl", "a")
 
     # Test the environment
@@ -78,4 +79,8 @@ async def main(model: str = "gpt-4.1-mini"):
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Run tau2-agent-framework model test")
+    parser.add_argument("--assistant", type=str, default="gpt-4.1-mini", help="Assistant model id, e.g., gpt-4.1-mini")
+    args = parser.parse_args()
+
+    asyncio.run(main(model=args.assistant))
