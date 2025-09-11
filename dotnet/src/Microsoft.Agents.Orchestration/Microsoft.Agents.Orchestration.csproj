@@ -5,6 +5,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.Orchestration</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>

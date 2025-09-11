@@ -67,7 +67,7 @@ public abstract class Executor : IIdentified
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
     public async ValueTask<object?> ExecuteAsync(object message, Type messageType, IWorkflowContext context)
     {
-        await context.AddEventAsync(new ExecutorInvokeEvent(this.Id, message)).ConfigureAwait(false);
+        await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message)).ConfigureAwait(false);
 
         CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
                                               .ConfigureAwait(false);
@@ -75,7 +75,7 @@ public abstract class Executor : IIdentified
         ExecutorEvent executionResult;
         if (result == null || result.IsSuccess)
         {
-            executionResult = new ExecutorCompleteEvent(this.Id, result?.Result);
+            executionResult = new ExecutorCompletedEvent(this.Id, result?.Result);
         }
         else
         {

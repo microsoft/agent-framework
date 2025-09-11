@@ -85,7 +85,7 @@ internal static class Step5EntryPoint
                         string workflowResult = workflowCompleteEvt.Data!.ToString()!;
                         writer.WriteLine($"Result: {workflowResult}");
                         return workflowResult;
-                    case ExecutorCompleteEvent executorCompleteEvt:
+                    case ExecutorCompletedEvent executorCompleteEvt:
                         writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
                         break;
                 }
