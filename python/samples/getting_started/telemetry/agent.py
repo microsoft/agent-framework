@@ -5,7 +5,7 @@ import logging
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace
@@ -163,7 +163,7 @@ async def main():
     with tracer.start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT) as current_span:
         print("Running scenario: Agent Chat")
         print("Welcome to the chat, type 'exit' to quit.")
-        agent = ChatClientAgent(
+        agent = ChatAgent(
             chat_client=OpenAIChatClient(),
             tools=get_weather,
             name="WeatherAgent",
@@ -174,7 +174,7 @@ async def main():
         try:
             while message.lower() != "exit":
                 print(f"{agent.display_name}: ", end="")
-                async for update in agent.run_streaming(
+                async for update in agent.run_stream(
                     message,
                     thread=thread,
                 ):

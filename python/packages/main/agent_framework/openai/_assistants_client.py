@@ -20,18 +20,18 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
-from .._clients import ChatClientBase, use_tool_calling
+from .._clients import BaseChatClient, use_tool_calling
 from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool
 from .._types import (
-    AIContents,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
     ChatToolMode,
+    Contents,
     FunctionCallContent,
     FunctionResultContent,
+    Role,
     TextContent,
     UriContent,
     UsageContent,
@@ -39,7 +39,7 @@ from .._types import (
 )
 from ..exceptions import ServiceInitializationError
 from ..telemetry import use_telemetry
-from ._shared import OpenAIConfigBase, OpenAISettings
+from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -52,7 +52,7 @@ __all__ = ["OpenAIAssistantsClient"]
 
 @use_telemetry
 @use_tool_calling
-class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
+class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     """OpenAI Assistants client."""
 
     assistant_id: str | None = Field(default=None)
@@ -274,13 +274,13 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role=ChatRole.ASSISTANT,
+                        role=Role.ASSISTANT,
                     )
                 elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
                     response_id = response.data.run_id
                 elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
                     delta = response.data.delta
-                    role = ChatRole.USER if delta.role == "user" else ChatRole.ASSISTANT
+                    role = Role.USER if delta.role == "user" else Role.ASSISTANT
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
@@ -296,7 +296,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                     contents = self._create_function_call_contents(response.data, response_id)
                     if contents:
                         yield ChatResponseUpdate(
-                            role=ChatRole.ASSISTANT,
+                            role=Role.ASSISTANT,
                             contents=contents,
                             conversation_id=thread_id,
                             message_id=response_id,
@@ -317,7 +317,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                         )
                     )
                     yield ChatResponseUpdate(
-                        role=ChatRole.ASSISTANT,
+                        role=Role.ASSISTANT,
                         contents=[usage_content],
                         conversation_id=thread_id,
                         message_id=response_id,
@@ -331,12 +331,12 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role=ChatRole.ASSISTANT,
+                        role=Role.ASSISTANT,
                     )
 
-    def _create_function_call_contents(self, event_data: Run, response_id: str | None) -> list[AIContents]:
+    def _create_function_call_contents(self, event_data: Run, response_id: str | None) -> list[Contents]:
         """Create function call contents from a tool action event."""
-        contents: list[AIContents] = []
+        contents: list[Contents] = []
 
         if event_data.required_action is not None:
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
@@ -437,7 +437,7 @@ class OpenAIAssistantsClient(OpenAIConfigBase, ChatClientBase):
                     additional_messages = []
                 additional_messages.append(
                     AdditionalMessage(
-                        role="assistant" if chat_message.role == ChatRole.ASSISTANT else "user",
+                        role="assistant" if chat_message.role == Role.ASSISTANT else "user",
                         content=message_contents,
                     )
                 )
