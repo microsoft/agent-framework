@@ -27,14 +27,46 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     }
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class, with an existing state from a serialized JSON element.
+    /// </summary>
+    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the store.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    public InMemoryChatMessageStore(JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+        : this(null, serializedStoreState, jsonSerializerOptions, ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+    {
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
     /// </summary>
     /// <param name="chatReducer">An optional <see cref="IChatReducer"/> instance used to process or reduce chat messages. If null, no reduction logic will be applied.</param>
     /// <param name="reducerTriggerEvent">The event that should trigger the reducer invocation.</param>
     public InMemoryChatMessageStore(IChatReducer chatReducer, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+        : this(chatReducer, default, null, reducerTriggerEvent)
     {
-        this._chatReducer = Throw.IfNull(chatReducer);
+        Throw.IfNull(chatReducer);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class, with an existing state from a serialized JSON element.
+    /// </summary>
+    /// <param name="chatReducer">An optional <see cref="IChatReducer"/> instance used to process or reduce chat messages. If null, no reduction logic will be applied.</param>
+    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the store.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    /// <param name="reducerTriggerEvent">The event that should trigger the reducer invocation.</param>
+    public InMemoryChatMessageStore(IChatReducer? chatReducer, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+    {
+        this._chatReducer = chatReducer;
         this._reducerTriggerEvent = reducerTriggerEvent;
+
+        var state = JsonSerializer.Deserialize(
+            serializedStoreState,
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+
+        if (state?.Messages is { Count: > 0 } messages)
+        {
+            this._messages.AddRange(messages);
+        }
     }
 
     /// <summary>
@@ -46,30 +78,6 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     /// Gets the event that triggers the reducer invocation in this store.
     /// </summary>
     public ChatReducerTriggerEvent ReducerTriggerEvent => this._reducerTriggerEvent;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
-    /// </summary>
-    public InMemoryChatMessageStore()
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class, with an existing state from a serialized JSON element.
-    /// </summary>
-    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the store.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    public InMemoryChatMessageStore(JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        var state = JsonSerializer.Deserialize(
-            serializedStoreState,
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
-
-        if (state?.Messages is { Count: > 0 } messages)
-        {
-            this._messages.AddRange(messages);
-        }
-    }
 
     /// <inheritdoc />
     public int Count => this._messages.Count;
