@@ -137,7 +137,91 @@ support for long-running executions without breaking existing functionality.
         }
     }
     ```
-Docs: [OpenAI background mode](https://platform.openai.com/docs/guides/background)
+
+  Docs: [OpenAI background mode](https://platform.openai.com/docs/guides/background)
+ 
+- Background Mode Disabled
+
+  - Non-streaming API - returns the final result
+     | Method Call                         | Status    | Result                          | Notes                               |
+     |-------------------------------------|-----------|---------------------------------|-------------------------------------|
+     | CreateResponseAsync(msgs, opts, ct) | Completed | The capital of France is Paris. |                                     |
+     | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is less than 5 minutes old |
+     | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is more than 5 minutes old |
+     | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is more than 12 hours old  |
+  
+     | Cancellation Method | Result                               |
+     |---------------------|--------------------------------------|
+     | CancelResponseAsync | Cannot cancel a synchronous response |
+
+  - Streaming API - returns streaming updates callers can iterate over to get the result
+     | Method Call                                  | Status     | Result                                                                           |
+     |----------------------------------------------|------------|----------------------------------------------------------------------------------|
+     | CreateResponseStreamingAsync(msgs, opts, ct) | -          | updates                                                                          |
+     | Iterating over updates                       | InProgress | -                                                                                |
+     | Iterating over updates                       | InProgress | -                                                                                |
+     | Iterating over updates                       | InProgress | The                                                                              |
+     | Iterating over updates                       | InProgress | capital                                                                          |
+     | Iterating over updates                       | InProgress | ...                                                                              |
+     | Iterating over updates                       | InProgress | Paris.                                                                           |
+     | Iterating over updates                       | Completed  | The capital of France is Paris.                                                  |
+     | GetStreamingResponseAsync(responseId, ct)    | -          | HTTP 400 - Response cannot be streamed, it was not created with background=true. |
+  
+     | Cancellation Method | Result                               |
+     |---------------------|--------------------------------------|
+     | CancelResponseAsync | Cannot cancel a synchronous response |
+   
+- Background Mode Enabled
+  
+  - Non-streaming API - returns queued response immediately and allow polling for the status and result
+     | Method Call                         | Status    | Result                          | Notes                                      |
+     |-------------------------------------|-----------|---------------------------------|--------------------------------------------|
+     | CreateResponseAsync(msgs, opts, ct) | Queued    | responseId                      |                                            |
+     | GetResponseAsync(responseId, ct)    | Queued    | -                               | if called before the response is completed |
+     | GetResponseAsync(responseId, ct)    | Queued    | -                               | if called before the response is completed |
+     | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is less than 5 minutes old        |
+     | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is more than 5 minutes old        |
+     | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is more than 12 hours old         |
+
+     The response started in a background mode runs server side until it completes, fails, and probably cancelled. The client can poll for
+     the status of the response using its id. If clients polls before the response is completed, it will get the latest status of the response.
+     If the client polls after the response is completed,  it will get the completed response with the result.
+  
+     | Cancellation Method | Result    | Notes                                  |
+     |---------------------|-----------|----------------------------------------|
+     | CancelResponseAsync | Cancelled | if cancelled before response completed |
+     | CancelResponseAsync | Completed | if cancelled after response completed  |
+     | CancellationToken   | No effect | it just cancels the client side call   |
+
+  - Streaming API - returns streaming updates callers can iterate over immediately or after a dropping the stream and picking it up later
+     | Method Call                                  | Status     | Result                                                                         | Notes                               |
+     |----------------------------------------------|------------|--------------------------------------------------------------------------------|-------------------------------------|
+     | CreateResponseStreamingAsync(msgs, opts, ct) | -          | updates                                                                        |                                     |
+     | Iterating over updates                       | Queued     | -                                                                              |                                     |
+     | Iterating over updates                       | Queued     | -                                                                              |                                     |
+     | Iterating over updates                       | InProgress | -                                                                              |                                     |
+     | Iterating over updates                       | InProgress | -                                                                              |                                     |
+     | Iterating over updates                       | InProgress | The                                                                            |                                     |
+     | Iterating over updates                       | InProgress | capital                                                                        |                                     |
+     | Iterating over updates                       | InProgress | ...                                                                            |                                     |
+     | Iterating over updates                       | InProgress | Paris.                                                                         |                                     |
+     | Iterating over updates                       | Completed  | The capital of France is Paris.                                                |                                     |
+     | GetStreamingResponseAsync(responseId, ct)    | -          | updates                                                                        | response is less than 5 minutes old |
+     | Iterating over updates                       | Queued     | -                                                                              |                                     |
+     | ... 									        | ...        | ...                                                                            |                                     |
+     | GetStreamingResponseAsync(responseId, ct)    | -          |  HTTP 400 - Response can no longer be streamed, it is more than 5 minutes old. | response is more than 5 minutes old |
+  
+     Setting the Store options to true in an attempt to overcome the 5-minute limit does not help.
+  
+     | Cancellation Method | Result                             | Notes                                  |
+     |---------------------|------------------------------------|----------------------------------------|
+     | CancelResponseAsync | Canceled<sup>1</sup>               | if cancelled before response completed |
+     | CancelResponseAsync | Cannot cancel a completed response | if cancelled after response completed  |
+     | CancellationToken   | No effect                          | it just cancels the client side call   |
+
+     <sup>1</sup> The CancelResponseAsync method return `Canceled` status, but subsequent call to GetResponseStreamingAsync returns 
+     a  enumerable that can be iterated over to get the rest of the response until it completes.
+
 </details>
 
 <details>
@@ -263,7 +347,7 @@ Docs: [OpenAI background mode](https://platform.openai.com/docs/guides/backgroun
 | Supported modes<sup>1</sup> | Sync, Async               | Async                               | Sync, Async          |
 | Getting status support      | ✅                        | ✅                                 | ✅                   |
 | Getting result support      | ✅                        | ✅                                 | ✅                   |
-| Update support              | ❌                        | ✅                                 | ✅                   |
+| Update support              | ❌                        | ✅                                 | ❌                   |
 | Cancellation support        | ✅                        | ✅                                 | ✅                   |
 | Delete support              | ✅                        | ❌                                 | ❌                   |
 | Non-streaming support       | ✅                        | ✅                                 | ✅                   |
@@ -976,6 +1060,58 @@ Chat clients will continue returning the sequence number of the last resumable u
 keep returning sequence number 2, corresponding to the last resumable update received before an update for the first function call. Once **all** function call updates 
 are received and processed, and the model returns a non-function call response, the chat client will then return a sequence number, say 10, which corresponds to the 
 first non-function call update. 
+
+#### Status of Steaming Updates
+
+Different APIs, provide different status for streamed function call updates
+
+Sequence of updates from OpenAI Responses API to answer the question "What time is it?" using a function call:
+| Id     | SN | Update.Kind              | Response.Status | ChatResponseUpdate.Status | Description                                       |
+|--------|----|--------------------------|-----------------|---------------------------|---------------------------------------------------|
+| resp_1 | 0  | resp.created             | Queued          | Queued                    |                                                   |
+| resp_1 | 1  | resp.queued              | Queued          | Queued                    |                                                   |
+| resp_1 | 2  | resp.in_progress         | InProgress      | InProgress                |                                                   |
+| resp_1 | 3  | resp.output_item.added   | -               | InProgress                |                                                   |
+| resp_1 | 4  | resp.func_call.args.delta| -               | InProgress                |                                                   |
+| resp_1 | 5  | resp.func_call.args.done | -               | InProgress                |                                                   |
+| resp_1 | 6  | resp.output_item.done    | -               | InProgress                |                                                   |
+| resp_1 | 7  | resp.completed           | Completed       | Complete                  |                                                   |
+| resp_1 | -  | -                        | -               | null                      | FunctionInvokingChatClient yield function result  |
+|        |    |                          | OpenAI Responses created a new response to handle function call result                          |
+| resp_2 | 0  | resp.created             | Queued          | Queued                    |                                                   |
+| resp_2 | 1  | resp.queued              | Queued          | Queued                    |                                                   |
+| resp_2 | 2  | resp.in_progress         | InProgress      | InProgress                |                                                   |
+| resp_2 | 3  | resp.output_item.added   | -               | InProgress                |                                                   |
+| resp_2 | 4  | resp.cnt_part.added      | -               | InProgress                |                                                   |
+| resp_2 | 5  | resp.output_text.delta   | -               | InProgress                |                                                   |
+| resp_2 | 6  | resp.output_text.delta   | -               | InProgress                |                                                   |
+| resp_2 | 7  | resp.output_text.delta   | -               | InProgress                |                                                   |
+| resp_2 | 8  | resp.output_text.done    | -               | InProgress                |                                                   |
+| resp_2 | 9  | resp.cnt_part.done       | -               | InProgress                |                                                   |
+| resp_2 | 10 | resp.output_item.done    | -               | InProgress                |                                                   |
+| resp_2 | 11 | resp.completed           | Completed       | Completed                 |                                                   |
+
+Sequence of updates from Azure AI Foundry Agents API to answer the question "What time is it?" using a function call:
+| Id     | SN      | UpdateKind        | Run.Status     | Step.Status | Message.Status  | ChatResponseUpdate.Status | Description                                       |
+|--------|---------|-------------------|----------------|-------------|-----------------|---------------------------|---------------------------------------------------|
+| run_1  | -       | RunCreated        | Queued         | -           | -               | Queued                    |                                                   |
+| run_1  | step_1  | -                 | RequiredAction | InProgress  | -               | RequiredAction            |                                                   |
+| TBD	 | -	   | -				   | -              | -           | -               | -                         | FunctionInvokingChatClient yield function result  |
+| run_1  | -       | RunStepCompleted  | Completed      | -           | -               | InProgress                |                                                   |
+| run_1  | -	   | RunQueued         | Queued		    | -           | -               | Queued                    |                                                   |
+| run_1  | -	   | RunInProgress     | InProgress	    | -           | -               | InProgress                |                                                   |
+| run_1  | step_2  | RunStepCreated    | -              | InProgress  | -               | InProgress                |                                                   |
+| run_1  | step_2  | RunStepInProgress | -              | InProgress  | -               | InProgress                |                                                   |
+| run_1  | -       | MessageCreated    | -              | -           | InProgress      | InProgress                |                                                   |
+| run_1  | -       | MessageInProgress | -              | -           | InProgress      | InProgress                |                                                   |
+| run_1  | -       | MessageUpdated    | -              | -           | -               | InProgress                |                                                   |
+| run_1  | -       | MessageUpdated    | -              | -           | -               | InProgress                |                                                   |
+| run_1  | -       | MessageUpdated    | -              | -           | -               | InProgress                |                                                   |
+| run_1  | -       | MessageCompleted  | -              | -           | Completed       | InProgress                |                                                   |
+| run_1  | step_2  | RunStepCompleted  | Completed      | -           | -               | InProgress                |                                                   |
+| run_1  | -       | RunCompleted      | Completed      | -           | -               | Completed                 |                                                   |
+
+To be continued...
 
 ### Decision Outcome
 TBD
