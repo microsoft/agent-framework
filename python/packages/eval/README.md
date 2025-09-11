@@ -27,7 +27,7 @@ export HF_TOKEN="hf\*..." # must have access to gaia-benchmark/GAIA
 Create a Python script (e.g., `run_gaia.py`) with the following content:
 
 ```python
-from agent_framework.eval import GAIA, Task, Prediction
+from agent_framework.eval.gaia import GAIA, Task, Prediction
 
 async def run_task(task: Task) -> Prediction:
     return Prediction(prediction="answer here", messages=[])

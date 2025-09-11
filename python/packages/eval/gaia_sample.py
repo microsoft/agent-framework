@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.eval import GAIA, Task, Prediction, Evaluation
+from agent_framework.eval.gaia import GAIA, Task, Prediction, Evaluation
 from azure.identity.aio import AzureCliCredential
 
 async def run_task(task: Task) -> Prediction:
@@ -27,7 +27,7 @@ async def run_task(task: Task) -> Prediction:
 async def evaluate_task(task: Task, prediction: Prediction) -> Evaluation:
     """Evaluate the prediction for a given task."""
     # Simple evaluation: check if the prediction contains the answer
-    is_correct = task.answer.lower() in prediction.prediction.lower()
+    is_correct = (task.answer or "").lower() in prediction.prediction.lower()
     return Evaluation(is_correct=is_correct, score=1 if is_correct else 0)
 
 
@@ -44,14 +44,19 @@ async def main() -> None:
         max_n=5, # Maximum number of tasks to run per level
         parallel=2, # Number of parallel tasks to run
         timeout=60, # Timeout per task in seconds
-        out="gaia_results_level1.jsonl" # Output file to save results (optional)
-        traces_out="gaia_results_level1_traces" # Directory to save detailed OTel traces by task ID (optional)
+        out="gaia_results_level1.jsonl", # Output file to save results (optional)
+        traces_out="gaia_results_level1_traces", # Directory to save detailed OTel traces by task ID (optional)
     )
 
     # Print the results.
     print("\n=== GAIA Benchmark Results ===")
     for result in results:
         print(f"\n--- Task ID: {result.task_id} ---")
-        print(f"Task: {result.task}")
-        print(f"Prediction: {result.prediction}")
-        print(f"Evaluation: {result.evaluation}")
+        print(f"Task: {result.task.question[:100]}...")
+        print(f"Prediction: {result.prediction.prediction}")
+        print(f"Evaluation: Correct={result.evaluation.is_correct}, Score={result.evaluation.score}")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

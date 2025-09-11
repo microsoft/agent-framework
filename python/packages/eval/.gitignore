@@ -1,3 +1,4 @@
 data_gaia_hub
 *.jsonl
+*.json
 *.html
