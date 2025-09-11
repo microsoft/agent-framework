@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
@@ -52,14 +53,29 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
+    public override AgentThread GetNewThread()
+        => new ClientProxyAgentThread();
+
+    /// <inheritdoc/>
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new ClientProxyAgentThread(serializedThread));
+
+    /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         ValidateInputMessages(messages);
 
         var a2aMessage = messages.ToA2AMessage();
 
+        if (thread is not ClientProxyAgentThread typedThread)
+        {
+            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+        }
+
+        typedThread ??= (ClientProxyAgentThread)this.GetNewThread();
+
         // Linking the message to the existing conversation, if any.
-        a2aMessage.ContextId = thread?.ConversationId;
+        a2aMessage.ContextId = typedThread?.ServiceThreadid;
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
@@ -69,7 +85,7 @@ internal sealed class A2AAgent : AIAgent
 
         if (a2aResponse is Message message)
         {
-            UpdateThreadConversationId(thread, message.ContextId);
+            UpdateThreadConversationId(typedThread, message.ContextId);
 
             return new AgentRunResponse
             {
@@ -82,7 +98,7 @@ internal sealed class A2AAgent : AIAgent
         }
         if (a2aResponse is AgentTask agentTask)
         {
-            UpdateThreadConversationId(thread, agentTask.ContextId);
+            UpdateThreadConversationId(typedThread, agentTask.ContextId);
 
             return new AgentRunResponse
             {
@@ -104,8 +120,15 @@ internal sealed class A2AAgent : AIAgent
 
         var a2aMessage = messages.ToA2AMessage();
 
+        if (thread is not ClientProxyAgentThread typedThread)
+        {
+            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+        }
+
+        typedThread ??= (ClientProxyAgentThread)this.GetNewThread();
+
         // Linking the message to the existing conversation, if any.
-        a2aMessage.ContextId = thread?.ConversationId;
+        a2aMessage.ContextId = typedThread?.ServiceThreadid;
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -120,7 +143,7 @@ internal sealed class A2AAgent : AIAgent
                 throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
             }
 
-            UpdateThreadConversationId(thread, message.ContextId);
+            UpdateThreadConversationId(typedThread, message.ContextId);
 
             yield return new AgentRunResponseUpdate
             {
@@ -160,7 +183,7 @@ internal sealed class A2AAgent : AIAgent
         }
     }
 
-    private static void UpdateThreadConversationId(AgentThread? thread, string? contextId)
+    private static void UpdateThreadConversationId(ClientProxyAgentThread? thread, string? contextId)
     {
         if (thread is null)
         {
@@ -169,13 +192,13 @@ internal sealed class A2AAgent : AIAgent
 
         // Surface cases where the A2A agent responds with a response that
         // has a different context Id than the thread's conversation Id.
-        if (thread.ConversationId is not null && contextId is not null && thread.ConversationId != contextId)
+        if (thread.ServiceThreadid is not null && contextId is not null && thread.ServiceThreadid != contextId)
         {
             throw new InvalidOperationException(
                 $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentThread)}.");
         }
 
         // Assign a server-generated context Id to the thread if it's not already set.
-        thread.ConversationId ??= contextId;
+        thread.ServiceThreadid ??= contextId;
     }
 }

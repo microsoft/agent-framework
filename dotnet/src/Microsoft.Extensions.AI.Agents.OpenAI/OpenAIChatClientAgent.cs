@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging;
@@ -59,6 +60,14 @@ public class OpenAIChatClientAgent : AIAgent
         this._chatClientAgent = new(chatClient, options, loggerFactory);
     }
 
+    /// <inheritdoc/>
+    public sealed override AgentThread GetNewThread()
+        => this._chatClientAgent.GetNewThread();
+
+    /// <inheritdoc/>
+    public sealed override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this._chatClientAgent.DeserializeThreadAsync(serializedThread, jsonSerializerOptions, cancellationToken);
+
     /// <summary>
     /// Run the agent with the provided message and arguments.
     /// </summary>
@@ -78,10 +87,6 @@ public class OpenAIChatClientAgent : AIAgent
         var chatCompletion = response.AsChatCompletion();
         return chatCompletion;
     }
-
-    /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => this._chatClientAgent.GetNewThread();
 
     /// <inheritdoc/>
     public sealed override Task<AgentRunResponse> RunAsync(

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -106,7 +107,7 @@ public sealed class ChatClientAgent : AIAgent
     {
         _ = Throw.IfNull(messages);
 
-        (AgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
 
         var agentName = this.GetLoggingAgentName();
@@ -147,7 +148,7 @@ public sealed class ChatClientAgent : AIAgent
     {
         var inputMessages = Throw.IfNull(messages);
 
-        (AgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
@@ -202,10 +203,11 @@ public sealed class ChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
-    {
-        var thread = new AgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() };
-        return thread;
-    }
+        => new ChatClientAgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null) };
+
+    /// <inheritdoc/>
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new ChatClientAgentThread(serializedThread, jsonSerializerOptions, this._agentOptions?.ChatMessageStoreFactory));
 
     #region Private
 
@@ -332,7 +334,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="runOptions">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
-    private async Task<(AgentThread AgentThread, ChatOptions? ChatOptions, List<ChatMessage> ThreadMessages)> PrepareThreadAndMessagesAsync(
+    private async Task<(ChatClientAgentThread AgentThread, ChatOptions? ChatOptions, List<ChatMessage> ThreadMessages)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
         IReadOnlyCollection<ChatMessage> inputMessages,
         AgentRunOptions? runOptions,
@@ -340,13 +342,18 @@ public sealed class ChatClientAgent : AIAgent
     {
         ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
 
-        thread ??= this.GetNewThread();
+        if (thread is not ChatClientAgentThread typedThread)
+        {
+            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+        }
+
+        typedThread ??= (ChatClientAgentThread)this.GetNewThread();
 
         // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];
-        if (thread.MessageStore is not null)
+        if (typedThread.MessageStore is not null)
         {
-            threadMessages.AddRange(await thread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
+            threadMessages.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
         }
 
         // Add the input messages to the end of thread messages.
@@ -354,7 +361,7 @@ public sealed class ChatClientAgent : AIAgent
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.
-        if (!string.IsNullOrWhiteSpace(thread.ConversationId) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && thread.ConversationId != chatOptions!.ConversationId)
+        if (!string.IsNullOrWhiteSpace(typedThread.ServiceThreadid) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && typedThread.ServiceThreadid != chatOptions!.ConversationId)
         {
             throw new InvalidOperationException(
                 $"""
@@ -370,18 +377,18 @@ public sealed class ChatClientAgent : AIAgent
         }
 
         // Only create or update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
-        if (!string.IsNullOrWhiteSpace(thread.ConversationId) && thread.ConversationId != chatOptions?.ConversationId)
+        if (!string.IsNullOrWhiteSpace(typedThread.ServiceThreadid) && typedThread.ServiceThreadid != chatOptions?.ConversationId)
         {
             chatOptions ??= new();
-            chatOptions.ConversationId = thread.ConversationId;
+            chatOptions.ConversationId = typedThread.ServiceThreadid;
         }
 
-        return (thread, chatOptions, threadMessages);
+        return (typedThread, chatOptions, threadMessages);
     }
 
-    private void UpdateThreadWithTypeAndConversationId(AgentThread thread, string? responseConversationId)
+    private void UpdateThreadWithTypeAndConversationId(ChatClientAgentThread thread, string? responseConversationId)
     {
-        if (string.IsNullOrWhiteSpace(responseConversationId) && !string.IsNullOrWhiteSpace(thread.ConversationId))
+        if (string.IsNullOrWhiteSpace(responseConversationId) && !string.IsNullOrWhiteSpace(thread.ServiceThreadid))
         {
             // We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             // meaning the service doesn't support service managed threads, so the thread cannot be used with this service.
@@ -394,14 +401,14 @@ public sealed class ChatClientAgent : AIAgent
         {
             // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
             // so we should update the thread with the new id.
-            thread.ConversationId = responseConversationId;
+            thread.ServiceThreadid = responseConversationId;
         }
         else if (thread.MessageStore is null)
         {
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
             // with the custom MessageStore so that it has somewhere to store the chat history.
-            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
+            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null);
         }
     }
 

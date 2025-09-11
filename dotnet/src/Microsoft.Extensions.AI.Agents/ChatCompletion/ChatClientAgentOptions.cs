@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace Microsoft.Extensions.AI.Agents;
 
@@ -78,7 +79,7 @@ public class ChatClientAgentOptions
     /// Gets or sets a factory function to create an instance of <see cref="IChatMessageStore"/>
     /// which will be used to store chat messages for this agent.
     /// </summary>
-    public Func<IChatMessageStore>? ChatMessageStoreFactory { get; set; }
+    public Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? ChatMessageStoreFactory { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,

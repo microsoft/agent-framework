@@ -122,6 +122,10 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <inheritdoc/>
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+         => this._innerAgent.DeserializeThreadAsync(serializedThread, jsonSerializerOptions, cancellationToken);
+
+    /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
@@ -246,9 +250,9 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 }
 
                 // Add conversation ID if thread is available (following gen_ai.conversation.id convention)
-                if (!string.IsNullOrWhiteSpace(thread?.ConversationId))
+                if ((thread as ClientProxyAgentThread)?.ServiceThreadid is string serviceThreadid && !string.IsNullOrWhiteSpace(serviceThreadid))
                 {
-                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Conversation.Id, thread.ConversationId);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Conversation.Id, serviceThreadid);
                 }
 
                 // Add instructions if available (for ChatClientAgent)

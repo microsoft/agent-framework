@@ -12,9 +12,33 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Represents an in-memory store for chat messages associated with a specific thread.
 /// </summary>
-internal sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
+public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
 {
     private readonly List<ChatMessage> _messages = new();
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
+    /// </summary>
+    public InMemoryChatMessageStore()
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class, with an existing state from a serialized JSON element.
+    /// </summary>
+    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the store.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    public InMemoryChatMessageStore(JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        var state = JsonSerializer.Deserialize(
+            serializedStoreState,
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+
+        if (state?.Messages is { Count: > 0 } messages)
+        {
+            this._messages.AddRange(messages);
+        }
+    }
 
     /// <inheritdoc />
     public int Count => this._messages.Count;
@@ -41,26 +65,6 @@ internal sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessag
     public Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult<IEnumerable<ChatMessage>>(this._messages);
-    }
-
-    /// <inheritdoc />
-    public ValueTask DeserializeStateAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        if (serializedStoreState is null)
-        {
-            return default;
-        }
-
-        var state = JsonSerializer.Deserialize(
-            serializedStoreState.Value,
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
-
-        if (state?.Messages is { Count: > 0 } messages)
-        {
-            this._messages.AddRange(messages);
-        }
-
-        return default;
     }
 
     /// <inheritdoc />
