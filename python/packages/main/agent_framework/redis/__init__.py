@@ -5,7 +5,7 @@ from typing import Any
 
 PACKAGE_NAME = "agent_framework_redis"
 PACKAGE_EXTRA = "redis"
-_IMPORTS = ["__version__", "RedisMemory", "RedisMemoryConfig"]
+_IMPORTS = ["__version__", "RedisProvider"]
 
 
 def __getattr__(name: str) -> Any:
