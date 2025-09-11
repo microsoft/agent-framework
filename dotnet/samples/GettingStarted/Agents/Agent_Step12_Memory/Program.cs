@@ -48,7 +48,7 @@ Console.WriteLine(">> Thread with blank memory\n");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", thread));
-Console.WriteLine(await agent.RunAsync("My name is Ruaidhri", thread));
+Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", thread));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", thread));
 
 // We can serialize the thread. The serialized state will include the state of the memory component.
@@ -58,7 +58,7 @@ Console.WriteLine("\n>> Deserialized Thread with previously created memories\n")
 
 // Later we can deserialize the thread and continue the conversation with the previous memory component state.
 var deserializedThread = await agent.DeserializeThreadAsync(threadElement);
-Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", deserializedThread));
+Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedThread));
 
 Console.WriteLine("\n>> Memories from memory component\n");
 
@@ -79,7 +79,7 @@ thread = agent.GetNewThread();
 
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.
-Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", thread));
+Console.WriteLine(await agent.RunAsync("What is my name and age?", thread));
 
 namespace SampleApp
 {
