@@ -61,7 +61,7 @@ async def main(model: str):
     )
 
     # Iterate over the tasks
-    for task in tasks[:1]:  # Test with first tasks
+    for task in tasks:
         _logger.info(f"<red>Testing task #{task.id}</red>")
         _logger.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")
 
