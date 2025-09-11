@@ -125,10 +125,15 @@ public class AgentThread
             null :
             await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
 
+        var aiContextProviderState = this.AIContextProvider is null ?
+            null :
+            await this.AIContextProvider.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+
         var state = new ThreadState
         {
             ConversationId = this.ConversationId,
-            StoreState = storeState
+            StoreState = storeState,
+            AIContextProviderState = aiContextProviderState
         };
 
         return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
@@ -196,6 +201,11 @@ public class AgentThread
             return;
         }
 
+        if (state?.AIContextProviderState.HasValue is true && this.AIContextProvider is not null)
+        {
+            await this.AIContextProvider.DeserializeAsync(state.AIContextProviderState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        }
+
         // If we don't have any IChatMessageStore state return here.
         if (state?.StoreState is null || state?.StoreState.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
         {
@@ -216,5 +226,7 @@ public class AgentThread
         public string? ConversationId { get; set; }
 
         public JsonElement? StoreState { get; set; }
+
+        public JsonElement? AIContextProviderState { get; set; }
     }
 }

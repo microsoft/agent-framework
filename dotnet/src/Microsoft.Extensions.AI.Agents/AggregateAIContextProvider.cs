@@ -3,6 +3,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -85,6 +86,66 @@ public sealed class AggregateAIContextProvider : AIContextProvider, IList<AICont
         };
 
         return combinedContext;
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        if (this._providers.Count == 0)
+        {
+            return default;
+        }
+
+        List<JsonElement?> subElements = new();
+        foreach (var provider in this._providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            subElements.Add(await provider.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false));
+        }
+
+        return JsonSerializer.SerializeToElement(subElements, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(List<JsonElement?>)));
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        if (serializedState.ValueKind == JsonValueKind.Undefined || serializedState.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        var state = JsonSerializer.Deserialize(
+            serializedState,
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(List<JsonElement?>))) as List<JsonElement?>;
+
+        if (state == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < this._providers.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var provider = this._providers[i];
+
+            // We have more providers than we have state entries, so assume
+            // that a new provider has been added and there is no state for it.
+            if (i >= state.Count)
+            {
+                break;
+            }
+
+            var subState = state[i];
+            if (subState == null)
+            {
+                continue;
+            }
+
+            await provider.DeserializeAsync(subState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        }
+
+        return;
     }
 
     /// <inheritdoc />

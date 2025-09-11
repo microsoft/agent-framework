@@ -48,12 +48,12 @@ public class AIContextProviderTests
             await base.MessagesAddingAsync(newMessages, cancellationToken);
         }
 
-        protected internal override async ValueTask<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override async ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             return await base.SerializeAsync(jsonSerializerOptions, cancellationToken);
         }
 
-        protected internal override async ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override async ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             await base.DeserializeAsync(serializedState, jsonSerializerOptions, cancellationToken);
         }

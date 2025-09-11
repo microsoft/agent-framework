@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.OpenAI;
@@ -27,16 +28,13 @@ OpenAI.Chat.ChatClient chatClient = new AzureOpenAIClient(
     new AzureCliCredential())
     .GetChatClient(deploymentName);
 
-// Create a user info object that will simulate a long term memory store and contain the user's name and age.
-UserInfo userInfo = new();
-
 // Create the agent and provide a factory to add our custom memory component to
 // all threads created by the agent. Here we are using the same user info object for all threads, which
 // means this agent instance shouldn't be used with multiple users or it will leak user info between them.
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     Instructions = "You are a friendly assistant. Always address the user by their name.",
-    AIContextProviderFactory = () => new SampleApp.UserInfoMemory(chatClient.AsIChatClient(), userInfo)
+    AIContextProviderFactory = () => new SampleApp.UserInfoMemory(chatClient.AsIChatClient())
 });
 
 // Create a new thread for the conversation.
@@ -46,21 +44,38 @@ AgentThread thread = agent.GetNewThread();
 // via the factory above. This allows you to have different user info objects for different threads.
 // thread.AIContextProvider = new SampleApp.UserInfoMemory(chatClient.AsIChatClient(), userInfo);
 
+Console.WriteLine(">> Thread with blank memory\n");
+
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", thread));
 Console.WriteLine(await agent.RunAsync("My name is Ruaidhri", thread));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", thread));
 
+// We can serialize the thread. The serialized state will include the state of the memory component.
+var threadElement = await thread.SerializeAsync();
+
+Console.WriteLine("\n>> Deserialized Thread with previously created memories\n");
+
+// Later we can deserialize the thread and continue the conversation with the previous memory component state.
+var deserializedThread = await agent.DeserializeThreadAsync(threadElement);
+Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", deserializedThread));
+
+Console.WriteLine("\n>> Memories from memory component\n");
+
+// It's possible to access the memory component via the thread's AIContextProvider property.
+var userInfo = ((UserInfoMemory)deserializedThread.AIContextProvider!).UserInfo;
+
 // Output the user info that was captured by the memory component.
-Console.WriteLine("--------------------------------");
 Console.WriteLine($"MEMORY - User Name: {userInfo.UserName}");
 Console.WriteLine($"MEMORY - User Age: {userInfo.UserAge}");
-Console.WriteLine("--------------------------------");
+
+Console.WriteLine("\n>> New Thread with previously created memories\n");
 
 // Create a new thread.
-// The new thread will reuse the same user info from the previous conversation,
-// since we are using the same user info object for all threads.
 thread = agent.GetNewThread();
+
+// We can attach the same user info object to this thread, meaning that this thread shares the same memories as the previous thread.
+((UserInfoMemory)thread.AIContextProvider!).UserInfo = userInfo;
 
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.
@@ -71,12 +86,14 @@ namespace SampleApp
     /// <summary>
     /// Sample memory component that can remember a user's name and age.
     /// </summary>
-    internal sealed class UserInfoMemory(IChatClient chatClient, UserInfo userInfo) : AIContextProvider
+    internal sealed class UserInfoMemory(IChatClient chatClient, UserInfo? userInfo = null) : AIContextProvider
     {
+        public UserInfo UserInfo { get; set; } = userInfo ?? new();
+
         public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
-            if ((userInfo.UserName == null || userInfo.UserAge == null) && newMessages.Any(x => x.Role == ChatRole.User))
+            if ((this.UserInfo.UserName == null || this.UserInfo.UserAge == null) && newMessages.Any(x => x.Role == ChatRole.User))
             {
                 var result = await chatClient.GetResponseAsync<UserInfo>(
                     newMessages,
@@ -86,8 +103,8 @@ namespace SampleApp
                     },
                     cancellationToken: cancellationToken);
 
-                userInfo.UserName ??= result.Result.UserName;
-                userInfo.UserAge ??= result.Result.UserAge;
+                this.UserInfo.UserName ??= result.Result.UserName;
+                this.UserInfo.UserAge ??= result.Result.UserAge;
             }
         }
 
@@ -97,19 +114,30 @@ namespace SampleApp
 
             // Add the user name and age to the instructions if we have them, otherwise ask for them.
             instructions.AppendLine(
-                userInfo.UserName == null ?
+                this.UserInfo.UserName == null ?
                 "Ask the user for their name and politely decline to answer any questions until they provide it." :
-                $"The user's name is {userInfo.UserName}.");
+                $"The user's name is {this.UserInfo.UserName}.");
 
             instructions.AppendLine(
-                userInfo.UserAge == null ?
+                this.UserInfo.UserAge == null ?
                 "Ask the user for their age and politely decline to answer any questions until they provide it." :
-                $"The user's age is {userInfo.UserAge}.");
+                $"The user's age is {this.UserInfo.UserAge}.");
 
             return new ValueTask<AIContext>(new AIContext
             {
                 Instructions = instructions.ToString()
             });
+        }
+
+        public override ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions));
+        }
+
+        public override ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            this.UserInfo = JsonSerializer.Deserialize<UserInfo>(serializedState, jsonSerializerOptions) ?? new UserInfo();
+            return default;
         }
     }
 
