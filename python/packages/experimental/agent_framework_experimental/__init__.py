@@ -7,6 +7,8 @@ Agent Framework Experimental package.
 import importlib
 import importlib.metadata
 
+from . import gaia
+
 try:
     __version__ = importlib.metadata.version(__name__)
 except importlib.metadata.PackageNotFoundError:
@@ -14,4 +16,5 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "__version__",
+    "gaia",
 ]

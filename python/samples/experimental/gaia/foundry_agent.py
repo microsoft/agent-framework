@@ -4,6 +4,9 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework.experimental.gaia import GAIA, Task, Prediction, Evaluation, GAIATelemetryConfig
 from azure.identity.aio import AzureCliCredential
 
+"""
+"""
+
 async def run_task(task: Task) -> Prediction:
     """Run a single GAIA task and return the prediction."""
     # Since no Agent ID is provided, the agent will be automatically created

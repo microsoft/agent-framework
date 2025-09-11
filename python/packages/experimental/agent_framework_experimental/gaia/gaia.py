@@ -6,6 +6,7 @@ GAIA benchmark implementation for Agent Framework.
 
 import asyncio
 import json
+import os
 import random
 import re
 import string
@@ -15,14 +16,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import orjson
-from huggingface_hub import snapshot_download
 from opentelemetry.trace import NoOpTracer, SpanKind, get_tracer
 from tqdm import tqdm
 
 from ._types import Evaluation, Evaluator, Prediction, Task, TaskResult, TaskRunner
 
-__all__ = ["GAIA", "gaia_scorer", "Task", "Prediction", "Evaluation", "TaskResult", "GAIATelemetryConfig"]
+__all__ = ["GAIA", "gaia_scorer", "GAIATelemetryConfig"]
 
 
 class GAIATelemetryConfig:
@@ -196,6 +195,7 @@ def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
             if not line.strip():
                 continue
             try:
+                import orjson
                 yield orjson.loads(line)
             except Exception:
                 yield json.loads(line)
@@ -304,6 +304,7 @@ class GAIA:
             )
             
         print(f"Downloading GAIA dataset to {self.data_dir}...")
+        from huggingface_hub import snapshot_download
         local_dir = snapshot_download(
             repo_id="gaia-benchmark/GAIA",
             repo_type="dataset",
@@ -550,7 +551,11 @@ class GAIA:
                     "error": result.error,
                     "timestamp": datetime.now().isoformat()
                 }
-                f.write(orjson.dumps(record).decode("utf-8") + "\n")
+                try:
+                    import orjson
+                    f.write(orjson.dumps(record).decode("utf-8") + "\n")
+                except ImportError:
+                    f.write(json.dumps(record) + "\n")
     
     def _save_traces(self, results: list[TaskResult], traces_dir: str) -> None:
         """Save detailed traces for each task."""
@@ -620,7 +625,11 @@ def viewer_main() -> None:
     with open(args.results_file, encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                results.append(orjson.loads(line))
+                try:
+                    import orjson
+                    results.append(orjson.loads(line))
+                except ImportError:
+                    results.append(json.loads(line))
     
     # Apply filters
     if args.level is not None:

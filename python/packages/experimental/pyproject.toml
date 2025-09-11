@@ -24,14 +24,12 @@ dependencies = [
   "agent-framework",
   "pydantic>=2.0.0",
   "opentelemetry-api>=1.24.0",
+  "tqdm>=4.60.0",
 ]
 
 [project.optional-dependencies]
 gaia = [
-  "datasets>=2.0.0",
   "huggingface-hub>=0.20.0",
-  "tqdm>=4.60.0",
-  "tenacity>=8.0.0",
   "orjson>=3.8.0",
 ]
 
