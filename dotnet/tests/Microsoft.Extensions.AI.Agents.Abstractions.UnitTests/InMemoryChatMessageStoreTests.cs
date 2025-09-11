@@ -93,7 +93,7 @@ public class InMemoryChatMessageStoreTests
     {
         var newStore = new InMemoryChatMessageStore();
 
-        var emptyObject = JsonSerializer.Deserialize<JsonElement>("{}");
+        var emptyObject = JsonSerializer.Deserialize<JsonElement>("{}", TestJsonSerializerContext.Default.JsonElement);
 
         await newStore.DeserializeStateAsync(emptyObject);
 
@@ -160,7 +160,9 @@ public class InMemoryChatMessageStoreTests
     {
         // Arrange
         var store = new InMemoryChatMessageStore();
-        var stateWithEmptyMessages = JsonSerializer.SerializeToElement(new { Messages = new List<ChatMessage>() });
+        var stateWithEmptyMessages = JsonSerializer.SerializeToElement(
+            new Dictionary<string, object> { ["Messages"] = new List<ChatMessage>() },
+            TestJsonSerializerContext.Default.IDictionaryStringObject);
 
         // Act
         await store.DeserializeStateAsync(stateWithEmptyMessages);
@@ -174,7 +176,9 @@ public class InMemoryChatMessageStoreTests
     {
         // Arrange
         var store = new InMemoryChatMessageStore();
-        var stateWithNullMessages = JsonSerializer.SerializeToElement(new { Messages = (List<ChatMessage>?)null });
+        var stateWithNullMessages = JsonSerializer.SerializeToElement(
+            new Dictionary<string, object> { ["Messages"] = null! },
+            TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
         await store.DeserializeStateAsync(stateWithNullMessages);
@@ -193,8 +197,10 @@ public class InMemoryChatMessageStoreTests
             new(ChatRole.User, "User message"),
             new(ChatRole.Assistant, "Assistant message")
         };
-        var state = new { Messages = messages };
-        var serializedState = JsonSerializer.SerializeToElement(state);
+        var state = new Dictionary<string, object> { ["Messages"] = messages };
+        var serializedState = JsonSerializer.SerializeToElement(
+            state,
+            TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
         await store.DeserializeStateAsync(serializedState);

@@ -4,8 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Reflection;
 
 namespace Microsoft.Agents.Workflows;
 
@@ -20,14 +22,17 @@ public abstract class Executor : IIdentified
     /// </summary>
     public string Id { get; }
 
+    private readonly ExecutorOptions _options;
+
     /// <summary>
     /// Initialize the executor with a unique identifier
     /// </summary>
-    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged
-    /// UUID will be generated.</param>
-    protected Executor(string? id = null)
+    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    protected Executor(string? id = null, ExecutorOptions? options = null)
     {
         this.Id = id ?? $"{this.GetType().Name}/{Guid.NewGuid():N}";
+        this._options = options ?? ExecutorOptions.Default;
     }
 
     /// <summary>
@@ -62,7 +67,7 @@ public abstract class Executor : IIdentified
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
     public async ValueTask<object?> ExecuteAsync(object message, Type messageType, IWorkflowContext context)
     {
-        await context.AddEventAsync(new ExecutorInvokeEvent(this.Id, message)).ConfigureAwait(false);
+        await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message)).ConfigureAwait(false);
 
         CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
                                               .ConfigureAwait(false);
@@ -70,7 +75,7 @@ public abstract class Executor : IIdentified
         ExecutorEvent executionResult;
         if (result == null || result.IsSuccess)
         {
-            executionResult = new ExecutorCompleteEvent(this.Id, result?.Result);
+            executionResult = new ExecutorCompletedEvent(this.Id, result?.Result);
         }
         else
         {
@@ -87,7 +92,7 @@ public abstract class Executor : IIdentified
 
         if (!result.IsSuccess)
         {
-            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}", result.Exception!);
+            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}", result.Exception);
         }
 
         if (result.IsVoid)
@@ -96,13 +101,29 @@ public abstract class Executor : IIdentified
         }
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
-        if (result.Result != null && ExecutorOptions.Default.AutoSendMessageHandlerResultObject)
+        if (result.Result != null && this._options.AutoSendMessageHandlerResultObject)
         {
             await context.SendMessageAsync(result.Result).ConfigureAwait(false);
         }
 
         return result.Result;
     }
+
+    /// <summary>
+    /// Invoked before a checkpoint is saved, allowing custom pre-save logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
+
+    /// <summary>
+    /// Invoked after a checkpoint is loaded, allowing custom post-load logic in derived classes.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    /// <param name="cancellation"></param>
+    protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.
@@ -120,4 +141,44 @@ public abstract class Executor : IIdentified
     /// <param name="messageType"></param>
     /// <returns></returns>
     public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
+}
+
+/// <summary>
+/// Provides a simple executor implementation that uses a single message handler function to process incoming messages.
+/// </summary>
+/// <typeparam name="TInput">The type of input message.</typeparam>
+/// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+/// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+public abstract class Executor<TInput>(string? id = null, ExecutorOptions? options = null)
+    : Executor(id, options), IMessageHandler<TInput>
+{
+    /// <inheritdoc/>
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        return routeBuilder.AddHandler<TInput>(this.HandleAsync);
+    }
+
+    /// <inheritdoc/>
+    public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context);
+}
+
+/// <summary>
+/// Provides a simple executor implementation that uses a single message handler function to process incoming messages.
+/// </summary>
+/// <typeparam name="TInput">The type of input message.</typeparam>
+/// <typeparam name="TOutput">The type of output message.</typeparam>
+/// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+/// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+public abstract class Executor<TInput, TOutput>(string? id = null, ExecutorOptions? options = null)
+    : Executor(id, options ?? ExecutorOptions.Default),
+      IMessageHandler<TInput, TOutput>
+{
+    /// <inheritdoc/>
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        return routeBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
+    }
+
+    /// <inheritdoc/>
+    public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context);
 }

@@ -59,8 +59,10 @@ public class AgentThreadTests
     public void SetConversationIdThrowsWhenMessageStoreIsSet()
     {
         // Arrange
-        var thread = new AgentThread();
-        thread.MessageStore = new InMemoryChatMessageStore();
+        var thread = new AgentThread
+        {
+            MessageStore = new InMemoryChatMessageStore()
+        };
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => thread.ConversationId = "new-thread-id");
@@ -72,8 +74,10 @@ public class AgentThreadTests
     public void SetChatMessageStoreThrowsWhenConversationIdIsSet()
     {
         // Arrange
-        var thread = new AgentThread();
-        thread.ConversationId = "existing-thread-id";
+        var thread = new AgentThread
+        {
+            ConversationId = "existing-thread-id"
+        };
         var store = new InMemoryChatMessageStore();
 
         // Act & Assert
@@ -84,63 +88,13 @@ public class AgentThreadTests
 
     #endregion Constructor and Property Tests
 
-    #region GetMessagesAsync Tests
-
-    [Fact]
-    public async Task GetMessagesAsyncReturnsEmptyListWhenNoStoreAsync()
-    {
-        // Arrange
-        var thread = new AgentThread();
-
-        // Act
-        var messages = await thread.GetMessagesAsync(CancellationToken.None).ToListAsync();
-
-        // Assert
-        Assert.Empty(messages);
-    }
-
-    [Fact]
-    public async Task GetMessagesAsyncReturnsEmptyListWhenAgentServiceIdAsync()
-    {
-        // Arrange
-        var thread = new AgentThread() { ConversationId = "thread-123" };
-
-        // Act
-        var messages = await thread.GetMessagesAsync(CancellationToken.None).ToListAsync();
-
-        // Assert
-        Assert.Empty(messages);
-    }
-
-    [Fact]
-    public async Task GetMessagesAsyncReturnsMessagesFromStoreAsync()
-    {
-        // Arrange
-        var store = new InMemoryChatMessageStore
-        {
-            new ChatMessage(ChatRole.User, "Hello"),
-            new ChatMessage(ChatRole.Assistant, "Hi there!")
-        };
-        var thread = new AgentThread() { MessageStore = store };
-
-        // Act
-        var messages = await thread.GetMessagesAsync(CancellationToken.None).ToListAsync();
-
-        // Assert
-        Assert.Equal(2, messages.Count);
-        Assert.Equal("Hello", messages[0].Text);
-        Assert.Equal("Hi there!", messages[1].Text);
-    }
-
-    #endregion GetMessagesAsync Tests
-
     #region OnNewMessagesAsync Tests
 
     [Fact]
     public async Task OnNewMessagesAsyncDoesNothingWhenAgentServiceIdAsync()
     {
         // Arrange
-        var thread = new AgentThread() { ConversationId = "thread-123" };
+        var thread = new AgentThread { ConversationId = "thread-123" };
         var messages = new List<ChatMessage>
         {
             new(ChatRole.User, "Hello"),
@@ -149,6 +103,8 @@ public class AgentThreadTests
 
         // Act
         await thread.OnNewMessagesAsync(messages, CancellationToken.None);
+        Assert.Equal("thread-123", thread.ConversationId);
+        Assert.Null(thread.MessageStore);
     }
 
     [Fact]
@@ -156,7 +112,7 @@ public class AgentThreadTests
     {
         // Arrange
         var store = new InMemoryChatMessageStore();
-        var thread = new AgentThread() { MessageStore = store };
+        var thread = new AgentThread { MessageStore = store };
         var messages = new List<ChatMessage>
         {
             new(ChatRole.User, "Hello"),
@@ -181,12 +137,12 @@ public class AgentThreadTests
     {
         // Arrange
         var chatMessageStore = new InMemoryChatMessageStore();
-        var json = JsonSerializer.Deserialize<JsonElement>("""
+        var json = JsonSerializer.Deserialize("""
             {
                 "storeState": { "messages": [{"authorName": "testAuthor"}] }
             }
-            """);
-        var thread = new AgentThread() { MessageStore = chatMessageStore };
+            """, TestJsonSerializerContext.Default.JsonElement);
+        var thread = new AgentThread { MessageStore = chatMessageStore };
 
         // Act.
         await thread.DeserializeAsync(json);
@@ -202,11 +158,11 @@ public class AgentThreadTests
     public async Task VerifyDeserializeWithIdAsync()
     {
         // Arrange
-        var json = JsonSerializer.Deserialize<JsonElement>("""
+        var json = JsonSerializer.Deserialize("""
             {
                 "conversationId": "TestConvId"
             }
-            """);
+            """, TestJsonSerializerContext.Default.JsonElement);
         var thread = new AgentThread();
 
         // Act
@@ -221,7 +177,7 @@ public class AgentThreadTests
     public async Task DeserializeWithInvalidJsonThrowsAsync()
     {
         // Arrange
-        var invalidJson = JsonSerializer.Deserialize<JsonElement>("[42]");
+        var invalidJson = JsonSerializer.Deserialize("[42]", TestJsonSerializerContext.Default.JsonElement);
         var thread = new AgentThread();
 
         // Act & Assert
@@ -239,7 +195,7 @@ public class AgentThreadTests
     public async Task VerifyThreadSerializationWithIdAsync()
     {
         // Arrange
-        var thread = new AgentThread() { ConversationId = "TestConvId" };
+        var thread = new AgentThread { ConversationId = "TestConvId" };
 
         // Act
         var json = await thread.SerializeAsync();
@@ -262,7 +218,7 @@ public class AgentThreadTests
         // Arrange
         var store = new InMemoryChatMessageStore();
         store.Add(new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" });
-        var thread = new AgentThread() { MessageStore = store };
+        var thread = new AgentThread { MessageStore = store };
 
         // Act
         var json = await thread.SerializeAsync();
@@ -300,7 +256,9 @@ public class AgentThreadTests
         JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
-        var storeStateElement = JsonSerializer.SerializeToElement(new { Key = "TestValue" });
+        var storeStateElement = JsonSerializer.SerializeToElement(
+            new Dictionary<string, object> { ["Key"] = "TestValue" },
+            TestJsonSerializerContext.Default.DictionaryStringObject);
 
         var messageStoreMock = new Mock<IChatMessageStore>();
         messageStoreMock
@@ -326,4 +284,15 @@ public class AgentThreadTests
     }
 
     #endregion Serialize Tests
+
+    private static async Task<List<T>> ToListAsync<T>(IAsyncEnumerable<T> values)
+    {
+        var result = new List<T>();
+        await foreach (var v in values)
+        {
+            result.Add(v);
+        }
+
+        return result;
+    }
 }

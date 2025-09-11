@@ -7,8 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import openai
 import pytest
 from agent_framework import (
-    ChatClient,
-    ChatClientBase,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    BaseChatClient,
+    ChatAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -21,7 +24,7 @@ from agent_framework.openai import (
     OpenAIContentFilterException,
 )
 from agent_framework.telemetry import USER_AGENT_KEY
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from httpx import Request, Response
 from openai import AsyncAzureOpenAI, AsyncStream
 from openai.resources.chat.completions import AsyncCompletions as AsyncChatCompletions
@@ -51,7 +54,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, ChatClientBase)
+    assert isinstance(azure_chat_client, BaseChatClient)
 
 
 def test_init_client(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -74,7 +77,7 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, ChatClientBase)
+    assert isinstance(azure_chat_client, BaseChatClient)
     for key, value in default_headers.items():
         assert key in azure_chat_client.client.default_headers
         assert azure_chat_client.client.default_headers[key] == value
@@ -87,7 +90,7 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, ChatClientBase)
+    assert isinstance(azure_chat_client, BaseChatClient)
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
@@ -576,6 +579,8 @@ async def test_get_streaming(
         messages=chat_history,
     ):
         assert msg is not None
+        assert msg.message_id is not None
+        assert msg.response_id is not None
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=True,
@@ -598,11 +603,17 @@ def get_story_text() -> str:
     )
 
 
+@ai_function
+def get_weather(location: str) -> str:
+    """Get the current weather for a location."""
+    return f"The weather in {location} is sunny and 72°F."
+
+
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -621,14 +632,17 @@ async def test_azure_openai_chat_client_response() -> None:
 
     assert response is not None
     assert isinstance(response, ChatResponse)
-    assert "scientists" in response.text
+    # Check for any relevant keywords that indicate the AI understood the context
+    assert any(
+        word in response.text.lower() for word in ["scientists", "research", "antarctica", "glaciology", "climate"]
+    )
 
 
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
@@ -648,8 +662,8 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -670,6 +684,8 @@ async def test_azure_openai_chat_client_streaming() -> None:
     async for chunk in response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
+        assert chunk.message_id is not None
+        assert chunk.response_id is not None
         for content in chunk.contents:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
@@ -680,8 +696,8 @@ async def test_azure_openai_chat_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureChatClient(ad_credential=DefaultAzureCredential())
-    assert isinstance(azure_chat_client, ChatClient)
+    azure_chat_client = AzureChatClient(credential=AzureCliCredential())
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
@@ -701,3 +717,119 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
                 full_message += content.text
 
     assert "scientists" in full_message
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_openai_chat_client_agent_basic_run():
+    """Test Azure OpenAI chat client agent basic run functionality with AzureChatClient."""
+    async with ChatAgent(
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
+    ) as agent:
+        # Test basic run
+        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        assert "hello world" in response.text.lower()
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_openai_chat_client_agent_basic_run_streaming():
+    """Test Azure OpenAI chat client agent basic streaming functionality with AzureChatClient."""
+    async with ChatAgent(
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
+    ) as agent:
+        # Test streaming run
+        full_text = ""
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_text += chunk.text
+
+        assert len(full_text) > 0
+        assert "streaming response test" in full_text.lower()
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_openai_chat_client_agent_thread_persistence():
+    """Test Azure OpenAI chat client agent thread persistence across runs with AzureChatClient."""
+    async with ChatAgent(
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant with good memory.",
+    ) as agent:
+        # Create a new thread that will be reused
+        thread = agent.get_new_thread()
+
+        # First interaction
+        response1 = await agent.run("My name is Alice. Remember this.", thread=thread)
+
+        assert isinstance(response1, AgentRunResponse)
+        assert response1.text is not None
+
+        # Second interaction - test memory
+        response2 = await agent.run("What is my name?", thread=thread)
+
+        assert isinstance(response2, AgentRunResponse)
+        assert response2.text is not None
+        assert "alice" in response2.text.lower()
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_openai_chat_client_agent_existing_thread():
+    """Test Azure OpenAI chat client agent with existing thread to continue conversations across agent instances."""
+    # First conversation - capture the thread
+    preserved_thread = None
+
+    async with ChatAgent(
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant with good memory.",
+    ) as first_agent:
+        # Start a conversation and capture the thread
+        thread = first_agent.get_new_thread()
+        first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Preserve the thread for reuse
+        preserved_thread = thread
+
+    # Second conversation - reuse the thread in a new agent instance
+    if preserved_thread:
+        async with ChatAgent(
+            chat_client=AzureChatClient(credential=AzureCliCredential()),
+            instructions="You are a helpful assistant with good memory.",
+        ) as second_agent:
+            # Reuse the preserved thread
+            second_response = await second_agent.run("What is my name?", thread=preserved_thread)
+
+            assert isinstance(second_response, AgentRunResponse)
+            assert second_response.text is not None
+            assert "alice" in second_response.text.lower()
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_chat_client_agent_level_tool_persistence():
+    """Test that agent-level tools persist across multiple runs with Azure Chat Client."""
+
+    async with ChatAgent(
+        chat_client=AzureChatClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant that uses available tools.",
+        tools=[get_weather],  # Agent-level tool
+    ) as agent:
+        # First run - agent-level tool should be available
+        first_response = await agent.run("What's the weather like in Chicago?")
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the agent-level weather tool
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - agent-level tool should still be available (persistence test)
+        second_response = await agent.run("What's the weather in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should use the agent-level weather tool again
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])

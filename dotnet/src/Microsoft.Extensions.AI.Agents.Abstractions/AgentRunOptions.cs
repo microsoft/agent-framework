@@ -22,6 +22,6 @@ public class AgentRunOptions
     /// <param name="options">The options to clone.</param>
     public AgentRunOptions(AgentRunOptions options)
     {
-        Throw.IfNull(options);
+        _ = Throw.IfNull(options);
     }
 }

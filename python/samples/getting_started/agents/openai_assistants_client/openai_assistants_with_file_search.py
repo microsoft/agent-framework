@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from agent_framework import ChatClientAgent, HostedFileSearchTool, HostedVectorStoreContent
+
+from agent_framework import ChatAgent, HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.openai import OpenAIAssistantsClient
 
 # Helper functions
+
 
 async def create_vector_store(client: OpenAIAssistantsClient) -> tuple[str, HostedVectorStoreContent]:
     """Create a vector store with sample documents."""
@@ -31,7 +33,7 @@ async def delete_vector_store(client: OpenAIAssistantsClient, file_id: str, vect
 
 async def main() -> None:
     client = OpenAIAssistantsClient()
-    async with ChatClientAgent(
+    async with ChatAgent(
         chat_client=client,
         instructions="You are a helpful assistant that searches files in a knowledge base.",
         tools=HostedFileSearchTool(),
@@ -41,13 +43,13 @@ async def main() -> None:
 
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
-        async for chunk in agent.run_streaming(
-            query,
-            tool_resources={"file_search": {"vector_store_ids": [vector_store.vector_store_id]}}
+        async for chunk in agent.run_stream(
+            query, tool_resources={"file_search": {"vector_store_ids": [vector_store.vector_store_id]}}
         ):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
         await delete_vector_store(client, file_id, vector_store.vector_store_id)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

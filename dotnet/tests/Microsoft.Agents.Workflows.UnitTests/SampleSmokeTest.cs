@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Sample;
-using Microsoft.Agents.Workflows.UnitTests.Sample;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
@@ -72,7 +71,7 @@ public class SampleSmokeTest
     }
 
     [Fact]
-    public async Task Test_RunSample_Step5Async()
+    public async Task Test_RunSample_Step4Async()
     {
         using StringWriter writer = new();
 
@@ -81,7 +80,45 @@ public class SampleSmokeTest
             ("Your guess was too high. Try again.", 23),
             ("Your guess was too low. Try again.", 42));
 
+        string guessResult = await Step4EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext);
+        Assert.Equal("You guessed correctly! You Win!", guessResult);
+    }
+
+    [Fact]
+    public async Task Test_RunSample_Step5Async()
+    {
+        using StringWriter writer = new();
+
+        VerifyingPlaybackResponder<string, int> responder = new(
+            // Iteration 1
+            ("Guess the number.", 50),
+            ("Your guess was too high. Try again.", 23),
+
+            // Iteration 2
+            ("Your guess was too high. Try again.", 23),
+            ("Your guess was too low. Try again.", 42)
+         );
+
         string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext);
+        Assert.Equal("You guessed correctly! You Win!", guessResult);
+    }
+
+    [Fact]
+    public async Task Test_RunSample_Step5aAsync()
+    {
+        using StringWriter writer = new();
+
+        VerifyingPlaybackResponder<string, int> responder = new(
+            // Iteration 1
+            ("Guess the number.", 50),
+            ("Your guess was too high. Try again.", 23),
+
+            // Iteration 2
+            ("Your guess was too high. Try again.", 23),
+            ("Your guess was too low. Try again.", 42)
+         );
+
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, rehydrateToRestore: true);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
@@ -91,6 +128,22 @@ public class SampleSmokeTest
         using StringWriter writer = new();
 
         await Step6EntryPoint.RunAsync(writer);
+
+        string result = writer.ToString();
+        string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Collection(lines,
+            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
+            line => Assert.Contains($"{EchoAgent.DefaultId}: {EchoAgent.Prefix}{HelloAgent.Greeting}", line)
+        );
+    }
+
+    [Fact]
+    public async Task Test_RunSample_Step7Async()
+    {
+        using StringWriter writer = new();
+
+        await Step7EntryPoint.RunAsync(writer);
 
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);

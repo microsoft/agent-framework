@@ -7,14 +7,14 @@ from agent_framework.exceptions import ServiceInvalidAuthError
 from azure.core.exceptions import ClientAuthenticationError
 
 if TYPE_CHECKING:
-    from azure.identity import ChainedTokenCredential
-    from azure.identity.aio import ChainedTokenCredential as AsyncChainedTokenCredential
+    from azure.core.credentials import TokenCredential
+    from azure.core.credentials_async import AsyncTokenCredential
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 def get_entra_auth_token(
-    credential: "ChainedTokenCredential",
+    credential: "TokenCredential",
     token_endpoint: str,
     **kwargs: Any,
 ) -> str | None:
@@ -25,7 +25,6 @@ def get_entra_auth_token(
 
     Args:
         credential: The Azure credential to use for authentication.
-            for dev, you can use `DefaultAzureCredential`, but this is not recommended for production.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
         **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
@@ -47,7 +46,7 @@ def get_entra_auth_token(
 
 
 async def get_entra_auth_token_async(
-    credential: "AsyncChainedTokenCredential", token_endpoint: str, **kwargs: Any
+    credential: "AsyncTokenCredential", token_endpoint: str, **kwargs: Any
 ) -> str | None:
     """Retrieve a async Microsoft Entra Auth Token for a given token endpoint.
 
@@ -56,7 +55,6 @@ async def get_entra_auth_token_async(
 
     Args:
         credential: The async Azure credential to use for authentication.
-            for dev, you can use `DefaultAzureCredential`, but this is not recommended for production.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
         **kwargs: Additional keyword arguments to pass to the token retrieval method.
 

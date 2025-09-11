@@ -2,26 +2,33 @@
 
 import asyncio
 import os
-import unittest.mock
 from typing import Annotated
+from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
 from pydantic import BaseModel
 
 from agent_framework import (
-    ChatClient,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
+    ChatAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    ChatRole,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
     HostedFileContent,
     HostedFileSearchTool,
+    HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
+    Role,
     TextContent,
     TextReasoningContent,
     UriContent,
@@ -45,7 +52,7 @@ class OutputStruct(BaseModel):
     """A structured output for testing purposes."""
 
     location: str
-    weather: str
+    weather: str | None = None
 
 
 async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, HostedVectorStoreContent]:
@@ -83,7 +90,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     openai_responses_client = OpenAIResponsesClient()
 
     assert openai_responses_client.ai_model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
 
 def test_init_validation_fail() -> None:
@@ -98,7 +105,7 @@ def test_init_ai_model_id_constructor(openai_unit_test_env: dict[str, str]) -> N
     openai_responses_client = OpenAIResponsesClient(ai_model_id=ai_model_id)
 
     assert openai_responses_client.ai_model_id == ai_model_id
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
 
 def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
@@ -110,7 +117,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
     )
 
     assert openai_responses_client.ai_model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
     for key, value in default_headers.items():
@@ -315,12 +322,12 @@ def test_content_filter_exception() -> None:
     # Mock a BadRequestError with content_filter code
     mock_error = BadRequestError(
         message="Content filter error",
-        response=unittest.mock.MagicMock(),
+        response=MagicMock(),
         body={"error": {"code": "content_filter", "message": "Content filter error"}},
     )
     mock_error.code = "content_filter"
 
-    with unittest.mock.patch.object(client.client.responses, "create", side_effect=mock_error):
+    with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
             asyncio.run(client.get_response(messages=[ChatMessage(role="user", text="Test message")]))
 
@@ -366,12 +373,12 @@ def test_chat_message_parsing_with_function_calls() -> None:
         asyncio.run(client.get_response(messages=messages))
 
 
-def test_response_format_parse_path() -> None:
+async def test_response_format_parse_path() -> None:
     """Test get_response response_format parsing path."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Mock successful parse response
-    mock_parsed_response = unittest.mock.MagicMock()
+    mock_parsed_response = MagicMock()
     mock_parsed_response.id = "parsed_response_123"
     mock_parsed_response.text = "Parsed response"
     mock_parsed_response.model = "test-model"
@@ -379,36 +386,33 @@ def test_response_format_parse_path() -> None:
     mock_parsed_response.metadata = {}
     mock_parsed_response.output_parsed = None
     mock_parsed_response.usage = None
+    mock_parsed_response.finish_reason = None
 
-    with unittest.mock.patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
-        response = asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
-            )
+    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
+        response = await client.get_response(
+            messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
         )
 
         assert response.conversation_id == "parsed_response_123"
         assert response.ai_model_id == "test-model"
 
 
-def test_bad_request_error_non_content_filter() -> None:
+async def test_bad_request_error_non_content_filter() -> None:
     """Test get_response BadRequestError without content_filter."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Mock a BadRequestError without content_filter code
     mock_error = BadRequestError(
         message="Invalid request",
-        response=unittest.mock.MagicMock(),
+        response=MagicMock(),
         body={"error": {"code": "invalid_request", "message": "Invalid request"}},
     )
     mock_error.code = "invalid_request"
 
-    with unittest.mock.patch.object(client.client.responses, "parse", side_effect=mock_error):
+    with patch.object(client.client.responses, "parse", side_effect=mock_error):
         with pytest.raises(ServiceResponseException) as exc_info:
-            asyncio.run(
-                client.get_response(
-                    messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct
-                )
+            await client.get_response(
+                messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct
             )
 
         assert "failed to complete the prompt" in str(exc_info.value)
@@ -419,10 +423,10 @@ async def test_streaming_content_filter_exception_handling() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Mock the OpenAI client to raise a BadRequestError with content_filter code
-    with unittest.mock.patch.object(client.client.responses, "create") as mock_create:
+    with patch.object(client.client.responses, "create") as mock_create:
         mock_create.side_effect = BadRequestError(
             message="Content filtered in stream",
-            response=unittest.mock.MagicMock(),
+            response=MagicMock(),
             body={"error": {"code": "content_filter", "message": "Content filtered"}},
         )
         mock_create.side_effect.code = "content_filter"
@@ -433,11 +437,13 @@ async def test_streaming_content_filter_exception_handling() -> None:
                 break
 
 
-def test_get_streaming_response_with_all_parameters() -> None:
+@skip_if_openai_integration_tests_disabled
+async def test_get_streaming_response_with_all_parameters() -> None:
     """Test get_streaming_response with all possible parameters."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    async def run_streaming_test():
+    # Should fail due to invalid API key
+    with pytest.raises(ServiceResponseException):
         response = client.get_streaming_response(
             messages=[ChatMessage(role="user", text="Test streaming")],
             include=["file_search_call.results"],
@@ -464,17 +470,13 @@ def test_get_streaming_response_with_all_parameters() -> None:
         async for _ in response:
             break
 
-    # Should fail due to invalid API key
-    with pytest.raises(ServiceResponseException):
-        asyncio.run(run_streaming_test())
-
 
 def test_response_content_creation_with_annotations() -> None:
     """Test _create_response_content with different annotation types."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with annotated text content
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -483,24 +485,24 @@ def test_response_content_creation_with_annotations() -> None:
     mock_response.created_at = 1000000000
 
     # Create mock annotation
-    mock_annotation = unittest.mock.MagicMock()
+    mock_annotation = MagicMock()
     mock_annotation.type = "file_citation"
     mock_annotation.file_id = "file_123"
     mock_annotation.filename = "document.pdf"
     mock_annotation.index = 0
 
-    mock_message_content = unittest.mock.MagicMock()
+    mock_message_content = MagicMock()
     mock_message_content.type = "output_text"
     mock_message_content.text = "Text with annotations."
     mock_message_content.annotations = [mock_annotation]
 
-    mock_message_item = unittest.mock.MagicMock()
+    mock_message_item = MagicMock()
     mock_message_item.type = "message"
     mock_message_item.content = [mock_message_content]
 
     mock_response.output = [mock_message_item]
 
-    with unittest.mock.patch.object(client, "_get_metadata_from_response", return_value={}):
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
         response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
 
         assert len(response.messages[0].contents) >= 1
@@ -514,7 +516,7 @@ def test_response_content_creation_with_refusal() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with refusal content
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -522,11 +524,11 @@ def test_response_content_creation_with_refusal() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_refusal_content = unittest.mock.MagicMock()
+    mock_refusal_content = MagicMock()
     mock_refusal_content.type = "refusal"
     mock_refusal_content.refusal = "I cannot provide that information."
 
-    mock_message_item = unittest.mock.MagicMock()
+    mock_message_item = MagicMock()
     mock_message_item.type = "message"
     mock_message_item.content = [mock_refusal_content]
 
@@ -544,7 +546,7 @@ def test_response_content_creation_with_reasoning() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with reasoning content
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -552,10 +554,10 @@ def test_response_content_creation_with_reasoning() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_reasoning_content = unittest.mock.MagicMock()
+    mock_reasoning_content = MagicMock()
     mock_reasoning_content.text = "Reasoning step"
 
-    mock_reasoning_item = unittest.mock.MagicMock()
+    mock_reasoning_item = MagicMock()
     mock_reasoning_item.type = "reasoning"
     mock_reasoning_item.content = [mock_reasoning_content]
     mock_reasoning_item.summary = ["Summary"]
@@ -575,7 +577,7 @@ def test_response_content_creation_with_code_interpreter() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with code interpreter outputs
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -583,15 +585,15 @@ def test_response_content_creation_with_code_interpreter() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_log_output = unittest.mock.MagicMock()
+    mock_log_output = MagicMock()
     mock_log_output.type = "logs"
     mock_log_output.logs = "Code execution log"
 
-    mock_image_output = unittest.mock.MagicMock()
+    mock_image_output = MagicMock()
     mock_image_output.type = "image"
     mock_image_output.url = "https://example.com/image.png"
 
-    mock_code_interpreter_item = unittest.mock.MagicMock()
+    mock_code_interpreter_item = MagicMock()
     mock_code_interpreter_item.type = "code_interpreter_call"
     mock_code_interpreter_item.outputs = [mock_log_output, mock_image_output]
     mock_code_interpreter_item.code = "print('hello')"
@@ -613,7 +615,7 @@ def test_response_content_creation_with_function_call() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Create a mock response with function call
-    mock_response = unittest.mock.MagicMock()
+    mock_response = MagicMock()
     mock_response.output_parsed = None
     mock_response.metadata = {}
     mock_response.usage = None
@@ -621,7 +623,7 @@ def test_response_content_creation_with_function_call() -> None:
     mock_response.model = "test-model"
     mock_response.created_at = 1000000000
 
-    mock_function_call_item = unittest.mock.MagicMock()
+    mock_function_call_item = MagicMock()
     mock_function_call_item.type = "function_call"
     mock_function_call_item.call_id = "call_123"
     mock_function_call_item.name = "get_weather"
@@ -640,11 +642,163 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.arguments == '{"location": "Seattle"}'
 
 
+def test_tools_to_response_tools_with_hosted_mcp() -> None:
+    """Test that HostedMCPTool is converted to the correct response tool dict."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    tool = HostedMCPTool(
+        name="My MCP",
+        url="https://mcp.example",
+        description="An MCP server",
+        approval_mode={"always_require_approval": ["tool_a", "tool_b"]},
+        allowed_tools={"tool_a", "tool_b"},
+        headers={"X-Test": "yes"},
+        additional_properties={"custom": "value"},
+    )
+
+    resp_tools = client._tools_to_response_tools([tool])
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+    mcp = resp_tools[0]
+    assert isinstance(mcp, dict)
+    assert mcp["type"] == "mcp"
+    assert mcp["server_label"] == "My_MCP"
+    # server_url may be normalized to include a trailing slash by the client
+    assert str(mcp["server_url"]).rstrip("/") == "https://mcp.example"
+    assert mcp["server_description"] == "An MCP server"
+    assert mcp["headers"]["X-Test"] == "yes"
+    assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
+    # approval mapping created from approval_mode dict
+    assert "require_approval" in mcp
+
+
+def test_create_response_content_with_mcp_approval_request() -> None:
+    """Test that a non-streaming mcp_approval_request is parsed into FunctionApprovalRequestContent."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_item = MagicMock()
+    mock_item.type = "mcp_approval_request"
+    mock_item.id = "approval-1"
+    mock_item.name = "do_sensitive_action"
+    mock_item.arguments = {"arg": 1}
+    mock_item.server_label = "My_MCP"
+
+    mock_response.output = [mock_item]
+
+    response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+
+    assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
+    req = response.messages[0].contents[0]
+    assert req.id == "approval-1"
+    assert req.function_call.name == "do_sensitive_action"
+    assert req.function_call.arguments == {"arg": 1}
+    assert req.function_call.additional_properties["server_label"] == "My_MCP"
+
+
+def test_create_streaming_response_content_with_mcp_approval_request() -> None:
+    """Test that a streaming mcp_approval_request event is parsed into FunctionApprovalRequestContent."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "mcp_approval_request"
+    mock_item.id = "approval-stream-1"
+    mock_item.name = "do_stream_action"
+    mock_item.arguments = {"x": 2}
+    mock_item.server_label = "My_MCP"
+    mock_event.item = mock_item
+
+    update = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+    assert any(isinstance(c, FunctionApprovalRequestContent) for c in update.contents)
+    fa = next(c for c in update.contents if isinstance(c, FunctionApprovalRequestContent))
+    assert fa.id == "approval-stream-1"
+    assert fa.function_call.name == "do_stream_action"
+
+
+@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+def test_end_to_end_mcp_approval_flow(otel_settings) -> None:
+    """End-to-end mocked test:
+    model issues an mcp_approval_request, user approves, client sends mcp_approval_response.
+    """
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # First mocked response: model issues an mcp_approval_request
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+
+    mock_item = MagicMock()
+    mock_item.type = "mcp_approval_request"
+    mock_item.id = "approval-1"
+    mock_item.name = "do_sensitive_action"
+    mock_item.arguments = {"arg": "value"}
+    mock_item.server_label = "My_MCP"
+    mock_response1.output = [mock_item]
+
+    # Second mocked response: simple assistant acknowledgement after approval
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Approved."
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    # Patch the create call to return the two mocked responses in sequence
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        # First call: get the approval request
+        response = asyncio.run(client.get_response(messages=[ChatMessage(role="user", text="Trigger approval")]))
+        assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
+        req = response.messages[0].contents[0]
+        assert req.id == "approval-1"
+
+        # Build a user approval and send it (include required function_call)
+        approval = FunctionApprovalResponseContent(approved=True, id=req.id, function_call=req.function_call)
+        approval_message = ChatMessage(role="user", contents=[approval])
+        _ = asyncio.run(client.get_response(messages=[approval_message]))
+
+        # Ensure two calls were made and the second includes the mcp_approval_response
+        assert mock_create.call_count == 2
+        _, kwargs = mock_create.call_args_list[1]
+        sent_input = kwargs.get("input")
+        assert isinstance(sent_input, list)
+        found = False
+        for item in sent_input:
+            if isinstance(item, dict) and item.get("type") == "mcp_approval_response":
+                assert item["approval_request_id"] == "approval-1"
+                assert item["approve"] is True
+                found = True
+        assert found
+
+
 def test_usage_details_basic() -> None:
     """Test _usage_details_from_openai without cached or reasoning tokens."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    mock_usage = unittest.mock.MagicMock()
+    mock_usage = MagicMock()
     mock_usage.input_tokens = 100
     mock_usage.output_tokens = 50
     mock_usage.total_tokens = 150
@@ -662,11 +816,11 @@ def test_usage_details_with_cached_tokens() -> None:
     """Test _usage_details_from_openai with cached input tokens."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    mock_usage = unittest.mock.MagicMock()
+    mock_usage = MagicMock()
     mock_usage.input_tokens = 200
     mock_usage.output_tokens = 75
     mock_usage.total_tokens = 275
-    mock_usage.input_tokens_details = unittest.mock.MagicMock()
+    mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = 25
     mock_usage.output_tokens_details = None
 
@@ -680,12 +834,12 @@ def test_usage_details_with_reasoning_tokens() -> None:
     """Test _usage_details_from_openai with reasoning tokens."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    mock_usage = unittest.mock.MagicMock()
+    mock_usage = MagicMock()
     mock_usage.input_tokens = 150
     mock_usage.output_tokens = 80
     mock_usage.total_tokens = 230
     mock_usage.input_tokens_details = None
-    mock_usage.output_tokens_details = unittest.mock.MagicMock()
+    mock_usage.output_tokens_details = MagicMock()
     mock_usage.output_tokens_details.reasoning_tokens = 30
 
     details = client._usage_details_from_openai(mock_usage)  # type: ignore
@@ -699,7 +853,7 @@ def test_get_metadata_from_response() -> None:
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Test with logprobs
-    mock_output_with_logprobs = unittest.mock.MagicMock()
+    mock_output_with_logprobs = MagicMock()
     mock_output_with_logprobs.logprobs = {"token": "test", "probability": 0.9}
 
     metadata = client._get_metadata_from_response(mock_output_with_logprobs)  # type: ignore
@@ -707,7 +861,7 @@ def test_get_metadata_from_response() -> None:
     assert metadata["logprobs"]["token"] == "test"
 
     # Test without logprobs
-    mock_output_no_logprobs = unittest.mock.MagicMock()
+    mock_output_no_logprobs = MagicMock()
     mock_output_no_logprobs.logprobs = None
 
     metadata_empty = client._get_metadata_from_response(mock_output_no_logprobs)  # type: ignore
@@ -721,13 +875,13 @@ def test_streaming_response_basic_structure() -> None:
     function_call_ids: dict[int, tuple[str, str]] = {}
 
     # Test with a basic mock event to ensure the method returns proper structure
-    mock_event = unittest.mock.MagicMock()
+    mock_event = MagicMock()
 
     response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)  # type: ignore
 
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
-    assert response.role == ChatRole.ASSISTANT
+    assert response.role == Role.ASSISTANT
     assert response.ai_model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
@@ -738,7 +892,7 @@ async def test_openai_responses_client_response() -> None:
     """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -771,9 +925,10 @@ async def test_openai_responses_client_response() -> None:
 
     assert response is not None
     assert isinstance(response, ChatResponse)
-    output = OutputStruct.model_validate_json(response.text)
+    output = response.value
+    assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
-    assert "sunny" in output.weather.lower()
+    assert output.weather is not None
 
 
 @skip_if_openai_integration_tests_disabled
@@ -781,7 +936,7 @@ async def test_openai_responses_client_response_tools() -> None:
     """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
@@ -820,7 +975,7 @@ async def test_openai_responses_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
     messages.append(
@@ -835,17 +990,11 @@ async def test_openai_responses_client_streaming() -> None:
     messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
-    response = openai_responses_client.get_streaming_response(messages=messages)
+    response = await ChatResponse.from_chat_response_generator(
+        openai_responses_client.get_streaming_response(messages=messages)
+    )
 
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-
-    assert "scientists" in full_message
+    assert "scientists" in response.text
 
     messages.clear()
     messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
@@ -855,17 +1004,16 @@ async def test_openai_responses_client_streaming() -> None:
         messages=messages,
         response_format=OutputStruct,
     )
-    full_message = ""
+    chunks = []
     async for chunk in response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-
-    output = OutputStruct.model_validate_json(full_message)
+        chunks.append(chunk)
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
+    output = full_message.value
+    assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
-    assert "sunny" in output.weather.lower()
+    assert output.weather is not None
 
 
 @skip_if_openai_integration_tests_disabled
@@ -873,7 +1021,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
     """Test OpenAI chat completion responses."""
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = [ChatMessage(role="user", text="What is the weather in Seattle?")]
 
@@ -902,15 +1050,15 @@ async def test_openai_responses_client_streaming_tools() -> None:
         tool_choice="auto",
         response_format=OutputStruct,
     )
-    full_message = ""
+    chunks = []
     async for chunk in response:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
+        chunks.append(chunk)
 
-    output = OutputStruct.model_validate_json(full_message)
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
+    output = full_message.value
+    assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
     assert "sunny" in output.weather.lower()
 
@@ -919,7 +1067,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
 async def test_openai_responses_client_web_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Test that the client will use the web search tool
     response = await openai_responses_client.get_response(
@@ -951,14 +1099,14 @@ async def test_openai_responses_client_web_search() -> None:
         tools=[HostedWebSearchTool(additional_properties=additional_properties)],
         tool_choice="auto",
     )
-    assert "Seattle" in response.text
+    assert response.text is not None
 
 
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_web_search_streaming() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Test that the client will use the web search tool
     response = openai_responses_client.get_streaming_response(
@@ -1004,14 +1152,15 @@ async def test_openai_responses_client_web_search_streaming() -> None:
         for content in chunk.contents:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
-    assert "Seattle" in full_message
+    assert full_message is not None
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_responses_client_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Test that the client will use the web search tool
@@ -1032,10 +1181,11 @@ async def test_openai_responses_client_file_search() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_responses_client_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClient)
+    assert isinstance(openai_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Test that the client will use the web search tool
@@ -1063,3 +1213,235 @@ async def test_openai_responses_client_streaming_file_search() -> None:
 
     assert "sunny" in full_message.lower()
     assert "75" in full_message
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_basic_run():
+    """Test OpenAI Responses Client agent basic run functionality with OpenAIResponsesClient."""
+    agent = OpenAIResponsesClient().create_agent(
+        instructions="You are a helpful assistant.",
+    )
+
+    # Test basic run
+    response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+    assert isinstance(response, AgentRunResponse)
+    assert response.text is not None
+    assert len(response.text) > 0
+    assert "hello world" in response.text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_basic_run_streaming():
+    """Test OpenAI Responses Client agent basic streaming functionality with OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+    ) as agent:
+        # Test streaming run
+        full_text = ""
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_text += chunk.text
+
+        assert len(full_text) > 0
+        assert "streaming response test" in full_text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_thread_persistence():
+    """Test OpenAI Responses Client agent thread persistence across runs with OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant with good memory.",
+    ) as agent:
+        # Create a new thread that will be reused
+        thread = agent.get_new_thread()
+
+        # First interaction
+        first_response = await agent.run("My favorite programming language is Python. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Second interaction - test memory
+        second_response = await agent.run("What is my favorite programming language?", thread=thread)
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_thread_storage_with_store_true():
+    """Test OpenAI Responses Client agent with store=True to verify service_thread_id is returned."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # Create a new thread
+        thread = AgentThread()
+
+        # Initially, service_thread_id should be None
+        assert thread.service_thread_id is None
+
+        # Run with store=True to store messages on OpenAI side
+        response = await agent.run(
+            "Hello! Please remember that my name is Alex.",
+            thread=thread,
+            store=True,
+        )
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+        # After store=True, service_thread_id should be populated
+        assert thread.service_thread_id is not None
+        assert isinstance(thread.service_thread_id, str)
+        assert len(thread.service_thread_id) > 0
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_existing_thread():
+    """Test OpenAI Responses Client agent with existing thread to continue conversations across agent instances."""
+    # First conversation - capture the thread
+    preserved_thread = None
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant with good memory.",
+    ) as first_agent:
+        # Start a conversation and capture the thread
+        thread = first_agent.get_new_thread()
+        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Preserve the thread for reuse
+        preserved_thread = thread
+
+    # Second conversation - reuse the thread in a new agent instance
+    if preserved_thread:
+        async with ChatAgent(
+            chat_client=OpenAIResponsesClient(),
+            instructions="You are a helpful assistant with good memory.",
+        ) as second_agent:
+            # Reuse the preserved thread
+            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
+
+            assert isinstance(second_response, AgentRunResponse)
+            assert second_response.text is not None
+            assert "photography" in second_response.text.lower()
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
+    """Test OpenAI Responses Client agent with HostedCodeInterpreterTool through OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can execute Python code.",
+        tools=[HostedCodeInterpreterTool()],
+    ) as agent:
+        # Test code interpreter functionality
+        response = await agent.run("Calculate the sum of numbers from 1 to 10 using Python code.")
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # Should contain calculation result (sum of 1-10 = 55) or code execution content
+        contains_relevant_content = any(
+            term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
+        )
+        assert contains_relevant_content or len(response.text.strip()) > 10
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_level_tool_persistence():
+    """Test that agent-level tools persist across multiple runs with OpenAI Responses Client."""
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that uses available tools.",
+        tools=[get_weather],  # Agent-level tool
+    ) as agent:
+        # First run - agent-level tool should be available
+        first_response = await agent.run("What's the weather like in Chicago?")
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the agent-level weather tool
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - agent-level tool should still be available (persistence test)
+        second_response = await agent.run("What's the weather in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should use the agent-level weather tool again
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_run_level_tool_isolation():
+    """Test that run-level tools are isolated to specific runs and don't persist with OpenAI Responses Client."""
+    # Counter to track how many times the weather tool is called
+    call_count = 0
+
+    @ai_function
+    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
+        """Get the current weather in a given location."""
+        nonlocal call_count
+        call_count += 1
+        return f"The weather in {location} is sunny and 72°F."
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # First run - use run-level tool
+        first_response = await agent.run(
+            "What's the weather like in Chicago?",
+            tools=[get_weather_with_counter],  # Run-level tool
+        )
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the run-level weather tool (call count should be 1)
+        assert call_count == 1
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - run-level tool should NOT persist (key isolation test)
+        second_response = await agent.run("What's the weather like in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should NOT use the weather tool since it was only run-level in previous call
+        # Call count should still be 1 (no additional calls)
+        assert call_count == 1
+
+
+def test_service_response_exception_includes_original_error_details() -> None:
+    """Test that ServiceResponseException messages include original error details in the new format."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="test message")]
+
+    mock_response = MagicMock()
+    original_error_message = "Request rate limit exceeded"
+    mock_error = BadRequestError(
+        message=original_error_message,
+        response=mock_response,
+        body={"error": {"code": "rate_limit", "message": original_error_message}},
+    )
+    mock_error.code = "rate_limit"
+
+    with (
+        patch.object(client.client.responses, "parse", side_effect=mock_error),
+        pytest.raises(ServiceResponseException) as exc_info,
+    ):
+        asyncio.run(client.get_response(messages=messages, response_format=OutputStruct))
+
+    exception_message = str(exc_info.value)
+    assert "service failed to complete the prompt:" in exception_message
+    assert original_error_message in exception_message

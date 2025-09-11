@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponseUpdate, ChatClientAgent, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.agents.models import (
     RunStepDelta,
@@ -11,7 +11,7 @@ from azure.ai.agents.models import (
     RunStepDeltaCodeInterpreterToolCall,
     RunStepDeltaToolCallObject,
 )
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 
 
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
@@ -37,10 +37,12 @@ async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Foundry."""
     print("=== Foundry Agent with Code Interpreter Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     async with (
-        DefaultAzureCredential() as credential,
-        ChatClientAgent(
-            chat_client=FoundryChatClient(async_ad_credential=credential),
+        AzureCliCredential() as credential,
+        ChatAgent(
+            chat_client=FoundryChatClient(async_credential=credential),
             instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
             tools=HostedCodeInterpreterTool(),
         ) as agent,
@@ -49,7 +51,7 @@ async def main() -> None:
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""
-        async for chunk in agent.run_streaming(query):
+        async for chunk in agent.run_stream(query):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
             code_interpreter_chunk = get_code_interpreter_chunk(chunk)

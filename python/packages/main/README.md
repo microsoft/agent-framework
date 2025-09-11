@@ -1,6 +1,7 @@
 # Get Started with Microsoft Agent Framework
 
 Highlights
+
 - Flexible Agent Framework: build, orchestrate, and deploy AI agents and multi-agent systems
 - Multi-Agent Orchestration: Group chat, sequential, concurrent, and handoff patterns
 - Plugin Ecosystem: Extend with native functions, OpenAPI, Model Context Protocol (MCP), and more
@@ -22,6 +23,7 @@ pip install agent-framework[azure,foundry]
 ```
 
 Supported Platforms:
+
 - Python: 3.10+
 - OS: Windows, macOS, Linux
 
@@ -32,6 +34,7 @@ Set as environment variables, or create a .env file at your project root:
 ```bash
 OPENAI_API_KEY=sk-...
 OPENAI_CHAT_MODEL_ID=...
+OPENAI_RESPONSES_MODEL_ID=...
 ...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
@@ -62,11 +65,11 @@ Create agents and invoke them directly:
 
 ```python
 import asyncio
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 
 async def main():
-    agent = ChatClientAgent(
+    agent = ChatAgent(
         chat_client=OpenAIChatClient(),
         instructions="""
         1) A robot may not injure a human being...
@@ -91,14 +94,14 @@ You can use the chat client classes directly for advanced workflows:
 ```python
 import asyncio
 from agent_framework.openai import OpenAIChatClient
-from agent_framework import ChatMessage, ChatRole
+from agent_framework import ChatMessage, Role
 
 async def main():
     client = OpenAIChatClient()
 
     messages = [
-        ChatMessage(role=ChatRole.SYSTEM, text="You are a helpful assistant."),
-        ChatMessage(role=ChatRole.USER, text="Write a haiku about Agent Framework.")
+        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant."),
+        ChatMessage(role=Role.USER, text="Write a haiku about Agent Framework.")
     ]
 
     response = await client.get_response(messages)
@@ -124,7 +127,7 @@ import asyncio
 from typing import Annotated
 from random import randint
 from pydantic import Field
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 
 
@@ -146,7 +149,7 @@ def get_menu_specials() -> str:
 
 
 async def main():
-    agent = ChatClientAgent(
+    agent = ChatAgent(
         chat_client=OpenAIChatClient(),
         instructions="You are a helpful assistant that can provide weather and restaurant information.",
         tools=[get_weather, get_menu_specials]
@@ -170,19 +173,19 @@ Coordinate multiple agents to collaborate on complex tasks using orchestration p
 
 ```python
 import asyncio
-from agent_framework import ChatClientAgent
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 
 
 async def main():
     # Create specialized agents
-    writer = ChatClientAgent(
+    writer = ChatAgent(
         chat_client=OpenAIChatClient(),
         name="Writer",
         instructions="You are a creative content writer. Generate and refine slogans based on feedback."
     )
 
-    reviewer = ChatClientAgent(
+    reviewer = ChatAgent(
         chat_client=OpenAIChatClient(),
         name="Reviewer",
         instructions="You are a critical reviewer. Provide detailed feedback on proposed slogans."

@@ -161,12 +161,14 @@ def test_graph_connectivity_isolated_executors():
 
     # Create edges that include an isolated executor (self-loop that's not connected to main graph)
     edge_groups = [
-        SingleEdgeGroup(executor1, executor2),
-        SingleEdgeGroup(executor3, executor3),
+        SingleEdgeGroup(executor1.id, executor2.id),
+        SingleEdgeGroup(executor3.id, executor3.id),
     ]  # Self-loop to include in graph
 
+    executors: dict[str, Executor] = {executor1.id: executor1, executor2.id: executor2, executor3.id: executor3}
+
     with pytest.raises(GraphConnectivityError) as exc_info:
-        validate_workflow_graph(edge_groups, executor1)
+        validate_workflow_graph(edge_groups, executors, executor1)
 
     assert "unreachable" in str(exc_info.value).lower()
     assert "executor3" in str(exc_info.value)
@@ -243,15 +245,16 @@ def test_type_compatibility_inheritance():
 def test_direct_validation_function():
     executor1 = StringExecutor(id="executor1")
     executor2 = StringExecutor(id="executor2")
-    edge_groups = [SingleEdgeGroup(executor1, executor2)]
+    edge_groups = [SingleEdgeGroup(executor1.id, executor2.id)]
+    executors: dict[str, Executor] = {executor1.id: executor1, executor2.id: executor2}
 
     # This should not raise any exceptions
-    validate_workflow_graph(edge_groups, executor1)
+    validate_workflow_graph(edge_groups, executors, executor1)
 
     # Test with invalid start executor
     executor3 = StringExecutor(id="executor3")
     with pytest.raises(GraphConnectivityError):
-        validate_workflow_graph(edge_groups, executor3)
+        validate_workflow_graph(edge_groups, executors, executor3)
 
 
 def test_fan_out_validation():
@@ -315,7 +318,7 @@ def test_logging_for_missing_input_types(caplog: Any) -> None:
 
     class NoInputTypesExecutor(Executor):
         # Handler without type annotation for input parameter
-        async def handle_message(self, message: Any, ctx: WorkflowContext) -> None:
+        async def handle_message(self, message: Any, ctx: WorkflowContext[Any]) -> None:
             await ctx.send_message("processed")
 
         def _discover_handlers(self) -> None:
@@ -578,7 +581,7 @@ def test_handler_ctx_missing_annotation_raises() -> None:
 def test_handler_ctx_unsubscripted_workflow_context_raises() -> None:
     class BadExecutor(Executor):
         @handler
-        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # missing T
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # type: ignore # missing T
             pass
 
     start = StringExecutor(id="s")

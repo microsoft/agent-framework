@@ -12,19 +12,18 @@ from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl, ValidationError
 
 from agent_framework import (
-    AITool,
     ChatMessage,
-    ChatRole,
     DataContent,
-    McpSseTools,
-    McpStdioTool,
-    McpStreamableHttpTool,
-    McpWebsocketTool,
+    MCPStdioTool,
+    MCPStreamableHTTPTool,
+    MCPWebsocketTool,
+    Role,
     TextContent,
+    ToolProtocol,
     UriContent,
 )
 from agent_framework._mcp import (
-    McpTool,
+    MCPTool,
     _ai_content_to_mcp_types,
     _chat_message_to_mcp_types,
     _get_input_model_from_mcp_prompt,
@@ -275,20 +274,20 @@ def test_get_input_model_from_mcp_prompt():
         model(arg2="optional")
 
 
-# McpTool tests
+# MCPTool tests
 async def test_local_mcp_server_initialization():
-    """Test McpTool initialization."""
-    server = McpTool(name="test_server")
-    assert isinstance(server, AITool)
+    """Test MCPTool initialization."""
+    server = MCPTool(name="test_server")
+    assert isinstance(server, ToolProtocol)
     assert server.name == "test_server"
     assert server.session is None
     assert server.functions == []
 
 
 async def test_local_mcp_server_context_manager():
-    """Test McpTool as context manager."""
+    """Test MCPTool as context manager."""
 
-    class TestServer(McpTool):
+    class TestServer(MCPTool):
         async def connect(self):
             # Mock connection
             self.session = Mock(spec=ClientSession)
@@ -306,7 +305,7 @@ async def test_local_mcp_server_context_manager():
 async def test_local_mcp_server_load_functions():
     """Test loading functions from MCP server."""
 
-    class TestServer(McpTool):
+    class TestServer(MCPTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             # Mock tools list response
@@ -330,7 +329,7 @@ async def test_local_mcp_server_load_functions():
             return None
 
     server = TestServer(name="test_server")
-    assert isinstance(server, AITool)
+    assert isinstance(server, ToolProtocol)
     async with server:
         await server.load_tools()
         assert len(server.functions) == 1
@@ -340,7 +339,7 @@ async def test_local_mcp_server_load_functions():
 async def test_local_mcp_server_load_prompts():
     """Test loading prompts from MCP server."""
 
-    class TestServer(McpTool):
+    class TestServer(MCPTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             # Mock prompts list response
@@ -369,7 +368,7 @@ async def test_local_mcp_server_load_prompts():
 async def test_local_mcp_server_function_execution():
     """Test function execution through MCP server."""
 
-    class TestServer(McpTool):
+    class TestServer(MCPTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
@@ -410,7 +409,7 @@ async def test_local_mcp_server_function_execution():
 async def test_local_mcp_server_function_execution_error():
     """Test function execution error handling."""
 
-    class TestServer(McpTool):
+    class TestServer(MCPTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
@@ -448,7 +447,7 @@ async def test_local_mcp_server_function_execution_error():
 async def test_local_mcp_server_prompt_execution():
     """Test prompt execution through MCP server."""
 
-    class TestMcpTool(McpTool):
+    class TestMCPTool(MCPTool):
         async def connect(self):
             self.session = Mock(spec=ClientSession)
             self.session.list_prompts = AsyncMock(
@@ -474,7 +473,7 @@ async def test_local_mcp_server_prompt_execution():
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None
 
-    server = TestMcpTool(name="test_server")
+    server = TestMCPTool(name="test_server")
     async with server:
         await server.load_prompts()
         prompt = server.functions[0]
@@ -482,37 +481,30 @@ async def test_local_mcp_server_prompt_execution():
 
         assert len(result) == 1
         assert isinstance(result[0], ChatMessage)
-        assert result[0].role == ChatRole.USER
+        assert result[0].role == Role.USER
         assert len(result[0].contents) == 1
         assert result[0].contents[0].text == "Test message"
 
 
 # Server implementation tests
 def test_local_mcp_stdio_tool_init():
-    """Test McpStdioTool initialization."""
-    tool = McpStdioTool(name="test", command="echo", args=["hello"])
+    """Test MCPStdioTool initialization."""
+    tool = MCPStdioTool(name="test", command="echo", args=["hello"])
     assert tool.name == "test"
     assert tool.command == "echo"
     assert tool.args == ["hello"]
 
 
-def test_local_mcp_sse_tools_init():
-    """Test McpSseTools initialization."""
-    tool = McpSseTools(name="test", url="http://localhost:8080")
-    assert tool.name == "test"
-    assert tool.url == "http://localhost:8080"
-
-
 def test_local_mcp_websocket_tool_init():
-    """Test McpWebsocketTool initialization."""
-    tool = McpWebsocketTool(name="test", url="ws://localhost:8080")
+    """Test MCPWebsocketTool initialization."""
+    tool = MCPWebsocketTool(name="test", url="ws://localhost:8080")
     assert tool.name == "test"
     assert tool.url == "ws://localhost:8080"
 
 
 def test_local_mcp_streamable_http_tool_init():
-    """Test McpStreamableHttpTool initialization."""
-    tool = McpStreamableHttpTool(name="test", url="http://localhost:8080")
+    """Test MCPStreamableHTTPTool initialization."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://localhost:8080")
     assert tool.name == "test"
     assert tool.url == "http://localhost:8080"
 
@@ -525,7 +517,7 @@ async def test_streamable_http_integration():
     if not url.startswith("http"):
         pytest.skip("LOCAL_MCP_URL is not an HTTP URL")
 
-    tool = McpStreamableHttpTool(name="integration_test", url=url)
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
 
     async with tool:
         # Test that we can connect and load tools
