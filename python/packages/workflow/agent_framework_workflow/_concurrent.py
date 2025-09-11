@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Callable, Sequence
@@ -22,7 +23,7 @@ parallel workflow with:
 - a default aggregator that combines all agent conversations and completes the workflow
 
 Notes:
-- Participants should be AgentProtocol instances (e.g., created via a client create_agent API).
+- Participants should be AgentProtocol instances or Executors.
 - A custom aggregator can be provided as:
   - an Executor instance (it should handle list[AgentExecutorResponse] and add a WorkflowCompletedEvent), or
   - a callback function with signature:
@@ -133,11 +134,14 @@ class _AggregateAgentConversations(Executor):
 class _CallbackAggregator(Executor):
     """Wraps a Python callback as an aggregator.
 
-    The callback can be sync or async and with either signature:
+    Accepts either an async or sync callback with one of the signatures:
       - (results: list[AgentExecutorResponse]) -> Any | None
       - (results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None
 
-    If the callback returns a non-None value, it is wrapped in a WorkflowCompletedEvent.
+    Notes:
+    - Async callbacks are awaited directly.
+    - Sync callbacks are executed via asyncio.to_thread to avoid blocking the event loop.
+    - If the callback returns a non-None value, it is wrapped in a WorkflowCompletedEvent.
     """
 
     def __init__(self, callback: Callable[..., Any], id: str | None = None) -> None:
@@ -147,11 +151,17 @@ class _CallbackAggregator(Executor):
 
     @handler
     async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
-        # Call according to provided signature
-        ret = self._callback(results, ctx) if self._param_count >= 2 else self._callback(results)
-
-        if inspect.isawaitable(ret):  # Support async callbacks
-            ret = await ret  # type: ignore[assignment]
+        # Call according to provided signature, always non-blocking for sync callbacks
+        if self._param_count >= 2:
+            if inspect.iscoroutinefunction(self._callback):
+                ret = await self._callback(results, ctx)  # type: ignore[misc]
+            else:
+                ret = await asyncio.to_thread(self._callback, results, ctx)
+        else:
+            if inspect.iscoroutinefunction(self._callback):
+                ret = await self._callback(results)  # type: ignore[misc]
+            else:
+                ret = await asyncio.to_thread(self._callback, results)
 
         # If the callback returned a value, finalize the workflow with it
         if ret is not None:

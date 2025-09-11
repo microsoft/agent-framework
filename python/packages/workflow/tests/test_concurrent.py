@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from agent_framework import AgentRunResponse, ChatMessage, Role
@@ -97,5 +97,30 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
 
     assert completed is not None
     # Custom aggregator returns a string payload
+    assert isinstance(completed.data, str)
+    assert completed.data == "One | Two"
+
+
+async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    # Sync callback with ctx parameter (should run via asyncio.to_thread)
+    def summarize_sync(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
+        texts: list[str] = []
+        for r in results:
+            msgs: list[ChatMessage] = r.agent_run_response.messages
+            texts.append(msgs[-1].text if msgs else "")
+        return " | ".join(sorted(texts))
+
+    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize_sync).build()
+
+    completed: WorkflowCompletedEvent | None = None
+    async for ev in wf.run_stream("prompt: custom sync"):
+        if isinstance(ev, WorkflowCompletedEvent):
+            completed = ev
+            break
+
+    assert completed is not None
     assert isinstance(completed.data, str)
     assert completed.data == "One | Two"
