@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -66,15 +65,6 @@ from ..exceptions import (
 from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
-
-if sys.version_info >= (3, 12):
-    pass  # type: ignore # pragma: no cover
-else:
-    pass  # type: ignore[import] # pragma: no cover
-
-if TYPE_CHECKING:
-    pass
-
 
 logger = get_logger("agent_framework.openai")
 
