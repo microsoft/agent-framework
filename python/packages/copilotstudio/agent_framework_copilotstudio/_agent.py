@@ -264,8 +264,8 @@ class CopilotStudioAgent(BaseAgent):
         self, activities: AsyncIterable[Activity], streaming: bool
     ) -> AsyncIterable[ChatMessage]:
         async for activity in activities:
-            if (activity.type == "message" and activity.text and not streaming) or (
-                activity.type == "typing" and activity.text and streaming
+            if activity.text and (
+                (activity.type == "message" and not streaming) or (activity.type == "typing" and streaming)
             ):
                 yield self._create_chat_message_from_activity(activity, [TextContent(activity.text)])
 
