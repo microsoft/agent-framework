@@ -455,7 +455,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                         response_tools.append(
                             WebSearchToolParam(
-                                type="web_search",
+                                type="web_search_preview",
                                 user_location=WebSearchUserLocation(
                                     type="approximate",
                                     city=location.get("city", None),
