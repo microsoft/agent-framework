@@ -31,6 +31,10 @@ OpenAI.Chat.ChatClient chatClient = new AzureOpenAIClient(
 // Create the agent and provide a factory to add our custom memory component to
 // all threads created by the agent. Here each new memory component will have its own
 // user info object, so each thread will have its own memory.
+// In real world applications/services, where the user info would be persisted in a database,
+// and preferably shared between multiple threads used by the same user, ensure that the
+// factory reads the user id from the current context and scopes the memory component
+// and its storage to that user id.
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     Instructions = "You are a friendly assistant. Always address the user by their name.",
