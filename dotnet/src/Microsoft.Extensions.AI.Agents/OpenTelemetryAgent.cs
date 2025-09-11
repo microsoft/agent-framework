@@ -24,13 +24,12 @@ namespace Microsoft.Extensions.AI.Agents;
 /// This class provides telemetry instrumentation for agent operations including activities, metrics, and logging.
 /// The telemetry output follows OpenTelemetry semantic conventions in <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/"/> and is subject to change as the conventions evolve.
 /// </remarks>
-public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
+public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 {
     private const LogLevel EventLogLevel = LogLevel.Information;
     private JsonSerializerOptions _jsonSerializerOptions;
     private readonly OpenTelemetryChatClient? _openTelemetryChatClient;
     private readonly string? _system;
-    private readonly AIAgent _innerAgent;
     private readonly ActivitySource _activitySource;
     private readonly Meter _meter;
     private readonly Histogram<double> _operationDurationHistogram;
@@ -44,9 +43,8 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     /// <param name="logger">The <see cref="ILogger"/> to use for emitting events.</param>
     /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
     public OpenTelemetryAgent(AIAgent innerAgent, ILogger? logger = null, string? sourceName = null)
+        : base(innerAgent)
     {
-        this._innerAgent = Throw.IfNull(innerAgent);
-
         string name = string.IsNullOrEmpty(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!;
         this._activitySource = new(name);
         this._meter = new(name);
@@ -54,7 +52,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         this._system = this.GetService<AIAgentMetadata>()?.ProviderName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents;
 
         // Attempt to get the open telemetry chat client if the inner agent is a ChatClientAgent.
-        this._openTelemetryChatClient = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
+        this._openTelemetryChatClient = (this.InnerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
 
         // Inherit by default the EnableSensitiveData setting from the TelemetryChatClient if available.
         this.EnableSensitiveData = this._openTelemetryChatClient?.EnableSensitiveData ?? false;
@@ -112,21 +110,16 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
-        => base.GetService(serviceType, serviceKey)
-            ?? (serviceType == typeof(ActivitySource) ? this._activitySource
-            : this._innerAgent.GetService(serviceType, serviceKey));
+    {
+        // Handle ActivitySource requests directly - always return our own ActivitySource
+        if (serviceType == typeof(ActivitySource))
+        {
+            return this._activitySource;
+        }
 
-    /// <inheritdoc/>
-    public override string Id => this._innerAgent.Id;
-
-    /// <inheritdoc/>
-    public override string? Name => this._innerAgent.Name;
-
-    /// <inheritdoc/>
-    public override string? Description => this._innerAgent.Description;
-
-    /// <inheritdoc/>
-    public override AgentThread GetNewThread() => this._innerAgent.GetNewThread();
+        // For other service types, use the base delegation logic
+        return base.GetService(serviceType, serviceKey);
+    }
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
@@ -146,7 +139,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         Exception? error = null;
         try
         {
-            response = await this._innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            response = await base.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
             return response;
         }
         catch (Exception ex)
@@ -175,7 +168,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
         try
         {
-            updates = this._innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+            updates = base.RunStreamingAsync(messages, thread, options, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -224,7 +217,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     private Activity? CreateAndConfigureActivity(string operationName, IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
     {
         // Get the GenAI system name for telemetry
-        var chatClientAgent = this._innerAgent as ChatClientAgent;
+        var chatClientAgent = this.InnerAgent as ChatClientAgent;
         Activity? activity = null;
         if (this._activitySource.HasListeners())
         {
