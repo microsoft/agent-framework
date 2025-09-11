@@ -29,8 +29,8 @@ OpenAI.Chat.ChatClient chatClient = new AzureOpenAIClient(
     .GetChatClient(deploymentName);
 
 // Create the agent and provide a factory to add our custom memory component to
-// all threads created by the agent. Here we are using the same user info object for all threads, which
-// means this agent instance shouldn't be used with multiple users or it will leak user info between them.
+// all threads created by the agent. Here each new memory component will have its own
+// user info object, so each thread will have its own memory.
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     Instructions = "You are a friendly assistant. Always address the user by their name.",
@@ -40,11 +40,7 @@ AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 // Create a new thread for the conversation.
 AgentThread thread = agent.GetNewThread();
 
-// It is also possible to add the memory component to an individual thread only instead of
-// via the factory above. This allows you to have different user info objects for different threads.
-// thread.AIContextProvider = new SampleApp.UserInfoMemory(chatClient.AsIChatClient(), userInfo);
-
-Console.WriteLine(">> Thread with blank memory\n");
+Console.WriteLine(">> Use thread with blank memory\n");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", thread));
@@ -54,13 +50,13 @@ Console.WriteLine(await agent.RunAsync("I am 20 years old", thread));
 // We can serialize the thread. The serialized state will include the state of the memory component.
 var threadElement = await thread.SerializeAsync();
 
-Console.WriteLine("\n>> Deserialized Thread with previously created memories\n");
+Console.WriteLine("\n>> Use deserialized thread with previously created memories\n");
 
 // Later we can deserialize the thread and continue the conversation with the previous memory component state.
 var deserializedThread = await agent.DeserializeThreadAsync(threadElement);
 Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedThread));
 
-Console.WriteLine("\n>> Memories from memory component\n");
+Console.WriteLine("\n>> Read memories from memory component\n");
 
 // It's possible to access the memory component via the thread's AIContextProvider property.
 var userInfo = ((UserInfoMemory)deserializedThread.AIContextProvider!).UserInfo;
@@ -69,13 +65,16 @@ var userInfo = ((UserInfoMemory)deserializedThread.AIContextProvider!).UserInfo;
 Console.WriteLine($"MEMORY - User Name: {userInfo.UserName}");
 Console.WriteLine($"MEMORY - User Age: {userInfo.UserAge}");
 
-Console.WriteLine("\n>> New Thread with previously created memories\n");
+Console.WriteLine("\n>> Use new thread with previously created memories\n");
 
 // Create a new thread.
 thread = agent.GetNewThread();
 
-// We can attach the same user info object to this thread, meaning that this thread shares the same memories as the previous thread.
-((UserInfoMemory)thread.AIContextProvider!).UserInfo = userInfo;
+// It is also possible to add the memory component to an individual thread only instead of all
+// threads via the factory above.
+// In this case we will also use the same user info object, so this thread will share the same
+// memories as the previous thread.
+thread.AIContextProvider = new UserInfoMemory(chatClient.AsIChatClient(), userInfo);
 
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.
