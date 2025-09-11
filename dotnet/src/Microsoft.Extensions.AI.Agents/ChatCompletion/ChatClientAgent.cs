@@ -342,12 +342,11 @@ public sealed class ChatClientAgent : AIAgent
     {
         ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
 
+        thread ??= this.GetNewThread();
         if (thread is not ChatClientAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
-
-        typedThread ??= (ChatClientAgentThread)this.GetNewThread();
 
         // Add any existing messages from the thread to the messages to be sent to the chat client.
         List<ChatMessage> threadMessages = [];

@@ -67,12 +67,11 @@ internal sealed class A2AAgent : AIAgent
 
         var a2aMessage = messages.ToA2AMessage();
 
+        thread ??= this.GetNewThread();
         if (thread is not ClientProxyAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
-
-        typedThread ??= (ClientProxyAgentThread)this.GetNewThread();
 
         // Linking the message to the existing conversation, if any.
         a2aMessage.ContextId = typedThread?.ServiceThreadid;
@@ -120,12 +119,11 @@ internal sealed class A2AAgent : AIAgent
 
         var a2aMessage = messages.ToA2AMessage();
 
+        thread ??= this.GetNewThread();
         if (thread is not ClientProxyAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
-
-        typedThread ??= (ClientProxyAgentThread)this.GetNewThread();
 
         // Linking the message to the existing conversation, if any.
         a2aMessage.ContextId = typedThread?.ServiceThreadid;

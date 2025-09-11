@@ -57,14 +57,13 @@ public class CopilotStudioAgent : AIAgent
     {
         Throw.IfNull(messages);
 
+        thread ??= this.GetNewThread();
         if (thread is not ClientProxyAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        typedThread ??= (ClientProxyAgentThread)this.GetNewThread();
         typedThread.ServiceThreadid ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
@@ -95,14 +94,13 @@ public class CopilotStudioAgent : AIAgent
     {
         Throw.IfNull(messages);
 
+        thread ??= this.GetNewThread();
         if (thread is not ClientProxyAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        typedThread ??= (ClientProxyAgentThread)this.GetNewThread();
         typedThread.ServiceThreadid ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
