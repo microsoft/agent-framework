@@ -70,7 +70,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         IList<AITool>? aiTools = null)
     {
         return Task.FromResult(new ChatClientAgent(
-            this._openAIResponseClient.AsNewIChatClient(),
+            this._openAIResponseClient.AsIChatClient(),
             options: new()
             {
                 Name = name,
