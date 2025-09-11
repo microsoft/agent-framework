@@ -2,6 +2,7 @@
 
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,9 +13,39 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Represents an in-memory store for chat messages associated with a specific thread.
 /// </summary>
-internal sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
+public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
 {
-    private readonly List<ChatMessage> _messages = new();
+    private readonly IChatReducer? _chatReducer;
+    private readonly ChatReducerTriggerEvent _reducerTriggerEvent;
+    private List<ChatMessage> _messages = new();
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
+    /// </summary>
+    public InMemoryChatMessageStore()
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
+    /// </summary>
+    /// <param name="chatReducer">An optional <see cref="IChatReducer"/> instance used to process or reduce chat messages. If null, no reduction logic will be applied.</param>
+    /// <param name="reducerTriggerEvent">The event that should trigger the reducer invocation.</param>
+    public InMemoryChatMessageStore(IChatReducer chatReducer, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+    {
+        this._chatReducer = Throw.IfNull(chatReducer);
+        this._reducerTriggerEvent = reducerTriggerEvent;
+    }
+
+    /// <summary>
+    /// Gets the chat reducer used to process or reduce chat messages. If null, no reduction logic will be applied.
+    /// </summary>
+    public IChatReducer? ChatReducer => this._chatReducer;
+
+    /// <summary>
+    /// Gets the event that triggers the reducer invocation in this store.
+    /// </summary>
+    public ChatReducerTriggerEvent ReducerTriggerEvent => this._reducerTriggerEvent;
 
     /// <inheritdoc />
     public int Count => this._messages.Count;
@@ -30,17 +61,32 @@ internal sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessag
     }
 
     /// <inheritdoc />
-    public Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    public async Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(messages);
+
+        if (messages.Count == 0)
+        {
+            return;
+        }
+
         this._messages.AddRange(messages);
-        return Task.CompletedTask;
+
+        if (this._reducerTriggerEvent == ChatReducerTriggerEvent.AfterMessageAdded && this._chatReducer is not null)
+        {
+            this._messages = (await this._chatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
+        }
     }
 
     /// <inheritdoc />
-    public Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
+    public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult<IEnumerable<ChatMessage>>(this._messages);
+        if (this._reducerTriggerEvent == ChatReducerTriggerEvent.BeforeMessagesRetrieval && this._chatReducer is not null)
+        {
+            this._messages = (await this._chatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
+        }
+
+        return this._messages;
     }
 
     /// <inheritdoc />
@@ -117,5 +163,23 @@ internal sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessag
     internal sealed class StoreState
     {
         public IList<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
+    }
+
+    /// <summary>
+    /// Defines the events that can trigger a reducer in the <see cref="InMemoryChatMessageStore"/>.
+    /// </summary>
+    public enum ChatReducerTriggerEvent
+    {
+        /// <summary>
+        /// Trigger the reducer when a new message is added.
+        /// <see cref="AddMessagesAsync(IReadOnlyCollection{ChatMessage}, CancellationToken)"/> will only complete when reducer processing is done.
+        /// </summary>
+        AfterMessageAdded,
+
+        /// <summary>
+        /// Trigger the reducer before messages are retrieved from the store.
+        /// The reducer will process the messages before they are returned to the caller.
+        /// </summary>
+        BeforeMessagesRetrieval
     }
 }
