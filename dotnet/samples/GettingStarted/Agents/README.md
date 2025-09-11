@@ -36,6 +36,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Telemetry with a simple agent](./Agent_Step08_Telemetry/)|This sample demonstrates how to add telemetry to a simple agent|
 |[Dependency injection with a simple agent](./Agent_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
 |[Exposing a simple agent as MCP tool](./Agent_Step10_AsMcpTool/)|This sample demonstrates how to expose an agent as an MCP tool|
+|[Using images with a simple agent](./Agent_Step11_UsingImages/)|This sample demonstrates how to use image multi-modality with an AI agent|
 
 ## Running the samples from the console
 

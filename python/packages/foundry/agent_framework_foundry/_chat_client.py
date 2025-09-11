@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import contextlib
 import json
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
@@ -24,7 +23,7 @@ from agent_framework import (
     UriContent,
     UsageContent,
     UsageDetails,
-    use_tool_calling,
+    use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
@@ -98,17 +97,17 @@ TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 HEADERS = prepend_agent_framework_to_user_agent()
 
 
+@use_function_invocation
 @use_telemetry
-@use_tool_calling
 class FoundryChatClient(BaseChatClient):
     """Azure AI Foundry Chat client."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_ai_foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
     client: AIProjectClient = Field(...)
     credential: AsyncTokenCredential | None = Field(...)
     agent_id: str | None = Field(default=None)
     agent_name: str | None = Field(default=None)
-    ai_model_deployment_name: str | None = Field(default=None)
+    ai_model_id: str | None = Field(default=None)
     thread_id: str | None = Field(default=None)
     _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
@@ -140,6 +139,7 @@ class FoundryChatClient(BaseChatClient):
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
             async_credential: Azure async credential to use for authentication.
+            setup_tracing: Whether to setup tracing for the client. Defaults to True.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
@@ -182,10 +182,24 @@ class FoundryChatClient(BaseChatClient):
             agent_id=agent_id,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
             agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
-            ai_model_deployment_name=foundry_settings.model_deployment_name,  # type: ignore[reportCallIssue]
+            ai_model_id=foundry_settings.model_deployment_name,  # type: ignore[reportCallIssue]
             **kwargs,
         )
         self._should_close_client = should_close_client
+
+    async def setup_foundry_telemetry(self, enable_live_metrics: bool = False) -> None:
+        """Call this method to setup tracing with Foundry.
+
+        This will take the connection string from the project client.
+        It will override any connection string that is set in the environment variables.
+        It will disable any OTLP endpoint that might have been set.
+        """
+        from agent_framework.telemetry import setup_telemetry
+
+        setup_telemetry(
+            application_insights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
+            enable_live_metrics=enable_live_metrics,
+        )
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -241,7 +255,9 @@ class FoundryChatClient(BaseChatClient):
 
         # Get the thread ID
         thread_id: str | None = (
-            chat_options.conversation_id if chat_options.conversation_id is not None else self.thread_id
+            chat_options.conversation_id
+            if chat_options.conversation_id is not None
+            else run_options.get("conversation_id", self.thread_id)
         )
 
         if thread_id is None and tool_results is not None:
@@ -265,12 +281,12 @@ class FoundryChatClient(BaseChatClient):
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self.ai_model_deployment_name:
+            if not self.ai_model_id:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name = self.agent_name
             args = {
-                "model": self.ai_model_deployment_name,
+                "model": self.ai_model_id,
                 "name": agent_name,
                 "headers": HEADERS,
             }
@@ -323,6 +339,7 @@ class FoundryChatClient(BaseChatClient):
             final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
 
             # Now create a new run and stream the results.
+            run_options.pop("conversation_id", None)
             stream = await self.client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
                 final_thread_id,
                 agent_id=agent_id,
@@ -353,21 +370,33 @@ class FoundryChatClient(BaseChatClient):
         self, thread_id: str | None, thread_run: ThreadRun | None, run_options: dict[str, Any]
     ) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
-        if thread_id is None:
-            # No thread ID was provided, so create a new thread.
-            thread = await self.client.agents.threads.create(
-                messages=run_options["additional_messages"],
-                tool_resources=run_options.get("tool_resources"),
-                metadata=run_options.get("metadata"),
+        if thread_id is not None:
+            if thread_run is not None:
+                # There was an active run; we need to cancel it before starting a new run.
+                await self.client.agents.runs.cancel(thread_id, thread_run.id, headers=HEADERS)
+
+            return thread_id
+
+        # No thread ID was provided, so create a new thread.
+        thread = await self.client.agents.threads.create(
+            tool_resources=run_options.get("tool_resources"),
+            metadata=run_options.get("metadata"),
+            headers=HEADERS,
+        )
+        thread_id = thread.id
+        # workaround for: https://github.com/Azure/azure-sdk-for-python/issues/42805
+        # this occurs when otel is enabled
+        # once fixed, in the function above, readd:
+        # `messages=run_options.pop("additional_messages")`
+        for msg in run_options.pop("additional_messages", []):
+            await self.client.agents.messages.create(
+                thread_id=thread_id,
+                role=msg.role,
+                content=msg.content,
+                metadata=msg.metadata,
                 headers=HEADERS,
             )
-            run_options["additional_messages"] = []
-            return thread.id
-
-        if thread_run is not None:
-            # There was an active run; we need to cancel it before starting a new run.
-            await self.client.agents.runs.cancel(thread_id, thread_run.id, headers=HEADERS)
-
+        # and remove until here.
         return thread_id
 
     async def _process_stream_events(
@@ -378,7 +407,7 @@ class FoundryChatClient(BaseChatClient):
         """Process events from the agent stream and yield ChatResponseUpdate objects."""
         # Use 'async with' only if the stream supports async context management (main agent stream).
         # Tool output handlers only support async iteration, not context management.
-        if isinstance(stream, contextlib.AbstractAsyncContextManager):
+        if isinstance(stream, AsyncAgentRunStream):
             async with stream as response_stream:  # type: ignore
                 async for update in self._process_stream_events_from_iterator(response_stream, thread_id):
                     yield update
@@ -387,7 +416,7 @@ class FoundryChatClient(BaseChatClient):
                 yield update
 
     async def _process_stream_events_from_iterator(
-        self, stream_iter: Any, thread_id: str
+        self, stream_iter: AsyncAgentEventHandler[Any], thread_id: str
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
         response_id: str | None = None
@@ -400,6 +429,7 @@ class FoundryChatClient(BaseChatClient):
                     raw_representation=event_data,
                     response_id=response_id,
                     role=Role.ASSISTANT,
+                    ai_model_id=event_data.model,
                 )
             elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
                 response_id = event_data.run_id
@@ -429,7 +459,7 @@ class FoundryChatClient(BaseChatClient):
                         response_id=response_id,
                     )
             elif (
-                event_type == AgentStreamEvent.THREAD_RUN_COMPLETED
+                event_type in [AgentStreamEvent.THREAD_RUN_COMPLETED, AgentStreamEvent.THREAD_RUN_STEP_COMPLETED]
                 and isinstance(event_data, RunStep)
                 and event_data.usage is not None
             ):
@@ -468,16 +498,16 @@ class FoundryChatClient(BaseChatClient):
         """Create function call contents from a tool action event."""
         contents: list[Contents] = []
 
-        if isinstance(event_data.required_action, SubmitToolOutputsAction):
+        if isinstance(event_data, ThreadRun) and isinstance(event_data.required_action, SubmitToolOutputsAction):
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
                 if isinstance(tool_call, RequiredFunctionToolCall):
-                    call_id = json.dumps([response_id, tool_call.id])
-                    function_name = tool_call.function.name
-                    function_arguments = json.loads(tool_call.function.arguments)
                     contents.append(
-                        FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments)
+                        FunctionCallContent(
+                            call_id=f'["{response_id}", "{tool_call.id}"]',
+                            name=tool_call.function.name,
+                            arguments=tool_call.function.arguments,
+                        )
                     )
-
         return contents
 
     async def _close_client_if_needed(self) -> None:
@@ -632,3 +662,11 @@ class FoundryChatClient(BaseChatClient):
         # to update the agent name in the client.
         if agent_name and not self.agent_name:
             self.agent_name = agent_name
+
+    def service_url(self) -> str:
+        """Get the service URL for the chat client.
+
+        Returns:
+            The service URL for the chat client, or None if not set.
+        """
+        return self.client._config.endpoint
