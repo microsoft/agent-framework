@@ -62,7 +62,11 @@ internal class MessageMerger
             List<ChatMessage> result = this.UpdatesByMessageId.Keys.Select(AggregateUpdatesToMessage)
                                                                    .ToList();
 
-            result.AddRange(this.ComputeDangling().Messages);
+            if (this.DanglingUpdates.Count > 0)
+            {
+                result.AddRange(this.ComputeDangling().Messages);
+            }
+
             return result;
 
             ChatMessage AggregateUpdatesToMessage(string messageId)
@@ -126,16 +130,17 @@ internal class MessageMerger
         return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
     }
 
-    public AgentRunResponse ComputeMerged(string primaryResponseId)
+    public AgentRunResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
     {
         List<ChatMessage> messages = [];
         Dictionary<string, AgentRunResponse> responses = new();
+        HashSet<string> agentIds = new();
 
         foreach (string responseId in this._mergeStates.Keys)
         {
             ResponseMergeState mergeState = this._mergeStates[responseId];
 
-            List<AgentRunResponse> responseList = mergeState.UpdatesByMessageId.Keys.Select(messageId => mergeState.ComputeMerged(messageId)).ToList();
+            List<AgentRunResponse> responseList = mergeState.UpdatesByMessageId.Keys.Select(mergeState.ComputeMerged).ToList();
             if (mergeState.DanglingUpdates.Count > 0)
             {
                 responseList.Add(mergeState.ComputeDangling());
@@ -143,13 +148,39 @@ internal class MessageMerger
 
             responseList.Sort(this.CompareByDateTimeOffset);
             responses[responseId] = responseList.Aggregate(MergeResponses);
-            messages.AddRange(responses[responseId].Messages);
+            messages.AddRange(GetMessagesWithCreatedAt(responses[responseId]));
+        }
+
+        UsageDetails? usage = null;
+        AdditionalPropertiesDictionary? additionalProperties = null;
+        HashSet<DateTimeOffset> createdTimes = new();
+
+        foreach (AgentRunResponse response in responses.Values)
+        {
+            if (response.AgentId != null)
+            {
+                agentIds.Add(response.AgentId);
+            }
+
+            if (response.CreatedAt.HasValue)
+            {
+                createdTimes.Add(response.CreatedAt.Value);
+            }
+
+            usage = MergeUsage(usage, response.Usage);
+            additionalProperties = MergeProperties(additionalProperties, response.AdditionalProperties);
         }
 
         messages.AddRange(this._danglingState.ComputeFlattened());
         return new AgentRunResponse(messages)
         {
             ResponseId = primaryResponseId,
+            AgentId = primaryAgentId
+                   ?? primaryAgentName
+                   ?? (agentIds.Count == 1 ? agentIds.First() : null),
+            CreatedAt = DateTimeOffset.Now,
+            Usage = usage,
+            AdditionalProperties = additionalProperties
         };
 
         AgentRunResponse MergeResponses(AgentRunResponse? current, AgentRunResponse incoming)
@@ -170,16 +201,62 @@ internal class MessageMerger
             return new()
             {
                 AgentId = incoming.AgentId ?? current.AgentId,
-                AdditionalProperties = incoming.AdditionalProperties ?? current.AdditionalProperties,
+                AdditionalProperties = MergeProperties(current.AdditionalProperties, incoming.AdditionalProperties),
                 CreatedAt = incoming.CreatedAt ?? current.CreatedAt,
                 Messages = current.Messages.Concat(incoming.Messages).ToList(),
                 ResponseId = current.ResponseId,
                 RawRepresentation = rawRepresentation,
-                Usage = Merge(current.Usage, incoming.Usage),
+                Usage = MergeUsage(current.Usage, incoming.Usage),
             };
         }
 
-        static UsageDetails? Merge(UsageDetails? current, UsageDetails? incoming)
+        static IEnumerable<ChatMessage> GetMessagesWithCreatedAt(AgentRunResponse response)
+        {
+            if (response.Messages.Count == 0)
+            {
+                return [];
+            }
+
+            if (response.CreatedAt is null)
+            {
+                return response.Messages;
+            }
+
+            DateTimeOffset? createdAt = response.CreatedAt;
+            return response.Messages.Select(
+                message => new ChatMessage
+                {
+                    Role = message.Role,
+                    AuthorName = message.AuthorName,
+                    Contents = message.Contents,
+                    MessageId = message.MessageId,
+                    CreatedAt = createdAt,
+                    RawRepresentation = message.RawRepresentation
+                });
+        }
+
+        static AdditionalPropertiesDictionary? MergeProperties(AdditionalPropertiesDictionary? current, AdditionalPropertiesDictionary? incoming)
+        {
+            if (current == null)
+            {
+                return incoming;
+            }
+
+            if (incoming == null)
+            {
+                return current;
+            }
+
+            AdditionalPropertiesDictionary merged = new(current);
+            foreach (string key in incoming.Keys)
+            {
+                merged[key] = incoming[key];
+            }
+
+            return merged;
+        }
+
+        static UsageDetails? MergeUsage(UsageDetails? current, UsageDetails? incoming)
         {
             if (current == null)
             {

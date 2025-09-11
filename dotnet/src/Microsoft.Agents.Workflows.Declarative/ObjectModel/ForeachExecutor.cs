@@ -32,6 +32,8 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     public bool HasValue { get; private set; }
 
+    protected override bool IsDiscreteAction => false;
+
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         this._index = 0;
@@ -78,10 +80,17 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     public async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        this.State.Reset(Throw.IfNull(this.Model.Value));
-        if (this.Model.Index is not null)
+        try
         {
-            this.State.Reset(this.Model.Index);
+            this.State.Reset(Throw.IfNull(this.Model.Value));
+            if (this.Model.Index is not null)
+            {
+                this.State.Reset(this.Model.Index);
+            }
+        }
+        finally
+        {
+            await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
         }
     }
 }
