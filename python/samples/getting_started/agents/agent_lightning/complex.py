@@ -351,7 +351,7 @@ async def main():
         temperature=0.0,
         base_url=proxy_base_url,
         api_key=proxy_api_key,
-        sliding_window=0,  # No sliding window for user simulator
+        sliding_window=30000,  # long sliding window for user simulator
     )
     judge_config = AgentConfiguration(
         model="gpt-4o-mini",
