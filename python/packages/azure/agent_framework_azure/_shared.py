@@ -168,7 +168,7 @@ class AzureOpenAISettings(AFBaseSettings):
 class AzureOpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(

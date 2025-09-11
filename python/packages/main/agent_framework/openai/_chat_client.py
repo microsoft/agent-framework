@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
@@ -15,9 +16,9 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from .._clients import BaseChatClient, use_tool_calling
+from .._clients import BaseChatClient
 from .._logging import get_logger
-from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol
+from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -41,14 +42,17 @@ from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
 
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 __all__ = ["OpenAIChatClient"]
 
 logger = get_logger("agent_framework.openai")
 
 
 # region Base Client
-@use_telemetry
-@use_tool_calling
 class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
     """OpenAI Chat completion class."""
 
@@ -233,11 +237,26 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         )
 
     def _usage_details_from_openai(self, usage: CompletionUsage) -> UsageDetails:
-        return UsageDetails(
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
+        details = UsageDetails(
+            input_token_count=usage.prompt_tokens,
+            output_token_count=usage.completion_tokens,
+            total_token_count=usage.total_tokens,
         )
+        if usage.completion_tokens_details:
+            if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
+                details["completion/accepted_prediction_tokens"] = tokens
+            if tokens := usage.completion_tokens_details.audio_tokens:
+                details["completion/audio_tokens"] = tokens
+            if tokens := usage.completion_tokens_details.reasoning_tokens:
+                details["completion/reasoning_tokens"] = tokens
+            if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
+                details["completion/rejected_prediction_tokens"] = tokens
+        if usage.prompt_tokens_details:
+            if tokens := usage.prompt_tokens_details.audio_tokens:
+                details["prompt/audio_tokens"] = tokens
+            if tokens := usage.prompt_tokens_details.cached_tokens:
+                details["prompt/cached_tokens"] = tokens
+        return details
 
     def _parse_text_from_choice(self, choice: Choice | ChunkChoice) -> TextContent | None:
         """Parse the choice into a TextContent object."""
@@ -362,13 +381,14 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             case _:
                 return content.model_dump(exclude_none=True)
 
-    def service_url(self) -> str | None:
+    @override
+    def service_url(self) -> str:
         """Get the URL of the service.
 
         Override this in the subclass to return the proper URL.
         If the service does not have a URL, return None.
         """
-        return str(self.client.base_url) if self.client else None
+        return str(self.client.base_url) if self.client else "Unknown"
 
 
 # region Public client
@@ -376,6 +396,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
 
+@use_function_invocation
+@use_telemetry
 class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
     """OpenAI Chat completion class."""
 
