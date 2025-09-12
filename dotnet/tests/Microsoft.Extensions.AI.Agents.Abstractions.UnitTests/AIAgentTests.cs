@@ -361,13 +361,13 @@ public class AIAgentTests
 
     private sealed class MockAgent : AIAgent
     {
-        public static new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+        public static new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
             return AIAgent.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
         }
 
         public override Task<AgentRunResponse> RunAsync(
-            IReadOnlyCollection<ChatMessage> messages,
+            IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
@@ -376,7 +376,7 @@ public class AIAgentTests
         }
 
         public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-            IReadOnlyCollection<ChatMessage> messages,
+            IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
