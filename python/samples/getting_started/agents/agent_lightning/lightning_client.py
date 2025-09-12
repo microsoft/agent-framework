@@ -2,6 +2,7 @@
 
 import json
 import os
+import traceback
 from datetime import datetime
 from loguru import logger
 from agentlightning import LitAgent, Trainer, configure_logger
@@ -69,28 +70,48 @@ class Tau2Agent(LitAgent):
         task_obj = Tau2Task.model_validate(task)
         _logger = logger.opt(colors=True)
         _logger.info(f"<cyan>[TASK]\n{str(task_obj)}</cyan>")
-        result = await loop(task_obj, assistant_config, user_config, judge_config, max_steps=100)
-        _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
-        _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
+        try:
+            result = await loop(task_obj, assistant_config, user_config, judge_config, max_steps=100)
+            _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
+            _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
 
-        reward = criteria(task_obj, result, return_reward_info=True)
-        _logger.info(f"<cyan>Final reward:</cyan> {reward.reward}")
+            reward = criteria(task_obj, result, return_reward_info=True)
+            _logger.info(f"<cyan>Final reward:</cyan> {reward.reward}")
+            final_reward = reward.reward
 
-        result["evaluation"] = reward
-        result["config"] = {
-            "assistant": assistant_config,
-            "user": user_config,
-            "judge": judge_config,
-        }
+            result["evaluation"] = reward
+            result["config"] = {
+                "assistant": assistant_config,
+                "user": user_config,
+                "judge": judge_config,
+            }
+        except Exception as e:
+            # We need to send the partial trace back to the server
+            # TODO: this should be handled by AGL
+            _logger.error(f"<red>Error during rollout:</red> {e}")
+            final_reward = 0.0
+            result = {
+                "evaluation": {"reward": final_reward},
+                "error": traceback.format_exc(),
+                "config": {
+                    "assistant": assistant_config,
+                    "user": user_config,
+                    "judge": judge_config,
+                }
+            }
 
         os.makedirs(output_dir, exist_ok=True)
         with open(f"{output_dir}/worker_{self.runner.worker_id}.jsonl", "a") as f:
             f.write(json.dumps(to_dumpable(task_obj, result), default=str) + "\n")
 
-        return reward.reward
+        return final_reward
 
     async def validation_rollout_async(self, task: dict, rollout_id: str, resources: dict) -> float:
-        return await self.training_rollout_async(task, rollout_id, resources)
+        resources_with_temp0 = {
+            "main_llm": resources["main_llm"].model_copy(update={"sampling_parameters": {"temperature": 0.0}})
+        }
+        logger.warning(f"Validation rollout with temperature 0.0")
+        return await self.training_rollout_async(task, rollout_id, resources_with_temp0)
 
 
 if __name__ == "__main__":
