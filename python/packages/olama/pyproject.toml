@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework"
-description = "Microsoft Agent Framework for building AI Agents with Python."
+name = "agent-framework-olama"
+description = "Azure AI Olama integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,30 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "openai>=1.103.0",
-    "pydantic>=2.11.7",
-    "pydantic-settings>=2.10.1",
-    "typing-extensions>=4.14.0",
-    "opentelemetry-api ~= 1.24",
-    "opentelemetry-sdk ~= 1.24",
-    "mcp>=1.12",
-]
-
-[project.optional-dependencies]
-azure = [
-    "agent-framework-azure"
-]
-foundry = [
-    "agent-framework-foundry"
-]
-olama = [
-    "agent-framework-olama"
-]
-workflow = [
-    "agent-framework-workflow"
-]
-runtime = [
-    "agent-framework-runtime"
+    "agent-framework",
+    "ollama >= 0.5.3",
 ]
 
 [tool.uv]
@@ -59,7 +37,6 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
-
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
@@ -68,13 +45,13 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 timeout = 120
 
+[tool.ruff]
+extend = "../../pyproject.toml"
+
 [tool.coverage.run]
 omit = [
     "**/__init__.py"
 ]
-
-[tool.ruff]
-extend = "../../pyproject.toml"
 
 [tool.pyright]
 extend = "../../pyproject.toml"
@@ -96,18 +73,18 @@ disallow_untyped_decorators = true
 disallow_any_unimported = true
 
 [tool.bandit]
-targets = ["agent_framework"]
+targets = ["agent_framework_olama"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
-test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_olama"
+test = "pytest --cov=agent_framework_olama --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
-module-name = "agent_framework"
+module-name = "agent_framework_olama"
 module-root = ""
 
 [build-system]

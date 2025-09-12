@@ -8,6 +8,7 @@ dependencies = [
     "agent-framework-azure",
     "agent-framework-foundry",
     "agent-framework-workflow",
+    "agent-framework-olama",
 ]
 
 [dependency-groups]
@@ -65,6 +66,7 @@ agent-framework-azure = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-workflow = { workspace = true }
 agent-framework-runtime = { workspace = true }
+agent-framework-olama = { workspace = true }
 
 [tool.ruff]
 line-length = 120
