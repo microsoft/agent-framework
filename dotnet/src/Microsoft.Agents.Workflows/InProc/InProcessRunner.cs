@@ -160,7 +160,7 @@ internal class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner 
 
         StepContext currentStep = this.RunContext.Advance();
 
-        if (currentStep.HasMessages)
+        if (currentStep.HasMessages || this.RunContext.HasUnservicedRequests)
         {
             await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
             return true;

@@ -76,7 +76,7 @@ public static class Program
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
         // Restoring from a checkpoint and resuming execution
-        var checkpointIndex = 1;
+        var checkpointIndex = 0;
         Console.WriteLine($"\n\nRestoring from the {checkpointIndex + 1}th checkpoint.");
         CheckpointInfo savedCheckpoint = checkpoints[checkpointIndex];
         // Note that we are restoring the state directly to the same run instance.
