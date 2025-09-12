@@ -3,20 +3,22 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Checkpointing;
 
 internal class WorkflowInfo
 {
+    [JsonConstructor]
     internal WorkflowInfo(
         Dictionary<string, ExecutorInfo> executors,
         Dictionary<string, List<EdgeInfo>> edges,
         HashSet<InputPortInfo> inputPorts,
         TypeId inputType,
         string startExecutorId,
-        TypeId? outputType = null,
-        string? outputCollectorId = null)
+        TypeId? outputType,
+        string? outputCollectorId)
     {
         this.Executors = Throw.IfNull(executors);
         this.Edges = Throw.IfNull(edges);
@@ -93,8 +95,8 @@ internal class WorkflowInfo
         if (workflow.Ports.Count != this.InputPorts.Count ||
             this.InputPorts.Any(portInfo =>
                 !workflow.Ports.TryGetValue(portInfo.PortId, out InputPort? port) ||
-                !portInfo.InputType.IsMatch(port.Request) ||
-                !portInfo.OutputType.IsMatch(port.Response)))
+                !portInfo.RequestType.IsMatch(port.Request) ||
+                !portInfo.ResponseType.IsMatch(port.Response)))
         {
             return false;
         }

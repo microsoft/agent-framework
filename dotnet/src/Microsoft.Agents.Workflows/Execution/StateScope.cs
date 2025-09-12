@@ -71,17 +71,17 @@ internal class StateScope
         return default;
     }
 
-    public IEnumerable<KeyValuePair<string, ExportedState>> ExportStates()
+    public IEnumerable<KeyValuePair<string, PortableValue>> ExportStates()
     {
         return this._stateData.Keys.Select(WrapStates);
 
-        KeyValuePair<string, ExportedState> WrapStates(string key)
+        KeyValuePair<string, PortableValue> WrapStates(string key)
         {
             return new(key, new(this._stateData[key]));
         }
     }
 
-    public void ImportState(string key, ExportedState state)
+    public void ImportState(string key, PortableValue state)
     {
         Throw.IfNullOrEmpty(key);
         Throw.IfNull(state);

@@ -172,15 +172,15 @@ internal class StateManager
         this._queuedUpdates.Clear();
     }
 
-    private static IEnumerable<KeyValuePair<ScopeKey, ExportedState>> ExportScope(StateScope scope)
+    private static IEnumerable<KeyValuePair<ScopeKey, PortableValue>> ExportScope(StateScope scope)
     {
-        foreach (KeyValuePair<string, ExportedState> state in scope.ExportStates())
+        foreach (KeyValuePair<string, PortableValue> state in scope.ExportStates())
         {
             yield return new(new ScopeKey(scope.ScopeId, state.Key), state.Value);
         }
     }
 
-    internal async ValueTask<Dictionary<ScopeKey, ExportedState>> ExportStateAsync()
+    internal async ValueTask<Dictionary<ScopeKey, PortableValue>> ExportStateAsync()
     {
         if (this._queuedUpdates.Count != 0)
         {
@@ -201,7 +201,7 @@ internal class StateManager
         this._queuedUpdates.Clear();
         this._scopes.Clear();
 
-        Dictionary<ScopeKey, ExportedState> importedState = checkpoint.State;
+        Dictionary<ScopeKey, PortableValue> importedState = checkpoint.StateData;
 
         foreach (ScopeKey scopeKey in importedState.Keys)
         {
