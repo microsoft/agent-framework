@@ -26,7 +26,8 @@ dependencies = [
     "agent-framework",
     "redis>=6.4.0",
     "redisvl>=0.8.2",
-    "sentence-transformers"
+    "sentence-transformers",
+    "nltk"
 ]
 
 [tool.uv]
