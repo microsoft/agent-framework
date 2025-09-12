@@ -15,6 +15,7 @@ dotenv run litellm --config config.yaml --host 0.0.0.0 --port 25613
 # agent-lightning
 git clone git@github.com:microsoft/agent-lightning
 cd agent-lightning
+git checkout agent-framework
 pip install --no-cache-dir -e ".[dev,agent]"
 cd ..
 
