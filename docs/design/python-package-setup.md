@@ -53,10 +53,11 @@ Overall the following structure is proposed:
     * core components, will be exposed directly from `agent_framework`:
         * (single) agents (includes threads)
         * tools (includes MCP and OpenAPI)
-        * models/types (name tbd, will include the equivalent of MEAI for dotnet; content types and client abstractions)
+        * types
+        * context_providers
         * logging
+        * workflows (includes multi-agent orchestration)
     * advanced components, will be exposed from `agent_framework.<component>`:
-        * context_providers (tbd)
         * guardrails / filters
         * vector_data (vector stores and other MEVD pieces)
         * text_search
@@ -64,8 +65,7 @@ Overall the following structure is proposed:
         * evaluations
         * utils (optional)
         * telemetry (could also be observability or monitoring)
-        * workflows (includes multi-agent orchestration)
-    * connectors; subpackages
+    * connectors; subpackages*
         * Subpackages are any additional functionality that is useful for a user, to reduce friction they will imported in a similar way as advanced components, however the code for them will be in a separate package, so that they can be installed separately, they must expose all public items, in their main `__init__.py` file, so that they can be imported from the main package without additional import levels.
         In the main package a corresponding folder will be created, with a `__init__.py` file that lazy imports the public items from the subpackage, so that they can be exposed from the main package.
         * Some examples are:
@@ -82,7 +82,7 @@ Overall the following structure is proposed:
     * azure
     * ...
 
-All the init's will use lazy loading so avoid importing the entire package when importing a single component.
+All the init's in the subpackages will use lazy loading so avoid importing the entire package when importing a single component.
 Internal imports will be done using relative imports, so that the package can be used as a namespace package.
 
 ### File structure
@@ -163,78 +163,67 @@ We might add a template subpackage as well, to make it easy to setup, this could
 
 In the [`DEV_SETUP.md`](../../python/DEV_SETUP.md) we will add instructions for how to deal with the path depth issues, especially on Windows, where the maximum path length can be a problem.
 
+### Subpackage scope
+The scope of subpackages is a balance between the number of subpackages we end up with, the size and complexity of each subpackage and its dependencies, and the user experience of installing and using the package.
+
+The two extremes are:
+1. One subpackage per vendor, so a `google` package that contains all Google related connectors, such as `GoogleChatClient`, `BigQueryCollection`, etc.
+    * Pros:
+        - fewer packages to manage, publish and maintain
+        - easier for users to find and install the right package.
+        - users that work primarily with one platform have a single package to install.
+    * Cons:
+        - larger packages with more dependencies
+        - larger installation sizes
+        - more difficult to version, since some parts may be GA, while other are in preview.
+2. One subpackage per connector, so a `google_chat` package, a `bigquery` package, etc.
+    * Pros:
+        - smaller packages with fewer dependencies
+        - smaller installation sizes
+        - easy to version and do lifecycle management on
+    * Cons:
+        - more packages to manage, register, publish and maintain
+        - more extras, means more difficult for users to find and install the right package.
+
+So with these two extremes in mind, we can also define some middle ground options:
+3. Group connectors by vendor and maturity, so that you can graduate something from the i.e. the `google-preview` package to the `google` package when it becomes GA.
+    * Pros:
+        - fewer packages to manage, publish and maintain
+        - easier for users to find and install the right package.
+        - users that work primarily with one platform have a single package to install.
+        - clear what the status is based on extra name
+    * Cons:
+        - moving something from one to the other might be a breaking change
+        - still larger packages with more dependencies
+    It could be mitigated that the `google-preview` package is still imported from `agent_framework.google`, so that the import path does not change, when something graduates, but it is still a clear choice for users to make. And we could then have three extras on that package, `google`, `google-preview` and `google-all` to make it easy to install the right package or just all.
+4. Group connectors by vendor and type, so that you have a `google-chat` package, a `google-data` package, etc.
+    * Pros:
+        - smaller packages with fewer dependencies
+        - smaller installation sizes
+    * Cons:
+        - more packages to manage, register, publish and maintain
+        - more extras, means more difficult for users to find and install the right package.
+        - still keeps the lifecycle more difficult, since some parts may be GA, while other are in preview.
+
+Decision:
+TBD
+
+### Microsoft vs Azure packages
+Another consideration is for Microsoft, since we have a lot of Azure services, but also other Microsoft services, such as Microsoft Copilot Studio, and potentially other services in the future, and maybe Foundry also will be marketed separate from Azure at some point. We could also have both a `microsoft` and an `azure` package, where the `microsoft` package contains all Microsoft services, excluding Azure, while the `azure` package only contains Azure services.
+
+Decision:
+TBD
+
 #### Evolving the package structure
 For each of the advanced components, we have two reason why we may split them into a folder, with an `__init__.py` and optionally a `_files.py`:
 1. If the file becomes too large, we can split it into multiple `_files`, while still keeping the public interface in the `__init__.py` file, this is a non-breaking change
 2. If we want to partially or fully move that code into a separate package.
 In this case we do need to lazy load anything that was moved from the main package to the subpackage, so that existing code still works, and if the subpackage is not installed we can raise a meaningful error.
 
-> **Important**: This setup means that in a users machine, the code from the main package and the code from any installed subpackages will be put in the same folder in their python installation, this means there cannot be name clashes between the contents of a subpackage with each other, or with the main package. So the first level inside of those subpackages should be unique, preferably the same as the subpackage name. A subpackage can contain anything that is useful and related to Agent Framework, in that case for i.e. Azure, that would mean the following structure:
-
-```plaintext
-<!-- inside the Azure subpackage: -->
-agent_framework/
-    azure/
-        __init__.py
-        _chat.py
-        _embeddings.py
-        _context_safety.py
-        ...
-```
 
 ## Coding standards
 
 Coding standards will be maintained in the [`DEV_SETUP.md`](../../python/DEV_SETUP.md) file.
-
-[tool.ruff.lint]
-fixable = ["ALL"]
-unfixable = []
-select = [
-    "ASYNC", # async checks
-    "B", # bugbear checks
-    "CPY", #copyright
-    "D", #pydocstyle checks
-    "E", #error checks
-    "ERA", #remove connected out code
-    "F", #pyflakes checks
-    "FIX", #fixme checks
-    "I", #isort
-    "INP", #implicit namespace package
-    "ISC", #implicit string concat
-    "Q", # flake8-quotes checks
-    "RET", #flake8-return check
-    "RSE", #raise exception parantheses check
-    "RUF", # RUF specific rules
-    "SIM", #flake8-simplify check
-    "T100", # Debugger,
-    "TD", #todos
-    "W", # pycodestyle warning checks
-]
-ignore = [
-    "D100", #allow missing docstring in public module
-    "D104", #allow missing docstring in public package
-    "TD003", #allow missing link to todo issue
-    "FIX002" #allow todo
-]
-
-[tool.ruff.format]
-docstring-code-format = true
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.ruff.lint.per-file-ignores]
-# Ignore all directories named `tests` and `samples`.
-"tests/**" = ["D", "INP", "TD", "ERA001", "RUF"]
-"samples/**" = ["D", "INP", "ERA001", "RUF"]
-# Ignore all files that end in `_test.py`.
-"*_test.py" = ["D"]
-"*.ipynb" = ["CPY", "E501"]
-
-[tool.ruff.lint.flake8-copyright]
-notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
-min-file-size = 1
-```
 
 ### Tooling
 uv and ruff are the main tools, for package management and code formatting/linting respectively.
