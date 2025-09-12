@@ -34,17 +34,18 @@ public static class AgentExtensions
     /// </summary>
     /// <param name="agent">The <see cref="AIAgent" /> to be represented via the created <see cref="AIFunction"/>.</param>
     /// <param name="options">Metadata to use to override defaults inferred from <paramref name="agent"/>.</param>
+    /// <param name="thread">The <see cref="AgentThread"/> to use for the function.</param>
     /// <returns>The created <see cref="AIFunction"/> for invoking the <see cref="AIAgent"/>.</returns>
-    public static AIFunction AsAIFunction(this AIAgent agent, AIFunctionFactoryOptions? options = null)
+    public static AIFunction AsAIFunction(this AIAgent agent, AIFunctionFactoryOptions? options = null, AgentThread? thread = null)
     {
         Throw.IfNull(agent);
 
-        [Description("Invoke an agent to retrieve some information.")]
+        [Description("Run an agent to retrieve some information.")]
         async Task<string> RunAgentAsync(
             [Description("Available information that will guide the agent.")] string query,
             CancellationToken cancellationToken)
         {
-            var response = await agent.RunAsync(query, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var response = await agent.RunAsync(query, thread: thread, cancellationToken: cancellationToken).ConfigureAwait(false);
             return response.Text;
         }
 

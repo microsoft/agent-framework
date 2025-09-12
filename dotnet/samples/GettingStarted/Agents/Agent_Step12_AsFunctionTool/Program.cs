@@ -2,14 +2,6 @@
 
 // This sample shows how to create and use a Azure OpenAI AI agent as a function tool.
 
-using System;
-using System.ComponentModel;
-using Azure.AI.OpenAI;
-using Azure.Identity;
-using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
-using OpenAI;
-
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
@@ -22,8 +14,13 @@ AIAgent weatherAgent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You answer questions about the weather.", name: "WeatherAgent", tools: [AIFunctionFactory.Create(GetWeather)]);
+     .CreateAIAgent(
+        instructions: "You answer questions about the weather.",
+        name: "WeatherAgent",
+        description: "An agent that answers questions about the weather.",
+        tools: [AIFunctionFactory.Create(GetWeather)]);
 
+// Create the main agent, and provide the weather agent as a function tool.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
