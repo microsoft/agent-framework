@@ -177,9 +177,7 @@ async def main() -> None:
 
     # Read Email content from the sample resource file.
     # This keeps the sample deterministic since the model sees the same email every run.
-    email_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "workflow", "resources", "email.txt"
-    )
+    email_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "resources", "email.txt")
 
     with open(email_path) as email_file:  # noqa: ASYNC230
         email = email_file.read()

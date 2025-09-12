@@ -151,11 +151,19 @@ class MockBaseChatClient(BaseChatClient):
         logger.debug(f"Running base chat client inner, with: {messages=}, {chat_options=}, {kwargs=}")
         if not self.run_responses:
             return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
+
+        response = self.run_responses.pop(0)
+
         if chat_options.tool_choice == "none":
             return ChatResponse(
-                messages=ChatMessage(role="assistant", text="I broke out of the function invocation loop...")
+                messages=ChatMessage(
+                    role="assistant",
+                    text="I broke out of the function invocation loop...",
+                ),
+                conversation_id=response.conversation_id,
             )
-        return self.run_responses.pop(0)
+
+        return response
 
     @override
     async def _inner_get_streaming_response(

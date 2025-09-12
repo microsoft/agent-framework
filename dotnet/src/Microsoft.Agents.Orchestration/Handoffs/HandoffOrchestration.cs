@@ -216,7 +216,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
             static void Terminate()
             {
-                if (NewFunctionInvokingChatClient.CurrentContext is not { } ctx)
+                if (FunctionInvokingChatClient.CurrentContext is not { } ctx)
                 {
                     throw new NotSupportedException($"The agent is not configured with a {nameof(FunctionInvokingChatClient)}. Cease execution.");
                 }
