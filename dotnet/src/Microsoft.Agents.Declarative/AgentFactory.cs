@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
@@ -33,9 +34,9 @@ public abstract class AgentFactory
     /// Return true if this instance of <see cref="AgentFactory"/> supports creating agents from the provided <see cref="AgentDefinition"/>
     /// </summary>
     /// <param name="agentDefinition">Definition of the agent to check is supported.</param>
-    public bool IsSupported(AgentDefinition agentDefinition)
+    public bool IsSupported(GptComponentMetadata agentDefinition)
     {
-        return this.Types.Any(s => string.Equals(s, agentDefinition.Type, StringComparison.OrdinalIgnoreCase));
+        return this.Types.Any(s => string.Equals(s, agentDefinition.GetTypeValue(), StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -45,12 +46,12 @@ public abstract class AgentFactory
     /// <param name="agentCreationOptions">Options used when creating the agent.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public async Task<AIAgent> CreateAsync(AgentDefinition agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
+    public async Task<AIAgent> CreateAsync(GptComponentMetadata agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentDefinition);
 
         var agent = await this.TryCreateAsync(agentDefinition, agentCreationOptions, cancellationToken).ConfigureAwait(false);
-        return (AIAgent?)agent ?? throw new NotSupportedException($"Agent type {agentDefinition.Type} is not supported.");
+        return (AIAgent?)agent ?? throw new NotSupportedException($"Agent type {agentDefinition.GetTypeValue()} is not supported.");
     }
 
     /// <summary>
@@ -60,5 +61,5 @@ public abstract class AgentFactory
     /// <param name="agentCreationOptions">Options used when creating the agent.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public abstract Task<AIAgent?> TryCreateAsync(AgentDefinition agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default);
+    public abstract Task<AIAgent?> TryCreateAsync(GptComponentMetadata agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default);
 }

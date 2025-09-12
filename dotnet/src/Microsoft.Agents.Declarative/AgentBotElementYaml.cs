@@ -1,38 +1,41 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using Microsoft.Bot.ObjectModel;
+using Microsoft.Bot.ObjectModel.Yaml;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Shared.Diagnostics;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Microsoft.Agents.Declarative;
 
 /// <summary>
-/// Helper methods for creating <see cref="AgentDefinition"/> from YAML.
+/// Helper methods for creating <see cref="BotElement"/> from YAML.
 /// </summary>
-internal static class AgentDefinitionYaml
+internal static class AgentBotElementYaml
 {
     /// <summary>
-    /// Convert the given YAML text to a <see cref="AgentDefinition"/> model.
+    /// Convert the given YAML text to a <see cref="GptComponentMetadata"/> model.
     /// </summary>
     /// <remarks>
-    /// The <see cref="AgentDefinition"/> will be normalized by calling
-    /// <see cref="Normalize(AgentDefinition, IConfiguration?)"/> before being returned.
+    /// The <see cref="BotElement"/> will be normalized by calling
+    /// <see cref="Normalize(GptComponentMetadata, IConfiguration?)"/> before being returned.
     /// </remarks>
-    /// <param name="text">YAML representation of the <see cref="AgentDefinition"/> to use to create the prompt function.</param>
+    /// <param name="text">YAML representation of the <see cref="BotElement"/> to use to create the prompt function.</param>
     /// <param name="configuration">Optional instance of <see cref="IConfiguration"/> which can provide configuration settings.</param>
     [RequiresDynamicCode("Calls YamlDotNet.Serialization.DeserializerBuilder.DeserializerBuilder()")]
-    public static AgentDefinition FromYaml(string text, IConfiguration? configuration = null)
+    public static GptComponentMetadata FromYaml(string text, IConfiguration? configuration = null)
     {
         Throw.IfNullOrEmpty(text);
 
-        var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .WithTypeConverter(new ToolTypeConverter())
-            .Build();
+        var yamlReader = new StringReader(text);
+        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new InvalidDataException("Text does not contain a valid agent definition.");
 
-        var agentDefinition = deserializer.Deserialize<AgentDefinition>(text);
+        if (rootElement is not GptComponentMetadata agentDefinition)
+        {
+            throw new InvalidDataException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(GptComponentMetadata)}.");
+        }
+
         return Normalize(agentDefinition, configuration);
     }
 
@@ -46,7 +49,7 @@ internal static class AgentDefinitionYaml
     /// </summary>
     /// <param name="agentDefinition">AgentDefinition instance to update.</param>
     /// <param name="configuration">Optional instance of <see cref="IConfiguration"/> which can provide configuration settings.</param>
-    public static AgentDefinition Normalize(AgentDefinition agentDefinition, IConfiguration? configuration)
+    public static GptComponentMetadata Normalize(GptComponentMetadata agentDefinition, IConfiguration? configuration)
     {
         Throw.IfNull(agentDefinition);
 

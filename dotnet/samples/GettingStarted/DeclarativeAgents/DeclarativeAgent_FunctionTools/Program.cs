@@ -67,7 +67,7 @@ var creationOptions = new AgentCreationOptions()
     Configuration = configuration,
     ServiceProvider = serviceProvider,
 };
-var agent = await agentFactory.CreateAgentFromYamlAsync(text, creationOptions);
+var agent = await agentFactory.CreateFromYamlAsync(text, creationOptions);
 
 // Create run options with the function tool.
 var chatOptions = new ChatOptions() { Tools = [AIFunctionFactory.Create(GetWeather)] };

@@ -2,6 +2,8 @@
 using Azure.AI.OpenAI;
 using Azure.Core;
 using Microsoft.Agents.Declarative;
+using Microsoft.Bot.ObjectModel;
+using OpenAI.Chat;
 
 namespace Microsoft.Extensions.AI.Agents.AzureAI;
 
@@ -24,7 +26,7 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
     }
 
     /// <inheritdoc/>
-    public override Task<AIAgent?> TryCreateAsync(AgentDefinition agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
+    public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
     {
         //Throw.IfNull(agentDefinition);
 
@@ -33,35 +35,43 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
         {
             IChatClient? chatClient = null;
 
-            var deploymentName = agentDefinition.Model.Connection?.Options?["deployment_name"] as string;
-            if (string.IsNullOrEmpty(deploymentName))
+            var openAIChatClient = agentCreationOptions.ServiceProvider?.GetService(typeof(ChatClient)) as ChatClient;
+            if (openAIChatClient is not null)
             {
-                throw new InvalidOperationException("The deployment_name must be specified in the agent definition model connection options to create a ChatClient.");
-            }
-
-            var client = agentCreationOptions.ServiceProvider?.GetService(typeof(AzureOpenAIClient)) as AzureOpenAIClient;
-            if (client is not null)
-            {
-                chatClient = client.GetChatClient(deploymentName).AsIChatClient();
+                chatClient = openAIChatClient.AsIChatClient();
             }
             else
             {
-                var endpoint = agentDefinition.Model.Connection?.Endpoint;
-                if (string.IsNullOrEmpty(endpoint))
+                var deploymentName = agentDefinition.GetModelConnectionOptionsDeploymentName();
+                if (string.IsNullOrEmpty(deploymentName))
                 {
-                    throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AzureOpenAIClient.");
+                    throw new InvalidOperationException("The deployment_name must be specified in the agent definition model connection options to create a ChatClient.");
                 }
 
-                if (agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) is not TokenCredential credential)
+                var client = agentCreationOptions.ServiceProvider?.GetService(typeof(AzureOpenAIClient)) as AzureOpenAIClient;
+                if (client is not null)
                 {
-                    throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an AzureOpenAIClient.");
+                    chatClient = client.GetChatClient(deploymentName).AsIChatClient();
                 }
+                else
+                {
+                    var endpoint = agentDefinition.GetModelConnectionEndpoint();
+                    if (string.IsNullOrEmpty(endpoint))
+                    {
+                        throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AzureOpenAIClient.");
+                    }
 
-                chatClient = new AzureOpenAIClient(
-                    new Uri(endpoint),
-                    credential)
-                     .GetChatClient(deploymentName)
-                     .AsIChatClient();
+                    if (agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) is not TokenCredential credential)
+                    {
+                        throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an AzureOpenAIClient.");
+                    }
+
+                    chatClient = new AzureOpenAIClient(
+                        new Uri(endpoint),
+                        credential)
+                         .GetChatClient(deploymentName)
+                         .AsIChatClient();
+                }
             }
 
             agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(), agentCreationOptions.LoggerFactory);
