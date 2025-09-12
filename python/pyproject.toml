@@ -130,7 +130,7 @@ min-file-size = 1
 
 [tool.pytest.ini_options]
 testpaths = '**/tests'
-addopts = "-ra -q -r fEX"
+addopts = "-ra -q -r fEX --import-mode=importlib"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
@@ -195,7 +195,16 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
-all-tests = "pytest --import-mode=importlib --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_copilotstudio --cov=agent_framework_foundry --cov=agent_framework_mem0 --cov=agent_framework_workflow --cov-report=term-missing:skip-covered packages/azure/tests packages/copilotstudio/tests packages/foundry/tests packages/main/tests packages/mem0/tests packages/workflow/tests"
+all-tests = [
+    { cmd = "coverage erase" },
+    { cmd = "pytest --import-mode=importlib --cov=agent_framework_azure --cov-append packages/azure/tests" },
+    { cmd = "pytest --import-mode=importlib --cov=agent_framework_copilotstudio --cov-append packages/copilotstudio/tests" },
+    { cmd = "pytest --import-mode=importlib --cov=agent_framework_foundry --cov-append packages/foundry/tests" },
+    { cmd = "pytest --import-mode=importlib --cov=agent_framework --cov-append packages/main/tests" },
+    { cmd = "pytest --import-mode=importlib --cov=agent_framework_mem0 --cov-append packages/mem0/tests" },
+    { cmd = "pytest --import-mode=importlib --cov=agent_framework_workflow --cov-append packages/workflow/tests" },
+    { cmd = "coverage report --show-missing --skip-covered" }
+]
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"
