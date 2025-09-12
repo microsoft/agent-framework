@@ -1,167 +1,325 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
+    ChatMessage,
+    Role,
+    TextContent,
+)
+from agent_framework.exceptions import ServiceException, ServiceInitializationError
+from microsoft_agents.copilotstudio.client import CopilotClient
 
-from agent_framework_copilotstudio._agent import CopilotStudioSettings
-
-
-class TestCopilotStudioSettings:
-    """Test class for CopilotStudioSettings."""
-
-    def test_copilot_studio_settings_with_env_vars(self, copilot_studio_unit_test_env: dict[str, str]) -> None:
-        """Test CopilotStudioSettings initialization with environment variables."""
-        settings = CopilotStudioSettings()
-
-        assert settings.environmentid == "test-environment-id"
-        assert settings.schemaname == "test-schema-name"
-        assert settings.agentappid == "test-client-id"
-        assert settings.tenantid == "test-tenant-id"
-
-    def test_copilot_studio_settings_direct_values(self) -> None:
-        """Test CopilotStudioSettings initialization with direct values."""
-        settings = CopilotStudioSettings(
-            environmentid="direct-env-id",
-            schemaname="direct-schema-name",
-            agentappid="direct-client-id",
-            tenantid="direct-tenant-id",
-        )
-
-        assert settings.environmentid == "direct-env-id"
-        assert settings.schemaname == "direct-schema-name"
-        assert settings.agentappid == "direct-client-id"
-        assert settings.tenantid == "direct-tenant-id"
-
-    def test_copilot_studio_settings_none_values(self) -> None:
-        """Test CopilotStudioSettings with None values."""
-        with patch.dict("os.environ", {}, clear=True):
-            settings = CopilotStudioSettings()
-
-            assert settings.environmentid is None
-            assert settings.schemaname is None
-            assert settings.agentappid is None
-            assert settings.tenantid is None
+from agent_framework_copilotstudio import CopilotStudioAgent
 
 
-class TestCopilotStudioAgentInitializationLogic:
-    """Test class for CopilotStudioAgent initialization logic without full agent creation."""
+def create_async_generator(items: list[Any]) -> Any:
+    """Helper to create async generator mock."""
 
-    @patch("agent_framework_copilotstudio._agent.acquire_token")
-    def test_token_acquisition_called_with_correct_parameters(
-        self, mock_acquire_token: MagicMock, copilot_studio_unit_test_env: dict[str, str]
-    ) -> None:
-        """Test that token acquisition is called with correct parameters during initialization."""
-        from agent_framework_copilotstudio._agent import CopilotStudioAgent
+    async def async_gen() -> Any:
+        for item in items:
+            yield item
 
-        mock_acquire_token.return_value = "test-token"
-
-        with (
-            patch.object(CopilotStudioAgent, "__init__", return_value=None),
-            patch("agent_framework_copilotstudio._agent.CopilotClient"),
-            patch("agent_framework_copilotstudio._agent.ConnectionSettings"),
-        ):
-            settings = CopilotStudioSettings()
-
-            from agent_framework_copilotstudio._agent import acquire_token
-
-            token = acquire_token(
-                client_id=settings.agentappid or "test-client-id",
-                tenant_id=settings.tenantid or "test-tenant-id",
-                username=None,
-                token_cache=None,
-                scopes=None,
-            )
-
-        assert token == "test-token"
-        mock_acquire_token.assert_called_once_with(
-            client_id="test-client-id",
-            tenant_id="test-tenant-id",
-            username=None,
-            token_cache=None,
-            scopes=None,
-        )
-
-    @pytest.mark.parametrize("exclude_list", [["COPILOTSTUDIOAGENT__ENVIRONMENTID"]], indirect=True)
-    def test_missing_environment_id_validation(self, copilot_studio_unit_test_env: dict[str, str]) -> None:
-        """Test that missing environment ID is properly validated."""
-        settings = CopilotStudioSettings()
-        assert settings.environmentid is None
-
-        if not settings.environmentid:
-            with pytest.raises(ServiceInitializationError, match="Copilot Studio environment ID is required"):
-                raise ServiceInitializationError(
-                    "Copilot Studio environment ID is required. Set via 'environment_id' parameter "
-                    "or 'COPILOTSTUDIOAGENT__ENVIRONMENTID' environment variable."
-                )
-
-    @pytest.mark.parametrize("exclude_list", [["COPILOTSTUDIOAGENT__SCHEMANAME"]], indirect=True)
-    def test_missing_schema_name_validation(self, copilot_studio_unit_test_env: dict[str, str]) -> None:
-        """Test that missing schema name is properly validated."""
-        settings = CopilotStudioSettings()
-        assert settings.schemaname is None
-
-        if not settings.schemaname:
-            with pytest.raises(
-                ServiceInitializationError, match="Copilot Studio agent identifier/schema name is required"
-            ):
-                raise ServiceInitializationError(
-                    "Copilot Studio agent identifier/schema name is required. Set via 'agent_identifier' parameter "
-                    "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
-                )
-
-    @pytest.mark.parametrize("exclude_list", [["COPILOTSTUDIOAGENT__AGENTAPPID"]], indirect=True)
-    def test_missing_client_id_validation(self, copilot_studio_unit_test_env: dict[str, str]) -> None:
-        """Test that missing client ID is properly validated."""
-        settings = CopilotStudioSettings()
-        assert settings.agentappid is None
-
-        if not settings.agentappid:
-            with pytest.raises(ServiceInitializationError, match="Copilot Studio client ID is required"):
-                raise ServiceInitializationError(
-                    "Copilot Studio client ID is required. Set via 'client_id' parameter "
-                    "or 'COPILOTSTUDIOAGENT__AGENTAPPID' environment variable."
-                )
-
-    @pytest.mark.parametrize("exclude_list", [["COPILOTSTUDIOAGENT__TENANTID"]], indirect=True)
-    def test_missing_tenant_id_validation(self, copilot_studio_unit_test_env: dict[str, str]) -> None:
-        """Test that missing tenant ID is properly validated."""
-        settings = CopilotStudioSettings()
-        assert settings.tenantid is None
-
-        if not settings.tenantid:
-            with pytest.raises(ServiceInitializationError, match="Copilot Studio tenant ID is required"):
-                raise ServiceInitializationError(
-                    "Copilot Studio tenant ID is required. Set via 'tenant_id' parameter "
-                    "or 'COPILOTSTUDIOAGENT__TENANTID' environment variable."
-                )
+    return async_gen()
 
 
-class TestCopilotStudioAgentMethods:
-    """Test class for individual methods that can be tested without full initialization."""
+class TestCopilotStudioAgent:
+    """Test cases for CopilotStudioAgent."""
 
-    @patch("agent_framework_copilotstudio._agent.acquire_token")
-    def test_token_acquisition_with_custom_parameters(self, mock_acquire_token: MagicMock) -> None:
-        """Test token acquisition with custom parameters."""
-        from agent_framework_copilotstudio._agent import acquire_token
+    @pytest.fixture
+    def mock_activity(self) -> MagicMock:
+        activity = MagicMock()
+        activity.text = "Test response"
+        activity.type = "message"
+        activity.id = "test-id"
+        activity.from_property.name = "Test Bot"
+        return activity
 
-        mock_acquire_token.return_value = "custom-token"
+    @pytest.fixture
+    def mock_copilot_client(self) -> MagicMock:
+        return MagicMock(spec=CopilotClient)
 
-        # Test the acquire_token function directly
-        token = acquire_token(
-            client_id="custom-client-id",
-            tenant_id="custom-tenant-id",
-            username="custom-user@example.com",
-            token_cache="custom-cache",
-            scopes=["custom-scope"],
-        )
+    @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
+    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
+    def test_init_missing_environment_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+        mock_acquire_token.return_value = "fake-token"
+        mock_settings.return_value.environmentid = None
+        mock_settings.return_value.schemaname = "test-bot"
+        mock_settings.return_value.tenantid = "test-tenant"
+        mock_settings.return_value.agentappid = "test-client"
 
-        assert token == "custom-token"
-        mock_acquire_token.assert_called_once_with(
-            client_id="custom-client-id",
-            tenant_id="custom-tenant-id",
-            username="custom-user@example.com",
-            token_cache="custom-cache",
-            scopes=["custom-scope"],
-        )
+        with pytest.raises(ServiceInitializationError, match="environment ID is required"):
+            CopilotStudioAgent()
+
+    @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
+    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
+    def test_init_missing_bot_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+        mock_acquire_token.return_value = "fake-token"
+        mock_settings.return_value.environmentid = "test-env"
+        mock_settings.return_value.schemaname = None
+        mock_settings.return_value.tenantid = "test-tenant"
+        mock_settings.return_value.agentappid = "test-client"
+
+        with pytest.raises(ServiceInitializationError, match="agent identifier"):
+            CopilotStudioAgent()
+
+    @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
+    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
+    def test_init_missing_tenant_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+        mock_acquire_token.return_value = "fake-token"
+        mock_settings.return_value.environmentid = "test-env"
+        mock_settings.return_value.schemaname = "test-bot"
+        mock_settings.return_value.tenantid = None
+        mock_settings.return_value.agentappid = "test-client"
+
+        with pytest.raises(ServiceInitializationError, match="tenant ID is required"):
+            CopilotStudioAgent()
+
+    @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
+    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
+    def test_init_missing_client_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+        mock_acquire_token.return_value = "fake-token"
+        mock_settings.return_value.environmentid = "test-env"
+        mock_settings.return_value.schemaname = "test-bot"
+        mock_settings.return_value.tenantid = "test-tenant"
+        mock_settings.return_value.agentappid = None
+
+        with pytest.raises(ServiceInitializationError, match="client ID is required"):
+            CopilotStudioAgent()
+
+    def test_init_with_client(self, mock_copilot_client: MagicMock) -> None:
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+        assert agent.client == mock_copilot_client
+        assert agent.id is not None
+
+    @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
+    def test_init_empty_environment_id(self, mock_acquire_token: MagicMock) -> None:
+        mock_acquire_token.return_value = "fake-token"
+        with patch("agent_framework_copilotstudio._agent.CopilotStudioSettings") as mock_settings:
+            mock_settings.return_value.environmentid = ""
+            mock_settings.return_value.schemaname = "test-bot"
+            mock_settings.return_value.tenantid = "test-tenant"
+            mock_settings.return_value.agentappid = "test-client"
+
+            with pytest.raises(ServiceInitializationError, match="environment ID is required"):
+                CopilotStudioAgent()
+
+    @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
+    def test_init_empty_schema_name(self, mock_acquire_token: MagicMock) -> None:
+        mock_acquire_token.return_value = "fake-token"
+        with patch("agent_framework_copilotstudio._agent.CopilotStudioSettings") as mock_settings:
+            mock_settings.return_value.environmentid = "test-env"
+            mock_settings.return_value.schemaname = ""
+            mock_settings.return_value.tenantid = "test-tenant"
+            mock_settings.return_value.agentappid = "test-client"
+
+            with pytest.raises(ServiceInitializationError, match="agent identifier"):
+                CopilotStudioAgent()
+
+    @pytest.mark.asyncio
+    async def test_run_with_string_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
+        """Test run method with string message."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
+
+        response = await agent.run("test message")
+
+        assert isinstance(response, AgentRunResponse)
+        assert len(response.messages) == 1
+        content = response.messages[0].contents[0]
+        assert isinstance(content, TextContent)
+        assert content.text == "Test response"
+        assert response.messages[0].role == Role.ASSISTANT
+
+    @pytest.mark.asyncio
+    async def test_run_with_chat_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
+        """Test run method with ChatMessage."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
+
+        chat_message = ChatMessage(role=Role.USER, contents=[TextContent("test message")])
+        response = await agent.run(chat_message)
+
+        assert isinstance(response, AgentRunResponse)
+        assert len(response.messages) == 1
+        content = response.messages[0].contents[0]
+        assert isinstance(content, TextContent)
+        assert content.text == "Test response"
+        assert response.messages[0].role == Role.ASSISTANT
+
+    @pytest.mark.asyncio
+    async def test_run_with_thread(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
+        """Test run method with existing thread."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+        thread = AgentThread()
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
+
+        response = await agent.run("test message", thread=thread)
+
+        assert isinstance(response, AgentRunResponse)
+        assert len(response.messages) == 1
+        assert thread.service_thread_id == "test-conversation-id"
+
+    @pytest.mark.asyncio
+    async def test_run_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:
+        """Test run method when conversation start fails."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([])
+
+        with pytest.raises(ServiceException, match="Failed to start a new conversation"):
+            await agent.run("test message")
+
+    @pytest.mark.asyncio
+    async def test_run_stream_with_string_message(self, mock_copilot_client: MagicMock) -> None:
+        """Test run_stream method with string message."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        typing_activity = MagicMock()
+        typing_activity.text = "Streaming response"
+        typing_activity.type = "typing"
+        typing_activity.id = "test-typing-id"
+        typing_activity.from_property.name = "Test Bot"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([typing_activity])
+
+        response_count = 0
+        async for response in agent.run_stream("test message"):
+            assert isinstance(response, AgentRunResponseUpdate)
+            content = response.contents[0]
+            assert isinstance(content, TextContent)
+            assert content.text == "Streaming response"
+            response_count += 1
+
+        assert response_count == 1
+
+    @pytest.mark.asyncio
+    async def test_run_stream_with_thread(self, mock_copilot_client: MagicMock) -> None:
+        """Test run_stream method with existing thread."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+        thread = AgentThread()
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        typing_activity = MagicMock()
+        typing_activity.text = "Streaming response"
+        typing_activity.type = "typing"
+        typing_activity.id = "test-typing-id"
+        typing_activity.from_property.name = "Test Bot"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([typing_activity])
+
+        response_count = 0
+        async for response in agent.run_stream("test message", thread=thread):
+            assert isinstance(response, AgentRunResponseUpdate)
+            content = response.contents[0]
+            assert isinstance(content, TextContent)
+            assert content.text == "Streaming response"
+            response_count += 1
+
+        assert response_count == 1
+        assert thread.service_thread_id == "test-conversation-id"
+
+    @pytest.mark.asyncio
+    async def test_run_stream_no_typing_activity(self, mock_copilot_client: MagicMock) -> None:
+        """Test run_stream method with non-typing activity."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        message_activity = MagicMock()
+        message_activity.text = "Message response"
+        message_activity.type = "message"
+        message_activity.id = "test-message-id"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([message_activity])
+
+        response_count = 0
+        async for _response in agent.run_stream("test message"):
+            response_count += 1
+
+        assert response_count == 0
+
+    @pytest.mark.asyncio
+    async def test_run_multiple_activities(self, mock_copilot_client: MagicMock) -> None:
+        """Test run method with multiple message activities."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        activity1 = MagicMock()
+        activity1.text = "First response"
+        activity1.type = "message"
+        activity1.id = "test-id-1"
+        activity1.from_property.name = "Test Bot"
+
+        activity2 = MagicMock()
+        activity2.text = "Second response"
+        activity2.type = "message"
+        activity2.id = "test-id-2"
+        activity2.from_property.name = "Test Bot"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([activity1, activity2])
+
+        response = await agent.run("test message")
+
+        assert isinstance(response, AgentRunResponse)
+        assert len(response.messages) == 2
+
+    @pytest.mark.asyncio
+    async def test_run_list_of_messages(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
+        """Test run method with list of messages."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        conversation_activity = MagicMock()
+        conversation_activity.conversation.id = "test-conversation-id"
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
+        mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
+
+        messages = ["Hello", "How are you?"]
+        response = await agent.run(messages)
+
+        assert isinstance(response, AgentRunResponse)
+        assert len(response.messages) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_stream_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:
+        """Test run_stream method when conversation start fails."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+
+        mock_copilot_client.start_conversation.return_value = create_async_generator([])
+
+        with pytest.raises(ServiceException, match="Failed to start a new conversation"):
+            async for _ in agent.run_stream("test message"):
+                pass
