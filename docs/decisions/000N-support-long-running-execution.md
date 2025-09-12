@@ -1,8 +1,8 @@
 ---
 status: proposed
 contact: semenshi
-date: 2025-07-30
-deciders: markwallace, rbarreto, dmytrostruk, westey-m, stephentoub, petchang
+date: 2025-09-12
+deciders: markwallace, rbarreto, dmytrostruk, westey-m, stephentoub
 informed: {}
 ---
 
@@ -347,7 +347,7 @@ support for long-running executions without breaking existing functionality.
 | Supported modes<sup>1</sup> | Sync, Async               | Async                               | Sync, Async          |
 | Getting status support      | ✅                        | ✅                                 | ✅                   |
 | Getting result support      | ✅                        | ✅                                 | ✅                   |
-| Update support              | ❌                        | ✅                                 | ❌                   |
+| Update support              | ❌                        | ✅                                 | ✅                   |
 | Cancellation support        | ✅                        | ✅                                 | ✅                   |
 | Delete support              | ✅                        | ❌                                 | ❌                   |
 | Non-streaming support       | ✅                        | ✅                                 | ✅                   |
@@ -479,7 +479,7 @@ public class ResponsesChatClient : IChatClient, IAsyncChatClient
         ClientResult<OpenAI.Responses.OpenAIResponse>? result = null;
 
         // If long-running execution mode is enabled, we run the prompt as a long-running execution
-        if(runAsynchronously)
+        if(enableLongRunningResponses)
         {
             // No RunId is provided, so we start a long-running execution
             if(options?.RunId is null)
@@ -742,11 +742,11 @@ Example that starts a long-running execution, gets its status, and cancels and d
 ```csharp
 IChatClient chatClient = new ResponsesChatClient();
 
-ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AsynchronousRun = true });
+ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = true });
 
 if (GetAsyncRunContent(response) is AsyncRunContent asyncRunContent)
 {
-    // Attempt to get result
+    // Get result
     response = await chatClient.GetAsyncRunResultAsync([], new ChatOptions
     { 
         RunId = asyncRunContent.RunId 
@@ -786,18 +786,18 @@ of chat clients that implement the operation-specific interfaces. However, this 
 
 Based on the API analysis, some APIs must be explicitly configured to run in long-running execution mode, 
 while others don't need additional configuration because they either decide themselves whether a request
-should run as a long-running execution, or they always operate in long-running execution mode or quick prompt mode:
+should run as a long-running operation, or they always operate in long-running execution mode or quick prompt mode:
 |        Feature              | OpenAI Responses          | Foundry Agents                      | A2A                  |
 |-----------------------------|---------------------------|-------------------------------------|----------------------|
 | Long-running execution      | User (Background = true)  | Long-running execution is always on | Agent                |
 
 
-The options below consider how to specify the long-running execution mode for chat clients that support both quick prompts and long-running executions.
+The options below consider how to enable long-running execution mode for chat clients that support both quick prompts and long-running executions.
 
-#### Option 2.1 Specify Execution Mode per `Get{Streaming}ResponseAsync` Method Invocation
+#### 2.1 Execution Mode per `Get{Streaming}ResponseAsync` Invocation
 
-This option proposes adding a new nullable `AsynchronousRun` property to the `ChatOptions` type that represents options
-for the `Get{Streaming}ResponseAsync` methods. The property value will be `true` if the caller requests a long-running execution, `false` otherwise.
+This option proposes adding a new nullable `AllowLongRunningResponses` property to the `ChatOptions` class.
+The property value will be `true` if the caller requests a long-running execution, `false`, `null` or omitted otherwise.
   
 Chat clients that work with APIs requiring explicit configuration per operation will use this property to determine whether to run the prompt as a long-running 
 execution or quick prompt. Chat clients that work with APIs that don't require explicit configuration will ignore this property and operate according 
@@ -807,47 +807,46 @@ to their own logic/configuration.
 public class ChatOptions
 {
     // Existing properties...
-    public bool? AsynchronousRun { get; set; }
+    public bool? AllowLongRunningResponses { get; set; }
 }
 
 // Consumer code example
 IChatClient chatClient = ...; // Get an instance of IChatClient
 
-// Start a long-running execution for the prompt
-ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AsynchronousRun = true });
+// Start a long-running execution for the prompt if supported by the underlying API
+ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = true });
 
 // Start a quick prompt
-ChatResponse quickResponse = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AsynchronousRun = false });
+ChatResponse quickResponse = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = false });
 ```
 
-**Pros:** Callers can switch between quick prompts and long-running executions per invocation of the `Get{Streaming}ResponseAsync` methods without changing the client configuration.
+**Pro:** Callers can switch between quick prompts and long-running executions per invocation of the `Get{Streaming}ResponseAsync` methods without changing the client configuration.
 
-**Cons:** This may not be valuable for all callers, as they may not have enough information to decide whether the prompt should run as a long-running execution or quick prompt.
+**Con:** This may not be valuable for all callers, as they may not have enough information to decide whether the prompt should run as a long-running execution or quick prompt.
 
-#### Option 2.2 Specify Execution Mode per Chat Client Instance
+#### 2.2 Execution Mode per Chat Client Instance
 
-This option proposes adding a new `asynchronousRun` parameter to constructors of chat clients that support both quick prompts and long-running executions.
-The parameter value will be `true` if the chat client should operate in long-running execution mode, `false` otherwise.
+This option proposes adding a new `enableLongRunningResponses` parameter to constructors of chat clients that support both quick prompts and long-running executions.
+The parameter value will be `true` if the chat client should operate in long-running execution mode, `false`, `null` or omitted otherwise.
 
 Chat clients that work with APIs requiring explicit configuration will use this parameter to determine whether to run prompts as long-running executions or quick prompts.
 Chat clients that work with APIs that don't require explicit configuration won't have this parameter in their constructors and will operate according to their own logic/configuration.
 
 ```csharp
-
 public class CustomChatClient : IChatClient, IAsyncChatClient
 {
-    private readonly bool _asynchronousRun;
+    private readonly bool _enableLongRunningResponses;
 
-    public CustomChatClient(bool asynchronousRun)
+    public CustomChatClient(bool enableLongRunningResponses)
     {
-        this._asynchronousRun = asynchronousRun;
+        this._enableLongRunningResponses = enableLongRunningResponses;
     }
 
     // Existing methods...
 }
 
 // Consumer code example
-IChatClient chatClient = new CustomChatClient(asynchronousRun: true);
+IChatClient chatClient = new CustomChatClient(enableLongRunningResponses: true);
 
 // Start a long-running execution for the prompt
 ChatResponse response = await chatClient.GetResponseAsync("<prompt>");
@@ -857,12 +856,11 @@ Chat clients can be configured to always operate in long-running execution mode 
 For example, a chat client responsible for generating ideas for images can be configured for quick prompt mode, while a chat client responsible for image 
 generation can be configured to always use long-running execution mode.
 
-**Pros:** Can be beneficial for scenarios where the chat clients need to be configured upfront in accordance with their role in a scenario.
+**Pro:** Can be beneficial for scenarios where chat clients need to be configured upfront in accordance with their role in a scenario.
 
-**Cons:** Less flexible than the previous option, as it requires changing the chat client configuration to switch between quick prompts and long-running executions.
-However, this flexibility might not be needed.
+**Con:** Less flexible than the previous option, as it requires configuring the chat client upfront at instantiation time. However, this flexibility might not be needed.
 
-#### Option 2.3 Combined Approach
+#### 2.3 Combined Approach
 
 This option proposes a combined approach that allows configuration per chat client instance and per `Get{Streaming}ResponseAsync` method invocation.
 
@@ -872,27 +870,28 @@ method invocation. If both are set, the one provided in the `Get{Streaming}Respo
 ```csharp
 public class CustomChatClient : IChatClient, IAsyncChatClient
 {
-    private readonly bool _asynchronousRun;
-    public CustomChatClient(bool asynchronousRun)
+    private readonly bool _enableLongRunningResponses;
+
+    public CustomChatClient(bool enableLongRunningResponses)
     {
-        this._asynchronousRun = asynchronousRun;
+        this._enableLongRunningResponses = enableLongRunningResponses;
     }
     
     public async Task<ChatResponse> GetResponseAsync(string prompt, ChatOptions? options = null, CancellationToken ct = default)
     {
-        bool runAsynchronously = options?.AsynchronousRun ?? this._asynchronousRun;
-        // Logic to handle the prompt based on runAsynchronously...
+        bool enableLongRunningResponses = options?.AllowLongRunningResponses ?? this._enableLongRunningResponses;
+        // Logic to handle the prompt based on enableLongRunningResponses...
     }
 }
 
 // Consumer code example
-IChatClient chatClient = new CustomChatClient(asynchronousRun: true);
+IChatClient chatClient = new CustomChatClient(enableLongRunningResponses: true);
 
 // Start a long-running execution for the prompt
 ChatResponse response = await chatClient.GetResponseAsync("<prompt>");
 
 // Start a quick prompt
-ChatResponse quickResponse = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AsynchronousRun = false });
+ChatResponse quickResponse = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = false });
 ```
 
 **Pros:** Flexible approach that combines the benefits of both previous options.
@@ -944,11 +943,11 @@ it will then call the method to get the result of the long-running execution and
 - Simplifies the API by providing a single, intuitive method for retrieving long-running execution information.
 - More optimal for chat clients that use APIs that return both status and result in a single call, as it avoids unnecessary API calls.
 
-## 4. Place For RunId, Status, and UpdateId of Long-Running Execution
+### 4. Place For RunId, Status, and UpdateId of Long-Running Execution
 
 This section considers different options for exposing the `RunId`, `Status`, and `UpdateId` properties of long-running executions.
 
-### Option 4.1. As AIContent
+#### 4.1. As AIContent
 
 The `AsyncRunContent` class will represent a long-running execution initiated and managed by an agent/LLM.
 Items of this content type will be returned in a chat message as part of the `AgentRunResponse` or `ChatResponse`
@@ -1008,10 +1007,10 @@ This UpdateId should be available together with RunId to callers, allowing them 
 by the RunId from the last received update, identified by the UpdateId.
 TBD: Explore this further if the option is selected.
 
-### Option 4.2. As Properties Of ChatResponse
+#### 4.2. As Properties Of ChatResponse
 TBD
 
-## 5. Streaming Support
+### 5. Streaming Support
 
 All analyzed APIs that support long-running executions also support streaming. 
 
@@ -1031,7 +1030,7 @@ The server's behavior regarding missed events during the disconnection period (e
 <sup>2</sup> The Azure AI Foundry Agents API has an API to start a streaming run but does not have an API to resume streaming from a specific point in the stream.
 However, it has non-streaming APIs to access already started runs, which can be used to emulate streaming resumption by accessing a run and its steps and streaming all the steps after a specific step.
 
-### Required Changes
+#### Required Changes
 
 To support streaming resumption, the following model changes are required:
 
@@ -1041,7 +1040,7 @@ To support streaming resumption, the following model changes are required:
 All the chat clients supporting the streaming resumption will need to return the `SequenceNumber` property as part of the `ChatResponseUpdate` class and 
 honor the `StartAfter` property of the `ChatOptions` class.
 
-### Function Calling
+#### Function Calling
 
 Function calls over streaming are communicated to chat clients through a series of updates. Chat clients accumulate these updates in their internal state to build
 the function call content once the last update has been received. The completed function call content is then returned to the function-calling chat client, 
@@ -1061,7 +1060,7 @@ keep returning sequence number 2, corresponding to the last resumable update rec
 are received and processed, and the model returns a non-function call response, the chat client will then return a sequence number, say 10, which corresponds to the 
 first non-function call update. 
 
-#### Status of Steaming Updates
+##### Status of Steaming Updates
 
 Different APIs, provide different status for streamed function call updates
 
@@ -1113,8 +1112,177 @@ Sequence of updates from Azure AI Foundry Agents API to answer the question "Wha
 
 To be continued...
 
-### Decision Outcome
-TBD
+### 6. Model To Support Long-Running Operations
+
+To support long-running operations, the following values need to be returned by the GetResponseAsync and GetStreamingResponseAsync methods:
+- `ResponseId` - identifier of the long-running execution or an entity representing it, such as a task.
+- `ConversationId` - identifier of the conversation or thread the long-running execution is part of. Some APIs, like Azure AI Foundry Agents, use 
+  this identifier together with the ResponseId to identify a run.
+- `SequenceNumber` - identifier of an update within a stream of updates. This is required to support streaming resumption by the GetStreamingResponseAsync method only.
+- `Status` - status of the long-running execution: whether it is queued, running, failed, cancelled, completed, etc.
+
+These values need to be supplied to subsequent calls of the GetResponseAsync and GetStreamingResponseAsync methods to get the status and result of long-running operations.
+
+#### 6.1 ChatOptions
+
+The following options consider different ways of extending the `ChatOptions` class to include the following properties to support long-running operations:
+- `AllowLongRunningResponses` - a boolean property that indicates whether the caller allows the chat client to run in long-running execution mode if it's supported by the chat client.
+- `ResponseId` - a string property that represents the identifier of the long-running execution or an entity representing it. A non-null value of this property would indicate to chat clients
+that callers want to get the status and result of an existing long-running execution, identified by the property value, rather than starting a new one.
+- `StartAfter` - a string property that represents the sequence number of an update within a stream of updates so that the chat client can resume streaming after the last received update.
+
+##### 6.1.1 Direct Properties in ChatOptions
+
+```csharp
+public class ChatOptions
+{
+    // Existing properties...
+    /// <summary>Gets or sets an optional identifier used to associate a request with an existing conversation.</summary>
+    public string? ConversationId { get; set; }
+    ...
+
+    // New properties...
+    public bool? AllowLongRunningResponses { get; set; }
+    public string? ResponseId { get; set; }
+    public string? StartAfter { get; set; }
+}
+
+// Usage example
+var response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = true });
+
+// If the response indicates a long-running execution, get its status and result
+if(response.Status is {} status)
+{
+    response = await chatClient.GetResponseAsync([], new ChatOptions 
+    { 
+        AllowLongRunningResponses = true,
+        ResponseId = response.ResponseId,
+        ConversationId = response.ConversationId,
+        //StartAfter = response.SequenceNumber // for GetStreamingResponseAsync only
+    });
+}
+
+```
+
+**Con:** Proliferation of long-running operation properties in the `ChatOptions` class.
+
+##### 6.1.2 Encapsulated Properties into Model Class
+
+```csharp
+public class ChatOptions
+{
+    // Existing properties...
+    public string? ConversationId { get; set; } 
+    ...
+    
+    // New properties...
+    public bool? AllowLongRunningResponses { get; set; }
+
+    public LongRunOptions? LongRunOptions { get; set; }
+}
+
+public class LongRunOptions
+{
+    public string? ResponseId { get; set; }
+    public string? ConversationId { get; set; } 
+    public string? StartAfter { get; set; }
+
+    // Alternatively, ChatResponse can have an extension method ToLongRunOptions.
+    public LongRunOptions FromChatResponse(ChatResponse response)
+    {
+        return new LongRunOptions
+        {
+            ResponseId = response.ResponseId,
+            ConversationId = response.ConversationId,
+        };
+    }
+
+    // Alternatively, ChatResponseUpdate can have an extension method ToLongRunOptions.
+    public LongRunOptions FromChatResponseUpdate(ChatResponseUpdate update)
+    {
+        return new LongRunOptions
+        {
+            ResponseId = update.ResponseId,
+            ConversationId = update.ConversationId,
+            StartAfter = update.SequenceNumber,
+        };
+    }
+}
+
+// Usage example
+var response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = true });
+
+// If the response indicates a long-running execution, get its status and result
+if(response.Status is {} status)
+{
+    while(status != ResponseStatus.Completed)
+    {
+        response = await chatClient.GetResponseAsync([], new ChatOptions 
+        { 
+            AllowLongRunningResponses = true,
+            LongRunOptions = LongRunOptions.FromChatResponse(response)
+            // or extension method
+            LongRunOptions = response.ToLongRunOptions()
+            // or implicit conversion
+            LongRunOptions = response
+        });
+    }
+}
+
+```
+
+**Pro:** No proliferation of long-running operation properties in the `ChatOptions` class.
+
+**Con:** Duplicated property `ConversationId`.
+
+#### 6.2 Overloads of GetResponseAsync and GetStreamingResponseAsync
+
+This option proposes introducing overloads of the `GetResponseAsync` and `GetStreamingResponseAsync` methods that will accept long-running operation parameters directly:
+
+```csharp
+public interface ILongRunningChatClient
+{
+    Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        string responseId,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default);
+
+    IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        string responseId,
+        string? startAfter = null,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default);
+}
+
+public class CustomChatClient : IChatClient, ILongRunningChatClient
+{
+    ...
+}
+
+// Usage example
+IChatClient chatClient = ...; // Get an instance of IChatClient
+
+ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = true });
+
+if(response.Status is {} status && chatClient.GetService<ILongRunningChatClient>() is {} longRunningChatClient)
+{
+    while(status.Status != ResponseStatus.Completed)
+    {
+        response = await longRunningChatClient.GetResponseAsync([], response.ResponseId, new ChatOptions { ConversationId = response.ConversationId });
+    }
+    ...
+}
+
+```
+
+**Pros:**
+- No proliferation of long-running operation properties in the ChatOptions class, except for the new AllowLongRunningResponses property discussed in section 2.
+
+**Cons:**
+- Interface switching: Callers need to switch to the `ILongRunningChatClient` interface to get the status and result of long-running executions.
+- An alternative solution for decorating the new methods will have to be put in place.
 
 ## Proposed Design for Supporting Long-Running Executions by AF Agents
 
@@ -1137,13 +1305,13 @@ the draft design for supporting long-running executions by agents is as follows:
   - They will return an item of `AIContent` type, like `TextContent`, as they do today if the prompt is run as a quick prompt.
 - The `AIAgent` class will be extended with a mechanism to indicate supported capabilities of the agent, such as update, cancel, and delete long-running executions.
   - This will allow callers to check if the agent supports a specific operation before calling it.
-- The `asynchronousRun` parameter will be added to the constructors of agents that support both quick prompts and long-running executions.
+- The `enableLongRunningOperations` parameter will be added to the constructors of agents that support both quick prompts and long-running executions.
   - The parameter value will be `true` if the agent should operate in long-running execution mode, `false` otherwise.
-- The `AgentRunOptions` class will be extended with a new `AsynchronousRun` property to allow enabling long-running execution mode per invocation of the `Run{Streaming}Async` methods.
+- The `AgentRunOptions` class will be extended with a new `AllowLongRunningResponses` property to allow enabling long-running execution mode per invocation of the `Run{Streaming}Async` methods.
   - If the property is set to `true`, and the agent supports long-running executions, then the prompt will be run as a long-running execution.
   - If the property is set to `false`, or the agent does not support long-running executions, then the prompt will be run as a quick prompt.
   - The property won't have any effect on agents that can decide themselves whether to run a prompt as a long-running execution or quick prompt.
-  - The property will have precedence over the `asynchronousRun` parameter passed to the agent constructor.
+  - The property will have precedence over the `enableLongRunningOperations` parameter passed to the agent constructor.
 
 **Note:** The exact implementation details can be explored further if this design is agreed on principle.
 
@@ -1169,16 +1337,16 @@ public abstract class AIAgent
 // Agent that support update and cancellation
 public class CustomAgent : AIAgent
 {
-    private readonly bool _asynchronousRun;
+    private readonly bool _enableLongRunningOperations;
 
-    public CustomAgent(bool asynchronousRun)
+    public CustomAgent(bool enableLongRunningOperations)
     {
-        this._asynchronousRun = asynchronousRun;
+        this._enableLongRunningOperations = enableLongRunningOperations;
     }
 
     public override Task<AgentRunResponse> RunAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken ct = default)
     {
-        var runAsynchronously = options?.AsynchronousRun ?? this._asynchronousRun;
+        var enableLongRunningOperations = options?.AllowLongRunningOperations ?? this._enableLongRunningOperations;
         // Logic to run the prompt as a long-running execution or quick prompt...
     }
 
@@ -1204,7 +1372,7 @@ public class CustomAgent : AIAgent
 Example of handling both long-running executions and quick prompts:
 
 ```csharp
-AIAgent agent = new CustomAgent(asynchronousRun: true);
+AIAgent agent = new CustomAgent(enableLongRunningOperations: true);
 
 AgentThread thread = agent.GetNewThread();
 
@@ -1234,7 +1402,7 @@ else
 Example of cancelling a long-running execution:
 
 ```csharp
-AIAgent agent = new CustomAgent(asynchronousRun: true);
+AIAgent agent = new CustomAgent(enableLongRunningOperations: true);
 
 AgentThread thread = agent.GetNewThread();
 
@@ -1270,7 +1438,7 @@ Example of specifying long-running execution mode per invocation of the `RunAsyn
 
 ```csharp
 // Run all prompts as long-running executions
-AIAgent agent = new CustomAgent(asynchronousRun: true);
+AIAgent agent = new CustomAgent(enableLongRunningOperations: true);
 
 AgentThread thread = agent.GetNewThread();
 
@@ -1278,11 +1446,14 @@ AgentThread thread = agent.GetNewThread();
 AgentRunResponse response = await agent.RunAsync("<prompt>", thread);
 
 // Same as above, but explictly specify long-running execution mode
-response = await agent.RunAsync("<prompt>", thread, new AgentRunOptions { AsynchronousRun = true });
+response = await agent.RunAsync("<prompt>", thread, new AgentRunOptions { AllowLongRunningOperations = true });
 
 // Run a quick prompt
-response = await agent.RunAsync("<prompt>", thread, new AgentRunOptions { AsynchronousRun = false });
+response = await agent.RunAsync("<prompt>", thread, new AgentRunOptions { AllowLongRunningOperations = false });
 ```
 
 ## Decision Outcome
-TBD
+
+### Long-Running Execution Support for Chat Clients
+
+### Long-Running Execution Support for AF agents
