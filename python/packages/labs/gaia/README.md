@@ -39,7 +39,7 @@ async def main() -> None:
     await runner.run(run_task, level=1, max_n=5, parallel=2)
 ```
 
-See the [gaia_sample.py](./gaia_sample.py) for more detail.
+See the [gaia_sample.py](./samples/gaia_sample.py) for more detail.
 
 ### Run the evaluation
 
@@ -52,6 +52,9 @@ uv run python run_gaia.py
 By default, the script will first look for cached GAIA data in the `data_gaia_hub` directory,
 and download it if not found.
 The result will be saved to `gaia_results_<timestamp>.jsonl`.
+
+**Don't run the script inside this directory because it will confuse the local `agent_framework` namespace
+package with the real one.**
 
 ## View results
 

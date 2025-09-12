@@ -1,12 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+GAIA Benchmark Sample
+
+To run this sample, execute it from the root directory of the agent-framework repository:
+    cd /path/to/agent-framework
+    uv run python python/packages/labs/gaia/gaia_sample.py
+
+This avoids namespace package conflicts that occur when running from within the gaia package directory.
+"""
+
 from azure.identity.aio import AzureCliCredential
 
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.labs.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
-
-"""
-"""
 
 
 async def run_task(task: Task) -> Prediction:
@@ -61,8 +68,7 @@ async def main() -> None:
         max_n=5,  # Maximum number of tasks to run per level
         parallel=2,  # Number of parallel tasks to run
         timeout=60,  # Timeout per task in seconds
-        out="gaia_results_level1.jsonl",  # Output file to save results (optional)
-        traces_out="gaia_results_level1_traces",  # Directory to save detailed task traces (optional)
+        out="gaia_results_level1.jsonl",  # Output file to save results including detailed traces (optional)
     )
 
     # Print the results.

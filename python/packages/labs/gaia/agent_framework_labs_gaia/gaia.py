@@ -399,7 +399,6 @@ class GAIA:
         parallel: int = 1,
         timeout: int | None = None,
         out: str | None = None,
-        traces_out: str | None = None,
     ) -> list[TaskResult]:
         """
         Run the GAIA benchmark.
@@ -410,8 +409,7 @@ class GAIA:
             max_n: Maximum number of tasks to run per level
             parallel: Number of parallel tasks to run
             timeout: Timeout per task in seconds
-            out: Output file to save results (optional)
-            traces_out: Directory to save detailed traces (optional)
+            out: Output file to save results including detailed traces (optional)
 
         Returns:
             List of TaskResult objects
@@ -511,19 +509,26 @@ class GAIA:
                     self._save_results(results, out)
                     print(f"Results saved to {out}")
 
-            if traces_out:
-                with self.tracer.start_as_current_span(
-                    "gaia.traces.save", kind=SpanKind.INTERNAL, attributes={"gaia.traces.output_dir": traces_out}
-                ):
-                    self._save_traces(results, traces_out)
-                    print(f"Traces saved to {traces_out}")
-
             return results
 
     def _save_results(self, results: list[TaskResult], output_path: str) -> None:
-        """Save results to JSONL file."""
+        """Save results with detailed trace information to JSONL file."""
         with open(output_path, "w", encoding="utf-8") as f:
             for result in results:
+                # Convert messages to serializable format
+                serializable_messages = []
+                if result.prediction.messages:
+                    for msg in result.prediction.messages:
+                        if hasattr(msg, "model_dump"):
+                            # Pydantic model
+                            serializable_messages.append(msg.model_dump())
+                        elif hasattr(msg, "__dict__"):
+                            # Regular object with attributes
+                            serializable_messages.append(vars(msg))
+                        else:
+                            # Fallback to string representation
+                            serializable_messages.append(str(msg))
+
                 record = {
                     "task_id": result.task_id,
                     "level": result.task.level,
@@ -535,62 +540,19 @@ class GAIA:
                     "runtime_seconds": result.runtime_seconds,
                     "error": result.error,
                     "timestamp": datetime.now().isoformat(),
+                    # Include detailed trace information
+                    "task_metadata": result.task.metadata,
+                    "file_name": result.task.file_name,
+                    "messages": serializable_messages,
+                    "prediction_metadata": result.prediction.metadata,
+                    "evaluation_details": result.evaluation.details,
                 }
                 try:
                     import orjson
 
-                    f.write(orjson.dumps(record).decode("utf-8") + "\n")
+                    f.write(orjson.dumps(record, default=str).decode("utf-8") + "\n")
                 except ImportError:
-                    f.write(json.dumps(record) + "\n")
-
-    def _save_traces(self, results: list[TaskResult], traces_dir: str) -> None:
-        """Save detailed traces for each task."""
-        traces_path = Path(traces_dir)
-        traces_path.mkdir(exist_ok=True)
-
-        for result in results:
-            trace_file = traces_path / f"{result.task_id}.json"
-
-            # Convert messages to serializable format
-            serializable_messages = []
-            if result.prediction.messages:
-                for msg in result.prediction.messages:
-                    if hasattr(msg, "model_dump"):
-                        # Pydantic model
-                        serializable_messages.append(msg.model_dump())
-                    elif hasattr(msg, "__dict__"):
-                        # Regular object with attributes
-                        serializable_messages.append(vars(msg))
-                    else:
-                        # Fallback to string representation
-                        serializable_messages.append(str(msg))
-
-            trace_data = {
-                "task": {
-                    "task_id": result.task.task_id,
-                    "question": result.task.question,
-                    "answer": result.task.answer,
-                    "level": result.task.level,
-                    "file_name": result.task.file_name,
-                    "metadata": result.task.metadata,
-                },
-                "prediction": {
-                    "prediction": result.prediction.prediction,
-                    "messages": serializable_messages,
-                    "metadata": result.prediction.metadata,
-                },
-                "evaluation": {
-                    "is_correct": result.evaluation.is_correct,
-                    "score": result.evaluation.score,
-                    "details": result.evaluation.details,
-                },
-                "runtime_seconds": result.runtime_seconds,
-                "error": result.error,
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            with open(trace_file, "w", encoding="utf-8") as f:
-                json.dump(trace_data, f, indent=2, default=str)
+                    f.write(json.dumps(record, default=str) + "\n")
 
 
 def viewer_main() -> None:
