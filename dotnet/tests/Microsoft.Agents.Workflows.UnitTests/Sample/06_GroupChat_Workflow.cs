@@ -37,9 +37,9 @@ internal static class Step6EntryPoint
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorCompleteEvent executorComplete)
+            if (evt is ExecutorCompletedEvent executorCompleted)
             {
-                Debug.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
+                Debug.WriteLine($"{executorCompleted.ExecutorId}: {executorCompleted.Data}");
             }
             else if (evt is AgentRunUpdateEvent update)
             {
