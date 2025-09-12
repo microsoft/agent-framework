@@ -25,6 +25,7 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    ToolProtocol,
     UriContent,
     UsageContent,
     UsageDetails,
@@ -610,7 +611,7 @@ class FoundryChatClient(BaseChatClient):
         return run_options, tool_results
 
     async def _prep_tools(
-        self, tools: list[AITool | MutableMapping[str, Any]]
+        self, tools: list["ToolProtocol" | MutableMapping[str, Any]]
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the run options."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
