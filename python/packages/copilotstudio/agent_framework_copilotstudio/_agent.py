@@ -55,15 +55,15 @@ class CopilotStudioSettings(AFBaseSettings):
 class CopilotStudioAgent(BaseAgent):
     """A Copilot Studio Agent."""
 
-    client: CopilotClient
-    settings: ConnectionSettings | None
+    client: CopilotClient  # type: ignore[no-any-unimported]
+    settings: ConnectionSettings | None  # type: ignore[no-any-unimported]
     environment_id: str | None
     agent_identifier: str | None
     client_id: str | None
     tenant_id: str | None
     token: str | None
-    cloud: PowerPlatformCloud | None
-    agent_type: AgentType | None
+    cloud: PowerPlatformCloud | None  # type: ignore[no-any-unimported]
+    agent_type: AgentType | None  # type: ignore[no-any-unimported]
     custom_power_platform_cloud: str | None
     username: str | None
     token_cache: Any | None
@@ -71,15 +71,15 @@ class CopilotStudioAgent(BaseAgent):
 
     def __init__(
         self,
-        client: CopilotClient | None = None,
-        settings: ConnectionSettings | None = None,
+        client: CopilotClient | None = None,  # type: ignore[no-any-unimported]
+        settings: ConnectionSettings | None = None,  # type: ignore[no-any-unimported]
         environment_id: str | None = None,
         agent_identifier: str | None = None,
         client_id: str | None = None,
         tenant_id: str | None = None,
         token: str | None = None,
-        cloud: PowerPlatformCloud | None = None,
-        agent_type: AgentType | None = None,
+        cloud: PowerPlatformCloud | None = None,  # type: ignore[no-any-unimported]
+        agent_type: AgentType | None = None,  # type: ignore[no-any-unimported]
         custom_power_platform_cloud: str | None = None,
         username: str | None = None,
         token_cache: Any | None = None,
@@ -301,7 +301,9 @@ class CopilotStudioAgent(BaseAgent):
         return conversation_id
 
     async def _process_activities(
-        self, activities: AsyncIterable[Activity], streaming: bool
+        self,
+        activities: AsyncIterable[Activity],
+        streaming: bool,  # type: ignore[no-any-unimported]
     ) -> AsyncIterable[ChatMessage]:
         """Process activities from the Copilot Studio agent.
 
@@ -320,7 +322,9 @@ class CopilotStudioAgent(BaseAgent):
                 yield self._create_chat_message_from_activity(activity, [TextContent(activity.text)])
 
     def _create_chat_message_from_activity(
-        self, activity: Activity, contents: MutableSequence[Contents]
+        self,
+        activity: Activity,
+        contents: MutableSequence[Contents],  # type: ignore[no-any-unimported]
     ) -> ChatMessage:
         """Create a ChatMessage from a Copilot Studio activity.
 
