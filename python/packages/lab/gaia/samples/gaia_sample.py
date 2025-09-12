@@ -5,7 +5,7 @@ GAIA Benchmark Sample
 
 To run this sample, execute it from the root directory of the agent-framework repository:
     cd /path/to/agent-framework
-    uv run python python/packages/labs/gaia/gaia_sample.py
+    uv run python python/packages/lab/gaia/gaia_sample.py
 
 This avoids namespace package conflicts that occur when running from within the gaia package directory.
 """
@@ -13,7 +13,7 @@ This avoids namespace package conflicts that occur when running from within the 
 from azure.identity.aio import AzureCliCredential
 
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.labs.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
+from agent_framework.lab.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
 
 
 async def run_task(task: Task) -> Prediction:

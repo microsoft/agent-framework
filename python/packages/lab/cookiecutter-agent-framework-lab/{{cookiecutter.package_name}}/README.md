@@ -1,17 +1,17 @@
-# Agent Framework Labs - {{ cookiecutter.package_display_name }}
+# Agent Framework Lab - {{ cookiecutter.package_display_name }}
 
 {{ cookiecutter.package_description }}
 
 ## Installation
 
 ```bash
-pip install agent-framework-labs-{{ cookiecutter.package_name }}
+pip install agent-framework-lab-{{ cookiecutter.package_name }}
 ```
 
 ## Usage
 
 ```python
-from agent_framework.labs.{{ cookiecutter.package_name }} import YourClass
+from agent_framework.lab.{{ cookiecutter.package_name }} import YourClass
 
 # Your usage example here
 instance = YourClass()
@@ -32,7 +32,7 @@ Brief description of what this lab package provides and its main features.
 ### Basic Usage
 
 ```python
-from agent_framework.labs.{{ cookiecutter.package_name }} import YourClass
+from agent_framework.lab.{{ cookiecutter.package_name }} import YourClass
 
 # Example usage
 ```
@@ -49,7 +49,7 @@ Document your main classes and functions here.
 
 ## Contributing
 
-This package is part of the Microsoft Agent Framework Labs. Please see the main repository for contribution guidelines.
+This package is part of the Microsoft Agent Framework Lab. Please see the main repository for contribution guidelines.
 
 ## License
 

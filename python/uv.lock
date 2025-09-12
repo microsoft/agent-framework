@@ -26,7 +26,7 @@ members = [
     "agent-framework",
     "agent-framework-azure",
     "agent-framework-foundry",
-    "agent-framework-labs-gaia",
+    "agent-framework-lab-gaia",
     "agent-framework-mem0",
     "agent-framework-project",
     "agent-framework-runtime",
@@ -130,9 +130,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agent-framework-labs-gaia"
+name = "agent-framework-lab-gaia"
 version = "0.1.0b1"
-source = { editable = "packages/labs/gaia" }
+source = { editable = "packages/lab/gaia" }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -175,7 +175,7 @@ dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-labs-gaia", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-lab-gaia", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-workflow", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -220,7 +220,7 @@ requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
     { name = "agent-framework-azure", editable = "packages/azure" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
-    { name = "agent-framework-labs-gaia", editable = "packages/labs/gaia" },
+    { name = "agent-framework-lab-gaia", editable = "packages/lab/gaia" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-workflow", editable = "packages/workflow" },
 ]

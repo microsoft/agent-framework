@@ -1,4 +1,4 @@
-# Agent Framework Labs - GAIA
+# Agent Framework Lab - GAIA
 
 The GAIA benchmark can be used for evaluating agents and workflows built using the Agent Framework.
 It includes built-in benchmarks as well as utilities for running custom evaluations.
@@ -8,7 +8,7 @@ It includes built-in benchmarks as well as utilities for running custom evaluati
 Use `uv` to install the package with GAIA dependencies:
 
 ```bash
-uv pip install "agent-framework-labs-gaia"
+uv pip install "agent-framework-lab-gaia"
 ```
 
 Set up Hugging Face token:
@@ -22,7 +22,7 @@ export HF_TOKEN="hf\*..." # must have access to gaia-benchmark/GAIA
 Create a Python script (e.g., `run_gaia.py`) with the following content:
 
 ```python
-from agent_framework.labs.gaia import GAIA, Task, Prediction, GAIATelemetryConfig
+from agent_framework.lab.gaia import GAIA, Task, Prediction, GAIATelemetryConfig
 
 async def run_task(task: Task) -> Prediction:
     return Prediction(prediction="answer here", messages=[])

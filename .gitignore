@@ -201,5 +201,5 @@ temp*/
 # GAIA data directories
 data_gaia_hub/
 **/data_gaia_hub/
-python/packages/labs/gaia/**/*.jsonl
+python/packages/lab/gaia/**/*.jsonl
 

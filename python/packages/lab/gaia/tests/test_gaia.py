@@ -3,7 +3,7 @@
 """Tests for GAIA benchmark implementation."""
 
 import pytest
-from agent_framework_labs_gaia import gaia_scorer
+from agent_framework_lab_gaia import gaia_scorer
 
 
 class TestGAIAScorer:

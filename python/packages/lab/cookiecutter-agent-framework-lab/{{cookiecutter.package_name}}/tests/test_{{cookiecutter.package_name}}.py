@@ -3,7 +3,7 @@
 """Tests for {{ cookiecutter.package_name }} module."""
 
 import pytest
-from agent_framework_labs_{{cookiecutter.package_name}} import __version__
+from agent_framework_lab_{{cookiecutter.package_name}} import __version__
 
 
 class Test{{cookiecutter.package_name | title}}:

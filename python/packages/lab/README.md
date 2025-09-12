@@ -1,6 +1,6 @@
-# Agent Framework Labs
+# Agent Framework Lab
 
-This directory contains experimental packages for Microsoft Agent Framework that are distributed as separate installable packages under the `agent_framework.labs` namespace.
+This directory contains experimental packages for Microsoft Agent Framework that are distributed as separate installable packages under the `agent_framework.lab` namespace.
 
 ## What are Lab Packages?
 
@@ -13,7 +13,7 @@ one of the following categories:
 
 ## Lab Packages
 
-- [**gaia**](./gaia/): GAIA benchmark implementation (`agent-framework-labs-gaia`)
+- [**gaia**](./gaia/): GAIA benchmark implementation (`agent-framework-lab-gaia`)
 
 ## How do I contribute?
 
@@ -23,7 +23,7 @@ If you want to contribute, please take the following steps:
 1. Follow the [Create a New Lab Package](#create-new-lab-package) guide
    below to create your own lab package.
 2. Create a new repo on GitHub and check in your package there.
-3. Tag your repo with `agent-framework-labs` for bettter discovery.
+3. Tag your repo with `agent-framework-lab` for bettter discovery.
 4. Submit a PR to this repo (github.com/microsoft/agent-framework)
    to add a link to your repo in the [list](#lab-packages) above.
    **The PR title must contain "[New Lab Package]"**.
@@ -41,12 +41,12 @@ contact you directly.
 Each lab package follows this structure:
 
 ```
-packages/labs/{lab_name}/
+packages/lab/{lab_name}/
 ├── agent_framework/
-│   └── labs/
+│   └── lab/
 │       └── {lab_name}/
-│           └── __init__.py          # Imports from agent_framework_labs_{lab_name}
-├── agent_framework_labs_{lab_name}/ # Actual implementation package
+│           └── __init__.py          # Imports from agent_framework_lab_{lab_name}
+├── agent_framework_lab_{lab_name}/ # Actual implementation package
 │   ├── __init__.py                  # Main exports and __version__
 │   ├── {module_files}.py           # Implementation modules
 │   └── py.typed                     # Type hints marker
@@ -71,7 +71,7 @@ pip install cookiecutter
 Then go to the directory where you want to create the package:
 
 ```bash
-cookiecutter /path/to/agent-framework/python/packages/labs/cookiecutter-agent-framework-lab
+cookiecutter /path/to/agent-framework/python/packages/lab/cookiecutter-agent-framework-lab
 ```
 
 You will be prompted for:
@@ -83,7 +83,7 @@ You will be prompted for:
 
 ### After Package Creation
 
-1. **Implement your functionality** in `agent_framework_labs_{package_name}/`
+1. **Implement your functionality** in `agent_framework_lab_{package_name}/`
 2. **Update exports** in `__init__.py` `__all__` list
 3. **Add dependencies** to `pyproject.toml`
 4. **Write tests** in the `tests/` directory
@@ -98,11 +98,11 @@ After creating your package, add it to the workspace configuration:
 # Add to dependencies section:
 dependencies = [
     # ... existing packages ...
-    "agent-framework-labs-{your_package_name}",
+    "agent-framework-lab-{your_package_name}",
 ]
 
 # Add to [tool.uv.sources] section:
-agent-framework-labs-{your_package_name} = { workspace = true }
+agent-framework-lab-{your_package_name} = { workspace = true }
 ```
 
 ### Usage
@@ -118,13 +118,13 @@ pip install git+https://github.com/your-username/your-lab-package-repo.git
 2. or from PyPI if you have uploaded your lab package there:
 
 ```bash
-pip install agent-framework-labs-{your_package_name}
+pip install agent-framework-lab-{your_package_name}
 ```
 
 Then, they can use your lab package:
 
 ```python
-from agent_framework.labs.{your_package_name} import YourClass, your_function
+from agent_framework.lab.{your_package_name} import YourClass, your_function
 
 # Use the functionality
 instance = YourClass()
@@ -133,8 +133,8 @@ result = your_function()
 
 ## Guidelines
 
-1. **Naming**: Use lowercase with hyphens for package names (`agent-framework-labs-{name}`)
-2. **Namespace**: Always use `agent_framework.labs.{name}` for imports
+1. **Naming**: Use lowercase with hyphens for package names (`agent-framework-lab-{name}`)
+2. **Namespace**: Always use `agent_framework.lab.{name}` for imports
 3. **Versioning**: Start with `0.1.0b1` for beta releases
 4. **Dependencies**: Minimize external dependencies, always include `agent-framework`
 5. **Documentation**: Include comprehensive README with usage examples

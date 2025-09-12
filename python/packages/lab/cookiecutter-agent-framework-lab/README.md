@@ -5,7 +5,7 @@ This is a cookiecutter template for creating new lab packages in the Microsoft A
 ## Usage
 
 ```bash
-cd /path/to/agent-framework/python/packages/labs
+cd /path/to/agent-framework/python/packages/lab
 cookiecutter ./cookiecutter-agent-framework-lab
 ```
 
@@ -27,10 +27,10 @@ The template creates a complete lab package structure:
 ```
 {package_name}/
 ├── agent_framework/
-│   └── labs/
+│   └── lab/
 │       └── {package_name}/
 │           └── __init__.py
-├── agent_framework_labs_{package_name}/
+├── agent_framework_lab_{package_name}/
 │   ├── __init__.py
 │   └── py.typed
 ├── tests/
@@ -43,7 +43,7 @@ The template creates a complete lab package structure:
 
 ## After Generation
 
-1. Implement your functionality in `agent_framework_labs_{package_name}/`
+1. Implement your functionality in `agent_framework_lab_{package_name}/`
 2. Update the `__all__` exports in `__init__.py`
 3. Add your dependencies to `pyproject.toml`
 4. Write comprehensive tests
@@ -55,4 +55,4 @@ Don't forget to add your new package to the workspace:
 
 1. Add to `python/pyproject.toml` dependencies
 2. Add to `[tool.uv.sources]` section
-3. Test installation with `uv run python -c "from agent_framework.labs.{name} import *"`
+3. Test installation with `uv run python -c "from agent_framework.lab.{name} import *"`
