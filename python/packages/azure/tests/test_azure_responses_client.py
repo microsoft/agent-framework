@@ -491,7 +491,7 @@ async def test_azure_responses_client_agent_level_tool_persistence():
 async def test_azure_responses_client_agent_chat_options_run_level() -> None:
     """Integration test for comprehensive ChatOptions parameter coverage with Azure Response Agent."""
     async with ChatAgent(
-        chat_client=AzureResponsesClient(),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         response = await agent.run(
@@ -514,7 +514,7 @@ async def test_azure_responses_client_agent_chat_options_run_level() -> None:
 async def test_azure_responses_client_agent_chat_options_agent_level() -> None:
     """Integration test for comprehensive ChatOptions parameter coverage with Azure Response Agent."""
     async with ChatAgent(
-        chat_client=AzureResponsesClient(),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
         max_tokens=100,
         temperature=0.7,
@@ -545,7 +545,7 @@ async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
     )
 
     async with ChatAgent(
-        chat_client=AzureResponsesClient(),
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
@@ -565,7 +565,7 @@ async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
-    azure_responses_client = AzureResponsesClient()
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClientProtocol)
 
@@ -590,7 +590,7 @@ async def test_azure_responses_client_file_search() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
-    azure_responses_client = AzureResponsesClient()
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
 
     assert isinstance(azure_responses_client, ChatClientProtocol)
 
