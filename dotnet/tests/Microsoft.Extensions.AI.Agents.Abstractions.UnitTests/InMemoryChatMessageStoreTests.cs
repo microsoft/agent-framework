@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Moq;
 
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
@@ -14,6 +15,36 @@ namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 /// </summary>
 public class InMemoryChatMessageStoreTests
 {
+    [Fact]
+    public void Constructor_Throws_ForNullReducer()
+    {
+        // Arrange & Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new InMemoryChatMessageStore(null!));
+    }
+
+    [Fact]
+    public void Constructor_DefaultsToBeforeMessageRetrieval_ForNotProvidedTriggerEvent()
+    {
+        // Arrange & Act
+        var reducerMock = new Mock<IChatReducer>();
+        var store = new InMemoryChatMessageStore(reducerMock.Object);
+
+        // Assert
+        Assert.Equal(InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval, store.ReducerTriggerEvent);
+    }
+
+    [Fact]
+    public void Constructor_Arguments_SetOnPropertiesCorrectly()
+    {
+        // Arrange & Act
+        var reducerMock = new Mock<IChatReducer>();
+        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded);
+
+        // Assert
+        Assert.Same(reducerMock.Object, store.ChatReducer);
+        Assert.Equal(InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded, store.ReducerTriggerEvent);
+    }
+
     [Fact]
     public async Task AddMessagesAsyncAddsMessagesAndReturnsNullThreadIdAsync()
     {
@@ -412,5 +443,111 @@ public class InMemoryChatMessageStoreTests
         Assert.Equal(2, messages.Count);
         Assert.Same(message1, messages[0]);
         Assert.Same(message2, messages[1]);
+    }
+
+    [Fact]
+    public async Task AddMessagesAsync_WithReducer_AfterMessageAdded_InvokesReducerAsync()
+    {
+        // Arrange
+        var originalMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.Assistant, "Hi there!")
+        };
+        var reducedMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Reduced")
+        };
+
+        var reducerMock = new Mock<IChatReducer>();
+        reducerMock
+            .Setup(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(reducedMessages);
+
+        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded);
+
+        // Act
+        await store.AddMessagesAsync(originalMessages, CancellationToken.None);
+
+        // Assert
+        Assert.Single(store);
+        Assert.Equal("Reduced", store[0].Text);
+        reducerMock.Verify(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetMessagesAsync_WithReducer_BeforeMessagesRetrieval_InvokesReducerAsync()
+    {
+        // Arrange
+        var originalMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.Assistant, "Hi there!")
+        };
+        var reducedMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Reduced")
+        };
+
+        var reducerMock = new Mock<IChatReducer>();
+        reducerMock
+            .Setup(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(reducedMessages);
+
+        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
+        await store.AddMessagesAsync(originalMessages, CancellationToken.None);
+
+        // Act
+        var result = (await store.GetMessagesAsync(CancellationToken.None)).ToList();
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal("Reduced", result[0].Text);
+        reducerMock.Verify(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AddMessagesAsync_WithReducer_ButWrongTrigger_DoesNotInvokeReducerAsync()
+    {
+        // Arrange
+        var originalMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        var reducerMock = new Mock<IChatReducer>();
+
+        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
+
+        // Act
+        await store.AddMessagesAsync(originalMessages, CancellationToken.None);
+
+        // Assert
+        Assert.Single(store);
+        Assert.Equal("Hello", store[0].Text);
+        reducerMock.Verify(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetMessagesAsync_WithReducer_ButWrongTrigger_DoesNotInvokeReducerAsync()
+    {
+        // Arrange
+        var originalMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+
+        var reducerMock = new Mock<IChatReducer>();
+
+        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded);
+        store.Add(originalMessages[0]);
+
+        // Act
+        var result = (await store.GetMessagesAsync(CancellationToken.None)).ToList();
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal("Hello", result[0].Text);
+        reducerMock.Verify(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }
