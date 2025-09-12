@@ -5,33 +5,38 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Microsoft.Extensions.AI.Agents;
+namespace Microsoft.Extensions.AI.Agents.A2A;
 
 /// <summary>
-/// A thread type that may be used by any agent that proxies a remote agent where the remote agent has its own thread management.
+/// Thread for A2A based agents.
 /// </summary>
-public class ProxyAgentThread : AgentThread
+public sealed class A2AAgentThread : AgentThread
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="ProxyAgentThread"/> class.
+    /// Initializes a new instance of the <see cref="A2AAgentThread"/> class.
     /// </summary>
-    public ProxyAgentThread()
+    internal A2AAgentThread()
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ProxyAgentThread"/> class from serialized state.
+    /// Initializes a new instance of the <see cref="A2AAgentThread"/> class from serialized state.
     /// </summary>
     /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
-    public ProxyAgentThread(JsonElement serializedThreadState)
+    internal A2AAgentThread(JsonElement serializedThreadState)
     {
+        if (serializedThreadState.ValueKind == JsonValueKind.Undefined || serializedThreadState.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
         var state = JsonSerializer.Deserialize(
             serializedThreadState,
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+            A2AAgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
-        if (state?.ServiceThreadId is string threadId)
+        if (state?.ContextId is string contextId)
         {
-            this.ServiceThreadId = threadId;
+            this.ContextId = contextId;
         }
     }
 
@@ -45,20 +50,20 @@ public class ProxyAgentThread : AgentThread
     {
         var state = new ThreadState
         {
-            ServiceThreadId = this.ServiceThreadId
+            ContextId = this.ContextId
         };
 
-        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
+        return JsonSerializer.SerializeToElement(state, A2AAgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
     }
 
     /// <summary>
-    /// Gets or sets the id of the service thread to support cases where the thread is owned by an underlying agent service.
+    /// Gets the A2A context id that is being used to communicate with the A2A service.
     /// </summary>
-    public virtual string? ServiceThreadId { get; set; }
+    public string? ContextId { get; internal set; }
 
     internal sealed class ThreadState
     {
-        [JsonPropertyName("serviceThreadId")]
-        public string? ServiceThreadId { get; set; }
+        [JsonPropertyName("contextId")]
+        public string? ContextId { get; set; }
     }
 }

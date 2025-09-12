@@ -4,10 +4,10 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Microsoft.Extensions.AI.Agents;
+namespace Microsoft.Extensions.AI.Agents.A2A;
 
-/// <summary>Provides a collection of utility methods for working with JSON data in the context of agents.</summary>
-public static partial class AgentAbstractionsJsonUtilities
+/// <summary>Provides a collection of utility methods for working with JSON data in the context of A2A agents.</summary>
+internal static partial class A2AAgentJsonUtilities
 {
     /// <summary>
     /// Gets the <see cref="JsonSerializerOptions"/> singleton used as the default in JSON serialization operations.
@@ -40,7 +40,7 @@ public static partial class AgentAbstractionsJsonUtilities
         JsonSerializerOptions options = new(JsonContext.Default.Options);
 
         // Chain with all supported types from Microsoft.Extensions.AI.Abstractions.
-        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         options.MakeReadOnly();
         return options;
@@ -52,12 +52,7 @@ public static partial class AgentAbstractionsJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // Agent abstraction types
-    [JsonSerializable(typeof(AgentRunOptions))]
-    [JsonSerializable(typeof(AgentRunResponse))]
-    [JsonSerializable(typeof(AgentRunResponse[]))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate[]))]
-    [JsonSerializable(typeof(InMemoryChatMessageStore.StoreState))]
+    [JsonSerializable(typeof(A2AAgentThread.ThreadState))]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

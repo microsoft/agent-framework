@@ -203,7 +203,7 @@ public sealed class ChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
-        => new ChatClientAgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null) };
+        => new ChatClientAgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedStoreState = default, JsonSerializerOptions = null }) };
 
     /// <inheritdoc/>
     public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
@@ -407,7 +407,7 @@ public sealed class ChatClientAgent : AIAgent
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
             // with the custom MessageStore so that it has somewhere to store the chat history.
-            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null);
+            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedStoreState = default, JsonSerializerOptions = null });
         }
     }
 

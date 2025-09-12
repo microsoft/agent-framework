@@ -13,7 +13,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Thread for chat client based agents.
 /// </summary>
-public sealed class ChatClientAgentThread : ProxyAgentThread
+public sealed class ChatClientAgentThread : AgentThread
 {
     private string? _serviceThreadId;
     private IChatMessageStore? _messageStore;
@@ -21,7 +21,7 @@ public sealed class ChatClientAgentThread : ProxyAgentThread
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class.
     /// </summary>
-    public ChatClientAgentThread()
+    internal ChatClientAgentThread()
     {
     }
 
@@ -31,10 +31,10 @@ public sealed class ChatClientAgentThread : ProxyAgentThread
     /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="chatMessageStoreFactory">An optional factory function to create a custom <see cref="IChatMessageStore"/>.</param>
-    public ChatClientAgentThread(
+    internal ChatClientAgentThread(
         JsonElement serializedThreadState,
         JsonSerializerOptions? jsonSerializerOptions = null,
-        Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = null)
+        Func<ChatClientAgentOptions.ChatMessageStoreFactoryContext, IChatMessageStore>? chatMessageStoreFactory = null)
     {
         var state = JsonSerializer.Deserialize(
             serializedThreadState,
@@ -48,7 +48,7 @@ public sealed class ChatClientAgentThread : ProxyAgentThread
             return;
         }
 
-        this._messageStore = chatMessageStoreFactory?.Invoke(state?.StoreState ?? default, jsonSerializerOptions);
+        this._messageStore = chatMessageStoreFactory?.Invoke(new() { SerializedStoreState = state?.StoreState ?? default, JsonSerializerOptions = jsonSerializerOptions });
 
         if (this._messageStore is null)
         {
@@ -79,10 +79,10 @@ public sealed class ChatClientAgentThread : ProxyAgentThread
     /// to fork the thread with each iteration.
     /// </para>
     /// </remarks>
-    public override string? ServiceThreadId
+    public string? ServiceThreadId
     {
         get => this._serviceThreadId;
-        set
+        internal set
         {
             if (string.IsNullOrWhiteSpace(this._serviceThreadId) && string.IsNullOrWhiteSpace(value))
             {
@@ -121,7 +121,7 @@ public sealed class ChatClientAgentThread : ProxyAgentThread
     public IChatMessageStore? MessageStore
     {
         get => this._messageStore;
-        set
+        internal set
         {
             if (this._messageStore is null && value is null)
             {

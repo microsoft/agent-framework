@@ -42,11 +42,11 @@ public class CopilotStudioAgent : AIAgent
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
-        => new ProxyAgentThread();
+        => new CopilotStudioAgentThread();
 
     /// <inheritdoc/>
     public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new ProxyAgentThread(serializedThread));
+        => new(new CopilotStudioAgentThread(serializedThread));
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
@@ -58,17 +58,17 @@ public class CopilotStudioAgent : AIAgent
         Throw.IfNull(messages);
 
         thread ??= this.GetNewThread();
-        if (thread is not ProxyAgentThread typedThread)
+        if (thread is not CopilotStudioAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        typedThread.ServiceThreadId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ServiceThreadId, cancellationToken), streaming: false, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: false, this._logger);
         var responseMessagesList = new List<ChatMessage>();
         await foreach (var message in responseMessages.ConfigureAwait(false))
         {
@@ -95,17 +95,17 @@ public class CopilotStudioAgent : AIAgent
         Throw.IfNull(messages);
 
         thread ??= this.GetNewThread();
-        if (thread is not ProxyAgentThread typedThread)
+        if (thread is not CopilotStudioAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        typedThread.ServiceThreadId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ServiceThreadId, cancellationToken), streaming: true, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
