@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import argparse
+import traceback
 import pandas as pd
 from datetime import datetime
 from loguru import logger
@@ -13,17 +14,30 @@ from complex import criteria, loop, AgentConfiguration
 
 
 def to_dumpable(task: Task, result: dict) -> dict:
-    return {
-        "id": task.id,
-        "evaluation": result["evaluation"].model_dump(),
-        "config": result["config"],
-        "termination_reason": result["termination_reason"].value,
-        "messages": [m.model_dump() for m in result["messages"]],
-        "task": task.model_dump(),
-    }
+    if "error" in result:
+        return {
+            "id": task.id,
+            "error": result["error"],
+            "evaluation": {
+                "reward": 0.0,
+            },
+            "config": result["config"],
+            "task": task.model_dump(),
+        }
+    else:
+        return {
+            "id": task.id,
+            "evaluation": result["evaluation"].model_dump(),
+            "config": result["config"],
+            "termination_reason": result["termination_reason"].value,
+            "messages": [m.model_dump() for m in result["messages"]],
+            "task": task.model_dump(),
+        }
 
 
-async def main(assistant_model: str, assistant_sliding_window: int, user_model: str, judge_model: str, debug_task_id: str | None):
+async def main(
+    assistant_model: str, assistant_sliding_window: int, user_model: str, judge_model: str, debug_task_id: str | None
+):
     # Read parquet files to get task counts
     train_tasks_df = pd.read_parquet("data/tasks_train.parquet")
     test_tasks_df = pd.read_parquet("data/tasks_test.parquet")
@@ -100,25 +114,51 @@ async def main(assistant_model: str, assistant_sliding_window: int, user_model: 
         if task.user_scenario and task.user_scenario.instructions:
             _logger.info(f"<cyan>User scenario:</cyan> {task.user_scenario.instructions.reason_for_call}")
 
-        result = await loop(task, assistant_config, user_config, judge_config, max_steps=100)
-        _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
-        _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
+        try:
+            result = await loop(task, assistant_config, user_config, judge_config, max_steps=100)
+            _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
+            _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
 
-        reward = criteria(task, result, return_reward_info=True)
-        result["evaluation"] = reward
-        result["config"] = {
-            "assistant": assistant_config,
-            "user": user_config,
-            "judge": judge_config,
-        }
-        reward_str = str(reward).replace("<", r"\<")
-        _logger.info(f"<cyan>Final evaluation:</cyan> {reward_str}")
+            reward = criteria(task, result, return_reward_info=True)
+            result["evaluation"] = reward
+            result["config"] = {
+                "assistant": assistant_config,
+                "user": user_config,
+                "judge": judge_config,
+            }
+            reward_str = str(reward).replace("<", r"\<")
+            _logger.info(f"<cyan>Final evaluation:</cyan> {reward_str}")
 
-        if result_fp is not None:
-            result_fp.write(json.dumps(to_dumpable(task, result), default=str) + "\n")
+            if result_fp is not None:
+                result_fp.write(json.dumps(to_dumpable(task, result), default=str) + "\n")
 
-        # Track results by subset
-        reward_value = reward.reward
+            # Track results by subset
+            reward_value = reward.reward
+        except Exception as e:
+            # Catch all errors
+            _logger.error(f"<red>Error testing task #{task.id}:</red> {e}")
+            if result_fp is not None:
+                result_fp.write(
+                    json.dumps(
+                        to_dumpable(
+                            task,
+                            {
+                                "error": traceback.format_exc(),
+                                "config": {
+                                    "assistant": assistant_config,
+                                    "user": user_config,
+                                    "judge": judge_config,
+                                },
+                            },
+                        ),
+                        default=str,
+                    )
+                    + "\n"
+                )
+
+            traceback.print_exc()
+            reward_value = 0.0
+
         all_results.append(reward_value)
 
         if task.id in train_task_ids:
@@ -146,7 +186,9 @@ if __name__ == "__main__":
     parser.add_argument("--assistant-sliding-window", type=int, default=4000, help="Assistant sliding window size")
     parser.add_argument("--user-model", type=str, default="gpt-4o-mini", help="User model id")
     parser.add_argument("--judge-model", type=str, default="gpt-4o-mini", help="Judge model id")
-    parser.add_argument("--debug-task-id", type=str, default=None, help="Debug a specific task ID (disables result file creation)")
+    parser.add_argument(
+        "--debug-task-id", type=str, default=None, help="Debug a specific task ID (disables result file creation)"
+    )
     args = parser.parse_args()
 
     asyncio.run(
