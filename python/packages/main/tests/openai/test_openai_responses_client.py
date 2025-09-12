@@ -7,6 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
+from openai.types.responses.response_reasoning_summary_text_delta_event import ResponseReasoningSummaryTextDeltaEvent
+from openai.types.responses.response_reasoning_summary_text_done_event import ResponseReasoningSummaryTextDoneEvent
+from openai.types.responses.response_reasoning_text_delta_event import ResponseReasoningTextDeltaEvent
+from openai.types.responses.response_reasoning_text_done_event import ResponseReasoningTextDoneEvent
+from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
 from pydantic import BaseModel
 
 from agent_framework import (
@@ -1445,3 +1450,143 @@ def test_service_response_exception_includes_original_error_details() -> None:
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
     assert original_error_message in exception_message
+
+
+def test_streaming_reasoning_text_delta_event() -> None:
+    """Test reasoning text delta event creates TextReasoningContent."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    event = ResponseReasoningTextDeltaEvent(
+        type="response.reasoning_text.delta",
+        content_index=0,
+        item_id="reasoning_123",
+        output_index=0,
+        sequence_number=1,
+        delta="reasoning delta",
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}) as mock_metadata:
+        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+
+        assert len(response.contents) == 1
+        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].text == "reasoning delta"
+        assert response.contents[0].raw_representation == event
+        mock_metadata.assert_called_once_with(event)
+
+
+def test_streaming_reasoning_text_done_event() -> None:
+    """Test reasoning text done event creates TextReasoningContent with complete text."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    event = ResponseReasoningTextDoneEvent(
+        type="response.reasoning_text.done",
+        content_index=0,
+        item_id="reasoning_456",
+        output_index=0,
+        sequence_number=2,
+        text="complete reasoning",
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}) as mock_metadata:
+        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+
+        assert len(response.contents) == 1
+        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].text == "complete reasoning"
+        assert response.contents[0].raw_representation == event
+        mock_metadata.assert_called_once_with(event)
+        assert response.additional_properties == {"test": "data"}
+
+
+def test_streaming_reasoning_summary_text_delta_event() -> None:
+    """Test reasoning summary text delta event creates TextReasoningContent."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    event = ResponseReasoningSummaryTextDeltaEvent(
+        type="response.reasoning_summary_text.delta",
+        item_id="summary_789",
+        output_index=0,
+        sequence_number=3,
+        summary_index=0,
+        delta="summary delta",
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}) as mock_metadata:
+        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+
+        assert len(response.contents) == 1
+        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].text == "summary delta"
+        assert response.contents[0].raw_representation == event
+        mock_metadata.assert_called_once_with(event)
+
+
+def test_streaming_reasoning_summary_text_done_event() -> None:
+    """Test reasoning summary text done event creates TextReasoningContent with complete text."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    event = ResponseReasoningSummaryTextDoneEvent(
+        type="response.reasoning_summary_text.done",
+        item_id="summary_012",
+        output_index=0,
+        sequence_number=4,
+        summary_index=0,
+        text="complete summary",
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
+        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+
+        assert len(response.contents) == 1
+        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].text == "complete summary"
+        assert response.contents[0].raw_representation == event
+        mock_metadata.assert_called_once_with(event)
+        assert response.additional_properties == {"custom": "meta"}
+
+
+def test_streaming_reasoning_events_preserve_metadata() -> None:
+    """Test that reasoning events preserve metadata like regular text events."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    text_event = ResponseTextDeltaEvent(
+        type="response.output_text.delta",
+        content_index=0,
+        item_id="text_item",
+        output_index=0,
+        sequence_number=1,
+        logprobs=[],
+        delta="text",
+    )
+
+    reasoning_event = ResponseReasoningTextDeltaEvent(
+        type="response.reasoning_text.delta",
+        content_index=0,
+        item_id="reasoning_item",
+        output_index=0,
+        sequence_number=2,
+        delta="reasoning",
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={"test": "metadata"}):
+        text_response = client._create_streaming_response_content(text_event, chat_options, function_call_ids)  # type: ignore
+        reasoning_response = client._create_streaming_response_content(reasoning_event, chat_options, function_call_ids)  # type: ignore
+
+        # Both should preserve metadata
+        assert text_response.additional_properties == {"test": "metadata"}
+        assert reasoning_response.additional_properties == {"test": "metadata"}
+
+        # Content types should be different
+        assert isinstance(text_response.contents[0], TextContent)
+        assert isinstance(reasoning_response.contents[0], TextReasoningContent)

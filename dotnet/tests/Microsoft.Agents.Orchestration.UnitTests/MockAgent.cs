@@ -36,7 +36,7 @@ internal sealed class MockAgent(int index) : AIAgent
         return new AgentThread() { ConversationId = Guid.NewGuid().ToString() };
     }
 
-    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         this.InvokeCount++;
         if (thread == null)
@@ -48,7 +48,7 @@ internal sealed class MockAgent(int index) : AIAgent
         return Task.FromResult(new AgentRunResponse(messages: [.. this.Response]));
     }
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         this.InvokeCount++;
 
