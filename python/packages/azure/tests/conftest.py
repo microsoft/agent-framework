@@ -7,27 +7,27 @@ from pytest import fixture
 
 # region: Connector Settings fixtures
 @fixture
-def azure_exclude_list(request: Any) -> list[str]:
+def exclude_list(request: Any) -> list[str]:
     """Fixture that returns a list of environment variables to exclude."""
     return request.param if hasattr(request, "param") else []
 
 
 @fixture
-def azure_override_env_param_dict(request: Any) -> dict[str, str]:
+def override_env_param_dict(request: Any) -> dict[str, str]:
     """Fixture that returns a dict of environment variables to override."""
     return request.param if hasattr(request, "param") else {}
 
 
 # These two fixtures are used for multiple things, also non-connector tests
 @fixture()
-def azure_openai_unit_test_env(monkeypatch, azure_exclude_list, azure_override_env_param_dict):  # type: ignore
+def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
     """Fixture to set environment variables for AzureOpenAISettings."""
 
-    if azure_exclude_list is None:
-        azure_exclude_list = []
+    if exclude_list is None:
+        exclude_list = []
 
-    if azure_override_env_param_dict is None:
-        azure_override_env_param_dict = {}
+    if override_env_param_dict is None:
+        override_env_param_dict = {}
 
     env_vars = {
         "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.com",
@@ -45,10 +45,10 @@ def azure_openai_unit_test_env(monkeypatch, azure_exclude_list, azure_override_e
         "AZURE_OPENAI_TOKEN_ENDPOINT": "https://test-token-endpoint.com",
     }
 
-    env_vars.update(azure_override_env_param_dict)  # type: ignore
+    env_vars.update(override_env_param_dict)  # type: ignore
 
     for key, value in env_vars.items():
-        if key in azure_exclude_list:
+        if key in exclude_list:
             monkeypatch.delenv(key, raising=False)  # type: ignore
             continue
         monkeypatch.setenv(key, value)  # type: ignore

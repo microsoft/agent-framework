@@ -294,7 +294,7 @@ async def test_foundry_chat_client_thread_management_through_public_api(mock_ai_
     mock_ai_project_client.agents.threads.create.assert_called_once()
 
 
-@pytest.mark.parametrize("foundry_exclude_list", [["FOUNDRY_MODEL_DEPLOYMENT_NAME"]], indirect=True)
+@pytest.mark.parametrize("exclude_list", [["FOUNDRY_MODEL_DEPLOYMENT_NAME"]], indirect=True)
 async def test_foundry_chat_client_get_agent_id_or_create_missing_model(
     mock_ai_project_client: MagicMock, foundry_unit_test_env: dict[str, str]
 ) -> None:

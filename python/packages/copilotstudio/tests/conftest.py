@@ -8,26 +8,26 @@ from microsoft_agents.copilotstudio.client import CopilotClient
 
 
 @pytest.fixture
-def copilot_studio_exclude_list(request: Any) -> list[str]:
+def exclude_list(request: Any) -> list[str]:
     """Fixture that returns a list of environment variables to exclude."""
     return request.param if hasattr(request, "param") else []
 
 
 @pytest.fixture
-def copilot_studio_override_env_param_dict(request: Any) -> dict[str, str]:
+def override_env_param_dict(request: Any) -> dict[str, str]:
     """Fixture that returns a dict of environment variables to override."""
     return request.param if hasattr(request, "param") else {}
 
 
 @pytest.fixture()
-def copilot_studio_unit_test_env(monkeypatch, copilot_studio_exclude_list, copilot_studio_override_env_param_dict):  # type: ignore
+def copilot_studio_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
     """Fixture to set environment variables for CopilotStudioSettings."""
 
-    if copilot_studio_exclude_list is None:
-        copilot_studio_exclude_list = []
+    if exclude_list is None:
+        exclude_list = []
 
-    if copilot_studio_override_env_param_dict is None:
-        copilot_studio_override_env_param_dict = {}
+    if override_env_param_dict is None:
+        override_env_param_dict = {}
 
     env_vars = {
         "COPILOTSTUDIOAGENT__ENVIRONMENTID": "test-environment-id",
@@ -36,10 +36,10 @@ def copilot_studio_unit_test_env(monkeypatch, copilot_studio_exclude_list, copil
         "COPILOTSTUDIOAGENT__TENANTID": "test-tenant-id",
     }
 
-    env_vars.update(copilot_studio_override_env_param_dict)  # type: ignore
+    env_vars.update(override_env_param_dict)  # type: ignore
 
     for key, value in env_vars.items():
-        if key in copilot_studio_exclude_list:
+        if key in exclude_list:
             monkeypatch.delenv(key, raising=False)  # type: ignore
             continue
         monkeypatch.setenv(key, value)  # type: ignore

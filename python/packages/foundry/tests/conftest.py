@@ -6,26 +6,26 @@ from pytest import fixture
 
 
 @fixture
-def foundry_exclude_list(request: Any) -> list[str]:
+def exclude_list(request: Any) -> list[str]:
     """Fixture that returns a list of environment variables to exclude."""
     return request.param if hasattr(request, "param") else []
 
 
 @fixture
-def foundry_override_env_param_dict(request: Any) -> dict[str, str]:
+def override_env_param_dict(request: Any) -> dict[str, str]:
     """Fixture that returns a dict of environment variables to override."""
     return request.param if hasattr(request, "param") else {}
 
 
 @fixture()
-def foundry_unit_test_env(monkeypatch, foundry_exclude_list, foundry_override_env_param_dict):  # type: ignore
+def foundry_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
     """Fixture to set environment variables for FoundrySettings."""
 
-    if foundry_exclude_list is None:
-        foundry_exclude_list = []
+    if exclude_list is None:
+        exclude_list = []
 
-    if foundry_override_env_param_dict is None:
-        foundry_override_env_param_dict = {}
+    if override_env_param_dict is None:
+        override_env_param_dict = {}
 
     env_vars = {
         "FOUNDRY_PROJECT_ENDPOINT": "https://test-project.cognitiveservices.azure.com/",
@@ -33,10 +33,10 @@ def foundry_unit_test_env(monkeypatch, foundry_exclude_list, foundry_override_en
         "FOUNDRY_AGENT_NAME": "TestAgent",
     }
 
-    env_vars.update(foundry_override_env_param_dict)  # type: ignore
+    env_vars.update(override_env_param_dict)  # type: ignore
 
     for key, value in env_vars.items():
-        if key in foundry_exclude_list:
+        if key in exclude_list:
             monkeypatch.delenv(key, raising=False)  # type: ignore
             continue
         monkeypatch.setenv(key, value)  # type: ignore

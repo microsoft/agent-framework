@@ -45,7 +45,7 @@ Your Azure AD App Registration should have:
 ### Basic Usage with Environment Variables
 
 ```python
-from agent_framework.copilotstudio import CopilotStudioAgent
+from agent_framework_copilotstudio import CopilotStudioAgent
 
 # Uses environment variables for configuration
 agent = CopilotStudioAgent()
@@ -55,7 +55,7 @@ result = await agent.run("What is the capital of France?")
 ### Explicit Configuration
 
 ```python
-from agent_framework.copilotstudio import CopilotStudioAgent, acquire_token
+from agent_framework_copilotstudio import CopilotStudioAgent, acquire_token
 from microsoft_agents.copilotstudio.client import ConnectionSettings, CopilotClient, PowerPlatformCloud, AgentType
 
 # Acquire token manually
