@@ -113,7 +113,7 @@ class ApprovalRequestContent : AIContent
     {
         return new ApprovalResponseContent
         {
-            ApprovalId = this.ApprovalId,
+            Id = this.Id,
             Approved = true,
             FunctionCall = this.FunctionCall
         };
@@ -123,7 +123,7 @@ class ApprovalRequestContent : AIContent
     {
         return new ApprovalResponseContent
         {
-            ApprovalId = this.ApprovalId,
+            Id = this.Id,
             Approved = false,
             FunctionCall = this.FunctionCall
         };
@@ -294,7 +294,7 @@ class FunctionApprovalRequestContent : UserInputRequestContent
     {
         return new ApprovalResponseContent
         {
-            ApprovalId = this.ApprovalId,
+            Id = this.Id,
             Approved = true,
             FunctionCall = this.FunctionCall
         };
@@ -304,7 +304,7 @@ class FunctionApprovalRequestContent : UserInputRequestContent
     {
         return new ApprovalResponseContent
         {
-            ApprovalId = this.ApprovalId,
+            Id = this.Id,
             Approved = false,
             FunctionCall = this.FunctionCall
         };
@@ -438,10 +438,10 @@ sequenceDiagram
     note right of Developer:Developer asks user for approval
     Developer->>+FunctionInvokingChatClient: [FunctionApprovalRequestContent(GetMenu, approved=false)]<br/>[FunctionApprovalRequestContent(GetSpecials, approved=true)]
     note right of FunctionInvokingChatClient:FunctionInvokingChatClient executes the approved<br/>function and generates a failed FunctionResultContent<br/>for the rejected one, before invoking the model again.
-    FunctionInvokingChatClient->>+ResponseChatClient: What is the special soup today?<br/>[FunctionCallContent(GetMenu)],<br/>[FunctionCallContent(GetSpecials)],<br/>[FunctionResultContent(GetMenu, Function invocation denied")]<br/>[FunctionResultContent(GetSpecials, "Special Soup: Clam Chouder...")]
+    FunctionInvokingChatClient->>+ResponseChatClient: What is the special soup today?<br/>[FunctionCallContent(GetMenu)],<br/>[FunctionCallContent(GetSpecials)],<br/>[FunctionResultContent(GetMenu, Function invocation denied")]<br/>[FunctionResultContent(GetSpecials, "Special Soup: Clam Chowder...")]
 
     ResponseChatClient-->>-FunctionInvokingChatClient: [TextContent("The specials soup is...")]
-    FunctionInvokingChatClient->>+Developer: [FunctionCallContent(GetMenu)],<br/>[FunctionCallContent(GetSpecials)],<br/>[FunctionResultContent(GetMenu, Function invocation denied")]<br/>[FunctionResultContent(GetSpecials, "Special Soup: Clam Chouder...")]<br/>[TextContent("The specials soup is...")]
+    FunctionInvokingChatClient->>+Developer: [FunctionCallContent(GetMenu)],<br/>[FunctionCallContent(GetSpecials)],<br/>[FunctionResultContent(GetMenu, Function invocation denied")]<br/>[FunctionResultContent(GetSpecials, "Special Soup: Clam Chowder...")]<br/>[TextContent("The specials soup is...")]
 ```
 
 ### Sequence Diagram: Post FunctionInvokingChatClient ApprovalGeneratingChatClient - Multiple function calls with partial approval
