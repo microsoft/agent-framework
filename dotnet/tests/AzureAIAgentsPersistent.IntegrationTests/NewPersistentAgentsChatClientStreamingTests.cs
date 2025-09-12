@@ -308,11 +308,11 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             AllowBackgroundResponses = true,
         };
 
-        ICancelableChatClient cancelableChatClient = client.GetService<ICancelableChatClient>()!;
-
-        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = cancelableChatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
+        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
 
         var update = (await streamingResponse.ElementAtAsync(0));
+
+        ICancelableChatClient cancelableChatClient = client.GetService<ICancelableChatClient>()!;
 
         // Act
         NewChatResponse? response = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(update!.ResponseId!, new() { ConversationId = update.ConversationId });

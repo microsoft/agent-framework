@@ -179,9 +179,9 @@ public sealed class NewPersistentAgentsChatClientTests
         // Arrange
         using var client = await CreateChatClientAsync(backgroundResponsesEnabled: true);
 
-        ICancelableChatClient cancelableChatClient = client.GetService<ICancelableChatClient>()!;
+        NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What time is it?");
 
-        NewChatResponse response = (NewChatResponse)await cancelableChatClient.GetResponseAsync("What time is it?");
+        ICancelableChatClient cancelableChatClient = client.GetService<ICancelableChatClient>()!;
 
         // Act
         NewChatResponse? cancelResponse = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(response!.ResponseId!, new() { ConversationId = response.ConversationId });

@@ -196,7 +196,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;
 
-        NewChatResponse response = (NewChatResponse)await cancelableChatClient.GetResponseAsync("What is the capital of France?", options);
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
         // Act
         NewChatResponse? cancelResponse = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(response.ResponseId!);

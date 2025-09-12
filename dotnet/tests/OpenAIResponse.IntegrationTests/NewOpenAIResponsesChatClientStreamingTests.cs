@@ -322,16 +322,16 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
-        ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;
-
         NewChatOptions options = new()
         {
             AllowBackgroundResponses = true
         };
 
-        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = cancelableChatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
+        IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);
 
         var update = (await streamingResponse.ElementAtAsync(0));
+
+        ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;
 
         // Act
         NewChatResponse? response = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(update.ResponseId!);
