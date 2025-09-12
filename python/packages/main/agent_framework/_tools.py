@@ -423,10 +423,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json() if arguments else "None"})
         with get_function_span(attributes=attributes) as span:
-            hist_attributes: dict[str, Any] = {
-                OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
-                OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
-            }
+            attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
             if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                 logger.debug(f"Function arguments: {kwargs}")
@@ -438,7 +435,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
-                hist_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 _capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise
@@ -457,7 +454,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
-                self._invocation_duration_histogram.record(duration, attributes=hist_attributes)
+                self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function duration: %fs", duration)
 
     def parameters(self) -> dict[str, Any]:
