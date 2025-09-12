@@ -409,7 +409,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
-        if not OTEL_SETTINGS.ENABLED:  # type: ignore
+        if not OTEL_SETTINGS.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -420,7 +420,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         setup_telemetry()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:
+        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({OtelAttr.TOOL_ARGUMENTS: json.dumps(kwargs)})
         with get_function_span(attributes=attributes) as span:
             hist_attributes: dict[str, Any] = {
@@ -428,7 +428,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
             }
             logger.info(f"Function name: {self.name}")
-            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                 logger.debug(f"Function arguments: {kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -444,7 +444,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                     span.set_attribute(OtelAttr.TOOL_RESULT, json.dumps(result))
                     logger.debug(f"Function result: {result or 'None'}")
                 return result  # type: ignore[reportReturnType]
