@@ -1,4 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
+using System;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -19,8 +20,15 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var typeValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("type"));
-        return typeValue?.Value;
+        try
+        {
+            var typeValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("type"));
+            return typeValue?.Value;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     /// <summary>

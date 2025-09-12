@@ -267,9 +267,9 @@ public class ChatClientAgentFactoryTests
     {
         // Arrange
         var yaml =
-            """
+            $"""
             kind: GptComponentMetadata
-            type: chat_client_agent
+            type: {agentType}
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;

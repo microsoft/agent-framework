@@ -117,8 +117,8 @@ public class AgentBotElementYamlTests
 
         // Assert
         Assert.NotNull(agentDefinition);
-        Assert.Equal("AzureOpenAIModelId", agentDefinition.GetModelId());
-        Assert.Equal("AzureOpenAIEndpoint", agentDefinition.GetModelConnectionEndpoint());
+        Assert.Equal("=Env.AzureOpenAIModelId", agentDefinition.GetModelId());
+        Assert.Equal("=Env.AzureOpenAIEndpoint", agentDefinition.GetModelConnectionEndpoint());
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public class AgentBotElementYamlTests
 
         // Assert
         Assert.NotNull(agentDefinition);
-        Assert.Equal("modelId", agentDefinition.GetModelId());
-        Assert.Equal("endpoint", agentDefinition.GetModelConnectionEndpoint());
+        Assert.Equal("=Env.AzureOpenAIModelId", agentDefinition.GetModelId());
+        Assert.Equal("=Env.AzureOpenAIEndpoint", agentDefinition.GetModelConnectionEndpoint());
     }
 }
