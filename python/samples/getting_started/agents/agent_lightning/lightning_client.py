@@ -1,6 +1,8 @@
 # type: ignore
 
+import json
 import os
+from datetime import datetime
 from loguru import logger
 from agentlightning import LitAgent, Trainer, configure_logger
 from tau2.data_model.tasks import Task as Tau2Task
@@ -8,6 +10,29 @@ from complex import criteria, loop, AgentConfiguration
 
 proxy_base_url = os.getenv("PROXY_OPENAI_BASE_URL")
 proxy_api_key = os.getenv("PROXY_OPENAI_API_KEY")
+timestamp = datetime.now().strftime("%m%d%H%M")  # for logging
+output_dir = f"outputs/client/{timestamp}"
+
+def to_dumpable(task: Tau2Task, result: dict) -> dict:
+    if "error" in result:
+        return {
+            "id": task.id,
+            "error": result["error"],
+            "evaluation": {
+                "reward": 0.0,
+            },
+            "config": result["config"],
+            "task": task.model_dump(),
+        }
+    else:
+        return {
+            "id": task.id,
+            "evaluation": result["evaluation"].model_dump(),
+            "config": result["config"],
+            "termination_reason": result["termination_reason"].value,
+            "messages": [m.model_dump() for m in result["messages"]],
+            "task": task.model_dump(),
+        }
 
 
 class Tau2Agent(LitAgent):
@@ -48,9 +73,21 @@ class Tau2Agent(LitAgent):
         _logger.info(f"<cyan>Agent result - Termination:</cyan> {result.get('termination_reason')}")
         _logger.info(f"<cyan>Number of messages:</cyan> {len(result['messages'])}")
 
-        reward = criteria(task_obj, result)
-        _logger.info(f"<cyan>Final reward:</cyan> {reward}")
-        return reward
+        reward = criteria(task_obj, result, return_reward_info=True)
+        _logger.info(f"<cyan>Final reward:</cyan> {reward.reward}")
+
+        result["evaluation"] = reward
+        result["config"] = {
+            "assistant": assistant_config,
+            "user": user_config,
+            "judge": judge_config,
+        }
+
+        os.makedirs(output_dir, exist_ok=True)
+        with open(f"{output_dir}/{self.trainer.worker_id}.jsonl", "a") as f:
+            f.write(json.dumps(to_dumpable(task, result), default=str) + "\n")
+
+        return reward.reward
 
     async def validation_rollout_async(self, task: dict, rollout_id: str, resources: dict) -> float:
         return await self.training_rollout_async(task, rollout_id, resources)
