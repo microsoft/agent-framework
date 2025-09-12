@@ -2,14 +2,13 @@
 
 """Common types for agent evaluation."""
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
     "Task",
     "Prediction",
-    "Evaluation", 
+    "Evaluation",
     "TaskResult",
     "TaskRunner",
     "Evaluator",
@@ -19,7 +18,7 @@ __all__ = [
 @dataclass
 class Task:
     """Represents a task to be evaluated."""
-    
+
     task_id: str
     question: str
     answer: str | None = None
@@ -31,11 +30,11 @@ class Task:
 @dataclass
 class Prediction:
     """Represents a prediction made by an agent for a task."""
-    
+
     prediction: str
     messages: list[Any] | None = None
     metadata: dict[str, Any] | None = None
-    
+
     def __post_init__(self) -> None:
         if self.messages is None:
             self.messages = []
@@ -44,7 +43,7 @@ class Prediction:
 @dataclass
 class Evaluation:
     """Represents the evaluation result of a prediction."""
-    
+
     is_correct: bool
     score: float
     details: dict[str, Any] | None = None
@@ -53,7 +52,7 @@ class Evaluation:
 @dataclass
 class TaskResult:
     """Complete result for a single task evaluation."""
-    
+
     task_id: str
     task: Task
     prediction: Prediction
@@ -65,7 +64,7 @@ class TaskResult:
 @runtime_checkable
 class TaskRunner(Protocol):
     """Protocol for running tasks."""
-    
+
     async def __call__(self, task: Task) -> Prediction:
         """Run a single task and return the prediction."""
         ...
@@ -74,7 +73,7 @@ class TaskRunner(Protocol):
 @runtime_checkable
 class Evaluator(Protocol):
     """Protocol for evaluating predictions."""
-    
+
     async def __call__(self, task: Task, prediction: Prediction) -> Evaluation:
         """Evaluate a prediction for a given task."""
         ...

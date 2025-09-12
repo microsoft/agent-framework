@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework.foundry import FoundryChatClient
-from agent_framework.labs.gaia import GAIA, Task, Prediction, Evaluation, GAIATelemetryConfig
 from azure.identity.aio import AzureCliCredential
+
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.labs.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
 
 """
 """
+
 
 async def run_task(task: Task) -> Prediction:
     """Run a single GAIA task and return the prediction."""
@@ -46,7 +48,7 @@ async def main() -> None:
         trace_to_file=True,  # Export traces to local file
         file_path="gaia_benchmark_traces.jsonl",  # Custom file path for traces
     )
-    
+
     # Create the GAIA benchmark runner with telemetry configuration
     runner = GAIA(evaluator=evaluate_task, telemetry_config=telemetry_config)
 
@@ -54,13 +56,13 @@ async def main() -> None:
     # By default, this will check for locally cached benchmark data and checkout
     # the latest version from HuggingFace if not found.
     results = await runner.run(
-        run_task, 
-        level=1, # Level 1, 2, or 3 or multiple levels like [1, 2]
-        max_n=5, # Maximum number of tasks to run per level
-        parallel=2, # Number of parallel tasks to run
-        timeout=60, # Timeout per task in seconds
-        out="gaia_results_level1.jsonl", # Output file to save results (optional)
-        traces_out="gaia_results_level1_traces", # Directory to save detailed task traces (optional)
+        run_task,
+        level=1,  # Level 1, 2, or 3 or multiple levels like [1, 2]
+        max_n=5,  # Maximum number of tasks to run per level
+        parallel=2,  # Number of parallel tasks to run
+        timeout=60,  # Timeout per task in seconds
+        out="gaia_results_level1.jsonl",  # Output file to save results (optional)
+        traces_out="gaia_results_level1_traces",  # Directory to save detailed task traces (optional)
     )
 
     # Print the results.
@@ -74,4 +76,5 @@ async def main() -> None:
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

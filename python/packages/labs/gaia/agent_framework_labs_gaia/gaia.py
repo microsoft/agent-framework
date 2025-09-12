@@ -26,7 +26,7 @@ __all__ = ["GAIA", "gaia_scorer", "GAIATelemetryConfig"]
 
 class GAIATelemetryConfig:
     """Configuration for GAIA telemetry and tracing."""
-    
+
     def __init__(
         self,
         enable_tracing: bool = False,
@@ -38,7 +38,7 @@ class GAIATelemetryConfig:
     ):
         """
         Initialize telemetry configuration.
-        
+
         Args:
             enable_tracing: Whether to enable OpenTelemetry tracing
             otlp_endpoint: OTLP endpoint for trace export
@@ -53,14 +53,14 @@ class GAIATelemetryConfig:
         self.enable_live_metrics = enable_live_metrics
         self.trace_to_file = trace_to_file
         self.file_path = file_path or "gaia_traces.json"
-        
+
     def setup_telemetry(self) -> None:
         """Set up OpenTelemetry based on configuration."""
         if not self.enable_tracing:
             return
-            
+
         from agent_framework.telemetry import setup_telemetry
-        
+
         setup_telemetry(
             enable_otel=True,
             enable_sensitive_data=True,  # Enable for detailed task traces
@@ -68,26 +68,27 @@ class GAIATelemetryConfig:
             application_insights_connection_string=self.application_insights_connection_string,
             enable_live_metrics=self.enable_live_metrics,
         )
-        
+
         # Set up local file export if requested
         if self.trace_to_file:
             self._setup_file_export()
-    
+
     def _setup_file_export(self) -> None:
         """Set up local file export for traces."""
         try:
-            from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult, SpanExporter
-            from opentelemetry.trace import get_tracer_provider
-            from opentelemetry.sdk.trace import TracerProvider
             import json
             import os
-            
+
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+            from opentelemetry.trace import get_tracer_provider
+
             class FileSpanExporter(SpanExporter):
                 def __init__(self, file_path: str):
                     self.file_path = file_path
                     # Ensure directory exists
                     os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-                
+
                 def export(self, spans) -> SpanExportResult:
                     try:
                         with open(self.file_path, "a", encoding="utf-8") as f:
@@ -98,26 +99,28 @@ class GAIATelemetryConfig:
                                     "name": span.name,
                                     "start_time": span.start_time,
                                     "end_time": span.end_time,
-                                    "duration_ns": (span.end_time - span.start_time) if (span.end_time and span.start_time) else None,
+                                    "duration_ns": (span.end_time - span.start_time)
+                                    if (span.end_time and span.start_time)
+                                    else None,
                                     "attributes": dict(span.attributes) if span.attributes else {},
                                     "status": {
                                         "status_code": span.status.status_code.name if span.status else "UNSET",
                                         "description": span.status.description if span.status else None,
-                                    }
+                                    },
                                 }
                                 f.write(json.dumps(span_data, default=str) + "\n")
                         return SpanExportResult.SUCCESS
                     except Exception:
                         return SpanExportResult.FAILURE
-                
+
                 def shutdown(self) -> None:
                     pass
-            
+
             tracer_provider = get_tracer_provider()
             if isinstance(tracer_provider, TracerProvider):
                 file_exporter = FileSpanExporter(self.file_path)
                 tracer_provider.add_span_processor(BatchSpanProcessor(file_exporter))
-                
+
         except ImportError:
             print("Warning: Could not set up file export for traces. Missing dependencies.")
 
@@ -149,14 +152,15 @@ def _normalize_str(s: str, remove_punct: bool = True) -> str:
 def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
     """
     Official GAIA scoring function.
-    
+
     Args:
         model_answer: The model's answer
         ground_truth: The ground truth answer
-        
+
     Returns:
         True if the answer is correct, False otherwise
     """
+
     def is_float(x: Any) -> bool:
         try:
             float(x)
@@ -196,25 +200,28 @@ def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
                 continue
             try:
                 import orjson
+
                 yield orjson.loads(line)
             except Exception:
                 yield json.loads(line)
 
 
-def _load_gaia_local(
-    repo_dir: Path, 
-    wanted_levels: list[int] | None = None, 
-    max_n: int | None = None
-) -> list[Task]:
+def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max_n: int | None = None) -> list[Task]:
     """Load GAIA tasks from local repository directory."""
     tasks: list[Task] = []
-    
+
     for p in repo_dir.rglob("metadata.jsonl"):
         for rec in _read_jsonl(p):
             # Robustly extract fields used across variants
             q = rec.get("Question") or rec.get("question") or rec.get("query") or rec.get("prompt")
             ans = rec.get("Final answer") or rec.get("answer") or rec.get("final_answer")
-            qid = str(rec.get("task_id") or rec.get("question_id") or rec.get("id") or rec.get("uuid") or f"{p.stem}:{len(tasks)}")
+            qid = str(
+                rec.get("task_id")
+                or rec.get("question_id")
+                or rec.get("id")
+                or rec.get("uuid")
+                or f"{p.stem}:{len(tasks)}"
+            )
             lvl = rec.get("Level") or rec.get("level")
             fname = rec.get("file_name") or rec.get("filename") or None
 
@@ -225,14 +232,7 @@ def _load_gaia_local(
             if wanted_levels and (lvl not in wanted_levels):
                 continue
 
-            tasks.append(Task(
-                task_id=qid,
-                question=q,
-                answer=str(ans),
-                level=lvl,
-                file_name=fname,
-                metadata=rec
-            ))
+            tasks.append(Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=rec))
 
     # Shuffle to help with rate-limits and fairness if max_n is provided
     random.shuffle(tasks)
@@ -244,21 +244,21 @@ def _load_gaia_local(
 class GAIA:
     """
     GAIA benchmark runner for Agent Framework.
-    
+
     GAIA (General AI Assistant) is a benchmark for general-purpose AI assistants.
     This class provides utilities to run the benchmark with custom agents.
     """
-    
+
     def __init__(
         self,
         evaluator: Evaluator | None = None,
         data_dir: str | None = None,
         hf_token: str | None = None,
-        telemetry_config: GAIATelemetryConfig | None = None
+        telemetry_config: GAIATelemetryConfig | None = None,
     ):
         """
         Initialize GAIA benchmark runner.
-        
+
         Args:
             evaluator: Custom evaluator function. If None, uses default GAIA scorer.
             data_dir: Directory to cache GAIA data. Defaults to 'data_gaia_hub'.
@@ -269,31 +269,27 @@ class GAIA:
         self.data_dir = Path(data_dir or "data_gaia_hub")
         self.hf_token = hf_token
         self.telemetry_config = telemetry_config or GAIATelemetryConfig()
-        
+
         # Set up telemetry
         self.telemetry_config.setup_telemetry()
-        
+
         # Initialize tracer
         if self.telemetry_config.enable_tracing:
             self.tracer = get_tracer("gaia_benchmark", "1.0.0")
         else:
             self.tracer = NoOpTracer()
-        
+
     async def _default_evaluator(self, task: Task, prediction: Prediction) -> Evaluation:
         """Default evaluator using GAIA official scoring."""
         is_correct = gaia_scorer(prediction.prediction, task.answer or "")
-        return Evaluation(
-            is_correct=is_correct,
-            score=1.0 if is_correct else 0.0
-        )
-        
+        return Evaluation(is_correct=is_correct, score=1.0 if is_correct else 0.0)
+
     def _ensure_data(self) -> Path:
         """Ensure GAIA data is available locally."""
-        import os
-        
+
         if self.data_dir.exists() and any(self.data_dir.rglob("metadata.jsonl")):
             return self.data_dir
-            
+
         # Download data if not available
         token = self.hf_token or os.environ.get("HF_TOKEN")
         if not token:
@@ -302,9 +298,10 @@ class GAIA:
                 "to access the GAIA dataset. Please set your Hugging Face token "
                 "with access to gaia-benchmark/GAIA."
             )
-            
+
         print(f"Downloading GAIA dataset to {self.data_dir}...")
         from huggingface_hub import snapshot_download
+
         local_dir = snapshot_download(
             repo_id="gaia-benchmark/GAIA",
             repo_type="dataset",
@@ -314,13 +311,9 @@ class GAIA:
             force_download=False,
         )
         return Path(local_dir)
-    
+
     async def _run_single_task(
-        self,
-        task: Task,
-        task_runner: TaskRunner,
-        semaphore: asyncio.Semaphore,
-        timeout: int | None = None
+        self, task: Task, task_runner: TaskRunner, semaphore: asyncio.Semaphore, timeout: int | None = None
     ) -> TaskResult:
         """Run a single task with error handling and timing."""
         async with semaphore:
@@ -332,7 +325,7 @@ class GAIA:
                     "gaia.task.level": task.level or 0,
                     "gaia.task.has_file": task.file_name is not None,
                     "gaia.task.timeout": timeout or 0,
-                }
+                },
             ) as span:
                 start_time = time.time()
                 try:
@@ -343,60 +336,61 @@ class GAIA:
                         attributes={
                             "gaia.task.question_length": len(task.question or ""),
                             "gaia.task.file_name": task.file_name or "",
-                        }
+                        },
                     ):
                         if timeout:
                             prediction = await asyncio.wait_for(task_runner(task), timeout=timeout)
                         else:
                             prediction = await task_runner(task)
-                    
+
                     # Add evaluation span
-                    with self.tracer.start_as_current_span(
-                        "gaia.task.evaluate",
-                        kind=SpanKind.INTERNAL
-                    ):
+                    with self.tracer.start_as_current_span("gaia.task.evaluate", kind=SpanKind.INTERNAL):
                         evaluation = await self.evaluator(task, prediction)
-                    
+
                     runtime_seconds = time.time() - start_time
-                    
+
                     # Add results to span
                     if span:
-                        span.set_attributes({
-                            "gaia.task.runtime_seconds": runtime_seconds,
-                            "gaia.task.is_correct": evaluation.is_correct,
-                            "gaia.task.score": evaluation.score,
-                            "gaia.task.prediction_length": len(prediction.prediction or ""),
-                        })
-                    
+                        span.set_attributes(
+                            {
+                                "gaia.task.runtime_seconds": runtime_seconds,
+                                "gaia.task.is_correct": evaluation.is_correct,
+                                "gaia.task.score": evaluation.score,
+                                "gaia.task.prediction_length": len(prediction.prediction or ""),
+                            }
+                        )
+
                     return TaskResult(
                         task_id=task.task_id,
                         task=task,
                         prediction=prediction,
                         evaluation=evaluation,
-                        runtime_seconds=runtime_seconds
+                        runtime_seconds=runtime_seconds,
                     )
                 except Exception as e:
                     runtime_seconds = time.time() - start_time
-                    
+
                     # Record error in span
                     if span:
-                        span.set_attributes({
-                            "gaia.task.runtime_seconds": runtime_seconds,
-                            "gaia.task.error": str(e),
-                            "gaia.task.is_correct": False,
-                            "gaia.task.score": 0.0,
-                        })
+                        span.set_attributes(
+                            {
+                                "gaia.task.runtime_seconds": runtime_seconds,
+                                "gaia.task.error": str(e),
+                                "gaia.task.is_correct": False,
+                                "gaia.task.score": 0.0,
+                            }
+                        )
                         span.record_exception(e)
-                    
+
                     return TaskResult(
                         task_id=task.task_id,
                         task=task,
                         prediction=Prediction(prediction="", messages=[]),
                         evaluation=Evaluation(is_correct=False, score=0.0),
                         runtime_seconds=runtime_seconds,
-                        error=str(e)
+                        error=str(e),
                     )
-    
+
     async def run(
         self,
         task_runner: TaskRunner,
@@ -405,11 +399,11 @@ class GAIA:
         parallel: int = 1,
         timeout: int | None = None,
         out: str | None = None,
-        traces_out: str | None = None
+        traces_out: str | None = None,
     ) -> list[TaskResult]:
         """
         Run the GAIA benchmark.
-        
+
         Args:
             task_runner: Function that takes a Task and returns a Prediction
             level: GAIA level(s) to run (1, 2, 3, or list of levels)
@@ -418,7 +412,7 @@ class GAIA:
             timeout: Timeout per task in seconds
             out: Output file to save results (optional)
             traces_out: Directory to save detailed traces (optional)
-            
+
         Returns:
             List of TaskResult objects
         """
@@ -430,21 +424,18 @@ class GAIA:
                 "gaia.benchmark.max_n": max_n or 0,
                 "gaia.benchmark.parallel": parallel,
                 "gaia.benchmark.timeout": timeout or 0,
-            }
+            },
         ) as benchmark_span:
             # Ensure data is available
-            with self.tracer.start_as_current_span(
-                "gaia.data.ensure",
-                kind=SpanKind.INTERNAL
-            ):
+            with self.tracer.start_as_current_span("gaia.data.ensure", kind=SpanKind.INTERNAL):
                 data_path = self._ensure_data()
-            
+
             # Parse level parameter
             if isinstance(level, int):
                 levels = [level]
             else:
                 levels = level
-                
+
             # Load tasks
             with self.tracer.start_as_current_span(
                 "gaia.tasks.load",
@@ -452,89 +443,83 @@ class GAIA:
                 attributes={
                     "gaia.tasks.levels": str(levels),
                     "gaia.tasks.max_n": max_n or 0,
-                }
+                },
             ) as load_span:
                 tasks = _load_gaia_local(data_path, wanted_levels=levels, max_n=max_n)
-                
+
                 if load_span:
-                    load_span.set_attributes({
-                        "gaia.tasks.loaded_count": len(tasks),
-                    })
-            
+                    load_span.set_attributes(
+                        {
+                            "gaia.tasks.loaded_count": len(tasks),
+                        }
+                    )
+
             if not tasks:
                 raise RuntimeError(
                     f"No GAIA tasks found for levels {levels}. "
                     "Make sure you have dataset access and selected valid levels."
                 )
-            
+
             print(f"Running {len(tasks)} GAIA tasks (levels={levels}) with {parallel} parallel workers...")
-            
+
             # Update benchmark span with task info
             if benchmark_span:
-                benchmark_span.set_attributes({
-                    "gaia.benchmark.total_tasks": len(tasks),
-                })
-            
+                benchmark_span.set_attributes(
+                    {
+                        "gaia.benchmark.total_tasks": len(tasks),
+                    }
+                )
+
             # Run tasks
             semaphore = asyncio.Semaphore(parallel)
             results = []
-            
-            tasks_coroutines = [
-                self._run_single_task(task, task_runner, semaphore, timeout)
-                for task in tasks
-            ]
-            
-            with self.tracer.start_as_current_span(
-                "gaia.tasks.execute_all",
-                kind=SpanKind.INTERNAL
-            ):
+
+            tasks_coroutines = [self._run_single_task(task, task_runner, semaphore, timeout) for task in tasks]
+
+            with self.tracer.start_as_current_span("gaia.tasks.execute_all", kind=SpanKind.INTERNAL):
                 for coro in tqdm(
-                    asyncio.as_completed(tasks_coroutines), 
-                    total=len(tasks_coroutines),
-                    desc="Evaluating tasks"
+                    asyncio.as_completed(tasks_coroutines), total=len(tasks_coroutines), desc="Evaluating tasks"
                 ):
                     result = await coro
                     results.append(result)
-            
+
             # Calculate summary statistics
             correct = sum(1 for r in results if r.evaluation.is_correct)
             accuracy = correct / len(results) if results else 0.0
             avg_runtime = sum(r.runtime_seconds or 0 for r in results) / len(results) if results else 0.0
-            
+
             # Update benchmark span with final results
             if benchmark_span:
-                benchmark_span.set_attributes({
-                    "gaia.benchmark.accuracy": accuracy,
-                    "gaia.benchmark.correct_count": correct,
-                    "gaia.benchmark.total_count": len(results),
-                    "gaia.benchmark.avg_runtime_seconds": avg_runtime,
-                })
-            
-            print(f"\nGAIA Benchmark Results:")
+                benchmark_span.set_attributes(
+                    {
+                        "gaia.benchmark.accuracy": accuracy,
+                        "gaia.benchmark.correct_count": correct,
+                        "gaia.benchmark.total_count": len(results),
+                        "gaia.benchmark.avg_runtime_seconds": avg_runtime,
+                    }
+                )
+
+            print("\nGAIA Benchmark Results:")
             print(f"Accuracy: {accuracy:.3f} ({correct}/{len(results)})")
             print(f"Average runtime: {avg_runtime:.2f}s")
-            
+
             # Save results if requested
             if out:
                 with self.tracer.start_as_current_span(
-                    "gaia.results.save",
-                    kind=SpanKind.INTERNAL,
-                    attributes={"gaia.results.output_file": out}
+                    "gaia.results.save", kind=SpanKind.INTERNAL, attributes={"gaia.results.output_file": out}
                 ):
                     self._save_results(results, out)
                     print(f"Results saved to {out}")
-                
+
             if traces_out:
                 with self.tracer.start_as_current_span(
-                    "gaia.traces.save",
-                    kind=SpanKind.INTERNAL,
-                    attributes={"gaia.traces.output_dir": traces_out}
+                    "gaia.traces.save", kind=SpanKind.INTERNAL, attributes={"gaia.traces.output_dir": traces_out}
                 ):
                     self._save_traces(results, traces_out)
                     print(f"Traces saved to {traces_out}")
-            
+
             return results
-    
+
     def _save_results(self, results: list[TaskResult], output_path: str) -> None:
         """Save results to JSONL file."""
         with open(output_path, "w", encoding="utf-8") as f:
@@ -549,36 +534,37 @@ class GAIA:
                     "score": result.evaluation.score,
                     "runtime_seconds": result.runtime_seconds,
                     "error": result.error,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 }
                 try:
                     import orjson
+
                     f.write(orjson.dumps(record).decode("utf-8") + "\n")
                 except ImportError:
                     f.write(json.dumps(record) + "\n")
-    
+
     def _save_traces(self, results: list[TaskResult], traces_dir: str) -> None:
         """Save detailed traces for each task."""
         traces_path = Path(traces_dir)
         traces_path.mkdir(exist_ok=True)
-        
+
         for result in results:
             trace_file = traces_path / f"{result.task_id}.json"
-            
+
             # Convert messages to serializable format
             serializable_messages = []
             if result.prediction.messages:
                 for msg in result.prediction.messages:
-                    if hasattr(msg, 'model_dump'):
+                    if hasattr(msg, "model_dump"):
                         # Pydantic model
                         serializable_messages.append(msg.model_dump())
-                    elif hasattr(msg, '__dict__'):
+                    elif hasattr(msg, "__dict__"):
                         # Regular object with attributes
                         serializable_messages.append(vars(msg))
                     else:
                         # Fallback to string representation
                         serializable_messages.append(str(msg))
-            
+
             trace_data = {
                 "task": {
                     "task_id": result.task.task_id,
@@ -586,23 +572,23 @@ class GAIA:
                     "answer": result.task.answer,
                     "level": result.task.level,
                     "file_name": result.task.file_name,
-                    "metadata": result.task.metadata
+                    "metadata": result.task.metadata,
                 },
                 "prediction": {
                     "prediction": result.prediction.prediction,
                     "messages": serializable_messages,
-                    "metadata": result.prediction.metadata
+                    "metadata": result.prediction.metadata,
                 },
                 "evaluation": {
                     "is_correct": result.evaluation.is_correct,
                     "score": result.evaluation.score,
-                    "details": result.evaluation.details
+                    "details": result.evaluation.details,
                 },
                 "runtime_seconds": result.runtime_seconds,
                 "error": result.error,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
-            
+
             with open(trace_file, "w", encoding="utf-8") as f:
                 json.dump(trace_data, f, indent=2, default=str)
 
@@ -610,16 +596,16 @@ class GAIA:
 def viewer_main() -> None:
     """Main function for the gaia_viewer script."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="View GAIA benchmark results")
     parser.add_argument("results_file", help="Path to results JSONL file")
     parser.add_argument("--detailed", action="store_true", help="Show detailed view")
     parser.add_argument("--level", type=int, help="Filter by level")
     parser.add_argument("--correct-only", action="store_true", help="Show only correct answers")
     parser.add_argument("--incorrect-only", action="store_true", help="Show only incorrect answers")
-    
+
     args = parser.parse_args()
-    
+
     # Load results
     results = []
     with open(args.results_file, encoding="utf-8") as f:
@@ -627,39 +613,40 @@ def viewer_main() -> None:
             if line.strip():
                 try:
                     import orjson
+
                     results.append(orjson.loads(line))
                 except ImportError:
                     results.append(json.loads(line))
-    
+
     # Apply filters
     if args.level is not None:
         results = [r for r in results if r.get("level") == args.level]
-    
+
     if args.correct_only:
         results = [r for r in results if r.get("is_correct")]
     elif args.incorrect_only:
         results = [r for r in results if not r.get("is_correct")]
-    
+
     # Display results
     if not results:
         print("No results match the filters.")
         return
-    
+
     total = len(results)
     correct = sum(1 for r in results if r.get("is_correct"))
     accuracy = correct / total if total > 0 else 0.0
-    
-    print(f"GAIA Results Summary:")
+
+    print("GAIA Results Summary:")
     print(f"Total: {total}, Correct: {correct}, Accuracy: {accuracy:.3f}")
     print("-" * 80)
-    
+
     for i, result in enumerate(results, 1):
         status = "✓" if result.get("is_correct") else "✗"
         level = result.get("level", "?")
         task_id = result.get("task_id", "unknown")
-        
+
         print(f"[{i}/{total}] {status} Level {level} - {task_id}")
-        
+
         if args.detailed:
             print(f"Question: {result.get('question', 'N/A')[:100]}...")
             print(f"Answer: {result.get('answer', 'N/A')}")

@@ -68,6 +68,22 @@ show_error_codes = true
 implicit_reexport = true
 packages = ["agent_framework_labs_{{ cookiecutter.package_name }}"]
 
+{% if cookiecutter.within_microsoft_agent_framework_repo == "y" %}
+[tool.poe]
+executor.type = "uv"
+include = "../../../shared_tasks.toml"
+[tool.poe.tasks]
+test = "pytest --cov=agent_framework_labs_{{ cookiecutter.package_name }} --cov-report=term-missing:skip-covered tests"
+mypy = "mypy agent_framework_labs_{{ cookiecutter.package_name }}"
+{% else %}
+[tool.poe.tasks]
+fmt = "ruff format"
+format = "ruff format"
+lint = "ruff check"
+test = "pytest --cov=agent_framework_labs_{{ cookiecutter.package_name }} --cov-report=term-missing:skip-covered tests"
+mypy = "mypy agent_framework_labs_{{ cookiecutter.package_name }}"
+{% endif %}
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -9,7 +9,7 @@ from .gaia import GAIA, GAIATelemetryConfig, gaia_scorer, viewer_main
 
 __all__ = [
     "GAIA",
-    "GAIATelemetryConfig", 
+    "GAIATelemetryConfig",
     "gaia_scorer",
     "viewer_main",
     "Task",

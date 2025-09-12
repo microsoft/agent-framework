@@ -69,6 +69,11 @@ show_error_codes = true
 implicit_reexport = true
 packages = ["agent_framework_labs_gaia"]
 
+[tool.poe]
+executor.type = "uv"
+include = "../../../shared_tasks.toml"
+[tool.poe.tasks]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
