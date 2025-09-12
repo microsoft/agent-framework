@@ -16,6 +16,10 @@ internal static class ActivityProcessor
     {
         await foreach (IActivity activity in activities.ConfigureAwait(false))
         {
+            // TODO: Prototype a custom AIContent type for CardActions, where the user is instructed to
+            // pick from a list of actions.
+            // The activity text doesn't make sense without the actions, as the message
+            // is often instructing the user to pick from the provided list of actions.
             if (!string.IsNullOrWhiteSpace(activity.Text))
             {
                 if ((activity.Type == "message" && !streaming) || (activity.Type == "typing" && streaming))
