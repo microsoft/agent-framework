@@ -15,8 +15,6 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
-from microsoft_agents.activity import Activity
-from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 from pydantic import ValidationError
 
 from ._acquire_token import acquire_token
@@ -55,15 +53,15 @@ class CopilotStudioSettings(AFBaseSettings):
 class CopilotStudioAgent(BaseAgent):
     """A Copilot Studio Agent."""
 
-    client: CopilotClient  # type: ignore[no-any-unimported]
-    settings: ConnectionSettings | None  # type: ignore[no-any-unimported]
+    client: Any  # CopilotClient
+    settings: Any | None  # ConnectionSettings | None
     environment_id: str | None
     agent_identifier: str | None
     client_id: str | None
     tenant_id: str | None
     token: str | None
-    cloud: PowerPlatformCloud | None  # type: ignore[no-any-unimported]
-    agent_type: AgentType | None  # type: ignore[no-any-unimported]
+    cloud: Any | None  # PowerPlatformCloud | None
+    agent_type: Any | None  # AgentType | None
     custom_power_platform_cloud: str | None
     username: str | None
     token_cache: Any | None
@@ -71,15 +69,15 @@ class CopilotStudioAgent(BaseAgent):
 
     def __init__(
         self,
-        client: CopilotClient | None = None,  # type: ignore[no-any-unimported]
-        settings: ConnectionSettings | None = None,  # type: ignore[no-any-unimported]
+        client: Any | None = None,  # CopilotClient | None
+        settings: Any | None = None,  # ConnectionSettings | None
         environment_id: str | None = None,
         agent_identifier: str | None = None,
         client_id: str | None = None,
         tenant_id: str | None = None,
         token: str | None = None,
-        cloud: PowerPlatformCloud | None = None,  # type: ignore[no-any-unimported]
-        agent_type: AgentType | None = None,  # type: ignore[no-any-unimported]
+        cloud: Any | None = None,  # PowerPlatformCloud | None
+        agent_type: Any | None = None,  # AgentType | None
         custom_power_platform_cloud: str | None = None,
         username: str | None = None,
         token_cache: Any | None = None,
@@ -144,6 +142,8 @@ class CopilotStudioAgent(BaseAgent):
                         "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
                     )
 
+                from microsoft_agents.copilotstudio.client import ConnectionSettings
+
                 settings = ConnectionSettings(
                     environment_id=copilot_studio_settings.environmentid,
                     agent_identifier=copilot_studio_settings.schemaname,
@@ -172,6 +172,8 @@ class CopilotStudioAgent(BaseAgent):
                     token_cache=token_cache,
                     scopes=scopes,
                 )
+
+            from microsoft_agents.copilotstudio.client import CopilotClient
 
             client = CopilotClient(settings=settings, token=token)
 
@@ -300,11 +302,7 @@ class CopilotStudioAgent(BaseAgent):
 
         return conversation_id
 
-    async def _process_activities(
-        self,
-        activities: AsyncIterable[Activity],
-        streaming: bool,  # type: ignore[no-any-unimported]
-    ) -> AsyncIterable[ChatMessage]:
+    async def _process_activities(self, activities: AsyncIterable[Any], streaming: bool) -> AsyncIterable[ChatMessage]:
         """Process activities from the Copilot Studio agent.
 
         Args:
@@ -321,11 +319,7 @@ class CopilotStudioAgent(BaseAgent):
             ):
                 yield self._create_chat_message_from_activity(activity, [TextContent(activity.text)])
 
-    def _create_chat_message_from_activity(
-        self,
-        activity: Activity,
-        contents: MutableSequence[Contents],  # type: ignore[no-any-unimported]
-    ) -> ChatMessage:
+    def _create_chat_message_from_activity(self, activity: Any, contents: MutableSequence[Contents]) -> ChatMessage:
         """Create a ChatMessage from a Copilot Studio activity.
 
         Args:
