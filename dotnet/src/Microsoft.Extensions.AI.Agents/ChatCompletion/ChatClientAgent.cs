@@ -360,7 +360,7 @@ public sealed class ChatClientAgent : AIAgent
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.
-        if (!string.IsNullOrWhiteSpace(typedThread.ServiceThreadid) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && typedThread.ServiceThreadid != chatOptions!.ConversationId)
+        if (!string.IsNullOrWhiteSpace(typedThread.ServiceThreadId) && !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) && typedThread.ServiceThreadId != chatOptions!.ConversationId)
         {
             throw new InvalidOperationException(
                 $"""
@@ -376,10 +376,10 @@ public sealed class ChatClientAgent : AIAgent
         }
 
         // Only create or update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
-        if (!string.IsNullOrWhiteSpace(typedThread.ServiceThreadid) && typedThread.ServiceThreadid != chatOptions?.ConversationId)
+        if (!string.IsNullOrWhiteSpace(typedThread.ServiceThreadId) && typedThread.ServiceThreadId != chatOptions?.ConversationId)
         {
             chatOptions ??= new();
-            chatOptions.ConversationId = typedThread.ServiceThreadid;
+            chatOptions.ConversationId = typedThread.ServiceThreadId;
         }
 
         return (typedThread, chatOptions, threadMessages);
@@ -387,7 +387,7 @@ public sealed class ChatClientAgent : AIAgent
 
     private void UpdateThreadWithTypeAndConversationId(ChatClientAgentThread thread, string? responseConversationId)
     {
-        if (string.IsNullOrWhiteSpace(responseConversationId) && !string.IsNullOrWhiteSpace(thread.ServiceThreadid))
+        if (string.IsNullOrWhiteSpace(responseConversationId) && !string.IsNullOrWhiteSpace(thread.ServiceThreadId))
         {
             // We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             // meaning the service doesn't support service managed threads, so the thread cannot be used with this service.
@@ -400,7 +400,7 @@ public sealed class ChatClientAgent : AIAgent
         {
             // If we got a conversation id back from the chat client, it means that the service supports server side thread storage
             // so we should update the thread with the new id.
-            thread.ServiceThreadid = responseConversationId;
+            thread.ServiceThreadId = responseConversationId;
         }
         else if (thread.MessageStore is null)
         {

@@ -1,39 +1,37 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
 /// A thread type that may be used by any agent that proxies a remote agent where the remote agent has its own thread management.
 /// </summary>
-public class ClientProxyAgentThread : AgentThread
+public class ProxyAgentThread : AgentThread
 {
-    private string? _serviceThreadId;
-
     /// <summary>
-    /// Initializes a new instance of the <see cref="ClientProxyAgentThread"/> class.
+    /// Initializes a new instance of the <see cref="ProxyAgentThread"/> class.
     /// </summary>
-    public ClientProxyAgentThread()
+    public ProxyAgentThread()
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ClientProxyAgentThread"/> class from serialized state.
+    /// Initializes a new instance of the <see cref="ProxyAgentThread"/> class from serialized state.
     /// </summary>
     /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
-    public ClientProxyAgentThread(JsonElement serializedThreadState)
+    public ProxyAgentThread(JsonElement serializedThreadState)
     {
         var state = JsonSerializer.Deserialize(
             serializedThreadState,
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
-        if (state?.ServiceThreadid is string threadId && !string.IsNullOrWhiteSpace(threadId))
+        if (state?.ServiceThreadId is string threadId)
         {
-            this.ServiceThreadid = threadId;
+            this.ServiceThreadId = threadId;
         }
     }
 
@@ -47,7 +45,7 @@ public class ClientProxyAgentThread : AgentThread
     {
         var state = new ThreadState
         {
-            ServiceThreadid = this.ServiceThreadid
+            ServiceThreadId = this.ServiceThreadId
         };
 
         return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
@@ -56,17 +54,11 @@ public class ClientProxyAgentThread : AgentThread
     /// <summary>
     /// Gets or sets the id of the service thread to support cases where the thread is owned by an underlying agent service.
     /// </summary>
-    public virtual string? ServiceThreadid
-    {
-        get => this._serviceThreadId;
-        set
-        {
-            this._serviceThreadId = Throw.IfNullOrWhitespace(value);
-        }
-    }
+    public virtual string? ServiceThreadId { get; set; }
 
     internal sealed class ThreadState
     {
-        public string? ServiceThreadid { get; set; }
+        [JsonPropertyName("serviceThreadId")]
+        public string? ServiceThreadId { get; set; }
     }
 }

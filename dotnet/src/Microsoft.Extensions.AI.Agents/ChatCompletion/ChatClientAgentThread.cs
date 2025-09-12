@@ -13,7 +13,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Thread for chat client based agents.
 /// </summary>
-public class ChatClientAgentThread : ClientProxyAgentThread
+public sealed class ChatClientAgentThread : ProxyAgentThread
 {
     private string? _serviceThreadId;
     private IChatMessageStore? _messageStore;
@@ -42,7 +42,7 @@ public class ChatClientAgentThread : ClientProxyAgentThread
 
         if (state?.ServiceThreadid is string threadId)
         {
-            this.ServiceThreadid = threadId;
+            this.ServiceThreadId = threadId;
 
             // Since we have an ID, we should not have a chat message store and we can return here.
             return;
@@ -62,8 +62,8 @@ public class ChatClientAgentThread : ClientProxyAgentThread
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Note that either <see cref="ServiceThreadid"/> or <see cref="MessageStore "/> may be set, but not both.
-    /// If <see cref="MessageStore "/> is not null, and <see cref="ServiceThreadid"/> is set, <see cref="MessageStore "/>
+    /// Note that either <see cref="ServiceThreadId"/> or <see cref="MessageStore "/> may be set, but not both.
+    /// If <see cref="MessageStore "/> is not null, and <see cref="ServiceThreadId"/> is set, <see cref="MessageStore "/>
     /// will be reverted to null, and vice versa.
     /// </para>
     /// <para>
@@ -79,7 +79,7 @@ public class ChatClientAgentThread : ClientProxyAgentThread
     /// to fork the thread with each iteration.
     /// </para>
     /// </remarks>
-    public override string? ServiceThreadid
+    public override string? ServiceThreadId
     {
         get => this._serviceThreadId;
         set
@@ -106,8 +106,8 @@ public class ChatClientAgentThread : ClientProxyAgentThread
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Note that either <see cref="ServiceThreadid"/> or <see cref="MessageStore "/> may be set, but not both.
-    /// If <see cref="ServiceThreadid"/> is not null, and <see cref="MessageStore "/> is set, <see cref="ServiceThreadid"/>
+    /// Note that either <see cref="ServiceThreadId"/> or <see cref="MessageStore "/> may be set, but not both.
+    /// If <see cref="ServiceThreadId"/> is not null, and <see cref="MessageStore "/> is set, <see cref="ServiceThreadId"/>
     /// will be reverted to null, and vice versa.
     /// </para>
     /// <para>
@@ -153,7 +153,7 @@ public class ChatClientAgentThread : ClientProxyAgentThread
 
         var state = new ThreadState
         {
-            ServiceThreadid = this.ServiceThreadid,
+            ServiceThreadid = this.ServiceThreadId,
             StoreState = storeState
         };
 
@@ -176,7 +176,7 @@ public class ChatClientAgentThread : ClientProxyAgentThread
 
         switch (this)
         {
-            case { ServiceThreadid: not null }:
+            case { ServiceThreadId: not null }:
                 // If the thread messages are stored in the service
                 // there is nothing to do here, since invoking the
                 // service should already update the thread.
