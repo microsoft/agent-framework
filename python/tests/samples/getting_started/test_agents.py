@@ -66,7 +66,16 @@ from samples.getting_started.agents.foundry.foundry_with_explicit_settings impor
     main as foundry_with_explicit_settings,
 )
 from samples.getting_started.agents.foundry.foundry_with_function_tools import (
-    main as foundry_with_function_tools,
+    mixed_tools_example as foundry_with_function_tools_mixed,
+)
+from samples.getting_started.agents.foundry.foundry_with_function_tools import (
+    tools_on_agent_level as foundry_with_function_tools_agent,
+)
+from samples.getting_started.agents.foundry.foundry_with_function_tools import (
+    tools_on_run_level as foundry_with_function_tools_run,
+)
+from samples.getting_started.agents.foundry.foundry_with_local_mcp import (
+    main as foundry_with_local_mcp,
 )
 from samples.getting_started.agents.foundry.foundry_with_thread import (
     main as foundry_with_thread,
@@ -320,7 +329,25 @@ agent_samples = [
         ],
     ),
     param(
-        foundry_with_function_tools,
+        foundry_with_function_tools_agent,
+        [],  # Non-interactive sample
+        id="foundry_with_function_tools",
+        marks=[
+            pytest.mark.foundry,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
+    ),
+    param(
+        foundry_with_function_tools_run,
+        [],  # Non-interactive sample
+        id="foundry_with_function_tools",
+        marks=[
+            pytest.mark.foundry,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
+    ),
+    param(
+        foundry_with_function_tools_mixed,
         [],  # Non-interactive sample
         id="foundry_with_function_tools",
         marks=[
@@ -332,6 +359,15 @@ agent_samples = [
         foundry_with_thread,
         [],  # Non-interactive sample
         id="foundry_with_thread",
+        marks=[
+            pytest.mark.foundry,
+            pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
+        ],
+    ),
+    param(
+        foundry_with_local_mcp,
+        [],  # Non-interactive sample
+        id="foundry_with_local_mcp",
         marks=[
             pytest.mark.foundry,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),

@@ -28,9 +28,9 @@ internal static class Step1EntryPoint
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorCompleteEvent executorComplete)
+            if (evt is ExecutorCompletedEvent executorCompleted)
             {
-                writer.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
+                writer.WriteLine($"{executorCompleted.ExecutorId}: {executorCompleted.Data}");
             }
         }
     }

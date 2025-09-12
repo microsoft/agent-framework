@@ -17,7 +17,7 @@ internal static class A2AMessageExtensions
     /// <param name="authorName">The author name to set on the resulting <see cref="ChatMessage"/>.</param>
     /// <param name="artifacts">The A2A artifacts to convert and add as chat messages.</param>
     /// <returns>The corresponding list of <see cref="ChatMessage"/>.</returns>
-    public static IList<ChatMessage> ToChatMessages(this IList<Message> messages, string? authorName = null, IList<Artifact>? artifacts = null)
+    internal static IList<ChatMessage> ToChatMessages(this IList<Message> messages, string? authorName = null, IList<Artifact>? artifacts = null)
     {
         List<ChatMessage> chatMessages = new(messages.Count);
 

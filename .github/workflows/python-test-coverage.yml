@@ -36,7 +36,7 @@ jobs:
       - name: Install the project
         run: uv sync --all-extras --dev
       - name: Run all tests with coverage report
-        run: uv run poe all-tests --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
+        run: uv run poe all-tests  -n logical --dist loadfile --dist worksteal --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:

@@ -19,12 +19,10 @@ internal static class A2AArtifactExtensions
     /// <returns>The corresponding <see cref="ChatMessage"/>.</returns>
     public static ChatMessage ToChatMessage(this Artifact artifact, string? authorName = null)
     {
-        return new()
+        return new ChatMessage(ChatRole.Assistant, [.. artifact.Parts.Select(part => part.ToAIContent())])
         {
             AuthorName = authorName,
-            Role = ChatRole.Assistant,
             RawRepresentation = artifact,
-            Contents = [.. artifact.Parts.Select(part => part.ToAIContent())],
             AdditionalProperties = AddArtifactPropertiesAsAdditionalProperties(artifact),
         };
     }

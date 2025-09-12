@@ -7,7 +7,6 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -25,9 +24,7 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Declar
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class WorkflowActionExecutor :
-    ReflectingExecutor<WorkflowActionExecutor>,
-    IMessageHandler<DeclarativeExecutorResult>
+internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorResult>
 {
     public const string RootActionId = "(root)";
 
@@ -60,14 +57,18 @@ internal abstract class WorkflowActionExecutor :
 
     protected DeclarativeWorkflowState State { get; }
 
+    protected virtual bool IsDiscreteAction => true;
+
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {
             Debug.WriteLine($"DISABLED {this.GetType().Name} [{this.Id}]");
             return;
         }
+
+        await this.RaiseInvocationEventAsync(context, message.ExecutorId).ConfigureAwait(false);
 
         await this.State.RestoreAsync(context, default).ConfigureAwait(false);
 
@@ -86,6 +87,13 @@ internal abstract class WorkflowActionExecutor :
         {
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
             throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
+        }
+        finally
+        {
+            if (this.IsDiscreteAction)
+            {
+                await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
+            }
         }
     }
 
@@ -117,4 +125,8 @@ internal abstract class WorkflowActionExecutor :
         string message = $"Unexpected workflow failure during {this.Model.GetType().Name} [{this.Id}]: {text}";
         return exception is null ? new(message) : new(message, exception);
     }
+
+    protected ValueTask RaiseInvocationEventAsync(IWorkflowContext context, string? priorEventId = null) => context.AddEventAsync(new DeclarativeActionInvokeEvent(this.Id, this.Model, priorEventId));
+
+    protected ValueTask RaiseCompletionEventAsync(IWorkflowContext context) => context.AddEventAsync(new DeclarativeActionCompleteEvent(this.Id, this.Model));
 }

@@ -392,7 +392,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         // where we don't know what the original message id of the function call was.
         string functionCallContentFallbackMessageId = Guid.NewGuid().ToString("N");
 
-        ApprovalRequiredAIFunction[]? approvalRequiredFunctions = (options?.Tools ?? []).Concat(AdditionalTools ?? []).OfType<ApprovalRequiredAIFunction>().ToArray();
+        NewApprovalRequiredAIFunction[]? approvalRequiredFunctions = (options?.Tools ?? []).Concat(AdditionalTools ?? []).OfType<NewApprovalRequiredAIFunction>().ToArray();
         bool hasApprovalRequiringFunctions = approvalRequiredFunctions.Length > 0;
 
         // Process approval requests (remove from original messages) and rejected approval responses (re-create FCC and create failed FRC).
@@ -1336,7 +1336,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
     /// </summary>
     private static async Task<(bool hasApprovalRequiringFcc, int lastApprovalCheckedFCCIndex)> CheckForApprovalRequiringFCCAsync(
         List<FunctionCallContent>? functionCallContents,
-        ApprovalRequiredAIFunction[] approvalRequiredFunctions,
+        NewApprovalRequiredAIFunction[] approvalRequiredFunctions,
         bool hasApprovalRequiringFcc,
         int lastApprovalCheckedFCCIndex)
     {
@@ -1349,7 +1349,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
         for (; lastApprovalCheckedFCCIndex < (functionCallContents?.Count ?? 0); lastApprovalCheckedFCCIndex++)
         {
             var fcc = functionCallContents![lastApprovalCheckedFCCIndex];
-            if (approvalRequiredFunctions.FirstOrDefault(y => y.Name == fcc.Name) is ApprovalRequiredAIFunction approvalFunction &&
+            if (approvalRequiredFunctions.FirstOrDefault(y => y.Name == fcc.Name) is NewApprovalRequiredAIFunction approvalFunction &&
                 await approvalFunction.RequiresApprovalCallback(new(fcc)))
             {
                 hasApprovalRequiringFcc |= true;
@@ -1390,7 +1390,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
     private static async Task<IList<ChatMessage>> ReplaceFunctionCallsWithApprovalRequests(IList<ChatMessage> messages, IList<AITool>? requestOptionsTools, IList<AITool>? additionalTools)
     {
         var outputMessages = messages;
-        ApprovalRequiredAIFunction[]? approvalRequiredFunctions = null;
+        NewApprovalRequiredAIFunction[]? approvalRequiredFunctions = null;
 
         bool anyApprovalRequired = false;
         List<(int, int)>? allFunctionCallContentIndices = null;
@@ -1408,7 +1408,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
                     allFunctionCallContentIndices.Add((i, j));
 
                     approvalRequiredFunctions ??= (requestOptionsTools ?? []).Concat(additionalTools ?? [])
-                        .OfType<ApprovalRequiredAIFunction>()
+                        .OfType<NewApprovalRequiredAIFunction>()
                         .ToArray();
 
                     anyApprovalRequired |= approvalRequiredFunctions.FirstOrDefault(x => x.Name == functionCall.Name) is { } approvalFunction && await approvalFunction.RequiresApprovalCallback(new(functionCall));
