@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class DataValueExtensions
 {
-    public static FormulaValue ToFormulaValue(this DataValue? value) =>
+    public static FormulaValue ToFormula(this DataValue? value) =>
         value switch
         {
             null => FormulaValue.NewBlank(),
@@ -58,7 +58,7 @@ internal static class DataValueExtensions
     public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>
         FormulaValue.NewRecordFromFields(
             recordDataValue.Properties.Select(
-                property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
+                property => new NamedValue(property.Key, property.Value.ToFormula())));
 
     public static RecordType ToRecordType(this RecordDataType record)
     {

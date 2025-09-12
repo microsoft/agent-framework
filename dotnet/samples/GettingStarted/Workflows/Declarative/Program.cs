@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#define PORTABLE_RESTORE
+#define RESTORE_HAXX
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,6 +11,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
+using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
@@ -43,13 +47,7 @@ internal sealed class Program
 
         Stopwatch timer = Stopwatch.StartNew();
 
-        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        DeclarativeWorkflowOptions options =
-            new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
-            {
-                Configuration = this.Configuration
-            };
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
+        Workflow<string> workflow = this.CreateWorkflow();
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
@@ -57,23 +55,77 @@ internal sealed class Program
 
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
-        await this.MonitorWorkflowRunAsync(run);
+
+        CheckpointManager checkpointManager = new();
+        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
+
+        bool isComplete = false;
+#if RESTORE_HAXX
+        string? response = null;
+#else
+        ExternalResponse? response = null;
+#endif
+        do
+        {
+            ExternalRequest? inputRequest = await this.MonitorWorkflowRunAsync(run, response);
+            if (inputRequest is not null)
+            {
+                Notify("\nWORKFLOW: Yield");
+
+                if (this.LastCheckpoint is null)
+                {
+                    throw new InvalidOperationException("Checkpoint information missing after external request.");
+                }
+
+                // Process the external request.
+#if RESTORE_HAXX
+                response = HandleExternalRequest(inputRequest);
+#else
+                response = HandleExternalRequest(inputRequest);
+#endif
+
+                // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
+                workflow = this.CreateWorkflow();
+
+                // Restore the latest checkpoint.
+                Debug.WriteLine($"RESTORE: {this.LastCheckpoint.CheckpointId}");
+                Notify("\nWORKFLOW: Restore");
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager);
+            }
+            else
+            {
+                isComplete = true;
+            }
+        }
+        while (!isComplete);
 
         Notify("\nWORKFLOW: Done!\n");
+    }
+
+    private Workflow<string> CreateWorkflow()
+    {
+        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+        DeclarativeWorkflowOptions options =
+            new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
+            {
+                Configuration = this.Configuration
+            };
+        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
+        return workflow;
     }
 
     private const string DefaultWorkflow = "HelloWorld.yaml";
     private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
 
-    private static readonly Dictionary<string, string> s_nameCache = [];
-    private static readonly HashSet<string> s_fileCache = [];
+    private static Dictionary<string, string> NameCache { get; } = [];
+    private static HashSet<string> FileCache { get; } = [];
 
     private string WorkflowFile { get; }
     private string? WorkflowInput { get; }
     private string FoundryEndpoint { get; }
     private PersistentAgentsClient FoundryClient { get; }
     private IConfiguration Configuration { get; }
+    private CheckpointInfo? LastCheckpoint { get; set; }
 
     private Program(string[] args)
     {
@@ -86,11 +138,15 @@ internal sealed class Program
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
     }
 
-    private async Task MonitorWorkflowRunAsync(StreamingRun run)
+#if RESTORE_HAXX
+    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, string? response = null)
+#else
+    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalResponse? response = null)
+#endif
     {
         string? messageId = null;
 
-        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (workflowEvent)
             {
@@ -114,6 +170,31 @@ internal sealed class Program
                     Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
                     break;
 
+                case SuperStepCompletedEvent checkpointCompleted:
+                    this.LastCheckpoint = checkpointCompleted.CompletionInfo?.Checkpoint;
+                    Debug.WriteLine($"CHECKPOINT x{checkpointCompleted.StepNumber} [{this.LastCheckpoint?.CheckpointId ?? "(none)"}]");
+                    break;
+
+                case RequestInfoEvent requestInfo:
+                    Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
+#if PORTABLE_RESTORE
+                    if (response is not null)
+                    {
+#if RESTORE_HAXX
+                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse<string>(response);
+#endif
+                        await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        return requestInfo.Request;
+                    }
+#else
+                    ExternalResponse response = HandleExternalRequest(requestInfo.Request);
+                    await run.Run.SendResponseAsync(response).ConfigureAwait(false);
+#endif
+                    break;
+
                 case ConversationUpdateEvent invokeEvent:
                     Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
                     break;
@@ -135,10 +216,10 @@ internal sealed class Program
                             string? agentId = streamEvent.Update.AuthorName;
                             if (agentId is not null)
                             {
-                                if (!s_nameCache.TryGetValue(agentId, out string? realName))
+                                if (!NameCache.TryGetValue(agentId, out string? realName))
                                 {
                                     PersistentAgent agent = await this.FoundryClient.Administration.GetAgentAsync(agentId);
-                                    s_nameCache[agentId] = agent.Name;
+                                    NameCache[agentId] = agent.Name;
                                     realName = agent.Name;
                                 }
                                 agentId = realName;
@@ -156,7 +237,7 @@ internal sealed class Program
                     {
                         case MessageContentUpdate messageUpdate:
                             string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
-                            if (fileId is not null && s_fileCache.Add(fileId))
+                            if (fileId is not null && FileCache.Add(fileId))
                             {
                                 BinaryData content = await this.FoundryClient.Files.GetFileContentAsync(fileId);
                                 await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
@@ -191,6 +272,31 @@ internal sealed class Program
                     break;
             }
         }
+
+        return default;
+    }
+#if RESTORE_HAXX
+    private static string HandleExternalRequest(ExternalRequest request)
+#else
+    private static ExternalResponse HandleExternalRequest(ExternalRequest request)
+#endif
+    {
+        string? prompt = request.Data as string;
+        string? userInput = null;
+        do
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.Write($"\n{prompt ?? "INPUT"}: ");
+            Console.ForegroundColor = ConsoleColor.White;
+            userInput = Console.ReadLine();
+        }
+        while (string.IsNullOrWhiteSpace(userInput));
+
+#if RESTORE_HAXX
+        return userInput;
+#else
+        return request.CreateResponse<string>(userInput);
+#endif
     }
 
     private static string ParseWorkflowFile(string[] args)

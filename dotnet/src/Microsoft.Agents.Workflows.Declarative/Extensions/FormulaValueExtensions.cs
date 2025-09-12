@@ -20,7 +20,7 @@ internal static class FormulaValueExtensions
 
     public static FormulaValue NewBlank(this FormulaType? type) => FormulaValue.NewBlank(type ?? FormulaType.Blank);
 
-    public static FormulaValue ToFormulaValue(this object? value) =>
+    public static FormulaValue ToFormula(this object? value) =>
         value switch
         {
             null => FormulaValue.NewBlank(),
@@ -152,7 +152,7 @@ internal static class FormulaValueExtensions
         {
             foreach (string key in value.Keys)
             {
-                yield return new NamedValue(key, value[key].ToFormulaValue());
+                yield return new NamedValue(key, value[key].ToFormula());
             }
         }
     }
@@ -190,7 +190,7 @@ internal static class FormulaValueExtensions
     private static RecordValue ToRecord(this ExpandoObject value) =>
         FormulaValue.NewRecordFromFields(
             value.Select(
-                property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
+                property => new NamedValue(property.Key, property.Value.ToFormula())));
 
     private static TableType ToTableType(this IEnumerable value)
     {

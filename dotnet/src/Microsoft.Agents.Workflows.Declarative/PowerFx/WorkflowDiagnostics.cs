@@ -44,7 +44,7 @@ internal static class WorkflowDiagnostics
                 continue;
             }
 
-            FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormulaValue() ?? variableDiagnostic.Type.NewBlank();
+            FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormula() ?? variableDiagnostic.Type.NewBlank();
 
             if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) ?? false)
             {

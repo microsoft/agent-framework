@@ -192,6 +192,22 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.RestartAfter(item.Id.Value, parentId);
     }
 
+    protected override void Visit(Question item) // %%% TODO
+    {
+        this.Trace(item);
+
+        QuestionExecutor questionExecutor = new(item, this._workflowState);
+        this.ContinueWith(questionExecutor);
+
+        string id = "input_" + item.GetId();
+        string parentId = GetParentId(item);
+        InputPort inputPort = InputPort.Create<string, string>(id);
+        this._workflowModel.AddPort(inputPort, parentId);
+        this._workflowModel.AddLinkFromPeer(parentId, id);
+
+        this.ContinueWith(this.CreateStep<string>("capture_" + item.GetId(), questionExecutor.HandleResponseAsync), parentId);
+    }
+
     protected override void Visit(CreateConversation item)
     {
         this.Trace(item);
@@ -364,11 +380,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.NotSupported(item);
     }
 
-    protected override void Visit(Question item)
-    {
-        this.NotSupported(item);
-    }
-
     protected override void Visit(CSATQuestion item)
     {
         this.NotSupported(item);
@@ -523,6 +534,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private DelegateActionExecutor CreateStep(string actionId, DelegateAction? stepAction = null)
     {
         DelegateActionExecutor stepExecutor = new(actionId, stepAction);
+
+        return stepExecutor;
+    }
+
+    private DelegateActionExecutor<TInput> CreateStep<TInput>(string actionId, DelegateAction? stepAction = null)
+    {
+        DelegateActionExecutor<TInput> stepExecutor = new(actionId, stepAction);
 
         return stepExecutor;
     }

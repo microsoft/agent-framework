@@ -83,20 +83,21 @@ internal sealed class DeclarativeWorkflowState
 
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1)
+        if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1) // %%% NEEDED ???
         {
             return;
         }
 
         await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
 
+        // %%% BUG: LastMessage.Text
         async ValueTask ReadScopeAsync(string scopeName)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName).ConfigureAwait(false);
             foreach (string key in keys)
             {
                 object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
-                this._scopes.Set(key, value.ToFormulaValue(), scopeName);
+                this._scopes.Set(key, value.ToFormula(), scopeName);
             }
         }
     }

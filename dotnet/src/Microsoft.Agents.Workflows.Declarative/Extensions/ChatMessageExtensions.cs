@@ -100,7 +100,7 @@ internal static class ChatMessageExtensions
 
         foreach (KeyValuePair<string, DataValue> property in metadata.Properties)
         {
-            properties[property.Key] = property.Value.ToFormulaValue().ToObject();
+            properties[property.Key] = property.Value.ToFormula().ToObject(); // %%% HAXX
         }
 
         return properties;
@@ -185,11 +185,11 @@ internal static class ChatMessageExtensions
 
     private static IEnumerable<NamedValue> GetMessageFields(this ChatMessage message)
     {
-        yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormulaValue());
-        yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormulaValue());
-        yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormula());
+        yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormula());
+        yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Content, TableValue.NewTable(s_contentRecordType, message.GetContentRecords()));
-        yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormulaValue());
+        yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToRecord());
     }
 
@@ -209,8 +209,8 @@ internal static class ChatMessageExtensions
 
         static IEnumerable<NamedValue> CreateContentRecord(string type, string value)
         {
-            yield return new NamedValue(TypeSchema.Message.Fields.ContentType, type.ToFormulaValue());
-            yield return new NamedValue(TypeSchema.Message.Fields.ContentValue, value.ToFormulaValue());
+            yield return new NamedValue(TypeSchema.Message.Fields.ContentType, type.ToFormula());
+            yield return new NamedValue(TypeSchema.Message.Fields.ContentValue, value.ToFormula());
         }
     }
     private static RecordValue ToRecord(this AdditionalPropertiesDictionary? value)
@@ -223,7 +223,7 @@ internal static class ChatMessageExtensions
             {
                 foreach (string key in value.Keys)
                 {
-                    yield return new NamedValue(key, value[key].ToFormulaValue());
+                    yield return new NamedValue(key, value[key].ToFormula());
                 }
             }
         }

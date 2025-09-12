@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,6 +12,8 @@ namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 internal sealed class SendActivityExecutor(SendActivity model, DeclarativeWorkflowState state) :
     DeclarativeActionExecutor<SendActivity>(model, state)
 {
+    public readonly Guid _check = Guid.NewGuid();
+
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (this.Model.Activity is MessageActivityTemplate messageActivity)

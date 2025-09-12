@@ -75,7 +75,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         return Steps.Else(this.Model);
     }
 
-    public async ValueTask DoneAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public async ValueTask DoneAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
     {
         await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
     }

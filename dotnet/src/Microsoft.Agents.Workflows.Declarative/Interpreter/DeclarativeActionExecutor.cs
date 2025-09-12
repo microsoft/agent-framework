@@ -59,6 +59,8 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
 
     protected virtual bool IsDiscreteAction => true;
 
+    protected virtual bool EmitResultEvent => true;
+
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
     {
@@ -70,13 +72,14 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
 
         await this.RaiseInvocationEventAsync(context, message.ExecutorId).ConfigureAwait(false);
 
-        await this.State.RestoreAsync(context, default).ConfigureAwait(false);
-
         try
         {
             object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
 
-            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id, result)).ConfigureAwait(false);
+            if (this.EmitResultEvent)
+            {
+                await this.SendResultMessageAsync(context, result).ConfigureAwait(false);
+            }
         }
         catch (DeclarativeActionException exception)
         {
@@ -97,7 +100,17 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
         }
     }
 
+    protected ValueTask SendResultMessageAsync(IWorkflowContext context, object? result = null, CancellationToken cancellationToken = default) =>
+        context.SendMessageAsync(new DeclarativeExecutorResult(this.Id, result));
+
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Restore the state of the executor from a checkpoint.
+    /// This must be overridden to restore any state that was saved during checkpointing.
+    /// </summary>
+    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => // %%% DELEGATE ALSO
+        this.State.RestoreAsync(context, cancellation);
 
     protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context)
     {
