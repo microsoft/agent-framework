@@ -138,7 +138,7 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
 
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var messagesList = messages as IList<ChatMessage> ?? messages.ToList();
+        var messagesList = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         if (messagesList.Count == 0)
         {
