@@ -14,7 +14,7 @@ from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
-from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
 from ._types import (
     AgentRunResponse,
     AgentRunResponseUpdate,
@@ -169,6 +169,67 @@ class BaseAgent(AFBaseModel):
         thread: AgentThread = self.get_new_thread()
         await deserialize_thread_state(thread, serialized_thread, **kwargs)
         return thread
+
+    def as_tool(
+        self,
+        name: str | None = None,
+        description: str | None = None,
+        arg_name: str = "input",
+        arg_description: str | None = None,
+        stream_callback: Callable[[AgentRunResponseUpdate], None] | None = None,
+    ) -> AIFunction[Any, str]:
+        """Create an AIFunction tool that wraps this agent.
+
+        Args:
+            name: The name for the tool. If None, uses the agent's name.
+            description: The description for the tool. If None, uses the agent's description or empty string.
+            arg_name: The name of the function argument (default: "input").
+            arg_description: The description for the function argument.
+                If None, defaults to "Input for {self.display_name}".
+            stream_callback: Optional callback for streaming responses. If provided, uses run_stream.
+
+        Returns:
+            An AIFunction that can be used as a tool by other agents.
+        """
+        from pydantic import Field, create_model
+
+        # Verify that self implements AgentProtocol
+        if not isinstance(self, AgentProtocol):
+            raise TypeError(f"Agent {self.__class__.__name__} must implement AgentProtocol to be used as a tool")
+
+        tool_name = name or self.name
+        if tool_name is None:
+            raise ValueError("Agent tool name cannot be None. Either provide a name parameter or set the agent's name.")
+        tool_description = description or self.description or ""
+        argument_description = arg_description or f"Input for {self.display_name}"
+
+        # Create dynamic input model with the specified argument name
+        from typing import Annotated
+
+        input_model = create_model(
+            f"{self.display_name}_Input",
+            **{arg_name: (Annotated[str, Field(..., description=argument_description)], ...)},
+        )
+
+        async def agent_wrapper(**kwargs: Any) -> str:
+            """Wrapper function that calls the agent."""
+            # Extract the input from kwargs using the specified arg_name
+            input_text = kwargs.get(arg_name, "")
+
+            if stream_callback is not None:
+                # Use streaming mode - accumulate updates and create final response
+                response_updates: list[AgentRunResponseUpdate] = []
+                async for update in self.run_stream(input_text):
+                    response_updates.append(update)
+                    stream_callback(update)
+
+                # Create final text from accumulated updates
+                return "".join(update.text for update in response_updates)
+            # Use non-streaming mode
+            response = await self.run(input_text)
+            return response.text
+
+        return AIFunction(name=tool_name, description=tool_description, func=agent_wrapper, input_model=input_model)
 
 
 # region ChatAgent
