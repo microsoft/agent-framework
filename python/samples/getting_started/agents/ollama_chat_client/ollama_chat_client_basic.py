@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.olama import OlamaChatClient
+from agent_framework.ollama import OllamaChatClient
 
 
 def get_weather(
@@ -19,7 +19,7 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = OlamaChatClient().create_agent(
+    agent = OllamaChatClient().create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         # tools=get_weather,
@@ -35,7 +35,7 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = OlamaChatClient().create_agent(
+    agent = OllamaChatClient().create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         # tools=get_weather,
@@ -51,7 +51,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Basic Olama Chat Client Agent Example ===")
+    print("=== Basic Ollama Chat Client Agent Example ===")
 
     await non_streaming_example()
     await streaming_example()

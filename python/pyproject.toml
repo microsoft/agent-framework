@@ -9,7 +9,7 @@ dependencies = [
     "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-workflow",
-    "agent-framework-olama",
+    "agent-framework-ollama",
 ]
 
 [dependency-groups]
@@ -67,7 +67,7 @@ agent-framework-azure = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-runtime = { workspace = true }
-agent-framework-olama = { workspace = true }
+agent-framework-ollama = { workspace = true }
 agent-framework-workflow = { workspace = true }
 
 [tool.ruff]

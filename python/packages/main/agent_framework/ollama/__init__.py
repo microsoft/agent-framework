@@ -3,11 +3,11 @@
 import importlib
 from typing import Any
 
-PACKAGE_NAME = "agent_framework_olama"
-PACKAGE_EXTRA = "olama"
+PACKAGE_NAME = "agent_framework_ollama"
+PACKAGE_EXTRA = "ollama"
 _IMPORTS = [
-    "OlamaChatClient",
-    "OlamaSettings",
+    "OllamaChatClient",
+    "OllamaSettings",
     "__version__",
 ]
 

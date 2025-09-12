@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-olama"
-description = "Azure AI Olama integration for Microsoft Agent Framework."
+name = "agent-framework-ollama"
+description = "Azure AI Ollama integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -73,18 +73,18 @@ disallow_untyped_decorators = true
 disallow_any_unimported = true
 
 [tool.bandit]
-targets = ["agent_framework_olama"]
+targets = ["agent_framework_ollama"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_olama"
-test = "pytest --cov=agent_framework_olama --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ollama"
+test = "pytest --cov=agent_framework_ollama --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
-module-name = "agent_framework_olama"
+module-name = "agent_framework_ollama"
 module-root = ""
 
 [build-system]

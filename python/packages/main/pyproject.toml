@@ -43,8 +43,8 @@ azure = [
 foundry = [
     "agent-framework-foundry"
 ]
-olama = [
-    "agent-framework-olama"
+ollama = [
+    "agent-framework-ollama"
 ]
 workflow = [
     "agent-framework-workflow"
