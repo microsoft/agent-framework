@@ -128,7 +128,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var inputMessages = Throw.IfNull(messages) as IList<ChatMessage> ?? messages.ToList();
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, inputMessages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
@@ -160,7 +160,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var inputMessages = Throw.IfNull(messages) as IList<ChatMessage> ?? messages.ToList();
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, inputMessages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
@@ -214,7 +214,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>
     /// Creates an activity for an agent request, or returns null if not enabled.
     /// </summary>
-    private Activity? CreateAndConfigureActivity(string operationName, IList<ChatMessage> messages, AgentThread? thread)
+    private Activity? CreateAndConfigureActivity(string operationName, IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
     {
         // Get the GenAI system name for telemetry
         var chatClientAgent = this.InnerAgent as ChatClientAgent;
