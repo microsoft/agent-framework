@@ -17,9 +17,9 @@ internal static class Step1aEntryPoint
 
         foreach (WorkflowEvent evt in run.NewEvents)
         {
-            if (evt is ExecutorCompleteEvent executorComplete)
+            if (evt is ExecutorCompletedEvent executorCompleted)
             {
-                writer.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
+                writer.WriteLine($"{executorCompleted.ExecutorId}: {executorCompleted.Data}");
             }
         }
     }
