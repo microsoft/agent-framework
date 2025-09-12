@@ -65,7 +65,7 @@ public abstract partial class OrchestratingAgent : AIAgent
 
     /// <inheritdoc />
     public sealed override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -87,7 +87,7 @@ public abstract partial class OrchestratingAgent : AIAgent
 
     /// <inheritdoc />
     public sealed override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // TODO: There should be a RunAsync overload that returns an OrchestratingAgentStreamingResponse, which this then delegates to.
 
@@ -106,12 +106,12 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="runtime">The runtime associated with the orchestration.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     public async ValueTask<OrchestratingAgentResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentRunOptions? options = null,
         IActorRuntimeContext? runtime = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(messages, nameof(messages));
+        var readonlyCollectionMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
         cancellationToken.ThrowIfCancellationRequested();
 
         ILogger logger = this.LoggerFactory.CreateLogger(this.GetType().Name);
@@ -131,8 +131,8 @@ public abstract partial class OrchestratingAgent : AIAgent
 
         JsonElement? checkpoint = await this.ReadCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
         Task<AgentRunResponse> completion = checkpoint is null ?
-            this.RunCoreAsync(messages, context, cancellationToken) :
-            this.ResumeCoreAsync(checkpoint.Value, messages, context, cancellationToken);
+            this.RunCoreAsync(readonlyCollectionMessages, context, cancellationToken) :
+            this.ResumeCoreAsync(checkpoint.Value, readonlyCollectionMessages, context, cancellationToken);
 
         if (logger.IsEnabled(LogLevel.Trace))
         {
