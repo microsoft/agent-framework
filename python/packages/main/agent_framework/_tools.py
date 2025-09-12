@@ -446,13 +446,13 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 logger.info(f"Function {self.name} succeeded.")
                 if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                     try:
-                        json.dumps(result)  # type: ignore[arg-type]
+                        json_result = json.dumps(result)
                     except (TypeError, OverflowError):
                         span.set_attribute(OtelAttr.TOOL_RESULT, "<non-serializable result>")
                         logger.debug("Function result: <non-serializable result>")
                     else:
-                        span.set_attribute(OtelAttr.TOOL_RESULT, json.dumps(result))
-                        logger.debug(f"Function result: {result or 'None'}")
+                        span.set_attribute(OtelAttr.TOOL_RESULT, json_result)
+                        logger.debug(f"Function result: {json_result}")
                 return result  # type: ignore[reportReturnType]
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
