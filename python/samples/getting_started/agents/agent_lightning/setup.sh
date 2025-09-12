@@ -32,3 +32,10 @@ cd tau2-bench
 git checkout agent-sample
 pip install -e .
 cd ..
+
+# test (closed source LLMs)
+dotenv run python test.py --assistant gpt-4.1 --user gpt-4.1 --assistant-sliding-window 28000
+
+# training
+bash train.sh
+dotenv run python lightning_client.py  # in another terminal
