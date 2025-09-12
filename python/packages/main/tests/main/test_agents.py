@@ -453,7 +453,7 @@ async def test_chat_agent_as_tool_no_name(chat_client: ChatClientProtocol) -> No
     agent = ChatAgent(chat_client=chat_client)  # No name provided
 
     # Should raise ValueError since agent has no name
-    with raises(ValueError, match="Agent name cannot be None"):
+    with raises(ValueError, match="Agent tool name cannot be None"):
         agent.as_tool()
 
 

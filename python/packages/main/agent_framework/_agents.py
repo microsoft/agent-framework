@@ -6,7 +6,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, create_model
 
 from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
@@ -191,8 +191,6 @@ class BaseAgent(AFBaseModel):
         Returns:
             An AIFunction that can be used as a tool by other agents.
         """
-        from pydantic import Field, create_model
-
         # Verify that self implements AgentProtocol
         if not isinstance(self, AgentProtocol):
             raise TypeError(f"Agent {self.__class__.__name__} must implement AgentProtocol to be used as a tool")
