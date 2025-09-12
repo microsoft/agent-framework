@@ -11,12 +11,12 @@ namespace Microsoft.Extensions.AI.Agents.Hosting;
 public interface IAgentHostingBuilder
 {
     /// <summary>
-    /// services
+    /// The service collection for dependency injection.
     /// </summary>
     IServiceCollection Services { get; }
 
     /// <summary>
-    /// The actor type
+    /// The actor type associated with the agent.
     /// </summary>
     ActorType ActorType { get; }
 }

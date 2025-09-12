@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI.Agents.Hosting.Discovery.Model;
 public sealed class AgentMetadata
 {
     /// <summary>
-    /// Id for agent
+    /// Name of the agent
     /// </summary>
     [JsonPropertyName("name")]
     public ActorType Name { get; }
@@ -20,20 +20,19 @@ public sealed class AgentMetadata
     /// <summary>
     /// Initializes the agent metadata with the specified <see cref="ActorType"/>.
     /// </summary>
-    /// <param name="name"></param>
     public AgentMetadata(ActorType name)
     {
         this.Name = name;
     }
 
     /// <summary>
-    /// descr
+    /// Description of the agent.
     /// </summary>
     [JsonPropertyName("description")]
     public string? Description { get; set; }
 
     /// <summary>
-    /// version
+    /// Agent definition version.
     /// </summary>
     [JsonPropertyName("version")]
     public string? Version { get; set; }
