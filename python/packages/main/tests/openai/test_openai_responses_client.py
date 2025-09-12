@@ -1494,7 +1494,6 @@ def test_service_response_exception_includes_original_error_details() -> None:
     assert original_error_message in exception_message
 
 
-
 def test_get_streaming_response_with_response_format() -> None:
     """Test get_streaming_response with response_format."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
