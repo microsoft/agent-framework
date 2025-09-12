@@ -84,7 +84,7 @@ class Tau2Agent(LitAgent):
         }
 
         os.makedirs(output_dir, exist_ok=True)
-        with open(f"{output_dir}/{self.trainer.worker_id}.jsonl", "a") as f:
+        with open(f"{output_dir}/{self.runner.worker_id}.jsonl", "a") as f:
             f.write(json.dumps(to_dumpable(task, result), default=str) + "\n")
 
         return reward.reward
