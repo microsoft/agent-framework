@@ -81,6 +81,9 @@ public static class HostApplicationBuilderAgentExtensions
     /// <exception cref="InvalidOperationException">Thrown when the agent factory delegate returns null or an invalid AI agent instance.</exception>
     public static IAgentHostingBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, AIAgent> createAgentDelegate)
     {
+        Throw.IfNull(builder);
+        Throw.IfNull(name);
+
         // unknown type of AI Agent, so using default agentHostingBuilder
         var agentHostingBuilder = new AIAgentHostingBuilder(builder.Services, name);
 

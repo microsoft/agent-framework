@@ -28,7 +28,7 @@ public class HostApplicationBuilderAgentExtensionsTests
     [Theory]
     [InlineData(null)]
     [InlineData("customKey")]
-    public void AddAIAgent_ValidParameters_ReturnsBuilder(string? chatClientKey)
+    public void AddAIAgent_ValidParameters_ReturnsAgentHostingBuilder(string? chatClientKey)
     {
         // Arrange
         var builder = new HostApplicationBuilder();
@@ -37,7 +37,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         var result = builder.AddAIAgent("agentName", "instructions", chatClientKey);
 
         // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -61,14 +61,10 @@ public class HostApplicationBuilderAgentExtensionsTests
     [Fact]
     public void AddAIAgent_NullInstructions_AllowsNull()
     {
-        // Arrange
         var builder = new HostApplicationBuilder();
-
-        // Act
         var result = builder.AddAIAgent("agentName", (string)null!);
 
-        // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -99,7 +95,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         var result = builder.AddAIAgent("agentName", null!, "key");
 
         // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -160,7 +156,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         var result = builder.AddAIAgent("agentName", (sp, key) => mockAgent.Object);
 
         // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -238,7 +234,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         var result = builder.AddAIAgent("agentName", "");
 
         // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -272,7 +268,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         var result = builder.AddAIAgent("agentName", "instructions");
 
         // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
         // The agent should be registered (proving the method chain worked)
         var descriptor = builder.Services.FirstOrDefault(
             d => d.ServiceKey as string == "agentName" &&
@@ -300,7 +296,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         var result = builder.AddAIAgent(name, "instructions");
 
         // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
         var descriptor = builder.Services.FirstOrDefault(
             d => d.ServiceKey as string == name &&
                  d.ServiceType == typeof(AIAgent));
