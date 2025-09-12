@@ -170,7 +170,7 @@ public sealed class ChatClientAgentThread : AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    protected override async Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+    protected override async Task OnNewMessagesAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         await base.OnNewMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
 

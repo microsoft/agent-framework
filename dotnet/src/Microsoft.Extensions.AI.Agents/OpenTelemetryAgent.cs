@@ -123,23 +123,23 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, inputMessages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
-        this.LogChatMessages(messages);
+        this.LogChatMessages(inputMessages);
 
         AgentRunResponse? response = null;
         Exception? error = null;
         try
         {
-            response = await base.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            response = await base.RunAsync(inputMessages, thread, options, cancellationToken).ConfigureAwait(false);
             return response;
         }
         catch (Exception ex)
@@ -149,30 +149,30 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, response, error, stopwatch, messages.Count, isStreaming: false);
+            this.TraceResponse(activity, response, error, stopwatch, inputMessages.Count, isStreaming: false);
         }
     }
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, inputMessages, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
         try
         {
-            updates = base.RunStreamingAsync(messages, thread, options, cancellationToken);
+            updates = base.RunStreamingAsync(inputMessages, thread, options, cancellationToken);
         }
         catch (Exception ex)
         {
-            this.TraceResponse(activity, response: null, ex, stopwatch, messages.Count, isStreaming: true);
+            this.TraceResponse(activity, response: null, ex, stopwatch, inputMessages.Count, isStreaming: true);
             throw;
         }
 
@@ -206,7 +206,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch, messages.Count, isStreaming: true);
+            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch, inputMessages.Count, isStreaming: true);
             await responseEnumerator.DisposeAsync().ConfigureAwait(false);
         }
     }

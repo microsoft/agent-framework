@@ -33,6 +33,7 @@ dependencies = [
     "azure-monitor-opentelemetry>=1.7.0",
     "azure-monitor-opentelemetry-exporter>=1.0.0b41",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+    "opentelemetry-semantic-conventions-ai>=0.4.13"
 ]
 
 [project.optional-dependencies]
