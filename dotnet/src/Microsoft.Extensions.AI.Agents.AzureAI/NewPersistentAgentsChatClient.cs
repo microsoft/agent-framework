@@ -41,11 +41,11 @@ namespace Azure.AI.Agents.Persistent
         /// <summary>Lazily-retrieved agent instance. Used for its properties.</summary>
         private PersistentAgent? _agent;
 
-        /// <summary>Specifies whether the client should await a long-running operation completion or not.</summary>
-        private readonly bool? _awaitRunCompletion;
+        /// <summary>Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</summary>
+        private readonly bool? _enableLongRunningResponses;
 
         /// <summary>Initializes a new instance of the <see cref="PersistentAgentsChatClient"/> class for the specified <see cref="PersistentAgentsClient"/>.</summary>
-        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null, bool? awaitRunCompletion = null)
+        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null, bool? enableLongRunningOperations = null)
         {
             Argument.AssertNotNull(client, nameof(client));
             Argument.AssertNotNullOrWhiteSpace(agentId, nameof(agentId));
@@ -53,7 +53,7 @@ namespace Azure.AI.Agents.Persistent
             _client = client;
             _agentId = agentId;
             _defaultThreadId = defaultThreadId;
-            _awaitRunCompletion = awaitRunCompletion;
+            _enableLongRunningResponses = enableLongRunningOperations;
 
             _metadata = new(ProviderName);
         }
@@ -252,16 +252,15 @@ namespace Azure.AI.Agents.Persistent
 
                         yield return ruUpdate;
 
-                        // Stop here if this is the first update and we are not awaiting the run result.
-                        if (isFirstUpdate)
+                        // Stop here if this is the first non-streaming update and we are not awaiting the run result.
+                        if (isFirstUpdate && !streamingCall)
                         {
                             isFirstUpdate = false;
-                            if (!ShouldAwaitRunCompletion(options) && (options as NewChatOptions)?.ResponseId is null)
+                            if (IsLongRunningResponsesModeEnabled(options) && (options as NewChatOptions)?.ResponseId is null)
                             {
                                 yield break;
                             }
                         }
-
                         break;
 
                     case MessageContentUpdate mcu:
@@ -652,7 +651,7 @@ namespace Azure.AI.Agents.Persistent
         private NewResponseStatus? ToResponseStatus(RunStatus? status, ChatOptions? options)
         {
             // Unless the new behavior of not awaiting run completion is requested, we don't return a status
-            if (status is null || ShouldAwaitRunCompletion(options))
+            if (status is null || !IsLongRunningResponsesModeEnabled(options))
             {
                 return null;
             }
@@ -700,17 +699,17 @@ namespace Azure.AI.Agents.Persistent
             throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown response status.");
         }
 
-        /// <summary>Determines whether to await long-running operation completion or not.</summary>
-        private bool ShouldAwaitRunCompletion(ChatOptions? options)
+        /// <summary>Determines whether long-running responses mode is enabled or not.</summary>
+        private bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
         {
             // If specified in options, use that.
-            if (options is NewChatOptions { AwaitLongRunCompletion: { } awaitRunCompletion })
+            if (options is NewChatOptions { AllowBackgroundResponses: { } allowBackgroundResponses })
             {
-                return awaitRunCompletion;
+                return allowBackgroundResponses;
             }
 
             // Otherwise, use the value specified at initialization
-            return _awaitRunCompletion ?? true;
+            return _enableLongRunningResponses ?? false;
         }
 
         private async IAsyncEnumerable<ChatResponseUpdate> GetRunUpdatesAsync(ThreadRun run, bool streamingCall, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -741,16 +740,6 @@ namespace Azure.AI.Agents.Persistent
             // If this method is called via non-streaming api, we either poll to completion if requested or return the current status.
             else
             {
-                if (ShouldAwaitRunCompletion(options))
-                {
-                    while (run.Status == RunStatus.Queued || run.Status == RunStatus.InProgress || run.Status == RunStatus.Cancelling)
-                    {
-                        //TBD: Use polling settings
-                        await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-                        run = await _client!.Runs.GetRunAsync(run.ThreadId, run.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
-                    }
-                }
-
                 await foreach (var update in GetRunUpdates_InternalAsync(run, options, cancellationToken).ConfigureAwait(false))
                 {
                     yield return update;
@@ -904,8 +893,8 @@ namespace Azure.AI.Agents.Persistent
                 return null;
             }
 
-            // Setting AwaitLongRunCompletion to false here only to get the `Status` property set in the response.
-            return new[] { CreateChatResponseUpdate(run, new NewChatOptions { AwaitLongRunCompletion = false }) }.NewToChatResponse();
+            // Setting AllowBackgroundResponses to true here only to get the `Status` property set in the response.
+            return new[] { CreateChatResponseUpdate(run, new NewChatOptions { AllowBackgroundResponses = true }) }.NewToChatResponse();
         }
 
         [JsonSerializable(typeof(JsonElement))]

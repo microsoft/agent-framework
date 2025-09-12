@@ -17,9 +17,9 @@ namespace Microsoft.Extensions.AI;
 public class NewChatOptions : ChatOptions
 {
     /// <summary>
-    /// Specifies whether the chat client should await the long-running operation completion.
+    /// Specifies whether the chat client should allow background responses if supported by underlying service.
     /// </summary>
-    public bool? AwaitLongRunCompletion { get; set; }
+    public bool? AllowBackgroundResponses { get; set; }
 
     /// <summary>
     /// Specifies the identifier of an update within a conversation to start generating chat responses after.
@@ -65,7 +65,7 @@ public class NewChatOptions : ChatOptions
         }
 
         // The following properties are specific to NewChatOptions
-        options.AwaitLongRunCompletion = this.AwaitLongRunCompletion;
+        options.AllowBackgroundResponses = this.AllowBackgroundResponses;
         options.StartAfter = this.StartAfter;
         options.ResponseId = this.ResponseId;
 

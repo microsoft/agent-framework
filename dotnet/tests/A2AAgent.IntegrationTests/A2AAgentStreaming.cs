@@ -13,53 +13,11 @@ namespace AgentConformance.IntegrationTests;
 
 public sealed class A2AAgentStreaming
 {
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RunStreamingAsync_WithAwaitModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
+    [Fact]
+    public async Task RunStreamingAsync_WhenHandlingTask_ReturnsExpectedResponseAsync()
     {
         // Arrange
         AIAgent agent = await this.CreateA2AAgentAsync();
-
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = awaitRunCompletion
-        };
-
-        List<NewResponseStatus> statuses = [];
-        string responseText = "";
-
-        // Act
-        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?", options: options))
-        {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
-
-            responseText += update;
-        }
-
-        // Assert
-        if (awaitRunCompletion)
-        {
-            Assert.Empty(statuses);
-            Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
-        }
-        else
-        {
-            Assert.Single(statuses);
-            Assert.Contains(NewResponseStatus.Submitted, statuses);
-        }
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RunStreamingAsync_WithAwaitModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
-    {
-        // Arrange
-        AIAgent agent = await this.CreateA2AAgentAsync(awaitRunCompletion);
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
@@ -76,55 +34,43 @@ public sealed class A2AAgentStreaming
         }
 
         // Assert
-        if (awaitRunCompletion)
-        {
-            Assert.Empty(statuses);
-            Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
-        }
-        else
-        {
-            Assert.Single(statuses);
-            Assert.Contains(NewResponseStatus.Submitted, statuses);
-        }
+        Assert.Contains(NewResponseStatus.Submitted, statuses);
+        Assert.Contains(NewResponseStatus.InProgress, statuses);
+        Assert.Contains(NewResponseStatus.Completed, statuses);
+        Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync(bool continueWithAwaiting)
+    [Fact]
+    public async Task RunStreamingAsync_HavingReturnedInitialTaskResponse_AllowsToContinueItAsync()
     {
         // Part 1: Start the background run and get the first part of the response.
         AIAgent agent = await this.CreateA2AAgentAsync();
-
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
 
         List<NewResponseStatus> statuses = [];
         string responseText = "";
         string? responseId = null;
 
-        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?", options: options))
+        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
         {
             if (update.Status is { } status)
             {
                 statuses.Add(status);
             }
 
-            responseText += update;
-
             responseId = update.ResponseId;
+
+            break;
         }
 
         Assert.Contains(NewResponseStatus.Submitted, statuses);
-        Assert.NotNull(responseText);
         Assert.NotNull(responseId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.AwaitLongRunCompletion = continueWithAwaiting;
-        options.ResponseId = responseId;
         statuses.Clear();
+        AgentRunOptions options = new()
+        {
+            ResponseId = responseId
+        };
 
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?", options: options))
         {
@@ -137,17 +83,9 @@ public sealed class A2AAgentStreaming
         }
 
         Assert.Contains("Paris", responseText);
-
-        if (continueWithAwaiting)
-        {
-            Assert.Empty(statuses);
-        }
-        else
-        {
-            Assert.Contains(NewResponseStatus.Submitted, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
-        }
+        Assert.Contains(NewResponseStatus.Submitted, statuses);
+        Assert.Contains(NewResponseStatus.InProgress, statuses);
+        Assert.Contains(NewResponseStatus.Completed, statuses);
     }
 
     [Fact]
@@ -174,10 +112,10 @@ public sealed class A2AAgentStreaming
         Assert.Equal(NewResponseStatus.Canceled, response.Status);
     }
 
-    private async Task<AIAgent> CreateA2AAgentAsync(bool? awaitRunCompletion = null)
+    private async Task<AIAgent> CreateA2AAgentAsync()
     {
         A2ACardResolver a2ACardResolver = new(new Uri("http://localhost:5048"));
 
-        return await a2ACardResolver.GetAIAgentAsync(awaitRunCompletion);
+        return await a2ACardResolver.GetAIAgentAsync();
     }
 }

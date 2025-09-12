@@ -19,14 +19,14 @@ public sealed class NewPersistentAgentsChatClientTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithAwaitModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
+    public async Task GetResponseAsync_WithBackgroundResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool backgroundResponsesEnabled)
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = awaitRunCompletion
+            AllowBackgroundResponses = backgroundResponsesEnabled
         };
 
         // Act
@@ -35,26 +35,26 @@ public sealed class NewPersistentAgentsChatClientTests
         // Assert
         Assert.NotNull(response);
 
-        if (awaitRunCompletion)
+        if (backgroundResponsesEnabled)
+        {
+            Assert.NotNull(response.ResponseId);
+            Assert.Equal(NewResponseStatus.Queued, response.Status);
+        }
+        else
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
             Assert.Null(response.Status);
-        }
-        else
-        {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
         }
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithAwaitModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
+    public async Task GetResponseAsync_WithBackgroundResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool backgroundResponsesEnabled)
     {
         // Arrange
-        using var client = await CreateChatClientAsync(awaitRun: awaitRunCompletion);
+        using var client = await CreateChatClientAsync(backgroundResponsesEnabled);
 
         // Act
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?");
@@ -62,16 +62,16 @@ public sealed class NewPersistentAgentsChatClientTests
         // Assert
         Assert.NotNull(response);
 
-        if (awaitRunCompletion)
+        if (backgroundResponsesEnabled)
+        {
+            Assert.NotNull(response.ResponseId);
+            Assert.Equal(NewResponseStatus.Queued, response.Status);
+        }
+        else
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
             Assert.Null(response.Status);
-        }
-        else
-        {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
         }
     }
 
@@ -83,7 +83,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = false
+            AllowBackgroundResponses = true
         };
 
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?", options);
@@ -116,45 +116,14 @@ public sealed class NewPersistentAgentsChatClientTests
     }
 
     [Fact]
-    public async Task GetResponseAsync_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
-    {
-        // Part 1: Start the background run.
-        using var client = await CreateChatClientAsync();
-
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?", options);
-
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
-
-        // Part 2: Wait for completion.
-        options.ConversationId = response.ConversationId;
-        options.ResponseId = response.ResponseId;
-        options.AwaitLongRunCompletion = true;
-
-        response = (NewChatResponse)await client.GetResponseAsync([], options);
-
-        Assert.NotNull(response);
-        Assert.Single(response.Messages);
-        Assert.Contains("Paris", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Null(response.Status);
-    }
-
-    [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_AndAwaitModeEnabled_CallsFunctionAsync()
+    public async Task GetResponseAsync_WithFunctionCalling_AndBackgroundResponsesDisabled_CallsFunctionAsync()
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = true,
+            AllowBackgroundResponses = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -174,7 +143,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = false,
+            AllowBackgroundResponses = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -205,52 +174,14 @@ public sealed class NewPersistentAgentsChatClientTests
     }
 
     [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_CanPollItselfAsync()
-    {
-        // Part 1: Start the background run.
-        using var client = await CreateChatClientAsync();
-
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false,
-            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
-        };
-
-        NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What time is it?", options);
-
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
-
-        // Part 2: Wait for completion.
-        options.ConversationId = response.ConversationId;
-        options.ResponseId = response.ResponseId;
-        options.AwaitLongRunCompletion = true;
-
-        response = (NewChatResponse)await client.GetResponseAsync([], options);
-
-        Assert.NotNull(response);
-        Assert.Equal(3, response.Messages.Count);
-        Assert.Contains("5:43", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Null(response.Status);
-    }
-
-    [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
-        using var client = await CreateChatClientAsync();
-
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false,
-            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
-        };
+        using var client = await CreateChatClientAsync(backgroundResponsesEnabled: true);
 
         ICancelableChatClient cancelableChatClient = client.GetService<ICancelableChatClient>()!;
 
-        NewChatResponse response = (NewChatResponse)await cancelableChatClient.GetResponseAsync("What time is it?", options);
+        NewChatResponse response = (NewChatResponse)await cancelableChatClient.GetResponseAsync("What time is it?");
 
         // Act
         NewChatResponse? cancelResponse = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(response!.ResponseId!, new() { ConversationId = response.ConversationId });
@@ -261,7 +192,7 @@ public sealed class NewPersistentAgentsChatClientTests
         Assert.True(cancelResponse.Status == NewResponseStatus.Canceling || cancelResponse.Status == NewResponseStatus.Canceled);
     }
 
-    private static async Task<IChatClient> CreateChatClientAsync(bool? awaitRun = null)
+    private static async Task<IChatClient> CreateChatClientAsync(bool? backgroundResponsesEnabled = null)
     {
         PersistentAgentsClient persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
 
@@ -270,7 +201,7 @@ public sealed class NewPersistentAgentsChatClientTests
             name: "LongRunningExecutionAgent",
             instructions: "You are a helpful assistant.");
 
-        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, awaitRunCompletion: awaitRun);
+        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, backgroundResponsesEnabled: backgroundResponsesEnabled);
 
         var functionInvokingChatClient = new NewFunctionInvokingChatClient(persistentChatClient);
 

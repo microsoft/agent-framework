@@ -11,63 +11,19 @@ namespace AgentConformance.IntegrationTests;
 
 public class A2AAgentTests
 {
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RunAsync_WithAwaitModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
+    [Fact]
+    public async Task RunAsync_WhenHandlingTask_ReturnsInitialResponseAsync()
     {
         // Arrange
         AIAgent agent = await this.CreateA2AAgentAsync();
-
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = awaitRunCompletion
-        };
-
-        // Act
-        AgentRunResponse response = await agent.RunAsync("What is the capital of France?", options: options);
-
-        // Assert
-        Assert.NotNull(response);
-
-        if (awaitRunCompletion)
-        {
-            Assert.Equal(2, response.Messages.Count);
-            Assert.Contains("Paris", response.Text);
-            Assert.Null(response.Status);
-        }
-        else
-        {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Submitted, response.Status);
-        }
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RunAsync_WithAwaitModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
-    {
-        // Arrange
-        AIAgent agent = await this.CreateA2AAgentAsync(awaitRunCompletion);
 
         // Act
         AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
 
         // Assert
         Assert.NotNull(response);
-
-        if (awaitRunCompletion)
-        {
-            Assert.Equal(2, response.Messages.Count);
-            Assert.Contains("Paris", response.Text);
-            Assert.Null(response.Status);
-        }
-        else
-        {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Submitted, response.Status);
-        }
+        Assert.NotNull(response.ResponseId);
+        Assert.Equal(NewResponseStatus.Submitted, response.Status);
     }
 
     [Fact]
@@ -76,18 +32,15 @@ public class A2AAgentTests
         // Part 1: Start the background run.
         AIAgent agent = await this.CreateA2AAgentAsync();
 
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        AgentRunResponse response = await agent.RunAsync("What is the capital of France?", options: options);
+        AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
 
         Assert.NotNull(response);
         Assert.NotNull(response.ResponseId);
         Assert.Equal(NewResponseStatus.Submitted, response.Status);
 
         // Part 2: Poll for completion.
+        AgentRunOptions options = new();
+
         int attempts = 0;
 
         while (response.Status is { } status &&
@@ -110,47 +63,12 @@ public class A2AAgentTests
     }
 
     [Fact]
-    public async Task RunResultAsync_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
-    {
-        // Part 1: Start the background run.
-        AIAgent agent = await this.CreateA2AAgentAsync();
-
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        AgentRunResponse response = await agent.RunAsync("What is the capital of France?", options: options);
-
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Submitted, response.Status);
-
-        // Part 2: Wait for completion.
-        options.ResponseId = response.ResponseId;
-        options.AwaitLongRunCompletion = true;
-
-        response = await agent.RunAsync([], options: options);
-
-        Assert.NotNull(response);
-        Assert.Equal(2, response.Messages.Count);
-        Assert.Contains("Paris", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Null(response.Status);
-    }
-
-    [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
         AIAgent agent = await this.CreateA2AAgentAsync();
 
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        AgentRunResponse response = await agent.RunAsync("What is the capital of France?", options: options);
+        AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
 
         // Act
         AgentRunResponse? cancelResponse = await agent.CancelRunAsync(response.ResponseId!);
@@ -160,10 +78,10 @@ public class A2AAgentTests
         Assert.Equal(NewResponseStatus.Canceled, cancelResponse.Status);
     }
 
-    private async Task<AIAgent> CreateA2AAgentAsync(bool? awaitRunCompletion = null)
+    private async Task<AIAgent> CreateA2AAgentAsync()
     {
         A2ACardResolver a2ACardResolver = new(new Uri("http://localhost:5048"));
 
-        return await a2ACardResolver.GetAIAgentAsync(awaitRunCompletion);
+        return await a2ACardResolver.GetAIAgentAsync();
     }
 }

@@ -28,7 +28,6 @@ internal sealed class A2AAgent : AIAgent
     private readonly string? _description;
     private readonly string? _displayName;
     private readonly ILogger _logger;
-    private readonly bool? _awaitRunCompletion;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="A2AAgent"/> class.
@@ -38,9 +37,8 @@ internal sealed class A2AAgent : AIAgent
     /// <param name="name">The the name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="displayName">The display name of the agent.</param>
-    /// <param name="awaitRunCompletion">Specifies whether the agent should await task completions or not.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, string? displayName = null, bool? awaitRunCompletion = null, ILoggerFactory? loggerFactory = null)
+    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
 
@@ -49,7 +47,6 @@ internal sealed class A2AAgent : AIAgent
         this._name = name;
         this._description = description;
         this._displayName = displayName;
-        this._awaitRunCompletion = awaitRunCompletion;
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
     }
 
@@ -88,19 +85,6 @@ internal sealed class A2AAgent : AIAgent
 
         if (a2aResponse is AgentTask task)
         {
-            // Await the task's completion if requested. This enables scenarios where a caller sends a message or requests a task by the task id,
-            // obtains a task, and then asks the agent to wait for its completion rather than waiting themselves (via polling).
-            if (this.ShouldAwaitTaskCompletions(options))
-            {
-                // Do polling
-                while (task.Status.State is TaskState.Submitted or TaskState.Working)
-                {
-                    //TBD: Use polling settings
-                    await Task.Delay(1000, cancellationToken).ConfigureAwait(false);
-                    task = await this._a2aClient.GetTaskAsync(task.Id, cancellationToken).ConfigureAwait(false);
-                }
-            }
-
             UpdateThreadConversationId(thread, task.ContextId);
 
             return this.ConvertToAgentResponse(task, options);
@@ -145,13 +129,6 @@ internal sealed class A2AAgent : AIAgent
                 foreach (var update in this.ConvertToAgentResponse(task, options).ToAgentRunResponseUpdates())
                 {
                     yield return update;
-
-                    // If the task's completion awaiting is not requested, return the first update
-                    // from the original response so the caller will receive the task id and status.
-                    if (!this.ShouldAwaitTaskCompletions(options) && options?.ResponseId is null)
-                    {
-                        yield break;
-                    }
                 }
             }
             else if (sseEvent.Data is TaskUpdateEvent taskUpdateEvent)
@@ -232,7 +209,7 @@ internal sealed class A2AAgent : AIAgent
             ResponseId = task.Id,
             RawRepresentation = task,
             Messages = task.History?.ToChatMessages(this.Name, task.Artifacts) ?? [],
-            Status = this.ToResponseStatus(task.Status, options),
+            Status = task.Status.ToResponseStatus(),
             AdditionalProperties = task.Metadata.ToAdditionalProperties() ?? [],
         };
 
@@ -244,16 +221,6 @@ internal sealed class A2AAgent : AIAgent
         }
 
         return response;
-    }
-
-    private NewResponseStatus? ToResponseStatus(AgentTaskStatus status, AgentRunOptions? options)
-    {
-        if (this.ShouldAwaitTaskCompletions(options))
-        {
-            return null;
-        }
-
-        return status.ToResponseStatus();
     }
 
     private AgentRunResponse ConvertToAgentResponse(Message message)
@@ -300,7 +267,7 @@ internal sealed class A2AAgent : AIAgent
         {
             if (statusUpdateEvent is { Status: { } status })
             {
-                responseUpdate.Status = this.ToResponseStatus(status, options);
+                responseUpdate.Status = status.ToResponseStatus();
 
                 responseUpdate.AdditionalProperties["Status.Timestamp"] = status.Timestamp;
 
@@ -333,18 +300,5 @@ internal sealed class A2AAgent : AIAgent
         }
 
         return responseUpdate;
-    }
-
-    /// <summary>Determines whether to await task completions or not.</summary>
-    private bool ShouldAwaitTaskCompletions(AgentRunOptions? options)
-    {
-        // If specified in options, use that.
-        if (options is { AwaitLongRunCompletion: { } awaitRunCompletion })
-        {
-            return awaitRunCompletion;
-        }
-
-        // Otherwise, use the value specified at initialization
-        return this._awaitRunCompletion ?? true;
     }
 }

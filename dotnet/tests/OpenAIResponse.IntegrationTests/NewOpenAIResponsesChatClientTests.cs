@@ -36,12 +36,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithAwaitModeProvidedViaOptions_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
+    public async Task GetResponseAsync_WithBackgroundResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool backgroundResponsesEnabled)
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = awaitRunCompletion
+            AllowBackgroundResponses = backgroundResponsesEnabled
         };
 
         // Act
@@ -50,27 +50,27 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Assert
         Assert.NotNull(response);
 
-        if (awaitRunCompletion)
+        if (backgroundResponsesEnabled)
+        {
+            Assert.NotNull(response.ResponseId);
+            Assert.Equal(NewResponseStatus.Queued, response.Status);
+        }
+        else
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
             Assert.Null(response.Status);
-        }
-        else
-        {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
         }
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithAwaitModeProvidedAtInitialization_ReturnsExpectedResponseAsync(bool awaitRunCompletion)
+    public async Task GetResponseAsync_WithBackgroundResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool backgroundResponsesEnabled)
     {
         // Arrange
         using IChatClient client = this._openAIResponseClient
-            .AsNewIChatClient(awaitRunCompletion: awaitRunCompletion)
+            .AsNewIChatClient(enableBackgroundResponses: backgroundResponsesEnabled)
             .AsBuilder()
             .UseFunctionInvocation()
             .Build();
@@ -81,17 +81,16 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Assert
         Assert.NotNull(response);
 
-        if (awaitRunCompletion)
+        if (backgroundResponsesEnabled)
+        {
+            Assert.NotNull(response.ResponseId);
+            Assert.Equal(NewResponseStatus.Queued, response.Status);
+        }
+        else
         {
             Assert.Single(response.Messages);
             Assert.Contains("Paris", response.Text);
             Assert.Null(response.Status);
-        }
-        else
-        {
-            Assert.Empty(response.Messages);
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
         }
     }
 
@@ -101,7 +100,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = false
+            AllowBackgroundResponses = true
         };
 
         NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
@@ -134,42 +133,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task GetResponseAsync_HavingReturnedInitialResponse_CanDoPollingItselfAsync()
-    {
-        // Part 1: Start the background run.
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
-
-        Assert.NotNull(response);
-        Assert.Empty(response.Messages);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
-
-        // Part 2: Wait for completion.
-        options.ConversationId = response.ConversationId;
-        options.ResponseId = response.ResponseId;
-        options.AwaitLongRunCompletion = true;
-
-        response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
-
-        Assert.NotNull(response);
-        Assert.Single(response.Messages);
-        Assert.Contains("Paris", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Null(response.Status);
-    }
-
-    [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_AndAwaitModeEnabled_CallsFunctionAsync()
+    public async Task GetResponseAsync_WithFunctionCalling_AndBackgroundResponsesDisabled_CallsFunctionAsync()
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = true,
+            AllowBackgroundResponses = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -187,7 +156,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = false,
+            AllowBackgroundResponses = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -217,42 +186,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_CanPollItselfAsync()
-    {
-        // Part 1: Start the background run.
-        NewChatOptions options = new()
-        {
-            AwaitLongRunCompletion = false,
-            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
-        };
-
-        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What time is it?", options);
-
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
-
-        // Part 2: Wait for completion.
-        options.ConversationId = response.ConversationId;
-        options.ResponseId = response.ResponseId;
-        options.AwaitLongRunCompletion = true;
-
-        response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
-
-        Assert.NotNull(response);
-        Assert.Equal(3, response.Messages.Count);
-        Assert.Contains("5:43", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Null(response.Status);
-    }
-
-    [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AwaitLongRunCompletion = false
+            AllowBackgroundResponses = true
         };
 
         ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;

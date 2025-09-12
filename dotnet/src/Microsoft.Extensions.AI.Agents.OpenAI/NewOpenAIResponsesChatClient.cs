@@ -40,20 +40,20 @@ internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
     /// <summary>The underlying <see cref="OpenAIResponseClient" />.</summary>
     private readonly OpenAIResponseClient _responseClient;
 
-    /// <summary>Specifies whether the client should await a long-running operation completion or not.</summary>
-    private readonly bool? _awaitRunCompletion;
+    /// <summary>Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</summary>
+    private readonly bool? _enableLongRunningOperations;
 
     /// <summary>Initializes a new instance of the <see cref="OpenAIResponsesChatClient"/> class for the specified <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The underlying client.</param>
-    /// <param name="awaitRunCompletion">Specifies whether the client should await a long-running operation completion or not.</param>
+    /// <param name="enableLongRunningOperations">Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? awaitRunCompletion = null)
+    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? enableLongRunningOperations = null)
     {
         _ = Throw.IfNull(responseClient);
 
         _responseClient = responseClient;
 
-        _awaitRunCompletion = awaitRunCompletion;
+        _enableLongRunningOperations = enableLongRunningOperations;
 
         // https://github.com/openai/openai-dotnet/issues/662
         // Update to avoid reflection once OpenAIResponseClient.Model is exposed publicly.
@@ -102,19 +102,6 @@ internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
         {
             // Otherwise, create a new response.
             openAIResponse = (await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false)).Value;
-        }
-
-        // Await the run's completion if requested. This enables scenarios where a caller requests a long-running operation or entity id,
-        // obtains it, and then asks the chat client to wait for its completion rather than waiting themselves (via polling).
-        if (ShouldAwaitRunCompletion(options))
-        {
-            // Do polling
-            while (openAIResponse.Status is ResponseStatus.Queued or ResponseStatus.InProgress)
-            {
-                //TBD: Use polling settings
-                await Task.Delay(1000, cancellationToken).ConfigureAwait(false);
-                openAIResponse = (await _responseClient.GetResponseAsync(openAIResponse.Id, cancellationToken).ConfigureAwait(false)).Value;
-            }
         }
 
         // Convert the response to a ChatResponse.
@@ -255,13 +242,6 @@ internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
         {
             // Otherwise, create a new response.
             streamingUpdates = _responseClient.CreateResponseStreamingAsync(openAIResponseItems, openAIOptions, cancellationToken);
-
-            // If run's completion awaiting is not requested, return sequence containing the first update
-            // from the original response so the caller will get run id and status.
-            if (!ShouldAwaitRunCompletion(options) && (options as NewChatOptions)?.ResponseId is null)
-            {
-                streamingUpdates = GetEnumerableWithFirstItemAsync(streamingUpdates, cancellationToken);
-            }
         }
 
         return FromOpenAIStreamingResponseUpdatesAsync(streamingUpdates, openAIOptions, cancellationToken);
@@ -458,7 +438,7 @@ internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
         {
             return new ResponseCreationOptions()
             {
-                BackgroundModeEnabled = !_awaitRunCompletion
+                BackgroundModeEnabled = IsLongRunningResponsesModeEnabled(options),
             };
         }
 
@@ -481,7 +461,7 @@ internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
                 $"{result.Instructions}{Environment.NewLine}{instructions}";
         }
 
-        result.BackgroundModeEnabled = !ShouldAwaitRunCompletion(options);
+        result.BackgroundModeEnabled = IsLongRunningResponsesModeEnabled(options);
 
         // Populate tools if there are any.
         if (options.Tools is { Count: > 0 } tools)
@@ -953,17 +933,17 @@ internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
         }
     }
 
-    /// <summary>Determines whether to await a long-running operation completion or not.</summary>
-    private bool ShouldAwaitRunCompletion(ChatOptions? options)
+    /// <summary>Determines whether long-running responses mode is enabled or not.</summary>
+    private bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
     {
         // If specified in options, use that.
-        if (options is NewChatOptions { AwaitLongRunCompletion: { } awaitRunCompletion })
+        if (options is NewChatOptions { AllowBackgroundResponses: { } allowBackgroundResponses })
         {
-            return awaitRunCompletion;
+            return allowBackgroundResponses;
         }
 
         // Otherwise, use the value specified at initialization
-        return _awaitRunCompletion ?? true;
+        return _enableLongRunningOperations ?? false;
     }
 
     /// <summary>Converts a <see cref="ResponseStatus"/> to a <see cref="NewResponseStatus"/>.</summary>
@@ -985,16 +965,6 @@ internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
             ResponseStatus.Failed => (NewResponseStatus?)NewResponseStatus.Failed,
             _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown response status."),
         };
-    }
-
-    /// <summary>Returns an async enumerable that yields only the first item from the provided async enumerable.</summary>
-    private async IAsyncEnumerable<StreamingResponseUpdate> GetEnumerableWithFirstItemAsync(IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates, [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (var update in streamingUpdates.WithCancellation(cancellationToken))
-        {
-            yield return update;
-            break;
-        }
     }
 }
 

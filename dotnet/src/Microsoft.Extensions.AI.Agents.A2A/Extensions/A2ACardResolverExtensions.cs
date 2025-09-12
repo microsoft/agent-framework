@@ -35,12 +35,11 @@ public static class A2ACardResolverExtensions
     /// </list>
     /// </remarks>
     /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>
-    /// <param name="awaitRunCompletion">Specifies whether the agent should await task completions or not.</param>
     /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
     /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to use when retrieving the agent card.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, bool? awaitRunCompletion = null, HttpClient? httpClient = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
+    public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, HttpClient? httpClient = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
     {
         // Obtain the agent card from the resolver.
         var agentCard = await resolver.GetAgentCardAsync(cancellationToken).ConfigureAwait(false);
@@ -48,6 +47,6 @@ public static class A2ACardResolverExtensions
         // Create the A2A client using the agent URL from the card.
         var a2aClient = new A2AClient(new Uri(agentCard.Url), httpClient);
 
-        return a2aClient.GetAIAgent(name: agentCard.Name, description: agentCard.Description, awaitRunCompletion: awaitRunCompletion, loggerFactory: loggerFactory);
+        return a2aClient.GetAIAgent(name: agentCard.Name, description: agentCard.Description, loggerFactory: loggerFactory);
     }
 }
