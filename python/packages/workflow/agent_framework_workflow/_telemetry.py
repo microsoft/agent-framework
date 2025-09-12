@@ -35,11 +35,11 @@ class WorkflowDiagnosticSettings(AFBaseSettings):
     """Settings for workflow tracing diagnostics."""
 
     env_prefix: ClassVar[str] = "AGENT_FRAMEWORK_WORKFLOW_"
-    enable_otel_diagnostics: bool = False
+    enable_otel: bool = False
 
     @property
     def ENABLED(self) -> bool:
-        return self.enable_otel_diagnostics
+        return self.enable_otel
 
 
 class WorkflowTracer:

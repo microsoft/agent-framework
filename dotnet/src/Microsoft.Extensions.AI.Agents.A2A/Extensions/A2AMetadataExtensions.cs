@@ -15,7 +15,7 @@ internal static class A2AMetadataExtensions
     /// </summary>
     /// <param name="metadata">The metadata dictionary to convert.</param>
     /// <returns>The converted <see cref="AdditionalPropertiesDictionary"/>, or null if the input is null or empty.</returns>
-    public static AdditionalPropertiesDictionary? ToAdditionalProperties(this Dictionary<string, JsonElement>? metadata)
+    internal static AdditionalPropertiesDictionary? ToAdditionalProperties(this Dictionary<string, JsonElement>? metadata)
     {
         if (metadata is not { Count: > 0 })
         {

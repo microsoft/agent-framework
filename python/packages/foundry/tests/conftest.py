@@ -62,6 +62,7 @@ def mock_ai_project_client() -> MagicMock:
     # Mock threads property
     mock_client.agents.threads = MagicMock()
     mock_client.agents.threads.create = AsyncMock()
+    mock_client.agents.messages.create = AsyncMock()
 
     # Mock runs property
     mock_client.agents.runs = MagicMock()
