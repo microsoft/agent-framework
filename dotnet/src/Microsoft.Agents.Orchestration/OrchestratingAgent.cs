@@ -148,7 +148,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="messages">The input message.</param>
     /// <param name="context">The context for this operation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    protected abstract Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken);
+    protected abstract Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken);
 
     /// <summary>
     /// Resumes processing of the orchestration.
@@ -157,7 +157,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="newMessages">The new messages to be processed in addition to the checkpoint state.</param>
     /// <param name="context">The context for this operation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    protected abstract Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken);
+    protected abstract Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IEnumerable<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken);
 
     /// <summary>
     /// Runs the agent with input messages and respond with both streamed and regular messages.
@@ -168,7 +168,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="options">Options to use when invoking the agent.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A task that returns the response <see cref="ChatMessage"/>.</returns>
-    protected static async ValueTask<AgentRunResponse> RunAsync(AIAgent agent, OrchestratingAgentContext context, IReadOnlyCollection<ChatMessage> input, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected static async ValueTask<AgentRunResponse> RunAsync(AIAgent agent, OrchestratingAgentContext context, IEnumerable<ChatMessage> input, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         // Utilize streaming iff a streaming callback is provided; otherwise, use the non-streaming API.
         AgentRunResponse response;
