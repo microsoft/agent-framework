@@ -80,7 +80,7 @@ def test_init_base_url(openai_unit_test_env: dict[str, str]) -> None:
     assert str(open_ai_chat_completion.client.base_url) == "http://localhost:1234/v1/"
 
 
-@pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
+@pytest.mark.parametrize("openai_exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
         OpenAIChatClient(
@@ -88,7 +88,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
         )
 
 
-@pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
+@pytest.mark.parametrize("openai_exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     ai_model_id = "test_model_id"
 

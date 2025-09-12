@@ -85,7 +85,7 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
         assert azure_responses_client.client.default_headers[key] == value
 
 
-@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
+@pytest.mark.parametrize("azure_exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
         AzureResponsesClient(

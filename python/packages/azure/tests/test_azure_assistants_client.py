@@ -125,7 +125,7 @@ def test_azure_assistants_client_init_validation_fail() -> None:
         AzureAssistantsClient(deployment_name=123, api_key="valid-key")  # type: ignore
 
 
-@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
+@pytest.mark.parametrize("azure_exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
 def test_azure_assistants_client_init_missing_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAssistantsClient initialization with missing deployment name."""
     with pytest.raises(ServiceInitializationError):
