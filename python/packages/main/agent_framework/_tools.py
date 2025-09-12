@@ -420,8 +420,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         setup_telemetry()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-            attributes.update({OtelAttr.TOOL_ARGUMENTS: json.dumps(kwargs)})
+        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and arguments:  # type: ignore[name-defined]
+            attributes.update({OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()})
         with get_function_span(attributes=attributes) as span:
             hist_attributes: dict[str, Any] = {
                 OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
@@ -444,9 +444,15 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-                    span.set_attribute(OtelAttr.TOOL_RESULT, json.dumps(result))
-                    logger.debug(f"Function result: {result or 'None'}")
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and result:  # type: ignore[name-defined]
+                    try:
+                        json.dumps(result)  # type: ignore[arg-type]
+                    except (TypeError, OverflowError):
+                        span.set_attribute(OtelAttr.TOOL_RESULT, "<non-serializable result>")
+                        logger.debug("Function result: <non-serializable result>")
+                    else:
+                        span.set_attribute(OtelAttr.TOOL_RESULT, json.dumps(result))
+                        logger.debug(f"Function result: {result or 'None'}")
                 return result  # type: ignore[reportReturnType]
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
