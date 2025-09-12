@@ -204,12 +204,8 @@ class BaseAgent(AFBaseModel):
         argument_description = arg_description or f"Input for {self.display_name}"
 
         # Create dynamic input model with the specified argument name
-        from typing import Annotated
-
-        input_model = create_model(
-            f"{self.display_name}_Input",
-            **{arg_name: (Annotated[str, Field(..., description=argument_description)], ...)},
-        )
+        field_info = Field(..., description=argument_description)
+        input_model = create_model(f"{self.display_name}_Input", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
 
         async def agent_wrapper(**kwargs: Any) -> str:
             """Wrapper function that calls the agent."""
