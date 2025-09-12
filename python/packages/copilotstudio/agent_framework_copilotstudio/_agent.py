@@ -31,13 +31,13 @@ class CopilotStudioSettings(AFBaseSettings):
     are ignored; however, validation will fail alerting that the settings are missing.
 
     Attributes:
-        environment_id: Environment ID of environment with the Copilot Studio App..
+        environmentid: Environment ID of environment with the Copilot Studio App..
             (Env var COPILOTSTUDIOAGENT__ENVIRONMENTID)
-        agent_identifier: The agent identifier or schema name of the Copilot to use.
+        schemaname: The agent identifier or schema name of the Copilot to use.
             (Env var COPILOTSTUDIOAGENT__SCHEMANAME)
-        client_id: The app ID of the App Registration used to login.
+        agentappid: The app ID of the App Registration used to login.
             (Env var COPILOTSTUDIOAGENT__AGENTAPPID)
-        tenant_id: The tenant ID of the App Registration used to login.
+        tenantid: The tenant ID of the App Registration used to login.
             (Env var COPILOTSTUDIOAGENT__TENANTID)
     Parameters:
         env_file_path: If provided, the .env settings are read from this file path location.
@@ -87,6 +87,38 @@ class CopilotStudioAgent(BaseAgent):
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
+        """Initialize the Copilot Studio Agent.
+
+        Args:
+            client: Optional pre-configured CopilotClient instance. If not provided,
+                a new client will be created using the other parameters.
+            settings: Optional pre-configured ConnectionSettings. If not provided,
+                settings will be created from the other parameters.
+            environment_id: Environment ID of the Power Platform environment containing
+                the Copilot Studio app. Can also be set via COPILOTSTUDIOAGENT__ENVIRONMENTID
+                environment variable.
+            agent_identifier: The agent identifier or schema name of the Copilot to use.
+                Can also be set via COPILOTSTUDIOAGENT__SCHEMANAME environment variable.
+            client_id: The app ID of the App Registration used for authentication.
+                Can also be set via COPILOTSTUDIOAGENT__AGENTAPPID environment variable.
+            tenant_id: The tenant ID of the App Registration used for authentication.
+                Can also be set via COPILOTSTUDIOAGENT__TENANTID environment variable.
+            token: Optional pre-acquired authentication token. If not provided,
+                token acquisition will be attempted using MSAL.
+            cloud: The Power Platform cloud to use (Public, GCC, etc.).
+            agent_type: The type of Copilot Studio agent (Copilot, Agent, etc.).
+            custom_power_platform_cloud: Custom Power Platform cloud URL if using
+                a custom environment.
+            username: Optional username for token acquisition.
+            token_cache: Optional token cache for storing authentication tokens.
+            scopes: Optional list of authentication scopes. Defaults to Power Platform
+                API scopes if not provided.
+            env_file_path: Optional path to .env file for loading configuration.
+            env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
+
+        Raises:
+            ServiceInitializationError: If required configuration is missing or invalid.
+        """
         try:
             copilot_studio_settings = CopilotStudioSettings(
                 environmentid=environment_id,
@@ -249,6 +281,14 @@ class CopilotStudioAgent(BaseAgent):
             )
 
     async def _start_new_conversation(self) -> str:
+        """Start a new conversation with the Copilot Studio agent.
+
+        Returns:
+            The conversation ID for the new conversation.
+
+        Raises:
+            ServiceException: If the conversation could not be started.
+        """
         conversation_id: str | None = None
 
         async for activity in self.client.start_conversation(emit_start_conversation_event=True):
@@ -263,6 +303,16 @@ class CopilotStudioAgent(BaseAgent):
     async def _process_activities(
         self, activities: AsyncIterable[Activity], streaming: bool
     ) -> AsyncIterable[ChatMessage]:
+        """Process activities from the Copilot Studio agent.
+
+        Args:
+            activities: Stream of activities from the agent.
+            streaming: Whether to process activities for streaming (typing activities)
+                or non-streaming (message activities) responses.
+
+        Yields:
+            ChatMessage objects created from the activities.
+        """
         async for activity in activities:
             if activity.text and (
                 (activity.type == "message" and not streaming) or (activity.type == "typing" and streaming)
@@ -272,6 +322,15 @@ class CopilotStudioAgent(BaseAgent):
     def _create_chat_message_from_activity(
         self, activity: Activity, contents: MutableSequence[Contents]
     ) -> ChatMessage:
+        """Create a ChatMessage from a Copilot Studio activity.
+
+        Args:
+            activity: The activity from the Copilot Studio agent.
+            contents: The content objects to include in the message.
+
+        Returns:
+            A ChatMessage object with the activity data.
+        """
         return ChatMessage(
             role=Role.ASSISTANT,
             contents=contents,
