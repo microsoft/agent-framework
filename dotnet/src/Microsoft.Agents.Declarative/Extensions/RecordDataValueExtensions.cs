@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -9,6 +11,20 @@ namespace Microsoft.Bot.ObjectModel;
 /// </summary>
 public static class RecordDataValueExtensions
 {
+    /// <summary>
+    /// Converts a <see cref="RecordDataValue"/> to a <see cref="IReadOnlyDictionary{TKey, TValue}"/>.
+    /// </summary>
+    /// <param name="recordData">Instance of <see cref="RecordDataValue"/></param>
+    public static IReadOnlyDictionary<string, string> ToDictionary(this RecordDataValue recordData)
+    {
+        Throw.IfNull(recordData);
+
+        return recordData.Properties.ToDictionary(
+            kvp => kvp.Key,
+            kvp => kvp.Value?.ToString() ?? string.Empty
+        );
+    }
+
     /// <summary>
     /// Retrieves the 'type' property from a <see cref="RecordDataValue"/>
     /// </summary>

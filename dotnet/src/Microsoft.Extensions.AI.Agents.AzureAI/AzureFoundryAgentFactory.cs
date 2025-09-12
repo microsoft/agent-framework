@@ -25,15 +25,15 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata agentDefinition, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata element, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
     {
-        //Throw.IfNull(agentDefinition);
+        //Throw.IfNull(element);
 
         ChatClientAgent? agent = null;
         PersistentAgentsClient? persistentAgentsClient = null;
-        if (this.IsSupported(agentDefinition))
+        if (this.IsSupported(element))
         {
-            var model = agentDefinition.GetModelId();
+            var model = element.GetModelId();
             if (string.IsNullOrEmpty(model))
             {
                 throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
@@ -42,7 +42,7 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
             persistentAgentsClient = agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
             if (persistentAgentsClient is null)
             {
-                var endpoint = agentDefinition.GetModelConnectionEndpoint();
+                var endpoint = element.GetModelConnectionEndpoint();
                 if (string.IsNullOrEmpty(endpoint))
                 {
                     throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
@@ -58,8 +58,11 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
 
             agent = await persistentAgentsClient.CreateAIAgentAsync(
                 model: model,
-                name: agentDefinition.GetName(),
-                instructions: agentDefinition.GetInstructions(),
+                name: element.GetName(),
+                instructions: element.GetInstructions(),
+                tools: element.GetFoundryToolDefinitions(),
+                toolResources: element.GetFoundryToolResources(),
+                metadata: element.GetMetadata(),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 

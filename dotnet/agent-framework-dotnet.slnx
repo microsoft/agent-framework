@@ -52,6 +52,7 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry/DeclarativeAgent_AzureAIFoundry.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_CodeInterpreter/DeclarativeAgent_AzureAIFoundry_CodeInterpreter.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureOpenAI/DeclarativeAgent_AzureOpenAI.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_FunctionTools/DeclarativeAgent_FunctionTools.csproj" />
@@ -101,8 +102,8 @@
     <Project Path="samples/GettingStarted/Workflows/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Checkpoint/">
-    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndRehydrate/CheckpointAndRehydrate.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointWithHumanInTheLoop/CheckpointWithHumanInTheLoop.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/HumanInTheLoop/">

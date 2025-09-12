@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -59,12 +61,12 @@ public static class GptComponentMetadataExtensions
     /// Retrieves the 'tools' property from a <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
-    public static RecordDataValue? GetTools(this GptComponentMetadata element)
+    public static ImmutableArray<RecordDataValue> GetTools(this GptComponentMetadata element)
     {
         Throw.IfNull(element);
 
         var toolsValue = element.ExtensionData?.GetProperty<TableDataValue>(InitializablePropertyPath.Create("tools"));
-        return toolsValue?.Values[0];
+        return toolsValue?.Values ?? ImmutableArray<RecordDataValue>.Empty;
     }
 
     /// <summary>
@@ -113,5 +115,17 @@ public static class GptComponentMetadataExtensions
 
         var deploymentNameValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("model.connection.options.deployment_name"));
         return deploymentNameValue?.Value;
+    }
+
+    /// <summary>
+    /// Retrieves the 'metadata' property from a <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
+    public static IReadOnlyDictionary<string, string>? GetMetadata(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        var metadataValue = element.ExtensionData?.GetProperty<TableDataValue>(InitializablePropertyPath.Create("metadata"));
+        return metadataValue?.Values.Length > 0 ? metadataValue.Values[0].ToDictionary() : null;
     }
 }

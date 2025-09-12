@@ -103,10 +103,11 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agentDefinition);
         var tools = agentDefinition.GetTools();
-        Assert.NotNull(tools);
-        Assert.Equal("function", tools.GetTypeValue());
-        Assert.Equal("GetWeather", tools.GetName());
-        Assert.Equal("Get the weather for a given location.", tools.GetDescription());
+        Assert.Single(tools);
+        Assert.NotNull(tools[0]);
+        Assert.Equal("function", tools[0].GetTypeValue());
+        Assert.Equal("GetWeather", tools[0].GetName());
+        Assert.Equal("Get the weather for a given location.", tools[0].GetDescription());
     }
 
     [Fact]
