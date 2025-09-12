@@ -40,9 +40,9 @@ public static class AgentExtensions
     {
         Throw.IfNull(agent);
 
-        [Description("Run an agent to retrieve some information.")]
-        async Task<string> RunAgentAsync(
-            [Description("Available information that will guide the agent.")] string query,
+        [Description("Invoke an agent to retrieve some information.")]
+        async Task<string> InvokeAgentAsync(
+            [Description("Input query to invoke the agent.")] string query,
             CancellationToken cancellationToken)
         {
             var response = await agent.RunAsync(query, thread: thread, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -53,6 +53,6 @@ public static class AgentExtensions
         options.Name ??= agent.Name;
         options.Description ??= agent.Description;
 
-        return AIFunctionFactory.Create(RunAgentAsync, options);
+        return AIFunctionFactory.Create(InvokeAgentAsync, options);
     }
 }
