@@ -57,12 +57,12 @@ Overall the following structure is proposed:
         * context_providers
         * logging
         * workflows (includes multi-agent orchestration)
-    * advanced components, will be exposed from `agent_framework.<component>`:
         * guardrails / filters
-        * vector_data (vector stores and other MEVD pieces)
-        * text_search
+    * advanced components, will be exposed from `agent_framework.<component>`:
+        * vector_data (tbd, vector stores and other MEVD pieces)
+        * text_search (tbd)
         * exceptions
-        * evaluations
+        * evaluations (tbd)
         * utils (optional)
         * telemetry (could also be observability or monitoring)
     * connectors; subpackages*
@@ -176,7 +176,7 @@ The two extremes are:
         - larger packages with more dependencies
         - larger installation sizes
         - more difficult to version, since some parts may be GA, while other are in preview.
-2. One subpackage per connector, so a `google_chat` package, a `bigquery` package, etc.
+2. One subpackage per connector, so a i.e. `google_chat` package, a i.e. `qoogle_bigquery` package, etc.
     * Pros:
         - smaller packages with fewer dependencies
         - smaller installation sizes
@@ -186,6 +186,7 @@ The two extremes are:
         - more extras, means more difficult for users to find and install the right package.
 
 So with these two extremes in mind, we can also define some middle ground options:
+
 3. Group connectors by vendor and maturity, so that you can graduate something from the i.e. the `google-preview` package to the `google` package when it becomes GA.
     * Pros:
         - fewer packages to manage, publish and maintain
@@ -204,6 +205,20 @@ So with these two extremes in mind, we can also define some middle ground option
         - more packages to manage, register, publish and maintain
         - more extras, means more difficult for users to find and install the right package.
         - still keeps the lifecycle more difficult, since some parts may be GA, while other are in preview.
+5. Add `meta`-extras, that combine different subpackages as one extra, so we could have a `google` extra that includes `google-chat`, `google-bigquery`, etc.
+    * Pros:
+        - easier for users on a single platform
+    * Cons:
+        - more packages to manage, register, publish and maintain
+        - more extras, means more difficult for users to find and install the right package.
+        - makes developer package management more complex, because that meta-extra will include both GA and non-GA packages, so during dev they could use that, but then during prod they have to figure out which one they actually need and make a change in their dependencies, leading to mismatches between dev and prod.
+5. Make all imports happen from `agent_framework.connectors` (or from two or three groups `agent_framework.chat_clients`, `agent_framework.context_providers`, or something similar) while the underlying code comes from different packages.
+    * Pros:
+        - best developer experience, since all imports are from the same place and it is easy to find what you need, and we can raise a meaningfull error with which extra to install.
+        - easier for users to find and install the right package.
+    * Cons:
+        - larger overhead in maintaining the `__init__.py` files that do the lazy loading and error handling.
+        - larger overhead in package management, since we have to ensure that the main package.
 
 Decision:
 TBD
