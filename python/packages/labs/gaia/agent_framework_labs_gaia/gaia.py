@@ -10,6 +10,7 @@ import os
 import random
 import re
 import string
+import tempfile
 import time
 from collections.abc import Iterable
 from datetime import datetime
@@ -261,12 +262,12 @@ class GAIA:
 
         Args:
             evaluator: Custom evaluator function. If None, uses default GAIA scorer.
-            data_dir: Directory to cache GAIA data. Defaults to 'data_gaia_hub'.
+            data_dir: Directory to cache GAIA data. Defaults to a temporary directory.
             hf_token: Hugging Face token for accessing the GAIA dataset.
             telemetry_config: Configuration for telemetry and tracing. If None, no tracing is performed.
         """
         self.evaluator = evaluator or self._default_evaluator
-        self.data_dir = Path(data_dir or "data_gaia_hub")
+        self.data_dir = Path(data_dir or Path(tempfile.gettempdir()) / "data_gaia_hub")
         self.hf_token = hf_token
         self.telemetry_config = telemetry_config or GAIATelemetryConfig()
 
