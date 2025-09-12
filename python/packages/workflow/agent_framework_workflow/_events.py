@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import traceback as _traceback
+from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
@@ -27,9 +30,27 @@ class WorkflowStartedEvent(WorkflowEvent):
 
 
 class WorkflowCompletedEvent(WorkflowEvent):
-    """Event triggered when a workflow completes."""
+    """Event triggered when a workflow completes.
 
-    ...
+    Backward compatible with existing usages that only pass `data`.
+    Can optionally flag error completion with details when appropriate.
+    """
+
+    def __init__(
+        self,
+        data: Any | None = None,
+        *,
+        is_error: bool = False,
+        error_details: "WorkflowErrorDetails | None" = None,
+    ) -> None:
+        super().__init__(data)
+        self.is_error = is_error
+        self.error_details = error_details
+
+    def __repr__(self) -> str:  # pragma: no cover - representation only
+        if self.is_error:
+            return f"{self.__class__.__name__}(data={self.data!r}, is_error=True, error_details={self.error_details})"
+        return f"{self.__class__.__name__}(data={self.data!r})"
 
 
 class WorkflowWarningEvent(WorkflowEvent):
@@ -54,6 +75,71 @@ class WorkflowErrorEvent(WorkflowEvent):
     def __repr__(self) -> str:
         """Return a string representation of the workflow error event."""
         return f"{self.__class__.__name__}(exception={self.data})"
+
+
+class WorkflowRunState(str, Enum):
+    """Run-level state of a workflow execution."""
+
+    STARTED = "STARTED"
+    IN_PROGRESS = "IN_PROGRESS"
+    WAITING_FOR_INPUT = "WAITING_FOR_INPUT"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class WorkflowStatusEvent(WorkflowEvent):
+    """Event indicating a transition in the workflow run state."""
+
+    def __init__(self, state: WorkflowRunState, data: Any | None = None):
+        super().__init__(data)
+        self.state = state
+
+    def __repr__(self) -> str:  # pragma: no cover - representation only
+        return f"{self.__class__.__name__}(state={self.state}, data={self.data!r})"
+
+
+@dataclass
+class WorkflowErrorDetails:
+    """Structured error information to surface in error events/results."""
+
+    error_type: str
+    message: str
+    traceback: str | None = None
+    executor_id: str | None = None
+    extra: dict[str, Any] | None = None
+
+    @classmethod
+    def from_exception(
+        cls,
+        exc: BaseException,
+        *,
+        executor_id: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> "WorkflowErrorDetails":
+        tb = None
+        try:
+            tb = "".join(_traceback.format_exception(type(exc), exc, exc.__traceback__))
+        except Exception:
+            tb = None
+        return cls(
+            error_type=exc.__class__.__name__,
+            message=str(exc),
+            traceback=tb,
+            executor_id=executor_id,
+            extra=extra,
+        )
+
+
+class WorkflowFailedEvent(WorkflowEvent):
+    """Terminal failure event for a workflow run."""
+
+    def __init__(self, details: WorkflowErrorDetails, data: Any | None = None):
+        super().__init__(data)
+        self.details = details
+
+    def __repr__(self) -> str:  # pragma: no cover - representation only
+        return f"{self.__class__.__name__}(details={self.details}, data={self.data!r})"
 
 
 class RequestInfoEvent(WorkflowEvent):
@@ -117,6 +203,17 @@ class ExecutorCompletedEvent(ExecutorEvent):
     def __repr__(self) -> str:
         """Return a string representation of the executor handler complete event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id})"
+
+
+class ExecutorFailedEvent(ExecutorEvent):
+    """Event triggered when an executor handler raises an error."""
+
+    def __init__(self, executor_id: str, details: WorkflowErrorDetails):
+        super().__init__(executor_id, details)
+        self.details = details
+
+    def __repr__(self) -> str:  # pragma: no cover - representation only
+        return f"{self.__class__.__name__}(executor_id={self.executor_id}, details={self.details})"
 
 
 class AgentRunUpdateEvent(ExecutorEvent):

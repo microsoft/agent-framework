@@ -102,7 +102,14 @@ class Executor(AFBaseModel):
             if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
                 # Directly handle SubWorkflowRequestInfo
                 await context.add_event(ExecutorInvokeEvent(self.id))
-                await self._handle_sub_workflow_request(message, context)
+                try:
+                    await self._handle_sub_workflow_request(message, context)
+                except Exception as exc:
+                    # Surface structured executor failure before propagating
+                    from ._events import ExecutorFailedEvent, WorkflowErrorDetails
+
+                    await context.add_event(ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc)))
+                    raise
                 await context.add_event(ExecutorCompletedEvent(self.id))
                 return
 
@@ -115,7 +122,14 @@ class Executor(AFBaseModel):
             if handler is None:
                 raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
             await context.add_event(ExecutorInvokeEvent(self.id))
-            await handler(message, context)
+            try:
+                await handler(message, context)
+            except Exception as exc:
+                # Surface structured executor failure before propagating
+                from ._events import ExecutorFailedEvent, WorkflowErrorDetails
+
+                await context.add_event(ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc)))
+                raise
             await context.add_event(ExecutorCompletedEvent(self.id))
 
     def _discover_handlers(self) -> None:

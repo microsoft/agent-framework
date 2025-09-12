@@ -25,7 +25,16 @@ from ._edge import (
     SwitchCaseEdgeGroupCase,
     SwitchCaseEdgeGroupDefault,
 )
-from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
+from ._events import (
+    RequestInfoEvent,
+    WorkflowCompletedEvent,
+    WorkflowErrorDetails,
+    WorkflowEvent,
+    WorkflowFailedEvent,
+    WorkflowRunState,
+    WorkflowStartedEvent,
+    WorkflowStatusEvent,
+)
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import CheckpointState, InProcRunnerContext, RunnerContext
@@ -68,6 +77,27 @@ class WorkflowRunResult(list[WorkflowEvent]):
             A list of RequestInfoEvent instances found in the workflow run result.
         """
         return [event for event in self if isinstance(event, RequestInfoEvent)]
+
+    def get_final_state(self) -> WorkflowRunState | None:
+        """Compute a final run state from emitted events.
+
+        Returns one of COMPLETED, FAILED, WAITING_FOR_INPUT if detectable,
+        else None when ambiguous.
+        """
+        # Prefer explicit status events if present
+        status_events = [e for e in self if isinstance(e, WorkflowStatusEvent)]
+        if status_events:
+            # Return the last status emitted
+            return status_events[-1].state  # type: ignore[return-value]
+
+        # Fallback heuristic if no status events
+        if any(isinstance(e, WorkflowFailedEvent) for e in self):
+            return WorkflowRunState.FAILED
+        if any(isinstance(e, WorkflowCompletedEvent) and not getattr(e, "is_error", False) for e in self):
+            return WorkflowRunState.COMPLETED
+        if any(isinstance(e, RequestInfoEvent) for e in self):
+            return WorkflowRunState.WAITING_FOR_INPUT
+        return None
 
 
 # region Workflow
@@ -202,9 +232,14 @@ class Workflow(AFBaseModel):
 
         # Create workflow span that encompasses the entire execution
         with workflow_tracer.create_workflow_run_span(self):
+            saw_completed = False
+            saw_request = False
             try:
-                # Add workflow started event
+                # Add workflow started event (telemetry + surface state to consumers)
                 workflow_tracer.add_workflow_event("workflow.started")
+                # Emit explicit start/status events to the stream
+                yield WorkflowStartedEvent()
+                yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -216,11 +251,26 @@ class Workflow(AFBaseModel):
 
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
+                    # Track terminal indicators while forwarding events
+                    if isinstance(event, WorkflowCompletedEvent):
+                        saw_completed = True
+                    elif isinstance(event, RequestInfoEvent):
+                        saw_request = True
                     yield event
 
-                # Success
+                # Success path: emit a final status based on observed terminal signals
+                if saw_completed:
+                    yield WorkflowStatusEvent(WorkflowRunState.COMPLETED)
+                elif saw_request:
+                    yield WorkflowStatusEvent(WorkflowRunState.WAITING_FOR_INPUT)
+                # Else: ambiguous/no-op; omit final status
+
                 workflow_tracer.add_workflow_event("workflow.completed")
             except Exception as e:
+                # Surface structured failure details before propagating exception
+                details = WorkflowErrorDetails.from_exception(e)
+                yield WorkflowFailedEvent(details)
+                yield WorkflowStatusEvent(WorkflowRunState.FAILED)
                 workflow_tracer.add_workflow_error_event(e)
                 raise
 
@@ -408,7 +458,10 @@ class Workflow(AFBaseModel):
         # Flush any trailing updates
         _flush_pending()
 
-        return WorkflowRunResult(coalesced)
+        # Preserve historical non-streaming contract: omit internal status/start events
+        filtered = [ev for ev in coalesced if not isinstance(ev, (WorkflowStatusEvent, WorkflowStartedEvent))]
+
+        return WorkflowRunResult(filtered)
 
     async def run_from_checkpoint(
         self,

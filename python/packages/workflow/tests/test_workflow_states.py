@@ -1,0 +1,115 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+import pytest
+from agent_framework.workflow import (
+    Executor,
+    ExecutorFailedEvent,
+    RequestInfoEvent,
+    RequestInfoExecutor,
+    RequestInfoMessage,
+    Workflow,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    WorkflowFailedEvent,
+    WorkflowRunResult,
+    WorkflowRunState,
+    WorkflowStatusEvent,
+    handler,
+)
+
+from agent_framework_workflow import InProcRunnerContext
+from agent_framework_workflow._shared_state import SharedState
+from agent_framework_workflow._workflow_context import WorkflowContext as WFContext
+
+
+class FailingExecutor(Executor):
+    """Executor that raises at runtime to test failure signaling."""
+
+    @handler
+    async def fail(self, msg: int, ctx: WorkflowContext[None]) -> None:  # pragma: no cover - invoked via workflow
+        raise RuntimeError("boom")
+
+
+async def test_executor_failed_and_workflow_failed_events_streaming():
+    failing = FailingExecutor(id="f")
+    wf: Workflow = WorkflowBuilder().set_start_executor(failing).build()
+
+    events: list[object] = []
+    with pytest.raises(RuntimeError, match="boom"):
+        async for ev in wf.run_stream(0):
+            events.append(ev)
+
+    # Workflow-level failure and FAILED status should be surfaced
+    assert any(isinstance(e, WorkflowFailedEvent) for e in events)
+    status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
+    assert status and status[-1].state == WorkflowRunState.FAILED
+
+
+async def test_executor_failed_event_emitted_on_direct_execute():
+    failing = FailingExecutor(id="f")
+    ctx = InProcRunnerContext()
+    wf_ctx: WFContext[None] = WFContext(
+        executor_id=failing.id,
+        source_executor_ids=["START"],
+        shared_state=SharedState(),
+        runner_context=ctx,
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing.execute(0, wf_ctx)
+    drained = await ctx.drain_events()
+    assert any(isinstance(e, ExecutorFailedEvent) for e in drained)
+
+
+class Requester(Executor):
+    """Executor that always requests external info to test WAITING_FOR_INPUT state."""
+
+    @handler
+    async def ask(self, _: str, ctx: WorkflowContext[RequestInfoMessage]) -> None:  # pragma: no cover
+        await ctx.send_message(RequestInfoMessage())
+
+
+async def test_waiting_for_input_status_streaming():
+    req = Requester(id="req")
+    rie = RequestInfoExecutor(id="rie")
+    wf = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
+
+    events = [ev async for ev in wf.run_stream("start")]  # Consume stream fully
+
+    # Ensure a request was emitted
+    assert any(isinstance(e, RequestInfoEvent) for e in events)
+    # Final status should be WAITING_FOR_INPUT
+    final_status = [e for e in events if isinstance(e, WorkflowStatusEvent)][-1]
+    assert final_status.state == WorkflowRunState.WAITING_FOR_INPUT
+
+
+class Completer(Executor):
+    """Executor that completes immediately with provided data for testing."""
+
+    @handler
+    async def run(self, msg: str, ctx: WorkflowContext[str]) -> None:  # pragma: no cover
+        await ctx.add_event(WorkflowCompletedEvent(msg))
+
+
+async def test_completed_status_streaming():
+    c = Completer(id="c")
+    wf = WorkflowBuilder().set_start_executor(c).build()
+    events = [ev async for ev in wf.run_stream("ok")]  # no raise
+    # Last status should be COMPLETED
+    status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
+    assert status and status[-1].state == WorkflowRunState.COMPLETED
+
+
+async def test_non_streaming_final_state_helpers():
+    # Completed case
+    c = Completer(id="c")
+    wf1 = WorkflowBuilder().set_start_executor(c).build()
+    result1: WorkflowRunResult = await wf1.run("done")
+    assert result1.get_final_state() == WorkflowRunState.COMPLETED
+
+    # Waiting-for-input case
+    req = Requester(id="req")
+    rie = RequestInfoExecutor(id="rie")
+    wf2 = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
+    result2: WorkflowRunResult = await wf2.run("start")
+    assert result2.get_final_state() == WorkflowRunState.WAITING_FOR_INPUT
