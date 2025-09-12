@@ -444,7 +444,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and result:  # type: ignore[name-defined]
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                     try:
                         json.dumps(result)  # type: ignore[arg-type]
                     except (TypeError, OverflowError):
