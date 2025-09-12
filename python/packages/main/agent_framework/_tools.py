@@ -420,8 +420,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         setup_telemetry()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED and arguments:  # type: ignore[name-defined]
-            attributes.update({OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()})
+        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            attributes.update({OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json() if arguments else "None"})
         with get_function_span(attributes=attributes) as span:
             hist_attributes: dict[str, Any] = {
                 OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
