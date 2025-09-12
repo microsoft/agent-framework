@@ -13,31 +13,17 @@ namespace Microsoft.Extensions.AI.Agents;
 /// Base abstraction for all agents. An agent instance may participate in one or more conversations.
 /// A conversation may include one or more agents.
 /// </summary>
-public sealed class CallbackEnabledAgent : AIAgent
+public sealed class CallbackEnabledAgent : DelegatingAIAgent
 {
-    private readonly AIAgent _innerAgent;
     private readonly CallbackMiddlewareProcessor _callbacksProcessor;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIAgent"/> class with default settings.
     /// </summary>
-    public CallbackEnabledAgent(AIAgent agent, CallbackMiddlewareProcessor? callbackMiddlewareProcessor)
+    public CallbackEnabledAgent(AIAgent agent, CallbackMiddlewareProcessor? callbackMiddlewareProcessor) : base(agent)
     {
-        this._innerAgent = Throw.IfNull(agent);
         this._callbacksProcessor = callbackMiddlewareProcessor ?? new();
     }
-
-    /// <inheritdoc/>
-    public override string Id => this._innerAgent.Id;
-
-    /// <inheritdoc/>
-    public override string? Name => this._innerAgent.Name;
-
-    /// <inheritdoc/>
-    public override string DisplayName => this._innerAgent.DisplayName;
-
-    /// <inheritdoc/>
-    public override string? Description => this._innerAgent.Description;
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
@@ -46,12 +32,8 @@ public sealed class CallbackEnabledAgent : AIAgent
 
         return serviceKey is null && serviceType == typeof(CallbackEnabledAgent)
             ? this
-            : this._innerAgent.GetService(serviceType, serviceKey);
+            : this.InnerAgent.GetService(serviceType, serviceKey);
     }
-
-    /// <inheritdoc/>
-    public override AgentThread GetNewThread()
-        => this._innerAgent.GetNewThread();
 
     /// <summary>
     /// Run the agent with the provided message and arguments.
@@ -80,7 +62,7 @@ public sealed class CallbackEnabledAgent : AIAgent
         {
             // There's a possibility that the provided context was customized by a specialized AgentInvokeCallbackContext context 
             roamingContext ??= ctx;
-            var result = await this._innerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken)
+            var result = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken)
                 .ConfigureAwait(false);
 
             ctx.SetRawResponse(result);
@@ -122,7 +104,7 @@ public sealed class CallbackEnabledAgent : AIAgent
 
         Task CoreLogic(AgentInvokeCallbackContext ctx)
         {
-            var enumerable = this._innerAgent.RunStreamingAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
+            var enumerable = this.InnerAgent.RunStreamingAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
             ctx.SetRawResponse(enumerable);
 
             return Task.CompletedTask;
