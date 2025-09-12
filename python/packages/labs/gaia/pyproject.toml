@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-experimental"
-description = "Experimental module for Microsoft Agent Framework."
+name = "agent-framework-labs-gaia"
+description = "GAIA benchmark module for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,26 +25,22 @@ dependencies = [
   "pydantic>=2.0.0",
   "opentelemetry-api>=1.24.0",
   "tqdm>=4.60.0",
-]
-
-[project.optional-dependencies]
-gaia = [
   "huggingface-hub>=0.20.0",
   "orjson>=3.8.0",
 ]
 
 [project.scripts]
-gaia_viewer = "agent_framework_experimental.gaia:viewer_main"
+gaia_viewer = "agent_framework_labs_gaia:viewer_main"
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["agent_framework_experimental"]
+packages = ["agent_framework_labs_gaia", "agent_framework.labs.gaia"]
 
 [tool.setuptools.package-data]
-agent_framework_experimental = ["py.typed"]
+agent_framework_labs_gaia = ["py.typed"]
 
 [tool.ruff]
 line-length = 120
@@ -71,7 +67,7 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 implicit_reexport = true
-packages = ["agent_framework_experimental"]
+packages = ["agent_framework_labs_gaia"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,10 +6,10 @@ requires-python = ">=3.10"
 dependencies = [
     "agent-framework",
     "agent-framework-azure",
-    "agent-framework-experimental",
     "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-workflow",
+    "agent-framework-labs-gaia",
 ]
 
 [dependency-groups]
@@ -58,14 +58,14 @@ environments = [
 ]
 
 [tool.uv.workspace]
-members = [ "packages/*" ]
-exclude = [ "packages/agent_framework_project.egg-info" ]
+members = [ "packages/*", "packages/labs/*" ]
+exclude = [ "packages/agent_framework_project.egg-info", "packages/labs", "packages/labs/cookiecutter-agent-framework-lab", "packages/labs/README.md" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
-agent-framework-experimental = { workspace = true }
 agent-framework-foundry = { workspace = true }
+agent-framework-labs-gaia = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-runtime = { workspace = true }
 agent-framework-workflow = { workspace = true }

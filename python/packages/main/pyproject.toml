@@ -48,9 +48,6 @@ workflow = [
 runtime = [
     "agent-framework-runtime"
 ]
-experimental = [
-    "agent-framework-experimental"
-]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

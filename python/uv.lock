@@ -25,8 +25,8 @@ supported-markers = [
 members = [
     "agent-framework",
     "agent-framework-azure",
-    "agent-framework-experimental",
     "agent-framework-foundry",
+    "agent-framework-labs-gaia",
     "agent-framework-mem0",
     "agent-framework-project",
     "agent-framework-runtime",
@@ -66,9 +66,6 @@ dependencies = [
 azure = [
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-experimental = [
-    { name = "agent-framework-experimental", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
 foundry = [
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -82,7 +79,6 @@ workflow = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-azure", marker = "extra == 'azure'", editable = "packages/azure" },
-    { name = "agent-framework-experimental", marker = "extra == 'experimental'", editable = "packages/experimental" },
     { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
     { name = "agent-framework-runtime", marker = "extra == 'runtime'", editable = "packages/runtime" },
     { name = "agent-framework-workflow", marker = "extra == 'workflow'", editable = "packages/workflow" },
@@ -97,7 +93,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
-provides-extras = ["azure", "foundry", "workflow", "runtime", "experimental"]
+provides-extras = ["azure", "foundry", "workflow", "runtime"]
 
 [[package]]
 name = "agent-framework-azure"
@@ -113,34 +109,6 @@ requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
     { name = "azure-identity", specifier = ">=1.13" },
 ]
-
-[[package]]
-name = "agent-framework-experimental"
-version = "0.1.0b1"
-source = { editable = "packages/experimental" }
-dependencies = [
-    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.optional-dependencies]
-gaia = [
-    { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "orjson", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework", editable = "packages/main" },
-    { name = "huggingface-hub", marker = "extra == 'gaia'", specifier = ">=0.20.0" },
-    { name = "opentelemetry-api", specifier = ">=1.24.0" },
-    { name = "orjson", marker = "extra == 'gaia'", specifier = ">=3.8.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "tqdm", specifier = ">=4.60.0" },
-]
-provides-extras = ["gaia"]
 
 [[package]]
 name = "agent-framework-foundry"
@@ -159,6 +127,29 @@ requires-dist = [
     { name = "aiohttp", specifier = "~=3.8" },
     { name = "azure-ai-agents", specifier = ">=1.1.0b1" },
     { name = "azure-ai-projects", specifier = ">=1.0.0b11" },
+]
+
+[[package]]
+name = "agent-framework-labs-gaia"
+version = "0.1.0b1"
+source = { editable = "packages/labs/gaia" }
+dependencies = [
+    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "orjson", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework", editable = "packages/main" },
+    { name = "huggingface-hub", specifier = ">=0.20.0" },
+    { name = "opentelemetry-api", specifier = ">=1.24.0" },
+    { name = "orjson", specifier = ">=3.8.0" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "tqdm", specifier = ">=4.60.0" },
 ]
 
 [[package]]
@@ -183,8 +174,8 @@ source = { virtual = "." }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-experimental", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-labs-gaia", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-workflow", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -228,8 +219,8 @@ dev = [
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
     { name = "agent-framework-azure", editable = "packages/azure" },
-    { name = "agent-framework-experimental", editable = "packages/experimental" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
+    { name = "agent-framework-labs-gaia", editable = "packages/labs/gaia" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-workflow", editable = "packages/workflow" },
 ]
