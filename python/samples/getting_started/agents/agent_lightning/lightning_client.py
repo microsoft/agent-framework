@@ -24,9 +24,10 @@ class Tau2Agent(LitAgent):
             base_url=main_llm.endpoint,
             api_key=proxy_api_key if main_llm.endpoint == proxy_base_url else "dummy",
             sliding_window=4000,
+            # We have to reserve the buffer for tool calls. It will be around 7000 in runtime.
         )
         user_config = AgentConfiguration(
-            model="gpt-4o-mini",
+            model="gpt-4.1",
             temperature=0.0,
             base_url=proxy_base_url,
             api_key=proxy_api_key,
