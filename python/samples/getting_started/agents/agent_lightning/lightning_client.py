@@ -111,15 +111,15 @@ class Tau2Agent(LitAgent):
         return final_reward
 
     async def validation_rollout_async(self, task: dict, rollout_id: str, resources: dict) -> float:
-        # from test import main
+        from test import main
 
-        # await main(
-        #     assistant_model=resources["main_llm"].model,
-        #     assistant_sliding_window=4000,
-        #     user_model="gpt-4.1",
-        #     judge_model="gpt-4o-mini",
-        #     debug_task_id=None,
-        # )
+        await main(
+            assistant_model="Qwen2.5-1.5B-Instruct",
+            assistant_sliding_window=4000,
+            user_model="gpt-4.1",
+            judge_model="gpt-4o-mini",
+            debug_task_id=None,
+        )
         resources_with_temp0 = {
             "main_llm": resources["main_llm"].model_copy(update={"sampling_parameters": {"temperature": 0.0}})
         }
