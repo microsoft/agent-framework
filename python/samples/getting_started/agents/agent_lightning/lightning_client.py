@@ -58,16 +58,14 @@ class Tau2Agent(LitAgent):
         )
         user_config = AgentConfiguration(
             model="gpt-4.1",
-            temperature=None,
-            # temperature=0.0,
+            temperature=0.0,
             base_url=proxy_base_url,
             api_key=proxy_api_key,
             sliding_window=30000,  # long sliding window for user simulator
         )
         judge_config = AgentConfiguration(
             model="gpt-4o-mini",
-            temperature=None,
-            # temperature=0.0,
+            temperature=0.0,
             base_url=proxy_base_url,
             api_key=proxy_api_key,
             sliding_window=0,  # Not used for judge
