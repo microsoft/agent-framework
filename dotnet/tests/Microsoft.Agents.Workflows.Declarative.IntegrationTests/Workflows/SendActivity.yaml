@@ -7,7 +7,7 @@ kind: AdaptiveDialog
 beginDialog:
 
   kind: OnActivity
-  id: workflow_demo
+  id: workflow_test
   actions:
 
     # Capture input

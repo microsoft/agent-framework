@@ -34,6 +34,7 @@ public static class DeclarativeWorkflowBuilder
         using StreamReader yamlReader = File.OpenText(workflowFile);
         return Build<TInput>(yamlReader, options, inputTransform);
     }
+
     /// <summary>
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
