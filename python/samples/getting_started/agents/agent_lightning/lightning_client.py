@@ -76,6 +76,8 @@ class Tau2Agent(LitAgent):
         if task_obj_reloaded != task_obj:
             logger.error(f"Task object reloaded from tau2 is not the same as the one from the dataset: {task_obj_reloaded} != {task_obj}")
 
+        task_obj = task_obj_reloaded
+
         _logger = logger.opt(colors=True)
         _logger.info(f"<cyan>[TASK]\n{str(task_obj)}</cyan>")
         try:
