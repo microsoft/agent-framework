@@ -32,7 +32,7 @@ internal sealed class FileReadExecutor() : ReflectingExecutor<FileReadExecutor>(
 }
 ```
 
-:::
+::: zone-end
 
 ::: zone pivot="programming-language-python"
 
