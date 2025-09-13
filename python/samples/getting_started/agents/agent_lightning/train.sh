@@ -13,6 +13,7 @@ PYTHONUNBUFFERED=1 python -m agentlightning.verl \
     algorithm.adv_estimator=grpo \
     data.train_files=data/tasks_train.parquet \
     data.val_files=data/tasks_test.parquet \
+    data.shuffle=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$ROLLOUT_TP_SIZE \
     trainer.n_gpus_per_node=${N_GPUS} \
     data.train_batch_size=8 \
