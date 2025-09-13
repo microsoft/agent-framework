@@ -46,8 +46,8 @@ class Tau2Agent(LitAgent):
 
         assistant_config = AgentConfiguration(
             model=main_llm.model,
-            # temperature=None,
-            temperature=main_llm.sampling_parameters["temperature"],
+            temperature=1.0,
+            # temperature=main_llm.sampling_parameters["temperature"],
             base_url=main_llm.endpoint,
             # model="gpt-4.1",
             # temperature=0.0,
