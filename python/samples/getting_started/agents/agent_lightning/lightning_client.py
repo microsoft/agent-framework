@@ -45,13 +45,13 @@ class Tau2Agent(LitAgent):
         main_llm = resources["main_llm"]
 
         assistant_config = AgentConfiguration(
-            model=main_llm.model,
-            temperature=1.0,
+            # model=main_llm.model,
+            # temperature=1.0,
             # temperature=main_llm.sampling_parameters["temperature"],
-            base_url=main_llm.endpoint,
-            # model="gpt-4.1",
-            # temperature=0.0,
-            # base_url=proxy_base_url,
+            # base_url=main_llm.endpoint,
+            model="Qwen2.5-1.5B-Instruct",
+            temperature=1.0,
+            base_url=proxy_base_url,
             api_key=proxy_api_key if main_llm.endpoint == proxy_base_url else "dummy",
             sliding_window=4000,
             # We have to reserve the buffer for tool calls. It will be around 7000 in runtime.
@@ -111,6 +111,15 @@ class Tau2Agent(LitAgent):
         return final_reward
 
     async def validation_rollout_async(self, task: dict, rollout_id: str, resources: dict) -> float:
+        # from test import main
+
+        # await main(
+        #     assistant_model=resources["main_llm"].model,
+        #     assistant_sliding_window=4000,
+        #     user_model="gpt-4.1",
+        #     judge_model="gpt-4o-mini",
+        #     debug_task_id=None,
+        # )
         resources_with_temp0 = {
             "main_llm": resources["main_llm"].model_copy(update={"sampling_parameters": {"temperature": 0.0}})
         }
