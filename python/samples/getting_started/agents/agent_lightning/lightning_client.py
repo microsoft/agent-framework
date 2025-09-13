@@ -117,6 +117,6 @@ class Tau2Agent(LitAgent):
 
 if __name__ == "__main__":
     configure_logger()
-    trainer = Trainer(n_workers=1)
+    trainer = Trainer(n_workers=4)
     agent = Tau2Agent(trained_agents="assistant_agent")
     trainer.fit(agent, "http://localhost:9991")
