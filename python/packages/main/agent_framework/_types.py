@@ -1758,7 +1758,7 @@ class ChatOptions(AFBaseModel):
         merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
 
         settings = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
-        settings = {k: v for k, v in settings.items() if v}
+        settings = {k: v for k, v in settings.items() if v is not None}
         settings.update(self.additional_properties)
         for key in merged_exclude:
             settings.pop(key, None)
