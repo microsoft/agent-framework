@@ -45,9 +45,12 @@ class Tau2Agent(LitAgent):
         main_llm = resources["main_llm"]
 
         assistant_config = AgentConfiguration(
-            model=main_llm.model,
-            temperature=main_llm.sampling_parameters["temperature"],
-            base_url=main_llm.endpoint,
+            # model=main_llm.model,
+            # temperature=main_llm.sampling_parameters["temperature"],
+            # base_url=main_llm.endpoint,
+            model="gpt-4.1",
+            temperature=0.0,
+            base_url=proxy_base_url,
             api_key=proxy_api_key if main_llm.endpoint == proxy_base_url else "dummy",
             sliding_window=4000,
             # We have to reserve the buffer for tool calls. It will be around 7000 in runtime.
