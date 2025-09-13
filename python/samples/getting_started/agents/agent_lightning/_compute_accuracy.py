@@ -5,8 +5,8 @@ import pandas as pd
 import json
 
 # Load train and test task IDs
-train_tasks_df = pd.read_parquet("data/tasks_train.parquet")
-test_tasks_df = pd.read_parquet("data/tasks_test.parquet")
+train_tasks_df = pd.read_parquet("data/tasks_train_serialized.parquet")
+test_tasks_df = pd.read_parquet("data/tasks_test_serialized.parquet")
 train_task_ids = set(train_tasks_df["id"].tolist())
 test_task_ids = set(test_tasks_df["id"].tolist())
 

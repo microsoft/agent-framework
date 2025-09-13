@@ -39,8 +39,8 @@ async def main(
     assistant_model: str, assistant_sliding_window: int, user_model: str, judge_model: str, debug_task_id: str | None
 ):
     # Read parquet files to get task counts
-    train_tasks_df = pd.read_parquet("data/tasks_train.parquet")
-    test_tasks_df = pd.read_parquet("data/tasks_test.parquet")
+    train_tasks_df = pd.read_parquet("data/tasks_train_serialized.parquet")
+    test_tasks_df = pd.read_parquet("data/tasks_test_serialized.parquet")
     total_tasks = len(train_tasks_df) + len(test_tasks_df)
 
     logger.info(f"Loaded tasks: {len(train_tasks_df)} train, {len(test_tasks_df)} test, {total_tasks} total")
@@ -70,7 +70,7 @@ async def main(
 
     assistant_config = AgentConfiguration(
         model=assistant_model,
-        temperature=1.0,
+        temperature=0.0,
         base_url=proxy_base_url,
         api_key=proxy_api_key,
         sliding_window=assistant_sliding_window,
