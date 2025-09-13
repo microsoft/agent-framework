@@ -70,7 +70,7 @@ async def main(
 
     assistant_config = AgentConfiguration(
         model=assistant_model,
-        temperature=0.0,
+        temperature=1.0,
         base_url=proxy_base_url,
         api_key=proxy_api_key,
         sliding_window=assistant_sliding_window,
