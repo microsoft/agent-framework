@@ -83,7 +83,7 @@ internal sealed class DeclarativeWorkflowState
 
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1) // %%% RESTORE: NEEDED ???
+        if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1)
         {
             return;
         }
