@@ -306,7 +306,7 @@ public class AgentAIFunctionFactoryTests
         public int RunAsyncCallCount { get; private set; }
 
         public override Task<AgentRunResponse> RunAsync(
-            IReadOnlyCollection<ChatMessage> messages,
+            IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
@@ -324,7 +324,7 @@ public class AgentAIFunctionFactoryTests
         }
 
         public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-            IReadOnlyCollection<ChatMessage> messages,
+            IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
