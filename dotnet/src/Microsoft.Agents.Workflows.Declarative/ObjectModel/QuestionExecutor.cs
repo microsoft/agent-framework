@@ -2,6 +2,7 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Entities;
 using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -77,7 +78,7 @@ internal sealed class QuestionExecutor(Question model, DeclarativeWorkflowState 
 
     public async ValueTask CaptureResponseAsync(IWorkflowContext context, InputResponse message, CancellationToken cancellationToken)
     {
-        bool isValid = false;
+        FormulaValue? extractedValue = null;
         if (string.IsNullOrWhiteSpace(message.Value))
         {
             string unrecognizedResponse = this.FormatPrompt(this.Model.UnrecognizedPrompt);
@@ -85,23 +86,25 @@ internal sealed class QuestionExecutor(Question model, DeclarativeWorkflowState 
         }
         else
         {
-            isValid = true; // %%% VALIDATE INPUT
-
-            if (!isValid)
+            EntityExtractionResult entityResult = EntityExtractor.Parse(this.Model.Entity, message.Value);
+            if (entityResult.IsValid)
+            {
+                extractedValue = entityResult.Value;
+            }
+            else
             {
                 string invalidResponse = this.FormatPrompt(this.Model.InvalidPrompt);
                 await context.AddEventAsync(new MessageActivityEvent(invalidResponse.Trim())).ConfigureAwait(false);
             }
         }
 
-        if (!isValid)
+        if (extractedValue is null)
         {
             await this.PromptAsync(context, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            FormulaValue validValue = message.Value.ToFormula();
-            await this.AssignAsync(this.Model.Variable?.Path, validValue, context).ConfigureAwait(false);
+            await this.AssignAsync(this.Model.Variable?.Path, extractedValue, context).ConfigureAwait(false);
             await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
         }

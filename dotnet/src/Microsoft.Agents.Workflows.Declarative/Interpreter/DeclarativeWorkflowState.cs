@@ -90,7 +90,6 @@ internal sealed class DeclarativeWorkflowState
 
         await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
 
-        // %%% RESTORE - BUG: LastMessage.Text
         async ValueTask ReadScopeAsync(string scopeName)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName).ConfigureAwait(false);
