@@ -22,7 +22,7 @@ internal static class MessageConverter
             foreach (var content in chatMessage.Contents)
             {
                 var part = ConvertAIContentToPart(content);
-                if (part != null)
+                if (part is not null)
                 {
                     parts.Add(part);
                 }
@@ -51,7 +51,7 @@ internal static class MessageConverter
         }
 
         var result = new List<ChatMessage>();
-        if (messageSendParams.Message?.Parts != null)
+        if (messageSendParams.Message?.Parts is not null)
         {
             var chatMessage = ToChatMessage(messageSendParams.Message);
             if (chatMessage is not null)
@@ -94,7 +94,7 @@ internal static class MessageConverter
     /// <returns>A ChatMessage object, or null if conversion is not possible.</returns>
     public static ChatMessage? ToChatMessage(this Message message)
     {
-        if (message?.Parts == null || message.Parts.Count == 0)
+        if (message?.Parts is not { Count: > 0 })
         {
             return null;
         }
@@ -151,10 +151,8 @@ internal static class MessageConverter
     /// <param name="part">The A2A part to convert.</param>
     /// <returns>An AIContent object, or null if conversion is not possible.</returns>
 #pragma warning disable CA1859 // Use concrete types when possible for improved performance
-    private static AIContent? ConvertPartToAIContent(Part part)
-#pragma warning restore CA1859 // Use concrete types when possible for improved performance
-    {
-        var result = part switch
+    private static AIContent? ConvertPartToAIContent(Part part) =>
+        part switch
         {
             TextPart textPart => new TextContent(textPart.Text)
             {
@@ -164,9 +162,6 @@ internal static class MessageConverter
             FilePart or DataPart or _ => throw new NotSupportedException($"Part type '{part.GetType().Name}' is not supported. Only TextPart is supported.")
         };
 
-        return result;
-    }
-
     /// <summary>
     /// Converts Microsoft.Extensions.AI ChatMessage back to A2A Message format.
     /// This is useful for the reverse operation.
@@ -175,23 +170,23 @@ internal static class MessageConverter
     /// <returns>An A2A Message object.</returns>
     public static Message ToA2AMessage(this ChatMessage chatMessage)
     {
-        if (chatMessage == null)
+        if (chatMessage is null)
         {
             throw new ArgumentNullException(nameof(chatMessage));
         }
 
         var message = new Message
         {
-            MessageId = chatMessage.MessageId ?? System.Guid.NewGuid().ToString(),
+            MessageId = chatMessage.MessageId ?? Guid.NewGuid().ToString(),
             Role = ConvertChatRoleToMessageRole(chatMessage.Role),
-            Parts = new List<Part>()
+            Parts = []
         };
 
         // Convert content to parts
         foreach (var content in chatMessage.Contents)
         {
             var part = ConvertAIContentToPart(content);
-            if (part != null)
+            if (part is not null)
             {
                 message.Parts.Add(part);
             }
@@ -231,10 +226,8 @@ internal static class MessageConverter
     /// <param name="content">The AIContent to convert.</param>
     /// <returns>A Part object, or null if conversion is not possible.</returns>
 #pragma warning disable CA1859 // Use concrete types when possible for improved performance
-    private static Part? ConvertAIContentToPart(AIContent content)
-#pragma warning restore CA1859 // Use concrete types when possible for improved performance
-    {
-        return content switch
+    private static Part? ConvertAIContentToPart(AIContent content) =>
+        content switch
         {
             TextContent textContent => new TextPart
             {
@@ -242,11 +235,10 @@ internal static class MessageConverter
             },
             _ => throw new NotSupportedException($"Content type '{content.GetType().Name}' is not supported.")
         };
-    }
 
     private static AdditionalPropertiesDictionary? ToAdditionalPropertiesDictionary(this Dictionary<string, JsonElement> metadata)
     {
-        if (metadata == null || metadata.Count == 0)
+        if (metadata is not { Count: > 0 })
         {
             return null;
         }

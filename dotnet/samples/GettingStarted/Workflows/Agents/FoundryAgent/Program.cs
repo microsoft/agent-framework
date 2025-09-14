@@ -34,10 +34,10 @@ public static class Program
         AIAgent englishAgent = await GetTranslationAgentAsync("English", persistentAgentsClient, model);
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(frenchAgent);
-        builder.AddEdge(frenchAgent, spanishAgent);
-        builder.AddEdge(spanishAgent, englishAgent);
-        var workflow = builder.Build<ChatMessage>();
+        var workflow = new WorkflowBuilder(frenchAgent)
+            .AddEdge(frenchAgent, spanishAgent)
+            .AddEdge(spanishAgent, englishAgent)
+            .Build<ChatMessage>();
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
@@ -71,11 +71,10 @@ public static class Program
         PersistentAgentsClient persistentAgentsClient,
         string model)
     {
-        string instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.";
         var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
             model: model,
             name: $"{targetLanguage} Translator",
-            instructions: instructions);
+            instructions: $"You are a translation assistant that translates the provided text to {targetLanguage}.");
 
         return await persistentAgentsClient.GetAIAgentAsync(agentMetadata.Value.Id);
     }

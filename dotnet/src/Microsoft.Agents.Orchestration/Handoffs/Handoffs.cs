@@ -17,7 +17,7 @@ public sealed class Handoffs :
     IReadOnlyDictionary<AIAgent, IEnumerable<Handoffs.HandoffTarget>>
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="Orchestration.Handoffs"/> class with no handoff relationships.
+    /// Initializes a new instance of the <see cref="Handoffs"/> class with no handoff relationships.
     /// </summary>
     /// <param name="initialAgent">The first agent to be invoked (prior to any handoff).</param>
     private Handoffs(AIAgent initialAgent)
@@ -41,7 +41,7 @@ public sealed class Handoffs :
     /// Creates a new collection of handoffs that start with the specified agent.
     /// </summary>
     /// <param name="initialAgent">The initial agent.</param>
-    /// <returns>The new <see cref="Orchestration.Handoffs"/> instance.</returns>
+    /// <returns>The new <see cref="Handoffs"/> instance.</returns>
     public static Handoffs StartWith(AIAgent initialAgent) => new(initialAgent);
 
     /// <summary>Creates a new <see cref="HandoffOrchestration"/> from the described handoffs.</summary>
@@ -54,7 +54,7 @@ public sealed class Handoffs :
     /// </summary>
     /// <param name="source">The source agent.</param>
     /// <param name="targets">The target agents to add as handoff targets for the source agent.</param>
-    /// <returns>The updated <see cref="Orchestration.Handoffs"/> instance.</returns>
+    /// <returns>The updated <see cref="Handoffs"/> instance.</returns>
     /// <remarks>The handoff reason for each target is derived from its description or name.</remarks>
     public Handoffs Add(AIAgent source, AIAgent[] targets)
     {
@@ -79,7 +79,7 @@ public sealed class Handoffs :
     /// <param name="source">The source agent.</param>
     /// <param name="target">The target agent.</param>
     /// <param name="handoffReason">The reason the <paramref name="source"/> should hand off to the <paramref name="target"/>.</param>
-    /// <returns>The updated <see cref="Orchestration.Handoffs"/> instance.</returns>
+    /// <returns>The updated <see cref="Handoffs"/> instance.</returns>
     public Handoffs Add(AIAgent source, AIAgent target, string? handoffReason = null)
     {
         Throw.IfNull(source);
@@ -127,7 +127,7 @@ public sealed class Handoffs :
 
     /// <inheritdoc />
     IEnumerator IEnumerable.GetEnumerator() =>
-        ((IReadOnlyDictionary<AIAgent, IEnumerable<Handoffs.HandoffTarget>>)this).GetEnumerator();
+        ((IReadOnlyDictionary<AIAgent, IEnumerable<HandoffTarget>>)this).GetEnumerator();
 
     /// <inheritdoc />
     bool IReadOnlyDictionary<AIAgent, IEnumerable<HandoffTarget>>.TryGetValue(AIAgent key, out IEnumerable<HandoffTarget> value)

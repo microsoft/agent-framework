@@ -19,7 +19,7 @@ internal sealed class A2AActorClient : IActorClient
 
     // because A2A sdk does not provide a client which can handle multiple agents, we need a client per agent
     // for this app the convention is "baseUri/<agentname>"
-    private readonly ConcurrentDictionary<string, (A2AClient, A2ACardResolver)> _clients = new();
+    private readonly ConcurrentDictionary<string, (A2AClient, A2ACardResolver)> _clients = [];
 
     public A2AActorClient(ILogger logger, Uri baseUri)
     {
@@ -35,10 +35,7 @@ internal sealed class A2AActorClient : IActorClient
         return a2aCardResolver.GetAgentCardAsync(cancellationToken);
     }
 
-    public ValueTask<ActorResponseHandle> GetResponseAsync(ActorId actorId, string messageId, CancellationToken cancellationToken)
-    {
-        throw new NotImplementedException();
-    }
+    public ValueTask<ActorResponseHandle> GetResponseAsync(ActorId actorId, string messageId, CancellationToken cancellationToken) => throw new NotImplementedException();
 
     public ValueTask<ActorResponseHandle> SendRequestAsync(ActorRequest request, CancellationToken cancellationToken)
     {
@@ -51,9 +48,8 @@ internal sealed class A2AActorClient : IActorClient
     private (A2AClient, A2ACardResolver) ResolveClient(ActorType agentName)
         => this.ResolveClient(agentName.Name);
 
-    private (A2AClient, A2ACardResolver) ResolveClient(string agentName)
-    {
-        return this._clients.GetOrAdd(agentName, name =>
+    private (A2AClient, A2ACardResolver) ResolveClient(string agentName) =>
+        this._clients.GetOrAdd(agentName, name =>
         {
             var uri = new Uri($"{this._uri}/{name}/");
             var a2aClient = new A2AClient(uri);
@@ -64,7 +60,6 @@ internal sealed class A2AActorClient : IActorClient
             this._logger.LogInformation("Built clients for agent {Agent} with baseUri {Uri}", name, uri);
             return (a2aClient, a2aCardResolver);
         });
-    }
 
     private sealed class A2AActorResponseHandle : ActorResponseHandle
     {
@@ -77,20 +72,11 @@ internal sealed class A2AActorClient : IActorClient
             this._request = request;
         }
 
-        public override ValueTask CancelAsync(CancellationToken cancellationToken)
-        {
-            throw new NotImplementedException();
-        }
+        public override ValueTask CancelAsync(CancellationToken cancellationToken) => throw new NotImplementedException();
 
-        public override ValueTask<ActorResponse> GetResponseAsync(CancellationToken cancellationToken)
-        {
-            throw new NotImplementedException();
-        }
+        public override ValueTask<ActorResponse> GetResponseAsync(CancellationToken cancellationToken) => throw new NotImplementedException();
 
-        public override bool TryGetResponse([NotNullWhen(true)] out ActorResponse? response)
-        {
-            throw new NotImplementedException();
-        }
+        public override bool TryGetResponse([NotNullWhen(true)] out ActorResponse? response) => throw new NotImplementedException();
 
         public override async IAsyncEnumerable<ActorRequestUpdate> WatchUpdatesAsync([EnumeratorCancellation] CancellationToken cancellationToken)
         {

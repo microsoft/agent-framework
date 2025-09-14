@@ -33,13 +33,11 @@ internal static class AIContentExtensions
     /// </summary>
     /// <param name="content">AI content to convert.</param>
     /// <returns>The corresponding A2A <see cref="Part"/> object.</returns>
-    internal static Part ToA2APart(this AIContent content)
-    {
-        return content switch
+    internal static Part ToA2APart(this AIContent content) =>
+        content switch
         {
             TextContent textContent => new TextPart { Text = textContent.Text },
             HostedFileContent hostedFileContent => new FilePart { File = new FileWithUri { Uri = hostedFileContent.FileId } },
             _ => throw new NotSupportedException($"Unsupported content type: {content.GetType().Name}."),
         };
-    }
 }

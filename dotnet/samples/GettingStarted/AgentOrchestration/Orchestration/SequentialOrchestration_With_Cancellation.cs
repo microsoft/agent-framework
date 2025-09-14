@@ -16,7 +16,7 @@ public class SequentialOrchestration_With_Cancellation(ITestOutputHelper output)
     {
         // Define the agents
         ChatClientAgent agent =
-            this.CreateAgent(
+            CreateAgent(
                 """
                 If the input message is a number, return the number incremented by one.
                 """,
@@ -26,10 +26,10 @@ public class SequentialOrchestration_With_Cancellation(ITestOutputHelper output)
         SequentialOrchestration orchestration = new(agent) { LoggerFactory = this.LoggerFactory };
 
         // Run the orchestration
-        string input = "42";
-        Console.WriteLine($"\n# INPUT: {input}\n");
+        const string Input = "42";
+        Console.WriteLine($"\n# INPUT: {Input}\n");
 
-        OrchestratingAgentResponse result = await orchestration.RunAsync([new ChatMessage(ChatRole.User, input)]);
+        OrchestratingAgentResponse result = await orchestration.RunAsync([new ChatMessage(ChatRole.User, Input)]);
 
         result.Cancel();
         await Task.Delay(TimeSpan.FromSeconds(3));

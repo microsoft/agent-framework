@@ -57,7 +57,7 @@ public static class Program
                     continue;
                 }
 
-                if (message == ":q" || message == "quit")
+                if (message is ":q" or "quit")
                 {
                     break;
                 }

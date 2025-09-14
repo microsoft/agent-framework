@@ -137,7 +137,7 @@ public class CosmosActorStateStorage : IActorStateStorage, IAsyncDisposable
         var results = new List<ActorReadResult>();
 
         // Read root document first to get actor-level ETag
-        string actorETag = await this.GetActorETagAsync(container, actorId, cancellationToken).ConfigureAwait(false);
+        string actorETag = await GetActorETagAsync(container, actorId, cancellationToken).ConfigureAwait(false);
         var actorType = actorId.Type.ToString();
         var actorKey = actorId.Key;
 
@@ -236,7 +236,7 @@ public class CosmosActorStateStorage : IActorStateStorage, IAsyncDisposable
     /// Gets the current ETag for the actor's root document.
     /// Returns a generated ETag if no root document exists.
     /// </summary>
-    private async ValueTask<string> GetActorETagAsync(Container container, ActorId actorId, CancellationToken cancellationToken)
+    private static async ValueTask<string> GetActorETagAsync(Container container, ActorId actorId, CancellationToken cancellationToken)
     {
         try
         {

@@ -10,10 +10,8 @@ public class OpenAIResponseStoreTrueChatClientAgentRunStreamingTests() : ChatCli
     private const string SkipReason = "OpenAIResponse does not support empty messages";
 
     [Fact(Skip = SkipReason)]
-    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync() =>
+        Task.CompletedTask;
 }
 
 public class OpenAIResponseStoreFalseChatClientAgentRunStreamingTests() : ChatClientAgentRunStreamingTests<OpenAIResponseFixture>(() => new(store: false))
@@ -21,8 +19,6 @@ public class OpenAIResponseStoreFalseChatClientAgentRunStreamingTests() : ChatCl
     private const string SkipReason = "OpenAIResponse does not support empty messages";
 
     [Fact(Skip = SkipReason)]
-    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync() =>
+        Task.CompletedTask;
 }

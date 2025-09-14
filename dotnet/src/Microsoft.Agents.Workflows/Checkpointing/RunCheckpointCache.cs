@@ -7,8 +7,8 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 
 internal sealed class RunCheckpointCache<TStoreObject>
 {
-    private readonly HashSet<CheckpointInfo> _checkpointIndex = new();
-    private readonly Dictionary<CheckpointInfo, TStoreObject> _cache = new();
+    private readonly HashSet<CheckpointInfo> _checkpointIndex = [];
+    private readonly Dictionary<CheckpointInfo, TStoreObject> _cache = [];
 
     public IEnumerable<CheckpointInfo> Index => this._checkpointIndex;
 

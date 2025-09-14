@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -20,7 +19,7 @@ namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
 
 internal static class AgentFactory
 {
-    public static async Task<ImmutableDictionary<string, string?>> CreateAsync(string agentsDirectory, AzureAIConfiguration config, CancellationToken cancellationToken)
+    public static async Task<IReadOnlyDictionary<string, string?>> CreateAsync(string agentsDirectory, AzureAIConfiguration config, CancellationToken cancellationToken)
     {
         PersistentAgentsClient clientAgents = new(config.Endpoint, new AzureCliCredential());
 
@@ -45,6 +44,6 @@ internal static class AgentFactory
             agentMap[agent.Name] = agent.Id;
         }
 
-        return agentMap.ToImmutableDictionary();
+        return agentMap;
     }
 }

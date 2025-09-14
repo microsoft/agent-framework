@@ -23,8 +23,5 @@ public abstract class AgentTests<TAgentFixture>(Func<TAgentFixture> createAgentF
         return this.Fixture.InitializeAsync();
     }
 
-    public Task DisposeAsync()
-    {
-        return this.Fixture.DisposeAsync();
-    }
+    public Task DisposeAsync() => this.Fixture.DisposeAsync();
 }

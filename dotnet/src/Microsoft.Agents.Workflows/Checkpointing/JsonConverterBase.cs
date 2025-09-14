@@ -18,18 +18,11 @@ internal abstract class JsonConverterBase<T> : JsonConverter<T>
     public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         SequencePosition position = reader.Position;
-
-        T? maybeValue = JsonSerializer.Deserialize<T>(ref reader, this.TypeInfo);
-        if (maybeValue is null)
-        {
+        return
+            JsonSerializer.Deserialize(ref reader, this.TypeInfo) ??
             throw new JsonException($"Could not deserialize a {typeof(T).Name} from JSON at position {position}");
-        }
-
-        return maybeValue;
     }
 
-    public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)
-    {
+    public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options) =>
         JsonSerializer.Serialize(writer, value, this.TypeInfo);
-    }
 }

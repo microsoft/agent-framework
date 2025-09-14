@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows;
 /// <summary>
 /// Represents a unique key within a specific scope, combining a scope identifier and a key string.
 /// </summary>
-public class ScopeKey
+public sealed class ScopeKey
 {
     /// <summary>
     /// The identifier for the scope associated with this key.
