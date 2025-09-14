@@ -55,7 +55,7 @@ jobs:
             .github
             dotnet
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v4.3.1
+        uses: actions/setup-dotnet@v5.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
       - name: Build dotnet solutions
