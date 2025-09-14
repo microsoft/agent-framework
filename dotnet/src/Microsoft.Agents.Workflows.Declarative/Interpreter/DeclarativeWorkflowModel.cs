@@ -48,7 +48,7 @@ internal sealed class DeclarativeWorkflowModel
         parentNode.Children.Add(stepNode);
     }
 
-    public void AddPort(InputPort port, string parentId) // %%% HAXX
+    public void AddPort(InputPort port, string parentId)
     {
         if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
         {

@@ -2,46 +2,141 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.PowerFx.Types;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
 internal sealed class QuestionExecutor(Question model, DeclarativeWorkflowState state) :
     DeclarativeActionExecutor<Question>(model, state)
 {
+    public static class Steps
+    {
+        public static string Prepare(string id) => $"{id}_{nameof(Prepare)}";
+        public static string Input(string id) => $"{id}_{nameof(Input)}";
+        public static string Capture(string id) => $"{id}_{nameof(Capture)}";
+    }
+
+    private readonly DurableProperty<int> _promptCount = new(nameof(_promptCount));
+    private readonly DurableProperty<bool> _hasExecuted = new(nameof(_hasExecuted));
+
+    protected override bool IsDiscreteAction => false;
     protected override bool EmitResultEvent => false;
+
+    public bool IsComplete(object? message)
+    {
+        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        return executorMessage.Result is null;
+    }
 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        // QUESTION
-        //this.Model.Variable; // VARIABLEPATH
-        //this.Model.Entity; // ENTITYREFERENCE
+        await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
 
-        //this.Model.Prompt;  // PROMPT
-        //this.Model.InvalidPrompt; // PROMPT
-        //this.Model.DefaultValueResponse; // PROMPT
+        InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
+        bool hasValue = this.State.Get(variable.Path) is BlankValue;
+        bool alwaysPrompt = this.State.ExpressionEngine.GetValue(this.Model.AlwaysPrompt).Value;
 
-        //this.Model.DefaultValue; //VALUE
-        //this.Model.AlwaysPrompt; // BOOL
-        //this.Model.SkipQuestionMode; // ENUM
-        //this.Model.HoldSettings; // ABSTRACT
+        bool proceed = !alwaysPrompt || hasValue;
+        if (proceed)
+        {
+            SkipQuestionMode mode = this.State.ExpressionEngine.GetValue(this.Model.SkipQuestionMode).Value;
+            proceed =
+                mode switch
+                {
+                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => !(await this._hasExecuted.ReadAsync(context).ConfigureAwait(false)),
+                    SkipQuestionMode.AlwaysSkipIfVariableHasValue => hasValue,
+                    SkipQuestionMode.AlwaysAsk => true,
+                    _ => true,
+                };
+        }
 
-        //// INPUTDIALOG
-        //this.Model.RepeatCount; // INT
-        //this.Model.InterruptionPolicy; // SEALED
-        //this.Model.UnrecognizedPrompt; // PROMPT
-
-        //this.State.Format(this.Model.Prompt) // %%% TEMPLATEBASE
-
-        await context.SendMessageAsync("REQUEST").ConfigureAwait(false);
+        if (proceed)
+        {
+            await this.PromptAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+        }
 
         return default;
     }
 
-    public async ValueTask HandleResponseAsync(IWorkflowContext context, object? message, CancellationToken cancellationToken)
+    public async ValueTask PrepareResponseAsync(IWorkflowContext context, ExecutorResultMessage message, CancellationToken cancellationToken)
     {
-        await this.AssignAsync(this.Model.Variable?.Path, message.ToFormula(), context).ConfigureAwait(false);
+        int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
+        InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
+        await context.SendMessageAsync(inputRequest).ConfigureAwait(false);
+        await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
+    }
+
+    public async ValueTask CaptureResponseAsync(IWorkflowContext context, InputResponse message, CancellationToken cancellationToken)
+    {
+        bool isValid = false;
+        if (string.IsNullOrWhiteSpace(message.Value))
+        {
+            string unrecognizedResponse = this.FormatPrompt(this.Model.UnrecognizedPrompt);
+            await context.AddEventAsync(new MessageActivityEvent(unrecognizedResponse.Trim())).ConfigureAwait(false);
+        }
+        else
+        {
+            isValid = true; // %%% VALIDATE INPUT
+
+            if (!isValid)
+            {
+                string invalidResponse = this.FormatPrompt(this.Model.InvalidPrompt);
+                await context.AddEventAsync(new MessageActivityEvent(invalidResponse.Trim())).ConfigureAwait(false);
+            }
+        }
+
+        if (!isValid)
+        {
+            await this.PromptAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            FormulaValue validValue = message.Value.ToFormula();
+            await this.AssignAsync(this.Model.Variable?.Path, validValue, context).ConfigureAwait(false);
+            await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask CompleteAsync(IWorkflowContext context, ExecutorResultMessage message, CancellationToken cancellationToken)
+    {
+        await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
+    }
+
+    private async ValueTask PromptAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        long repeatCount = this.State.ExpressionEngine.GetValue(this.Model.RepeatCount).Value;
+        int actualCount = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
+        if (actualCount >= repeatCount)
+        {
+            ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
+            DataValue defaultValue = this.State.ExpressionEngine.GetValue(defaultValueExpression).Value;
+            string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
+            await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim())).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await context.SendResultMessageAsync(this.Id, result: true, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private string FormatPrompt(ActivityTemplateBase? promptTemplate)
+    {
+        if (promptTemplate is not MessageActivityTemplate messageActivity)
+        {
+            return string.Empty;
+        }
+
+        return this.State.Format(messageActivity.Text).Trim();
     }
 }

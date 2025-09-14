@@ -15,19 +15,15 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
-internal sealed record class DeclarativeExecutorResult(string ExecutorId, object? Result = null);
-
 internal abstract class DeclarativeActionExecutor<TAction>(TAction model, DeclarativeWorkflowState state) :
-    WorkflowActionExecutor(model, state)
+    DeclarativeActionExecutor(model, state)
     where TAction : DialogAction
 {
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorResult>
+internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
 {
-    public const string RootActionId = "(root)";
-
     private static readonly ImmutableHashSet<string> s_mutableScopes =
         new HashSet<string>
         {
@@ -37,7 +33,7 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
 
     private string? _parentId;
 
-    protected WorkflowActionExecutor(DialogAction model, DeclarativeWorkflowState state)
+    protected DeclarativeActionExecutor(DialogAction model, DeclarativeWorkflowState state)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
@@ -51,9 +47,9 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
 
     public DialogAction Model { get; }
 
-    public string ParentId => this._parentId ??= this.Model.GetParentId() ?? RootActionId;
+    public string ParentId => this._parentId ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root();
 
-    internal ILogger Logger { get; set; } = NullLogger<WorkflowActionExecutor>.Instance;
+    internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
     protected DeclarativeWorkflowState State { get; }
 
@@ -62,7 +58,7 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
     protected virtual bool EmitResultEvent => true;
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ExecutorResultMessage message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {
@@ -70,7 +66,9 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
             return;
         }
 
-        await this.RaiseInvocationEventAsync(context, message.ExecutorId).ConfigureAwait(false);
+        await context.RaiseInvocationEventAsync(this.Model, message.ExecutorId).ConfigureAwait(false);
+
+        Debug.WriteLine($"RESULT #{this.Id} - {message.Result ?? "(null)"}");
 
         try
         {
@@ -78,7 +76,7 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
 
             if (this.EmitResultEvent)
             {
-                await this.SendResultMessageAsync(context, result).ConfigureAwait(false);
+                await context.SendResultMessageAsync(this.Id, result).ConfigureAwait(false);
             }
         }
         catch (DeclarativeActionException exception)
@@ -95,13 +93,10 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
         {
             if (this.IsDiscreteAction)
             {
-                await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
+                await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
             }
         }
     }
-
-    protected ValueTask SendResultMessageAsync(IWorkflowContext context, object? result = null, CancellationToken cancellationToken = default) =>
-        context.SendMessageAsync(new DeclarativeExecutorResult(this.Id, result));
 
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
@@ -109,7 +104,7 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
-    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => // %%% DELEGATE ALSO
+    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => // %%% RESTORE: ALL EXECUTORS ???
         this.State.RestoreAsync(context, cancellation);
 
     protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context)
@@ -143,8 +138,4 @@ internal abstract class WorkflowActionExecutor : Executor<DeclarativeExecutorRes
         string message = $"Unexpected workflow failure during {this.Model.GetType().Name} [{this.Id}]: {text}";
         return exception is null ? new(message) : new(message, exception);
     }
-
-    protected ValueTask RaiseInvocationEventAsync(IWorkflowContext context, string? priorEventId = null) => context.AddEventAsync(new DeclarativeActionInvokeEvent(this.Id, this.Model, priorEventId));
-
-    protected ValueTask RaiseCompletionEventAsync(IWorkflowContext context) => context.AddEventAsync(new DeclarativeActionCompleteEvent(this.Id, this.Model));
 }

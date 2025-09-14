@@ -1,8 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#define PORTABLE_RESTORE
-#define RESTORE_HAXX
-
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -14,6 +11,7 @@ using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
+using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -59,11 +57,7 @@ internal sealed class Program
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 
         bool isComplete = false;
-#if RESTORE_HAXX
-        string? response = null;
-#else
-        ExternalResponse? response = null;
-#endif
+        InputResponse? response = null;
         do
         {
             ExternalRequest? inputRequest = await this.MonitorWorkflowRunAsync(run, response);
@@ -77,17 +71,13 @@ internal sealed class Program
                 }
 
                 // Process the external request.
-#if RESTORE_HAXX
                 response = HandleExternalRequest(inputRequest);
-#else
-                response = HandleExternalRequest(inputRequest);
-#endif
 
                 // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
                 workflow = this.CreateWorkflow();
 
                 // Restore the latest checkpoint.
-                Debug.WriteLine($"RESTORE: {this.LastCheckpoint.CheckpointId}");
+                Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("\nWORKFLOW: Restore");
                 run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager);
             }
@@ -137,11 +127,7 @@ internal sealed class Program
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
     }
 
-#if RESTORE_HAXX
-    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, string? response = null)
-#else
-    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalResponse? response = null)
-#endif
+    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
     {
         string? messageId = null;
 
@@ -176,22 +162,16 @@ internal sealed class Program
 
                 case RequestInfoEvent requestInfo:
                     Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
-#if PORTABLE_RESTORE
                     if (response is not null)
                     {
-#if RESTORE_HAXX
-                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse<string>(response);
-#endif
+                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse<InputResponse>(response);
                         await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
+                        response = null;
                     }
                     else
                     {
                         return requestInfo.Request;
                     }
-#else
-                    ExternalResponse response = HandleExternalRequest(requestInfo.Request);
-                    await run.Run.SendResponseAsync(response).ConfigureAwait(false);
-#endif
                     break;
 
                 case ConversationUpdateEvent invokeEvent:
@@ -274,28 +254,20 @@ internal sealed class Program
 
         return default;
     }
-#if RESTORE_HAXX
-    private static string HandleExternalRequest(ExternalRequest request)
-#else
-    private static ExternalResponse HandleExternalRequest(ExternalRequest request)
-#endif
+    private static InputResponse HandleExternalRequest(ExternalRequest request)
     {
-        string? prompt = request.Data as string;
+        InputRequest? message = request.Data as InputRequest;
         string? userInput = null;
         do
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write($"\n{prompt ?? "INPUT"}: ");
+            Console.Write($"\n{message?.Prompt ?? "INPUT:"} ");
             Console.ForegroundColor = ConsoleColor.White;
             userInput = Console.ReadLine();
         }
         while (string.IsNullOrWhiteSpace(userInput));
 
-#if RESTORE_HAXX
-        return userInput;
-#else
-        return request.CreateResponse<string>(userInput);
-#endif
+        return new InputResponse(userInput);
     }
 
     private static string ParseWorkflowFile(string[] args)

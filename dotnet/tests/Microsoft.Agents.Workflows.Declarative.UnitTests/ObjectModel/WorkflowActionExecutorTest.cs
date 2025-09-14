@@ -14,7 +14,7 @@ using Xunit.Abstractions;
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 
 /// <summary>
-/// Base test class for <see cref="WorkflowActionExecutor"/> implementations.
+/// Base test class for <see cref="DeclarativeActionExecutor"/> implementations.
 /// </summary>
 public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : WorkflowTest(output)
 {
@@ -26,7 +26,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
 
-    internal async Task<WorkflowEvent[]> Execute(WorkflowActionExecutor executor)
+    internal async Task<WorkflowEvent[]> Execute(DeclarativeActionExecutor executor)
     {
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
@@ -38,7 +38,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         return events;
     }
 
-    internal void VerifyModel(DialogAction model, WorkflowActionExecutor action)
+    internal void VerifyModel(DialogAction model, DeclarativeActionExecutor action)
     {
         Assert.Equal(model.Id, action.Id);
         Assert.Equal(model, action.Model);
@@ -80,7 +80,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     {
         public async ValueTask HandleAsync(WorkflowScopes message, IWorkflowContext context)
         {
-            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+            await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
         }
     }
 }

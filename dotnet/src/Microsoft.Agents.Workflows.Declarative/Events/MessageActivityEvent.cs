@@ -5,10 +5,15 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Event that broadcasts the conversation identifier.
 /// </summary>
-public class MessageActivityEvent(string message) : WorkflowEvent(message)
+public sealed class MessageActivityEvent : WorkflowEvent
 {
     /// <summary>
     /// The conversation ID associated with the workflow.
     /// </summary>
-    public string Message => message;
+    public string Message { get; }
+
+    internal MessageActivityEvent(string message) : base(message)
+    {
+        this.Message = message;
+    }
 }

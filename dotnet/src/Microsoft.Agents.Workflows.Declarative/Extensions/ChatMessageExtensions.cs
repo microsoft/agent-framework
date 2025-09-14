@@ -100,7 +100,7 @@ internal static class ChatMessageExtensions
 
         foreach (KeyValuePair<string, DataValue> property in metadata.Properties)
         {
-            properties[property.Key] = property.Value.ToFormula().ToObject(); // %%% HAXX
+            properties[property.Key] = property.Value.ToObject();
         }
 
         return properties;

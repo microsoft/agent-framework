@@ -78,7 +78,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             {
                 conversationId = assignValue;
                 await this.State.SetConversationIdAsync(context, conversationId).ConfigureAwait(false);
-                await context.AddEventAsync(new ConversationUpdateEvent(this.Id, conversationId)).ConfigureAwait(false);
+                await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
             }
         }
     }

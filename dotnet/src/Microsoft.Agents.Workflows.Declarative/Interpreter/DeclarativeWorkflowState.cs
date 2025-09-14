@@ -77,20 +77,20 @@ internal sealed class DeclarativeWorkflowState
         await context.QueueStateUpdateAsync(varName, value.ToObject(), scopeName).ConfigureAwait(false);
     }
 
-    public string? Format(IEnumerable<TemplateLine> template) => this._engine.Format(template);
+    public string Format(IEnumerable<TemplateLine> template) => this._engine.Format(template);
 
-    public string? Format(TemplateLine? line) => this._engine.Format(line);
+    public string Format(TemplateLine? line) => this._engine.Format(line);
 
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1) // %%% NEEDED ???
+        if (Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 1) // %%% RESTORE: NEEDED ???
         {
             return;
         }
 
         await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
 
-        // %%% BUG: LastMessage.Text
+        // %%% RESTORE - BUG: LastMessage.Text
         async ValueTask ReadScopeAsync(string scopeName)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName).ConfigureAwait(false);

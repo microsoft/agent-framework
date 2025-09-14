@@ -90,7 +90,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
         finally
         {
-            await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
+            await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
         }
     }
 }

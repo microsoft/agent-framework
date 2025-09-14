@@ -57,7 +57,7 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
 
-        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
 
         WorkflowScopes scopes = new();
         scopes.Initialize(WrapWithBot(workflowElement), options.Configuration);

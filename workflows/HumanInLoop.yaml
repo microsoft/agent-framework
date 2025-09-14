@@ -25,7 +25,7 @@ beginDialog:
       prompt:
         kind: Message
         text:
-            - "REQUEST:"
+            - "CONFIRM:"
       entity:
         kind: StringPrebuiltEntity
 
