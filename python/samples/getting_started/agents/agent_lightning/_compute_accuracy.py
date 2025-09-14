@@ -11,6 +11,9 @@ train_task_ids = set(train_tasks_df["id"].tolist())
 test_task_ids = set(test_tasks_df["id"].tolist())
 
 for file_path in os.listdir("results"):
+    if os.path.isdir(os.path.join("results", file_path)):
+        continue
+
     all_data = []
     train_data = []
     test_data = []
