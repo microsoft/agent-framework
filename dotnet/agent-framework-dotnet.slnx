@@ -49,6 +49,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />

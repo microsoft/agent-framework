@@ -61,14 +61,9 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     }
 
     /// <inheritdoc />
-    public async Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(messages);
-
-        if (messages.Count == 0)
-        {
-            return;
-        }
 
         this._messages.AddRange(messages);
 
@@ -172,7 +167,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     {
         /// <summary>
         /// Trigger the reducer when a new message is added.
-        /// <see cref="AddMessagesAsync(IReadOnlyCollection{ChatMessage}, CancellationToken)"/> will only complete when reducer processing is done.
+        /// <see cref="AddMessagesAsync(IEnumerable{ChatMessage}, CancellationToken)"/> will only complete when reducer processing is done.
         /// </summary>
         AfterMessageAdded,
 

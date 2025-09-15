@@ -31,7 +31,7 @@ dev = [
     "markdownify",
     # Documentation
     "myst-nb==1.1.2",
-    "pydata-sphinx-theme==0.16.0",
+    "pydata-sphinx-theme==0.16.1",
     "sphinx-copybutton",
     "sphinx-design",
     "sphinx",

@@ -65,7 +65,7 @@ public abstract partial class OrchestratingAgent : AIAgent
 
     /// <inheritdoc />
     public sealed override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -87,7 +87,7 @@ public abstract partial class OrchestratingAgent : AIAgent
 
     /// <inheritdoc />
     public sealed override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // TODO: There should be a RunAsync overload that returns an OrchestratingAgentStreamingResponse, which this then delegates to.
 
@@ -106,12 +106,12 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="runtime">The runtime associated with the orchestration.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     public async ValueTask<OrchestratingAgentResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentRunOptions? options = null,
         IActorRuntimeContext? runtime = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(messages, nameof(messages));
+        var readonlyCollectionMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
         cancellationToken.ThrowIfCancellationRequested();
 
         ILogger logger = this.LoggerFactory.CreateLogger(this.GetType().Name);
@@ -131,8 +131,8 @@ public abstract partial class OrchestratingAgent : AIAgent
 
         JsonElement? checkpoint = await this.ReadCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
         Task<AgentRunResponse> completion = checkpoint is null ?
-            this.RunCoreAsync(messages, context, cancellationToken) :
-            this.ResumeCoreAsync(checkpoint.Value, messages, context, cancellationToken);
+            this.RunCoreAsync(readonlyCollectionMessages, context, cancellationToken) :
+            this.ResumeCoreAsync(checkpoint.Value, readonlyCollectionMessages, context, cancellationToken);
 
         if (logger.IsEnabled(LogLevel.Trace))
         {
@@ -148,7 +148,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="messages">The input message.</param>
     /// <param name="context">The context for this operation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    protected abstract Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken);
+    protected abstract Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken);
 
     /// <summary>
     /// Resumes processing of the orchestration.
@@ -157,7 +157,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="newMessages">The new messages to be processed in addition to the checkpoint state.</param>
     /// <param name="context">The context for this operation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
-    protected abstract Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken);
+    protected abstract Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IEnumerable<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken);
 
     /// <summary>
     /// Runs the agent with input messages and respond with both streamed and regular messages.
@@ -168,7 +168,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="options">Options to use when invoking the agent.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A task that returns the response <see cref="ChatMessage"/>.</returns>
-    protected static async ValueTask<AgentRunResponse> RunAsync(AIAgent agent, OrchestratingAgentContext context, IReadOnlyCollection<ChatMessage> input, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected static async ValueTask<AgentRunResponse> RunAsync(AIAgent agent, OrchestratingAgentContext context, IEnumerable<ChatMessage> input, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         // Utilize streaming iff a streaming callback is provided; otherwise, use the non-streaming API.
         AgentRunResponse response;
