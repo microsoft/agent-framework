@@ -45,7 +45,7 @@ namespace Azure.AI.Agents.Persistent
         private readonly bool? _enableLongRunningResponses;
 
         /// <summary>Initializes a new instance of the <see cref="PersistentAgentsChatClient"/> class for the specified <see cref="PersistentAgentsClient"/>.</summary>
-        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null, bool? enableLongRunningOperations = null)
+        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null, bool? enableLongRunningResponses = null)
         {
             Argument.AssertNotNull(client, nameof(client));
             Argument.AssertNotNullOrWhiteSpace(agentId, nameof(agentId));
@@ -53,7 +53,7 @@ namespace Azure.AI.Agents.Persistent
             _client = client;
             _agentId = agentId;
             _defaultThreadId = defaultThreadId;
-            _enableLongRunningResponses = enableLongRunningOperations;
+            _enableLongRunningResponses = enableLongRunningResponses;
 
             _metadata = new(ProviderName);
         }
@@ -686,9 +686,9 @@ namespace Azure.AI.Agents.Persistent
         private bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
         {
             // If specified in options, use that.
-            if (options is NewChatOptions { AllowBackgroundResponses: { } allowBackgroundResponses })
+            if (options is NewChatOptions { AllowLongRunningResponses: { } allowLongRunningResponses })
             {
-                return allowBackgroundResponses;
+                return allowLongRunningResponses;
             }
 
             // Otherwise, use the value specified at initialization
@@ -881,7 +881,6 @@ namespace Azure.AI.Agents.Persistent
                 return null;
             }
 
-            // Setting AllowBackgroundResponses to true here only to get the `Status` property set in the response.
             return new[] { CreateChatResponseUpdate(run, throwIfOperationCancelled: false) }.NewToChatResponse();
         }
 

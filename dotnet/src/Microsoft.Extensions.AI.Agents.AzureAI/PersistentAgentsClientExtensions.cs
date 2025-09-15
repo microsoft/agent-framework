@@ -176,8 +176,8 @@ public static class PersistentAgentsClientExtensions
     /// <param name="client">The <see cref="PersistentAgentsClient"/> instance used to initialize the chat client. Cannot be <see langword="null"/>.</param>
     /// <param name="assistantId">The unique identifier of the assistant. Cannot be <see langword="null"/> or whitespace.</param>
     /// <param name="defaultThreadId">The optional default thread identifier for the chat client. Can be <see langword="null"/>.</param>
-    /// <param name="backgroundResponsesEnabled">Enables long-running responses mode for the chat client, if set to <see langword="true"/></param>
+    /// <param name="enableLongRunningResponses">Enables long-running responses mode for the chat client, if set to <see langword="true"/></param>
     /// <returns>A new <see cref="IChatClient"/> instance configured with the specified assistant and optional default thread.</returns>
-    public static IChatClient AsNewIChatClient(this PersistentAgentsClient client, string assistantId, string? defaultThreadId = null, bool? backgroundResponsesEnabled = null)
-        => new NewPersistentAgentsChatClient(Argument.CheckNotNull(client, nameof(client)), Argument.CheckNotNullOrEmpty(assistantId, nameof(assistantId)), defaultThreadId, enableLongRunningOperations: backgroundResponsesEnabled);
+    public static IChatClient AsNewIChatClient(this PersistentAgentsClient client, string assistantId, string? defaultThreadId = null, bool? enableLongRunningResponses = null)
+        => new NewPersistentAgentsChatClient(Argument.CheckNotNull(client, nameof(client)), Argument.CheckNotNullOrEmpty(assistantId, nameof(assistantId)), defaultThreadId, enableLongRunningResponses: enableLongRunningResponses);
 }

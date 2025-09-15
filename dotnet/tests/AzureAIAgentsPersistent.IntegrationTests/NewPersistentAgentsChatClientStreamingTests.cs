@@ -21,14 +21,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool enableBackgroundResponses)
+    public async Task GetStreamingResponseAsync_WithLongRunningResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = enableBackgroundResponses
+            AllowLongRunningResponses = enableLongRunningResponses
         };
 
         string responseText = "";
@@ -47,7 +47,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Assert
         Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
 
-        if (enableBackgroundResponses)
+        if (enableLongRunningResponses)
         {
             Assert.NotNull(firstContinuationToken);
             Assert.Null(lastContinuationToken);
@@ -62,10 +62,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableBackgroundResponses)
+    public async Task GetStreamingResponseAsync_WithLongRunningResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
     {
         // Arrange
-        using var client = await CreateChatClientAsync(enableBackgroundResponses);
+        using var client = await CreateChatClientAsync(enableLongRunningResponses);
 
         string responseText = "";
         ContinuationToken? firstContinuationToken = null;
@@ -83,7 +83,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Assert
         Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
 
-        if (enableBackgroundResponses)
+        if (enableLongRunningResponses)
         {
             Assert.NotNull(firstContinuationToken);
             Assert.Null(lastContinuationToken);
@@ -103,7 +103,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true
+            AllowLongRunningResponses = true
         };
 
         ContinuationToken? firstContinuationToken = null;
@@ -143,14 +143,14 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
     }
 
     [Fact]
-    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndBackgroundResponsesDisabled_CallsFunctionAsync()
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndLongRunningResponsesDisabled_CallsFunctionAsync()
     {
         // Arrange
         using var client = await CreateChatClientAsync();
 
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = false,
+            AllowLongRunningResponses = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -176,7 +176,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true,
+            AllowLongRunningResponses = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -273,7 +273,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true,
+            AllowLongRunningResponses = true,
         };
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);
@@ -289,7 +289,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         Assert.NotNull(response);
     }
 
-    private static async Task<IChatClient> CreateChatClientAsync(bool? backgroundResponsesEnabled = null)
+    private static async Task<IChatClient> CreateChatClientAsync(bool? enableLongRunningResponses = null)
     {
         PersistentAgentsClient persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
 
@@ -298,7 +298,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             name: "LongRunningExecutionAgent",
             instructions: "You are a helpful assistant.");
 
-        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, backgroundResponsesEnabled: backgroundResponsesEnabled);
+        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, enableLongRunningResponses: enableLongRunningResponses);
 
         var functionInvokingChatClient = new NewFunctionInvokingChatClient(persistentChatClient);
 

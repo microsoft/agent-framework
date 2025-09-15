@@ -41,19 +41,19 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
     private readonly OpenAIResponseClient _responseClient;
 
     /// <summary>Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</summary>
-    private readonly bool? _enableLongRunningOperations;
+    private readonly bool? _enableLongRunningResponses;
 
     /// <summary>Initializes a new instance of the <see cref="OpenAIResponsesChatClient"/> class for the specified <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The underlying client.</param>
-    /// <param name="enableLongRunningOperations">Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</param>
+    /// <param name="enableLongRunningResponses">Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? enableLongRunningOperations = null)
+    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? enableLongRunningResponses = null)
     {
         _ = Throw.IfNull(responseClient);
 
         _responseClient = responseClient;
 
-        _enableLongRunningOperations = enableLongRunningOperations;
+        _enableLongRunningResponses = enableLongRunningResponses;
 
         // https://github.com/openai/openai-dotnet/issues/662
         // Update to avoid reflection once OpenAIResponseClient.Model is exposed publicly.
@@ -990,13 +990,13 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
     private bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
     {
         // If specified in options, use that.
-        if (options is NewChatOptions { AllowBackgroundResponses: { } allowBackgroundResponses })
+        if (options is NewChatOptions { AllowLongRunningResponses: { } allowLongRunningResponses })
         {
-            return allowBackgroundResponses;
+            return allowLongRunningResponses;
         }
 
         // Otherwise, use the value specified at initialization
-        return _enableLongRunningOperations ?? false;
+        return _enableLongRunningResponses ?? false;
     }
 }
 

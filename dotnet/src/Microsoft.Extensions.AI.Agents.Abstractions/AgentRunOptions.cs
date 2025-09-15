@@ -27,9 +27,9 @@ public class AgentRunOptions
     }
 
     /// <summary>
-    /// Specifies whether the agent should await the long-running operation completion.
+    /// Specifies whether the agent should allow long-running runs if supported by underlying service.
     /// </summary>
-    public bool? AwaitLongRunCompletion { get; set; }
+    public bool? AllowLongRuns { get; set; }
 
     /// <summary>
     /// Token to get result of a long-running operation.

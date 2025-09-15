@@ -39,12 +39,12 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool enableBackgroundResponses)
+    public async Task GetStreamingResponseAsync_WithLonRunningResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = enableBackgroundResponses
+            AllowLongRunningResponses = enableLongRunningResponses
         };
 
         string responseText = "";
@@ -63,7 +63,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Assert
         Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
 
-        if (enableBackgroundResponses)
+        if (enableLongRunningResponses)
         {
             Assert.NotNull(firstContinuationToken);
             Assert.Null(lastContinuationToken);
@@ -78,11 +78,11 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithBackgroundResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableBackgroundResponses)
+    public async Task GetStreamingResponseAsync_WithLongRunningResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
     {
         // Arrange
         using IChatClient client = this._openAIResponseClient
-            .AsNewIChatClient(enableBackgroundResponses: enableBackgroundResponses)
+            .AsNewIChatClient(enableLongRunningResponses: enableLongRunningResponses)
             .AsBuilder()
             .UseFunctionInvocation()
             .Build();
@@ -103,7 +103,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Assert
         Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
 
-        if (enableBackgroundResponses)
+        if (enableLongRunningResponses)
         {
             Assert.NotNull(firstContinuationToken);
             Assert.Null(lastContinuationToken);
@@ -121,7 +121,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Part 1: Start the background run and get the first part of the response.
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true
+            AllowLongRunningResponses = true
         };
 
         ContinuationToken? firstContinuationToken = null;
@@ -162,12 +162,12 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     }
 
     [Fact]
-    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndBackgroundResponsesDisabled_CallsFunctionAsync()
+    public async Task GetStreamingResponseAsync_WithFunctionCalling_AndLongRunningResponsesDisabled_CallsFunctionAsync()
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = false,
+            AllowLongRunningResponses = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -191,7 +191,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true,
+            AllowLongRunningResponses = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -284,7 +284,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Arrange
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true
+            AllowLongRunningResponses = true
         };
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);

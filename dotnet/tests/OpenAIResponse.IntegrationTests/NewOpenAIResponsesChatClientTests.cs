@@ -36,12 +36,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithBackgroundResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool backgroundResponsesEnabled)
+    public async Task GetResponseAsync_WithLongRunningResponsesEnabledViaOptions_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = backgroundResponsesEnabled
+            AllowLongRunningResponses = enableLongRunningResponses
         };
 
         // Act
@@ -50,7 +50,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Assert
         Assert.NotNull(response);
 
-        if (backgroundResponsesEnabled)
+        if (enableLongRunningResponses)
         {
             Assert.NotNull(response.ContinuationToken);
         }
@@ -64,11 +64,11 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetResponseAsync_WithBackgroundResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool backgroundResponsesEnabled)
+    public async Task GetResponseAsync_WithLongRunningResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
     {
         // Arrange
         using IChatClient client = this._openAIResponseClient
-            .AsNewIChatClient(enableBackgroundResponses: backgroundResponsesEnabled)
+            .AsNewIChatClient(enableLongRunningResponses: enableLongRunningResponses)
             .AsBuilder()
             .UseFunctionInvocation()
             .Build();
@@ -79,7 +79,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Assert
         Assert.NotNull(response);
 
-        if (backgroundResponsesEnabled)
+        if (enableLongRunningResponses)
         {
             Assert.NotNull(response.ContinuationToken);
         }
@@ -96,7 +96,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true
+            AllowLongRunningResponses = true
         };
 
         NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
@@ -121,12 +121,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_AndBackgroundResponsesDisabled_CallsFunctionAsync()
+    public async Task GetResponseAsync_WithFunctionCalling_AndLongRunningResponsesDisabled_CallsFunctionAsync()
     {
         // Arrange
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = false,
+            AllowLongRunningResponses = false,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -144,7 +144,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true,
+            AllowLongRunningResponses = true,
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -175,7 +175,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Arrange
         NewChatOptions options = new()
         {
-            AllowBackgroundResponses = true
+            AllowLongRunningResponses = true
         };
 
         NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);

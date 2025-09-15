@@ -79,12 +79,7 @@ public sealed class A2AAgentStreaming
         // Arrange
         AIAgent agent = await this.CreateA2AAgentAsync();
 
-        AgentRunOptions options = new()
-        {
-            AwaitLongRunCompletion = false
-        };
-
-        IAsyncEnumerable<AgentRunResponseUpdate> streamingResponse = agent.RunStreamingAsync("What is the capital of France?", options: options);
+        IAsyncEnumerable<AgentRunResponseUpdate> streamingResponse = agent.RunStreamingAsync("What is the capital of France?");
 
         var update = (await streamingResponse.ElementAtAsync(0));
 
