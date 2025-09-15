@@ -126,7 +126,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
     { name = "aiohttp", specifier = "~=3.8" },
-    { name = "azure-ai-agents", specifier = ">=1.1.0b1" },
+    { name = "azure-ai-agents", specifier = ">=1.2.0b4" },
     { name = "azure-ai-projects", specifier = ">=1.0.0b11" },
 ]
 
@@ -479,16 +479,16 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agents"
-version = "1.2.0b3"
+version = "1.2.0b4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/72/52/3c1af9ed86582f09343f135d527ca26f0bf9659c01ccbddb650bbb952963/azure_ai_agents-1.2.0b3.tar.gz", hash = "sha256:440d7fca98c0b13654a57dcd159cdf64d1024f9baacd1a4354ce91a290d3741e", size = 362563, upload-time = "2025-08-22T22:41:58.609Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/db/cdf0ab3cf642ef766d193fadfee4cc8e70867a051c800f9e1091feb76337/azure_ai_agents-1.2.0b4.tar.gz", hash = "sha256:3da41c0f17282dd76bff7d370c714ef2d17140a119a1eb88d8653311835bbe85", size = 383620, upload-time = "2025-09-13T02:04:47.301Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/a4/c916745e150b5e157688da9a7965d62efb82ad940f2991260d1d2b79fcf1/azure_ai_agents-1.2.0b3-py3-none-any.whl", hash = "sha256:fec3e92fac5de2c18dee2d4def734825c2a4880bee39b3c237a7ad8079bfa8a7", size = 208129, upload-time = "2025-08-22T22:42:00.249Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/08/571e60c5f76c3ba20e6a99de636335e2480941816344dfad971a2e362c12/azure_ai_agents-1.2.0b4-py3-none-any.whl", hash = "sha256:8cfc4cd19d7d2087858148eba8b9b424a5d30fafbda87ca2d12ea5a066bec051", size = 214705, upload-time = "2025-09-13T02:04:49.171Z" },
 ]
 
 [[package]]
@@ -3347,7 +3347,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/2f/104c0a3c778d7c2ab8190e9db4f62f0b6957b53c9d87db77c284b69f33ea/pyzmq-27.1.0-cp312-abi3-win32.whl", hash = "sha256:250e5436a4ba13885494412b3da5d518cd0d3a278a1ae640e113c073a5f88edd", size = 559184, upload-time = "2025-09-08T23:08:15.163Z" },
     { url = "https://files.pythonhosted.org/packages/fc/7f/a21b20d577e4100c6a41795842028235998a643b1ad406a6d4163ea8f53e/pyzmq-27.1.0-cp312-abi3-win_amd64.whl", hash = "sha256:9ce490cf1d2ca2ad84733aa1d69ce6855372cb5ce9223802450c9b2a7cba0ccf", size = 619480, upload-time = "2025-09-08T23:08:17.192Z" },
     { url = "https://files.pythonhosted.org/packages/78/c2/c012beae5f76b72f007a9e91ee9401cb88c51d0f83c6257a03e785c81cc2/pyzmq-27.1.0-cp312-abi3-win_arm64.whl", hash = "sha256:75a2f36223f0d535a0c919e23615fc85a1e23b71f40c7eb43d7b1dedb4d8f15f", size = 552993, upload-time = "2025-09-08T23:08:18.926Z" },
-    { url = "https://files.pythonhosted.org/packages/60/cb/84a13459c51da6cec1b7b1dc1a47e6db6da50b77ad7fd9c145842750a011/pyzmq-27.1.0-cp313-cp313-android_24_arm64_v8a.whl", hash = "sha256:93ad4b0855a664229559e45c8d23797ceac03183c7b6f5b4428152a6b06684a5", size = 1122436, upload-time = "2025-09-08T23:08:20.801Z" },
     { url = "https://files.pythonhosted.org/packages/a5/ad/15906493fd40c316377fd8a8f6b1f93104f97a752667763c9b9c1b71d42d/pyzmq-27.1.0-cp313-cp313t-macosx_10_15_universal2.whl", hash = "sha256:e343d067f7b151cfe4eb3bb796a7752c9d369eed007b91231e817071d2c2fec7", size = 1341197, upload-time = "2025-09-08T23:08:24.286Z" },
     { url = "https://files.pythonhosted.org/packages/14/1d/d343f3ce13db53a54cb8946594e567410b2125394dafcc0268d8dda027e0/pyzmq-27.1.0-cp313-cp313t-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:08363b2011dec81c354d694bdecaef4770e0ae96b9afea70b3f47b973655cc05", size = 897275, upload-time = "2025-09-08T23:08:26.063Z" },
     { url = "https://files.pythonhosted.org/packages/69/2d/d83dd6d7ca929a2fc67d2c3005415cdf322af7751d773524809f9e585129/pyzmq-27.1.0-cp313-cp313t-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d54530c8c8b5b8ddb3318f481297441af102517602b569146185fa10b63f4fa9", size = 660469, upload-time = "2025-09-08T23:08:27.623Z" },
