@@ -125,7 +125,7 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var metadataValue = element.ExtensionData?.GetProperty<TableDataValue>(InitializablePropertyPath.Create("metadata"));
+        var metadataValue = element.ExtensionData?.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("metadata"));
         return metadataValue?.Values.Length > 0 ? metadataValue.Values[0].ToDictionary() : null;
     }
 }

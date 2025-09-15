@@ -10,6 +10,10 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="System.Linq.Async" />
     <PackageReference Include="Azure.AI.Agents.Persistent" />
@@ -17,6 +21,7 @@
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="Microsoft.Bot.ObjectModel.Json" />
   </ItemGroup>
 
   <ItemGroup>

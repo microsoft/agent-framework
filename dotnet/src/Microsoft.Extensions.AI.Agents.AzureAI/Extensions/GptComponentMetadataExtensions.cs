@@ -16,22 +16,22 @@ internal static class GptComponentMetadataExtensions
     /// Return the Foundry tool definitions which corresponds with the provided <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
-    public static IEnumerable<ToolDefinition> GetFoundryToolDefinitions(this GptComponentMetadata element)
+    public static IEnumerable<Azure.AI.Agents.Persistent.ToolDefinition> GetFoundryToolDefinitions(this GptComponentMetadata element)
     {
         //Throw.IfNull(element);
 
-        return element.GetTools().Select<RecordDataValue, ToolDefinition>(tool =>
+        return element.GetTools().Select<RecordDataValue, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
         {
             var type = tool.GetTypeValue();
             return type switch
             {
-                /*AzureAISearchType => CreateAzureAISearchToolDefinition(tool),
-                AzureFunctionType => CreateAzureFunctionToolDefinition(tool),
-                BingGroundingType => CreateBingGroundingToolDefinition(tool, agentDefinition.GetProjectsClient(kernel)),
-                CodeInterpreterType => CreateCodeInterpreterToolDefinition(tool),
-                FileSearchType => CreateFileSearchToolDefinition(tool),
-                FunctionType => CreateFunctionToolDefinition(tool),
-                OpenApiType => CreateOpenApiToolDefinition(tool),*/
+                //AzureAISearchType => CreateAzureAISearchToolDefinition(tool),
+                AzureFunctionType => tool.CreateAzureFunctionToolDefinition(),
+                //BingGroundingType => CreateBingGroundingToolDefinition(tool, agentDefinition.GetProjectsClient(kernel)),
+                CodeInterpreterType => tool.CreateCodeInterpreterToolDefinition(),
+                //FileSearchType => CreateFileSearchToolDefinition(tool),
+                FunctionType => tool.CreateFunctionToolDefinition(),
+                OpenApiType => tool.CreateOpenApiToolDefinition(),
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {type}, supported tool types are: {string.Join(",", s_validToolTypes)}"),
             };
         }) ?? [];
