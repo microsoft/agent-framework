@@ -33,7 +33,7 @@ dev = [
 docs = [
     # Documentation
     "debugpy>=1.8.16",
-    "py2docfx",
+    "py2docfx>=0.1.20",
     "pip",
 ]
 
@@ -58,7 +58,6 @@ agent-framework-foundry = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-runtime = { workspace = true }
 agent-framework-workflow = { workspace = true }
-py2docfx = { git = "https://github.com/eavanvalkenburg/py2docfx", tag = "0.1.20-a2" }
 
 [tool.ruff]
 line-length = 120
@@ -172,6 +171,7 @@ docs-build = "uv run python ./docs/generate_docs.py"
 docs-debug = "uv run python -m debugpy --listen 5678 ./docs/generate_docs.py"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
 install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
+install_with_docs = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --docs "
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
