@@ -22,4 +22,4 @@ runs:
       - name: Install the project
         shell: bash
         run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          cd python && uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
