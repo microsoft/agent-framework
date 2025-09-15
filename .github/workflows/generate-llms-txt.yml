@@ -1,0 +1,146 @@
+name: Generate llms.txt on Release
+
+on:
+  release:
+    types: [published]
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+permissions:
+  contents: write  # Required to commit and push the generated file
+
+jobs:
+  generate-llms-txt:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        # Fetch full history to ensure we have all markdown files
+        fetch-depth: 0
+        # Use a token that can push to the repository
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Make script executable
+      run: chmod +x scripts/generate-llms-txt.py
+
+    - name: Generate llms.txt
+      run: |
+        echo "Generating llms.txt file..."
+        python scripts/generate-llms-txt.py
+        
+        # Check if file was generated
+        if [ -f "llms.txt" ]; then
+          echo "✅ llms.txt generated successfully"
+          echo "File size: $(wc -c < llms.txt) bytes"
+          echo "Line count: $(wc -l < llms.txt) lines"
+        else
+          echo "❌ Failed to generate llms.txt"
+          exit 1
+        fi
+
+    - name: Check for changes
+      id: check_changes
+      run: |
+        # Check if llms.txt file was generated
+        if [ ! -f "llms.txt" ]; then
+          echo "changes_detected=false" >> $GITHUB_OUTPUT
+          echo "❌ llms.txt file was not generated"
+          exit 1
+        fi
+        
+        # Check if llms.txt is tracked by git
+        if git ls-files --error-unmatch llms.txt >/dev/null 2>&1; then
+          # File is tracked, check for differences
+          if git diff --quiet llms.txt; then
+            echo "changes_detected=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in tracked llms.txt"
+          else
+            echo "changes_detected=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in tracked llms.txt"
+          fi
+        else
+          # File is not tracked (new file)
+          echo "changes_detected=true" >> $GITHUB_OUTPUT
+          echo "llms.txt is a new file that will be added"
+        fi
+
+    - name: Commit and push llms.txt
+      if: steps.check_changes.outputs.changes_detected == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Add the file to git
+        git add llms.txt
+        
+        # Check if there are actually changes to commit (double-check)
+        if git diff --staged --quiet; then
+          echo "⚠️ No staged changes found, nothing to commit"
+          exit 0
+        fi
+        
+        # Get release information for commit message
+        if [ "${{ github.event_name }}" = "release" ]; then
+          COMMIT_MSG="Update llms.txt for release ${{ github.event.release.tag_name }}"
+        else
+          COMMIT_MSG="Update llms.txt (manual trigger)"
+        fi
+        
+        # Commit the changes
+        git commit -m "$COMMIT_MSG
+
+        - Generated from all Markdown files in the repository
+        - Organized by priority and category for AI consumption
+        - Generated at $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        
+        [skip ci]"
+        
+        # Push the changes
+        git push
+        
+        echo "✅ llms.txt committed and pushed successfully"
+
+    - name: Add release asset (if triggered by release)
+      if: github.event_name == 'release' && steps.check_changes.outputs.changes_detected == 'true'
+      run: |
+        # Upload llms.txt as a release asset
+        gh release upload ${{ github.event.release.tag_name }} llms.txt --clobber
+        echo "✅ llms.txt added to release assets"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Output summary
+      run: |
+        echo "## 📋 llms.txt Generation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "llms.txt" ]; then
+          echo "✅ **Status:** Generated successfully" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **File size:** $(wc -c < llms.txt) bytes" >> $GITHUB_STEP_SUMMARY
+          echo "📄 **Line count:** $(wc -l < llms.txt) lines" >> $GITHUB_STEP_SUMMARY
+          echo "🔄 **Changes detected:** ${{ steps.check_changes.outputs.changes_detected }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "🎯 **Trigger:** Release ${{ github.event.release.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🎯 **Trigger:** Manual workflow dispatch" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### File Structure" >> $GITHUB_STEP_SUMMARY
+          echo "The generated \`llms.txt\` includes:" >> $GITHUB_STEP_SUMMARY
+          echo "- Project overview and getting started guides" >> $GITHUB_STEP_SUMMARY
+          echo "- User documentation for .NET and Python" >> $GITHUB_STEP_SUMMARY
+          echo "- Technical specifications and design documents" >> $GITHUB_STEP_SUMMARY
+          echo "- Examples and sample code" >> $GITHUB_STEP_SUMMARY
+          echo "- Contributing guidelines and support information" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Status:** Failed to generate" >> $GITHUB_STEP_SUMMARY
+        fi
