@@ -1075,7 +1075,7 @@ Sequence of updates from OpenAI Responses API to answer the question "What time 
 | resp_1 | 5  | resp.func_call.args.done | -               | InProgress                |                                                   |
 | resp_1 | 6  | resp.output_item.done    | -               | InProgress                |                                                   |
 | resp_1 | 7  | resp.completed           | Completed       | Complete                  |                                                   |
-| resp_1 | -  | -                        | -               | null                      | FunctionInvokingChatClient yield function result  |
+| resp_1 | -  | -                        | -               | null                      | FunctionInvokingChatClient yields function result  |
 |        |    |                          | OpenAI Responses created a new response to handle function call result                          |
 | resp_2 | 0  | resp.created             | Queued          | Queued                    |                                                   |
 | resp_2 | 1  | resp.queued              | Queued          | Queued                    |                                                   |
@@ -1095,7 +1095,7 @@ Sequence of updates from Azure AI Foundry Agents API to answer the question "Wha
 |--------|---------|-------------------|----------------|-------------|-----------------|---------------------------|---------------------------------------------------|
 | run_1  | -       | RunCreated        | Queued         | -           | -               | Queued                    |                                                   |
 | run_1  | step_1  | -                 | RequiredAction | InProgress  | -               | RequiredAction            |                                                   |
-| TBD	 | -	   | -				   | -              | -           | -               | -                         | FunctionInvokingChatClient yield function result  |
+| TBD	 | -	   | -				   | -              | -           | -               | -                         | FunctionInvokingChatClient yields function result  |
 | run_1  | -       | RunStepCompleted  | Completed      | -           | -               | InProgress                |                                                   |
 | run_1  | -	   | RunQueued         | Queued		    | -           | -               | Queued                    |                                                   |
 | run_1  | -	   | RunInProgress     | InProgress	    | -           | -               | InProgress                |                                                   |
@@ -1166,7 +1166,7 @@ if(response.Status is {} status)
 
 **Con:** Proliferation of long-running operation properties in the `ChatOptions` class.
 
-##### 6.1.2 Encapsulated Properties into Model Class
+##### 6.1.2 LongRunOptions Model Class
 
 ```csharp
 public class ChatOptions
@@ -1228,12 +1228,86 @@ if(response.Status is {} status)
         });
     }
 }
-
 ```
 
 **Pro:** No proliferation of long-running operation properties in the `ChatOptions` class.
 
 **Con:** Duplicated property `ConversationId`.
+
+##### 6.1.3 Continuation Token
+
+This option suggests using `System.ClientModel.ContinuationToken` to encapsulate all properties required for long-running operations.
+The continuation token will be returned by chat clients as part of the `ChatResponse` and `ChatResponseUpdate` responses to indicate that
+the response is part of a long-running execution. A null value of the property will indicate that the response is not part of a long-running execution.
+Chat clients will accept a non-null value of the property to indicate that callers want to get the status and result of an existing long-running execution.
+
+Each chat client will implement its own continuation token class that inherits from `ContinuationToken` to encapsulate properties required for long-running operations
+that are specific to the underlying API the chat client works with. For example, for the OpenAI Responses API, the continuation token class will encapsulate
+the `ResponseId` and `SequenceNumber` properties.
+
+```csharp
+public class ChatOptions
+{
+    // Existing properties...
+    public string? ConversationId { get; set; } 
+    ...
+    
+    // New properties...
+    public bool? AllowLongRunningResponses { get; set; }
+
+    public ContinuationToken? ContinuationToken { get; set; }
+}
+
+internal sealed class LongRunContinuationToken : ContinuationToken
+{
+    public LongRunContinuationToken(string responseId)
+    {
+        this.ResponseId = responseId;
+    }
+
+    public string ResponseId { get; set; }
+
+    public int? SequenceNumber { get; set; }
+
+    public static LongRunContinuationToken FromToken(ContinuationToken token)
+    {
+        if (token is LongRunContinuationToken longRunContinuationToken)
+        {
+            return longRunContinuationToken;
+        }
+
+        BinaryData data = token.ToBytes();
+
+        Utf8JsonReader reader = new(data);
+
+        string responseId = null!;
+        int? startAfter = null;
+
+        reader.Read();
+
+        // Reading functionality
+
+        return new(responseId)
+        {
+            SequenceNumber = startAfter
+        };
+    }
+}
+
+// Usage example
+ChatOptions options = new() { AllowLongRunningResponses = true };
+
+var response = await chatClient.GetResponseAsync("<prompt>", options);
+
+while (response.ContinuationToken is { } token)
+{
+    options.ContinuationToken = token;
+
+    response = await chatClient.GetResponseAsync([], options);
+}
+
+Console.WriteLine(response.Text);
+```
 
 #### 6.2 Overloads of GetResponseAsync and GetStreamingResponseAsync
 
