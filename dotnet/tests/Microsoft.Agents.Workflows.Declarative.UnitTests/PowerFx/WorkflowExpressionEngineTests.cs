@@ -7,7 +7,6 @@ using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Bot.ObjectModel.Exceptions;
-using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
