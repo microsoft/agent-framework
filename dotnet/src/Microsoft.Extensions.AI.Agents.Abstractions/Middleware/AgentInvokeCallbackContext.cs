@@ -22,9 +22,9 @@ public sealed class AgentInvokeCallbackContext : CallbackContext
     /// <param name="options">The options for the agent invocation.</param>
     /// <param name="isStreaming">A value indicating whether this is a streaming invocation.</param>
     /// <param name="cancellationToken">The cancellation token for the operation.</param>
-    internal AgentInvokeCallbackContext(
+    public AgentInvokeCallbackContext(
         AIAgent agent,
-        IReadOnlyCollection<ChatMessage> messages,
+        IList<ChatMessage> messages,
         AgentThread? thread,
         AgentRunOptions? options,
         bool isStreaming,
@@ -40,7 +40,7 @@ public sealed class AgentInvokeCallbackContext : CallbackContext
     /// <summary>
     /// Gets the messages being passed to the agent.
     /// </summary>
-    public IReadOnlyCollection<ChatMessage> Messages { get; }
+    public IList<ChatMessage> Messages { get; set; }
 
     /// <summary>
     /// Gets the conversation thread for the invocation.
@@ -50,7 +50,7 @@ public sealed class AgentInvokeCallbackContext : CallbackContext
     /// <summary>
     /// Gets the options for the agent invocation.
     /// </summary>
-    public AgentRunOptions? Options { get; }
+    public AgentRunOptions? Options { get; set; }
 
     /// <summary>
     /// Gets a value indicating whether this is a streaming invocation.
