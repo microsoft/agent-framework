@@ -1,7 +1,7 @@
 ---
 status: proposed
 contact: rogerbarreto
-date: 2025-08-22
+date: 2025-09-15
 deciders: markwallace-microsoft, rogerbarreto, westey-m, dmytrostruk, sergeymenshykh
 informed: {}
 ---
@@ -154,144 +154,375 @@ public class AIAgent
 
 ### Option 2: Agent Filter Decorator Pattern
 
-Similar to the `OpenTelemetryAgent` and the `DelegatingChatClient` in `Microsoft.Extensions.AI`, this option involves creating a `FilteredAgent` class that wraps agents and allows interception of method calls providing a collection of Filters to manage the wrapped agent.
+Similar to the `OpenTelemetryAgent` and the `DelegatingChatClient` in `Microsoft.Extensions.AI`, this option involves creating decorator agents that wrap the inner agent and allow interception of method calls. The current POC implementation demonstrates two approaches:
+
+#### 2a. Direct Decorator Implementation (GuardrailCallbackAgent)
 
 ```csharp
-var services = new ServiceCollection();
-services.AddSingleton<IAgentRunFilter, MyAgentRunFilter>();
-services.AddSingleton<IAgentFunctionCallFilter, MyAgentFunctionCallFilter>();
-
-// Using DI
-var agent = new MyAgent();
-var filteredAgent = new FilteringAIAgent(agent, services.BuildServiceProvider());
-
-// Manual
-var agent = new MyAgent();
-var filteredAgent = new FilteringAIAgent(agent, 
-    runFilters: [new MyAgentRunFilter()], 
-    functionCallFilters: [new MyAgentFunctionCallFilter()]);
-
-public class FilteringAIAgent
-{
-    private List<IAgentRunFilter>? _runFilters;
-    private List<IAgentFunctionCallFilter>? _functionCallFilters;
-
-    public FilteringAIAgent(AIAgent agent, IServiceProvider serviceProvider)
+// Current POC implementation from samples
+var agent = persistentAgentsClient.CreateAIAgent(model).AsBuilder()
+    .Use((innerAgent) => new GuardrailCallbackAgent(innerAgent)) // Decoration based agent run handling
+    .Use(async (context, next) => // Context based handling
     {
-        _innerAgent = agent;
+        // Guardrail: Filter input messages for PII
+        context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+        Console.WriteLine($"Pii Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
 
-        // Resolve filters from DI
-        _runFilters ??= serviceProvider.GetServices<IAgentRunFilter>()?.ToList();
-        _functionCallFilters ??= serviceProvider.GetServices<IAgentFunctionCallFilter>()?.ToList();
+        await next(context).ConfigureAwait(false);
+
+        if (!context.IsStreaming)
+        {
+            // Guardrail: Filter output messages for PII
+            context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+        }
+        else
+        {
+            context.SetRawResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
+        }
+    })
+    .Build();
+
+// Direct decorator implementation
+internal sealed class GuardrailCallbackAgent : DelegatingAIAgent
+{
+    private readonly string[] _forbiddenKeywords = { "harmful", "illegal", "violence" };
+
+    public GuardrailCallbackAgent(AIAgent innerAgent) : base(innerAgent) { }
+
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        var filteredMessages = this.FilterMessages(messages);
+        Console.WriteLine($"Guardrail Middleware - Filtered messages: {new ChatResponse(filteredMessages).Text}");
+
+        var response = await this.InnerAgent.RunAsync(filteredMessages, thread, options, cancellationToken);
+
+        response.Messages = response.Messages.Select(m => new ChatMessage(m.Role, this.FilterContent(m.Text))).ToList();
+
+        return response;
     }
 
-    public async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
-        AgentThread? thread = null,
-        AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var context = new AgentRunContext(messages, thread, options);
-
-        // Wrap core logic in filter pipeline
-        await _runFilters.OnRunAsync(context, async ctx =>
+        var filteredMessages = this.FilterMessages(messages);
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(filteredMessages, thread, options, cancellationToken))
         {
-            // Core agent logic
-            var response = await _innerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, cancellationToken);
-            ctx.Response = response;
-        }, cancellationToken);
+            if (update.Text != null)
+            {
+                yield return new AgentRunResponseUpdate(update.Role, this.FilterContent(update.Text));
+            }
+            else
+            {
+                yield return update;
+            }
+        }
+    }
 
-        // Extract the response from the context
-        return context.Response ?? throw new InvalidOperationException("Agent execution did not produce a response");
+    private List<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages)
+    {
+        return messages.Select(m => new ChatMessage(m.Role, this.FilterContent(m.Text))).ToList();
+    }
+
+    private string FilterContent(string content)
+    {
+        foreach (var keyword in this._forbiddenKeywords)
+        {
+            if (content.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[REDACTED: Forbidden content]";
+            }
+        }
+        return content;
     }
 }
 ```
 
+#### 2b. Context-Based Middleware (RunningCallbackHandlerAgent)
+
+The POC also includes a context-based approach using `RunningCallbackHandlerAgent` that wraps the agent and provides a context object for middleware processing:
+
+```csharp
+// Internal implementation that supports the .Use() pattern
+internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
+{
+    private readonly Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> _func;
+
+    internal RunningCallbackHandlerAgent(AIAgent innerAgent, Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> func) : base(innerAgent)
+    {
+        this._func = func;
+    }
+
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        var context = new AgentInvokeCallbackContext(this, messages, thread, options, isStreaming: false, cancellationToken);
+
+        async Task CoreLogicAsync(AgentInvokeCallbackContext ctx)
+        {
+            var response = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken).ConfigureAwait(false);
+            ctx.SetRawResponse(response);
+        }
+
+        await this._func(context, CoreLogicAsync).ConfigureAwait(false);
+
+        return context.RunResponse!;
+    }
+}
+```
+
+#### 2c. Function Invocation Filtering 
+
+The POC also demonstrates function invocation filtering using a similar decorator pattern:
+
+```csharp
+// Function invocation middleware using .Use() pattern
+var agent = persistentAgentsClient.CreateAIAgent(model)
+    .AsBuilder()
+    .Use((functionInvocationContext, next, ct) =>
+    {
+        Console.WriteLine($"IsStreaming: {functionInvocationContext!.IsStreaming}");
+        return next(functionInvocationContext.Arguments, ct);
+    })
+    .Use((functionInvocationContext, next, ct) =>
+    {
+        Console.WriteLine($"City Name: {(functionInvocationContext!.Arguments.TryGetValue("location", out var location) ? location : "not provided")}");
+        return next(functionInvocationContext.Arguments, ct);
+    })
+    .Build();
+```
+
+This demonstrates that the current POC supports both agent-level and function-level filtering through consistent patterns.
+
 #### Pros
 - Clean separation of concerns
-- Follows established patterns in `Microsoft.Extensions.AI`
+- Follows established patterns in `Microsoft.Extensions.AI` (DelegatingChatClient, OpenTelemetryAgent)
 - Non-intrusive to existing agent implementations
-- Supports both manual and DI configuration
-- Context-specific processing middleware
+- Supports both manual and DI configuration through builder pattern
+- Context-specific processing middleware with `AgentInvokeCallbackContext`
 - Composable and reusable filter components
+- Flexible implementation allowing both direct decorators and context-based middleware
+- Seamless integration with builder pattern using `.Use()` method
+- Support for both streaming and non-streaming scenarios
+- Rich context object providing access to messages, thread, options, and response handling
 
 #### Cons
 - Additional wrapper class adds complexity
 - Requires explicit wrapping of agents
-- Only viable for `ChatClientAgents` as other agents implementation will not have visibility/knowledge of the function call filters.
 
 ### Option 3: Dedicated Processor Component for Middleware
 
-This approach involves creating a dedicated `AgentFilterProcessor` that manages multiple collections of `IAgent_XYZ_Filter` instances.
-Each agent can be provided with the processor or automatically have one injected from DI.
+This approach involves creating a dedicated `CallbackMiddlewareProcessor` that manages collections of `ICallbackMiddleware` instances. The current POC implementation demonstrates this pattern with the `CallbackEnabledAgent` and processor architecture.
+
+#### Current POC Implementation
 
 ```csharp
-var services = new ServiceCollection();
-services.AddSingleton<IAgentRunFilter, MyAgentRunFilter>();
-services.AddSingleton<IAgentFunctionCallFilter, MyAgentFunctionCallFilter>();
-services.AddSingleton<AgentFilterProcessor>();
+// Current POC usage from samples
+var agent = persistentAgentsClient.CreateAIAgent(model)
+    .AsBuilder()
+    .UseCallbacks(config =>
+    {
+        config.AddCallback(new PiiDetectionMiddleware());
+        config.AddCallback(new GuardrailCallbackMiddleware());
+    }).Build();
 
-// Using DI
-var provider = services.BuildServiceProvider();
-
-// Filters are auto-registered with the processor from DI
-var processor = provider.GetRequiredService<AgentFilterProcessor>();
-
-// Manual
-var processor = new AgentFilterProcessor();
-processor.AddFilter(new MyAgentRunFilter());
-processor.AddFilter(new MyAgentFunctionCallFilter());
-
-// Agent takes processor in ctor or via DI
-var agent = new MyAgent(processor);
-
-```
-
-The `AgentFilterProcessor` would manage the filter pipeline and chain execution using the same pattern as Semantic Kernel:
-
-```csharp
-public class AgentFilterProcessor
+// Middleware implementation
+internal sealed class PiiDetectionMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
 {
-    // For thread-safety when used as a Singleton
-    private readonly ConcurrentBag<IAgentFilter> _filters = new(); 
-
-    public void AddFilter(IAgentFilter filter) 
-        => _filters.Add(filter);
-
-    public IEnumerable<IAgentFilter> GetFiltersForContext<T>() where T : AgentContext
-        => _filters.Where(f => f.CanProcess(typeof(T));
-
-    public async Task ProcessAsync<T>(T context, Func<T, Task> coreLogic, CancellationToken ct = default) where T : AgentContext
+    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
     {
-        var applicable = GetFiltersForContext<T>().ToList(); // Sorted
-        await InvokeChainAsync(context, applicable, 0, coreLogic, ct);
-    }
+        // Guardrail: Filter input messages for PII
+        context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+        Console.WriteLine($"Pii Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
+        await next(context).ConfigureAwait(false);
 
-    private async Task InvokeChainAsync<T>(T context, IList<IAgentFilter> filters, int index, Func<T, Task> coreLogic, CancellationToken ct) where T : AgentContext
-    {
-        if (index < filters.Count)
+        if (!context.IsStreaming)
         {
-            await filters[index].OnProcessAsync(
-                context, 
-                async ctx => await InvokeChainAsync((T)ctx, filters, index + 1, coreLogic, ct), 
-                ct);
+            // Guardrail: Filter output messages for PII
+            context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
         }
         else
         {
-            await coreLogic(context);
+            context.SetRawResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
+        }
+    }
+
+    private static string FilterPii(string content)
+    {
+        // PII detection logic...
+    }
+}
+
+internal sealed class GuardrailCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
+{
+    private readonly string[] _forbiddenKeywords = { "harmful", "illegal", "violence" };
+
+    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
+    {
+        // Guardrail: Filter input messages for forbidden content
+        context.Messages = this.FilterMessages(context.Messages);
+        Console.WriteLine($"Guardrail Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
+
+        await next(context).ConfigureAwait(false);
+        if (!context.IsStreaming)
+        {
+            // Guardrail: Filter output messages for forbidden content
+            context.Messages = this.FilterMessages(context.Messages);
+        }
+        else
+        {
+            context.SetRawResponse(StreamingGuardRailAsync(context.RunStreamingResponse!));
         }
     }
 }
 ```
 
+#### Function Invocation Filtering
+
+The POC also demonstrates function invocation filtering using the processor pattern:
+
+```csharp
+// Processor-based function invocation middleware
+var agent = persistentAgentsClient.CreateAIAgent(model)
+    .AsBuilder()
+    .UseCallbacks(config =>
+    {
+        config.AddCallback(new UsedApiFunctionInvocationCallback());
+        config.AddCallback(new CityInformationFunctionInvocationCallback());
+    }).Build();
+
+internal sealed class UsedApiFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationCallbackContext>
+{
+    public override async Task OnProcessAsync(AgentFunctionInvocationCallbackContext context, Func<AgentFunctionInvocationCallbackContext, Task> next, CancellationToken cancellationToken)
+    {
+        Console.WriteLine($"IsStreaming: {context!.IsStreaming}");
+
+        await next(context);
+    }
+}
+
+internal sealed class CityInformationFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationCallbackContext>
+{
+    public override async Task OnProcessAsync(AgentFunctionInvocationCallbackContext context, Func<AgentFunctionInvocationCallbackContext, Task> next, CancellationToken cancellationToken)
+    {
+        Console.WriteLine($"City Name: {(context!.Arguments.TryGetValue("location", out var location) ? location : "not provided")}");
+        await next(context);
+    }
+}
+```
+
+This demonstrates that the current POC supports both agent-level and function-level filtering through consistent patterns.
+
+#### Processor Implementation
+
+The `CallbackMiddlewareProcessor` manages the filter pipeline and chain execution:
+
+```csharp
+public sealed class CallbackMiddlewareProcessor
+{
+    // For thread-safety when used as a Singleton
+    private readonly ConcurrentBag<ICallbackMiddleware> _agentCallbacks = [];
+
+    public CallbackMiddlewareProcessor(IEnumerable<ICallbackMiddleware>? callbacks = null)
+    {
+        if (callbacks is not null)
+        {
+            foreach (var callback in callbacks)
+            {
+                AddCallback(callback);
+            }
+        }
+    }
+
+    internal CallbackMiddlewareProcessor AddCallback(ICallbackMiddleware middleware)
+    {
+        switch (middleware)
+        {
+            case CallbackMiddleware<AgentInvokeCallbackContext>:
+                this._agentCallbacks.Add(middleware);
+                break;
+            default:
+                throw new ArgumentException($"The middleware type '{middleware.GetType().FullName}' is not supported.", nameof(middleware));
+        }
+
+        return this;
+    }
+
+    public async Task ProcessAsync<TContext>(TContext context, Func<TContext, Task> coreLogic, CancellationToken cancellationToken = default)
+        where TContext : CallbackContext
+    {
+        var applicableCallbacks = this.GetApplicableCallbacks<TContext>().ToList();
+        await this.InvokeChainAsync(context, applicableCallbacks, 0, coreLogic, cancellationToken).ConfigureAwait(false);
+    }
+
+    private IEnumerable<ICallbackMiddleware> GetApplicableCallbacks<TContext>()
+        where TContext : CallbackContext
+    {
+        return this._agentCallbacks.Where(callback => callback.CanProcess<TContext>());
+    }
+}
+```
+
+#### CallbackEnabledAgent Implementation
+
+```csharp
+public sealed class CallbackEnabledAgent : DelegatingAIAgent
+{
+    private readonly CallbackMiddlewareProcessor _callbacksProcessor;
+
+    public CallbackEnabledAgent(AIAgent agent, CallbackMiddlewareProcessor? callbackMiddlewareProcessor) : base(agent)
+    {
+        this._callbacksProcessor = callbackMiddlewareProcessor ?? new();
+    }
+
+    public override async Task<AgentRunResponse> RunAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        AgentInvokeCallbackContext roamingContext = null!;
+
+        async Task CoreLogic(AgentInvokeCallbackContext ctx)
+        {
+            roamingContext ??= ctx;
+            var result = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken)
+                .ConfigureAwait(false);
+
+            ctx.SetRawResponse(result);
+        }
+
+        await this._callbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
+            new AgentInvokeCallbackContext(
+                agent: this,
+                messages: messages,
+                thread,
+                options,
+                isStreaming: false,
+                cancellationToken),
+            CoreLogic,
+            cancellationToken)
+            .ConfigureAwait(false);
+
+        return roamingContext.RunResponse!;
+    }
+}
+```
+
 #### Pros
-- Flexibility: Use shared processor for multiple agents or create per-agent instances.
-- Querying: Agents can inspect/trigger filters dynamically via GetFiltersForContext.
-- Extensibility: Add new contexts/filters without changing agent or processor much (just implement IAgentFilter<TNewContext>).
-- Simplicity: No decorators; agents stay lean. Generic filters reduce interface explosion.
+- Flexibility: Use shared processor for multiple agents or create per-agent instances
+- Clean fluent configuration API with `.UseCallbacks()` builder method
+- Type-safe middleware registration with `CallbackMiddleware<TContext>` base class
+- Thread-safe processor implementation using `ConcurrentBag<ICallbackMiddleware>`
+- Extensible context system with `AgentInvokeCallbackContext` providing rich execution context
+- Seamless integration with existing agent builder pattern
+- Support for both streaming and non-streaming scenarios in middleware
+- Clear separation between middleware logic and agent core functionality
+- Simplicity: Agents stay lean, middleware is externalized to processor
+- Extensibility: Add new contexts/filters without changing agent implementation
 
 #### Cons
-- Introducing a separate processor class creates an extra layer between the agent and its filters
+- Additional complexity with processor class and context management
+- Requires understanding of middleware lifecycle and context passing
+- Type switching in processor for different middleware types
+- Roaming context pattern needed to capture specialized contexts through middleware chain
 
 ## APPENDIX 1: Proposed Middleware Contexts
 
@@ -507,7 +738,29 @@ class MyMultipleFilterImplementation : IAgentFilter<AgentRunContext>, IAgentFilt
 
 ## Decision Outcome
 
-Chosen option: To be determined after further discussion and evaluation of the pros and cons of each option.
+**Current Status**: POC Implementation Complete - Both Option 2 (Decorator Pattern) and Option 3 (Processor Pattern) have been implemented and demonstrated in the current branch.
+
+**POC Findings**:
+- **Option 2 (Decorator Pattern)** is implemented through:
+  - Direct decorator classes inheriting from `DelegatingAIAgent` (e.g., `GuardrailCallbackAgent`)
+  - Context-based middleware using `RunningCallbackHandlerAgent` with `AgentInvokeCallbackContext`
+  - Builder pattern integration with `.Use()` method for fluent configuration
+
+- **Option 3 (Processor Pattern)** is implemented through:
+  - `CallbackMiddlewareProcessor` managing collections of `ICallbackMiddleware` instances
+  - `CallbackEnabledAgent` as a decorator that integrates with the processor
+  - `CallbackMiddleware<TContext>` base class for type-safe middleware implementation
+  - Builder pattern integration with `.UseCallbacks()` method
+
+**Key POC Insights**:
+1. Both patterns actually work
+2. The processor pattern provides better extensibility and type safety
+3. The decorator pattern offers more direct control and simpler implementation for specific use cases
+4. Function invocation filtering is supported in both patterns
+5. Streaming scenarios are well-supported in both approaches
+6. Builder pattern integration makes both approaches developer-friendly
+
+**Next Steps**: Further evaluation needed to determine which of the patterns should be preferred for the final implementation.
 
 ## Appendix: Other AI Agent Framework Analysis Details
 
