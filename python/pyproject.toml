@@ -29,6 +29,8 @@ dev = [
     "rich",
     "tomli",
     "tomli-w",
+]
+docs = [
     # Documentation
     "debugpy>=1.8.16",
     "py2docfx",

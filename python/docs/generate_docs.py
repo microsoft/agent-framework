@@ -32,6 +32,9 @@ async def generate_af_docs(root_path: Path):
                     "sphinx.ext.autosummary"
                 ],
                 "extension_config": {
+                    "napoleon_google_docstring": True,
+                    "napoleon_preprocess_types": True,
+                    "napoleon_use_param": True,
                     "autodoc_pydantic_field_doc_policy": "both",
                     "autodoc_pydantic_model_show_json": False,
                     "autodoc_pydantic_model_show_config_summary": True,
@@ -42,6 +45,9 @@ async def generate_af_docs(root_path: Path):
                     "autodoc_pydantic_settings_show_field_summary": True,
                     "python_use_unqualified_type_names": True,
                     "autodoc_preserve_defaults": True,
+                    "autodoc_class_signature": "separated",
+                    "autodoc_typehints": "both",
+                    "autodoc_typehints_format": "fully-qualified",
                     "autodoc_default_options": {
                         "members": True,
                         "member-order": "alphabetical",

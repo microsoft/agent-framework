@@ -146,7 +146,7 @@ class UsageDetails(AFBaseModel):
         """Initializes the UsageDetails instance.
 
         Args:
-            input_token_count: The number of tokens in the input.
+            input_token_count (int | None): The number of tokens in the input.
             output_token_count: The number of tokens in the output.
             total_token_count: The total number of tokens used to produce the response.
             **kwargs: Additional token counts, can be set by passing keyword arguments.
