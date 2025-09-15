@@ -37,6 +37,7 @@ from azure.ai.agents.models import (
     AsyncAgentRunStream,
     CodeInterpreterToolDefinition,
     FunctionName,
+    FunctionToolOutput,
     ListSortOrder,
     MessageDeltaChunk,
     MessageImageUrlParam,
@@ -630,7 +631,7 @@ class FoundryChatClient(BaseChatClient):
         if tool_results:
             for function_result_content in tool_results:
                 # When creating the FunctionCallContent, we created it with a CallId == [runId, callId].
-                # We need to extract the run ID and ensure that the ToolOutput we send back to Azure
+                # We need to extract the run ID and ensure that the FunctionToolOutput we send back to Azure
                 # is only the call ID.
                 run_and_call_ids: list[str] = json.loads(function_result_content.call_id)
 
@@ -648,7 +649,9 @@ class FoundryChatClient(BaseChatClient):
 
                 if tool_outputs is None:
                     tool_outputs = []
-                tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
+                tool_outputs.append(
+                    FunctionToolOutput(tool_call_id=call_id, output=str(function_result_content.result))
+                )
 
         return run_id, tool_outputs
 
