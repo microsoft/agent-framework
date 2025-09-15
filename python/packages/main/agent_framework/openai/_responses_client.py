@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
-from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -67,17 +66,6 @@ from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
 
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
-if TYPE_CHECKING:
-    from openai.types.responses.response_includable import ResponseIncludable
-
-    from .._types import ChatToolMode
-
-
 logger = get_logger("agent_framework.openai")
 
 __all__ = ["OpenAIResponsesClient"]
@@ -89,192 +77,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     """Base class for all OpenAI Responses based API's."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
-
-    def _filter_options(self, **kwargs: Any) -> dict[str, Any]:
-        """Filter options for the responses call."""
-        # The responses call does not support all the options that the chat completion call does.
-        # We filter out the unsupported options.
-        return {key: value for key, value in kwargs.items() if value is not None}
-
-    @override
-    async def get_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        *,
-        include: list["ResponseIncludable"] | None = None,
-        instructions: str | None = None,
-        max_tokens: int | None = None,
-        parallel_tool_calls: bool | None = None,
-        model: str | None = None,
-        previous_response_id: str | None = None,
-        reasoning: dict[str, str] | None = None,
-        service_tier: str | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        truncation: str | None = None,
-        timeout: float | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ChatResponse:
-        """Get a response from the OpenAI API.
-
-        Args:
-            messages: the message or messages to send to the model
-            include: additional output data to include in the model response.
-            instructions: a system (or developer) message inserted into the model's context.
-            max_tokens: The maximum number of tokens to generate.
-            parallel_tool_calls: Whether to enable parallel tool calls.
-            model: The model to use for the agent.
-            previous_response_id: The ID of the previous response.
-            reasoning: The reasoning to use for the response.
-            service_tier: The service tier to use for the response.
-            response_format: The format of the response.
-            seed: The random seed to use for the response.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            truncation: the truncation strategy to use.
-            timeout: the timeout for the request.
-            additional_properties: additional properties to include in the request.
-            kwargs: any additional keyword arguments,
-                will only be passed to functions that are called.
-
-        Returns:
-            A chat response from the model.
-        """
-        additional_properties = additional_properties or {}
-        additional_properties.update(
-            self._filter_options(
-                include=include,
-                instructions=instructions,
-                parallel_tool_calls=parallel_tool_calls,
-                model=model,
-                previous_response_id=previous_response_id,
-                reasoning=reasoning,
-                service_tier=service_tier,
-                truncation=truncation,
-                timeout=timeout,
-            )
-        )
-
-        return await super().get_response(
-            messages=messages,
-            max_tokens=max_tokens,
-            response_format=response_format,
-            seed=seed,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=tools,  # type: ignore
-            top_p=top_p,
-            user=user,
-            additional_properties=additional_properties,
-            **kwargs,
-        )
-
-    @override
-    async def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        *,
-        # TODO(peterychang): enable this option. background: bool | None = None,
-        include: list["ResponseIncludable"] | None = None,
-        instructions: str | None = None,
-        max_tokens: int | None = None,
-        parallel_tool_calls: bool | None = None,
-        model: str | None = None,
-        previous_response_id: str | None = None,
-        reasoning: dict[str, str] | None = None,
-        service_tier: str | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: "ChatToolMode" | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        truncation: str | None = None,
-        timeout: float | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Get a streaming response from the OpenAI API.
-
-        Args:
-            messages: the message or messages to send to the model
-            include: additional output data to include in the model response.
-            instructions: a system (or developer) message inserted into the model's context.
-            max_tokens: The maximum number of tokens to generate.
-            parallel_tool_calls: Whether to enable parallel tool calls.
-            model: The model to use for the agent.
-            previous_response_id: The ID of the previous response.
-            reasoning: The reasoning to use for the response.
-            service_tier: The service tier to use for the response.
-            response_format: The format of the response.
-            seed: The random seed to use for the response.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            truncation: the truncation strategy to use.
-            timeout: the timeout for the request.
-            additional_properties: additional properties to include in the request.
-            kwargs: any additional keyword arguments,
-                will only be passed to functions that are called.
-
-        Returns:
-            A stream representing the response(s) from the LLM.
-        """
-        additional_properties = additional_properties or {}
-        additional_properties.update(
-            self._filter_options(
-                include=include,
-                instructions=instructions,
-                parallel_tool_calls=parallel_tool_calls,
-                model=model,
-                previous_response_id=previous_response_id,
-                reasoning=reasoning,
-                service_tier=service_tier,
-                truncation=truncation,
-                timeout=timeout,
-            )
-        )
-
-        async for update in super().get_streaming_response(
-            messages=messages,
-            max_tokens=max_tokens,
-            response_format=response_format,
-            seed=seed,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=tools,  # type: ignore
-            top_p=top_p,
-            user=user,
-            additional_properties=additional_properties,
-            **kwargs,
-        ):
-            yield update
 
     # region Inner Methods
 
@@ -474,18 +276,33 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         return response_tools
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
-        """Take ChatOptions and create the specific options for Responses."""
-        options_dict = chat_options.to_provider_settings(exclude={"response_format"})
+        """Take ChatOptions and create the specific options for Responses API."""
+        options_dict: dict[str, Any] = {}
+
+        if chat_options.max_tokens is not None:
+            options_dict["max_output_tokens"] = chat_options.max_tokens
+
+        if chat_options.temperature is not None:
+            options_dict["temperature"] = chat_options.temperature
+
+        if chat_options.top_p is not None:
+            options_dict["top_p"] = chat_options.top_p
+
+        if chat_options.user is not None:
+            options_dict["user"] = chat_options.user
+
         # messages
         request_input = self._prepare_chat_messages_for_request(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
         options_dict["input"] = request_input
+
         # tools
         if chat_options.tools is None:
             options_dict.pop("parallel_tool_calls", None)
         else:
             options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
+
         # other settings
         if "store" not in options_dict:
             options_dict["store"] = False
