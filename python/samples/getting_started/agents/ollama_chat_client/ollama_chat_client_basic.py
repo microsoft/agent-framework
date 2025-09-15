@@ -22,7 +22,7 @@ async def non_streaming_example() -> None:
     agent = OllamaChatClient().create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
-        # tools=get_weather,
+        tools=get_weather,
     )
 
     query = "What's the weather like in Seattle?"
@@ -38,7 +38,7 @@ async def streaming_example() -> None:
     agent = OllamaChatClient().create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
-        # tools=get_weather,
+        tools=get_weather,
     )
 
     query = "What's the weather like in Portland?"

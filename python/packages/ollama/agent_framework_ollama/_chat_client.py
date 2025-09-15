@@ -1,24 +1,35 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import MutableSequence
+import json
+from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from itertools import chain
-from typing import Any, AsyncIterable, ClassVar
+from typing import Any, ClassVar
 
 from agent_framework import (
+    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    Contents,
+    DataContent,
+    FunctionCallContent,
+    FunctionResultContent,
     Role,
     TextContent,
+    ToolProtocol,
+    get_logger,
+    use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.telemetry import use_telemetry
 from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
+from ollama._types import Image as OllamaImage
 from ollama._types import Message as OllamaMessage
 from pydantic import ValidationError
 
@@ -32,6 +43,11 @@ class OllamaSettings(AFBaseSettings):
     chat_model_id: str | None = None
 
 
+logger = get_logger("agent_framework.ollama")
+
+
+@use_function_invocation
+@use_telemetry
 class OllamaChatClient(BaseChatClient):
     client: AsyncClient
     chat_model_id: str
@@ -80,6 +96,7 @@ class OllamaChatClient(BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         options_dict = self._prepare_options(messages, chat_options)
+
         response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
             model=self.chat_model_id,
             stream=True,
@@ -87,30 +104,106 @@ class OllamaChatClient(BaseChatClient):
         )
 
         async for part in response_object:
-            yield self._create_chat_response_update(part)
+            yield self._ollama_to_agent_framework_message_parser(part)
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
         options_dict = chat_options.to_provider_settings()
+        # Prepare Messages from Agent Framework format to Ollama format
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
         if "messages" not in options_dict:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
+
+        # Prepare Tools from Agent Framework format to Json Schema format
+        if chat_options.tools:
+            options_dict["tools"] = self._chat_to_tool_spec(chat_options.tools)
+
+        # Currently Ollama only supports auto tool choice
+        if chat_options.tool_choice == "required":
+            raise ServiceInvalidRequestError("Ollama does not support required tool choice.")
+        # Remove Tool Choice since it's not available by Ollama
+        if "tool_choice" in options_dict:
+            del options_dict["tool_choice"]
+
         return options_dict
 
     def _prepare_chat_history_for_request(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
-        list_of_list = [self._ollama_chat_message_parser(msg) for msg in messages]
+        list_of_list = [self._agent_framework_to_ollama_message_parser(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
-    def _ollama_chat_message_parser(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _agent_framework_to_ollama_message_parser(self, message: ChatMessage) -> list[OllamaMessage]:
         messages: list[OllamaMessage] = []
         for content in message.contents:
-            if isinstance(content, TextContent):
-                messages.append(OllamaMessage(role=message.role.value, content=content.text))
+            match content:
+                case TextContent():
+                    ollama_message = OllamaMessage(role=str(message.role), content=content.text)
+                case FunctionCallContent():
+                    ollama_message = OllamaMessage(
+                        role=str(message.role),
+                        tool_calls=[
+                            OllamaMessage.ToolCall(
+                                function=OllamaMessage.ToolCall.Function(
+                                    name=content.name,
+                                    arguments=content.arguments
+                                    if isinstance(content.arguments, Mapping)
+                                    else json.loads(content.arguments or "{}"),
+                                )
+                            )
+                        ],
+                    )
+                case FunctionResultContent():
+                    ollama_message = OllamaMessage(
+                        role=str(Role.TOOL),
+                        content=content.result,
+                    )
+                case DataContent():
+                    if not content.has_top_level_media_type("image"):
+                        raise ServiceInvalidRequestError("Only URIContent with image media type is supported.")
+                    ollama_message = OllamaMessage(
+                        role=message.role.value,
+                        images=[OllamaImage(value=content.uri)],
+                    )
+                case _:
+                    raise ServiceInvalidRequestError(f"Unsupported content type: {type(content)}")
+            messages.append(ollama_message)
         return messages
 
-    def _create_chat_response_update(self, response: OllamaChatResponse) -> ChatResponseUpdate:
+    def _ollama_to_agent_framework_message_parser(self, response: OllamaChatResponse) -> ChatResponseUpdate:
+        contents: list[Contents] = []
         if response.message.content:
-            return ChatResponseUpdate(text=response.message.content, role=Role.ASSISTANT)
-        return ChatResponseUpdate(text="", role=Role.ASSISTANT)
+            contents.append(TextContent(text=response.message.content))
+        if response.message.tool_calls:
+            tool_calls = self._parse_ollama_tool_calls(response.message.tool_calls)
+            contents.extend(tool_calls)
+        return ChatResponseUpdate(
+            contents=contents,
+            role=Role.ASSISTANT,
+            ai_model_id=self.chat_model_id,
+        )
+
+    def _parse_ollama_tool_calls(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Contents]:
+        resp: list[Contents] = []
+        for tool in tool_calls:
+            fcc = FunctionCallContent(
+                call_id="",  # Ollama does not provide a call ID
+                name=tool.function.name,
+                arguments=tool.function.arguments if isinstance(tool.function.arguments, dict) else "",
+                raw_representation=tool.function,
+            )
+            resp.append(fcc)
+        return resp
+
+    def _chat_to_tool_spec(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+        chat_tools: list[dict[str, Any]] = []
+        for tool in tools:
+            if isinstance(tool, ToolProtocol):
+                match tool:
+                    case AIFunction():
+                        chat_tools.append(tool.to_json_schema_spec())
+                    case _:
+                        logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
+            else:
+                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
+        return chat_tools
