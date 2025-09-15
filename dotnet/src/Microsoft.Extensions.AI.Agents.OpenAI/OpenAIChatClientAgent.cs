@@ -85,7 +85,7 @@ public class OpenAIChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public sealed override Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage> messages,
+        IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -93,7 +93,7 @@ public class OpenAIChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public sealed override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage> messages,
+        IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)

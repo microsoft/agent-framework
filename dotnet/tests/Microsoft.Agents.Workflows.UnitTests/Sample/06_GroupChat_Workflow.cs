@@ -95,7 +95,7 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     public override string Id => id;
     public override string? Name => id;
 
-    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         IEnumerable<AgentRunResponseUpdate> update = [
             await this.RunStreamingAsync(messages, thread, options, cancellationToken)
@@ -105,7 +105,7 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
         return update.ToAgentRunResponse();
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         AgentRunResponseUpdate response = new(ChatRole.Assistant, "Hello World!")
         {
@@ -126,7 +126,7 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
     public override string Id => id;
     public override string? Name => id;
 
-    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         IEnumerable<AgentRunResponseUpdate> update = [
             await this.RunStreamingAsync(messages, thread, options, cancellationToken)
@@ -136,15 +136,17 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
         return update.ToAgentRunResponse();
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (messages.Count == 0)
+        var messagesList = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+
+        if (messagesList.Count == 0)
         {
             throw new ArgumentException("No messages provided to echo.", nameof(messages));
         }
 
         StringBuilder collectedText = new(Prefix);
-        foreach (string messageText in messages.Select(message => message.Text)
+        foreach (string messageText in messagesList.Select(message => message.Text)
                                                .Where(text => !string.IsNullOrEmpty(text)))
         {
             collectedText.AppendLine(messageText);
