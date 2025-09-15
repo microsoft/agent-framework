@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,14 +29,17 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
     }
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
-        this.ResumeAsync(0, messages, context, cancellationToken);
+    protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        this.ResumeAsync(0, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), context, cancellationToken);
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IEnumerable<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.SequentialState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
-        return this.ResumeAsync(state.Index, state.Messages, context, cancellationToken);
+
+        // Append the new messages to the checkpoint state
+        List<ChatMessage> allMessages = [.. state.Messages, .. newMessages];
+        return this.ResumeAsync(state.Index, allMessages, context, cancellationToken);
     }
 
     /// <inheritdoc />

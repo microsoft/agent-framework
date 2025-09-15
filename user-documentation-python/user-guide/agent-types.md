@@ -120,6 +120,53 @@ async with (
 For code interpreter examples, see:
 - [Foundry with code interpreter](../../../python/samples/getting_started/agents/foundry/foundry_with_code_interpreter.py)
 
+### Model Context Protocol (MCP) Tools
+
+Foundry agents support Model Context Protocol (MCP) tools for connecting to external services and data sources.
+
+Learn more about MCP tools in the [Azure AI Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol).
+
+```python
+from agent_framework import ChatAgent, MCPStreamableHTTPTool
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
+
+# Tools can be defined at agent creation
+async with (
+    AzureCliCredential() as credential,
+    FoundryChatClient(async_credential=credential).create_agent(
+        name="DocsAgent",
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=MCPStreamableHTTPTool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+        ),
+    ) as agent
+):
+    response = await agent.run("How to create an Azure storage account using az cli?")
+```
+
+You can also provide MCP tools when running the agent:
+
+```python
+async with (
+    AzureCliCredential() as credential,
+    MCPStreamableHTTPTool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+    ) as mcp_server,
+    ChatAgent(
+        chat_client=FoundryChatClient(async_credential=credential),
+        name="DocsAgent",
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+    ) as agent,
+):
+    response = await agent.run("What is Microsoft Semantic Kernel?", tools=mcp_server)
+```
+
+For complete MCP examples, see:
+- [Foundry with MCP tools](../../../python/samples/getting_started/agents/foundry/foundry_with_local_mcp.py)
+
 ## Custom agents
 
 It is also possible to create fully custom agents that are not just wrappers around a chat client.
