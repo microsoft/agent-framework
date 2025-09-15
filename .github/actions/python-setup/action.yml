@@ -3,11 +3,11 @@ description: Reusable workflow to setup uv environment
 
 inputs:
     python-version:
-        required: true
-        type: string
+      description: The Python version to set up
+      required: true
     os:
-        required: true
-        type: string
+      description: The operating system to set up
+      required: true
 
 runs:
     using: "composite"
@@ -20,5 +20,6 @@ runs:
             cache-suffix: ${{ inputs.os }}-${{ inputs.python-version }}
             cache-dependency-glob: "**/uv.lock"
       - name: Install the project
+        shell: bash
         run: |
           uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
