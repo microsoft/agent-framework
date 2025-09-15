@@ -35,4 +35,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-packages --dev --docs
       - name: Build the docs
-        run: uv run poe docs-build
+        run: uv run poe docs-full
+    #  Upload docs to learn gh

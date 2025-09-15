@@ -142,10 +142,6 @@ class ToolProtocol(Protocol):
         ...
 
 
-ArgsT = TypeVar("ArgsT", bound=BaseModel)
-ReturnT = TypeVar("ReturnT")
-
-
 class BaseTool(AFBaseModel):
     """Base class for AI tools, providing common attributes and methods.
 
