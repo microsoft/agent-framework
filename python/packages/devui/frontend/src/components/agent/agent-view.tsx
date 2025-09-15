@@ -14,21 +14,22 @@ import {
 } from "@/components/ui/attachment-gallery";
 import { MessageRenderer } from "@/components/message_renderer";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { Send, User, Bot, Plus } from "lucide-react";
+import { Send, User, Bot, Plus, AlertCircle } from "lucide-react";
 import { apiClient } from "@/services/api";
-import {
-  extractMessageContent,
-  updateRichMessageContents,
-  useFunctionCallAccumulator,
-  type DebugEventHandler,
-} from "@/components/shared/chat-base";
 import type {
   AgentInfo,
   ChatMessage,
-  ChatState,
   RunAgentRequest,
   ThreadInfo,
+  ExtendedResponseStreamEvent,
 } from "@/types";
+
+interface ChatState {
+  messages: ChatMessage[];
+  isStreaming: boolean;
+}
+
+type DebugEventHandler = (event: ExtendedResponseStreamEvent) => void;
 
 interface AgentViewProps {
   selectedAgent: AgentInfo;
@@ -41,13 +42,18 @@ interface MessageBubbleProps {
 
 function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
-  const Icon = isUser ? User : Bot;
+  const isError = message.error;
+  const Icon = isUser ? User : (isError ? AlertCircle : Bot);
 
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
       <div
         className={`flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-md border ${
-          isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+          isUser 
+            ? "bg-primary text-primary-foreground" 
+            : isError 
+            ? "bg-orange-100 dark:bg-orange-900 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800"
+            : "bg-muted"
         }`}
       >
         <Icon className="h-4 w-4" />
@@ -59,14 +65,26 @@ function MessageBubble({ message }: MessageBubbleProps) {
         } max-w-[80%]`}
       >
         <div
-          className={`rounded px-3 py-2 text-sm ${
-            isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+          className={`rounded px-3 py-2 text-sm break-all ${
+            isUser 
+              ? "bg-primary text-primary-foreground" 
+              : isError
+              ? "bg-orange-50 dark:bg-orange-950/50 text-orange-800 dark:text-orange-200 border border-orange-200 dark:border-orange-800"
+              : "bg-muted"
           }`}
         >
-          <MessageRenderer
-            contents={message.contents}
-            isStreaming={message.streaming}
-          />
+          {isError && (
+            <div className="flex items-start gap-2 mb-2">
+              <AlertCircle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
+              <span className="font-medium text-sm">Unable to process request</span>
+            </div>
+          )}
+          <div className={isError ? "text-xs leading-relaxed break-all" : ""}>
+            <MessageRenderer
+              contents={message.contents}
+              isStreaming={message.streaming}
+            />
+          </div>
         </div>
 
         <div className="text-xs text-muted-foreground font-mono">
@@ -98,7 +116,6 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const [chatState, setChatState] = useState<ChatState>({
     messages: [],
     isStreaming: false,
-    streamEvents: [],
   });
   const [currentThread, setCurrentThread] = useState<ThreadInfo | undefined>(
     undefined
@@ -109,8 +126,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { functionCallAccumulator, clearAccumulator } =
-    useFunctionCallAccumulator();
+  const accumulatedText = useRef<string>("");
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -122,11 +138,10 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     setChatState({
       messages: [],
       isStreaming: false,
-      streamEvents: [],
     });
     setCurrentThread(undefined);
-    clearAccumulator();
-  }, [selectedAgent.id, clearAccumulator]);
+    accumulatedText.current = "";
+  }, [selectedAgent.id]);
 
   // Handle file uploads
   const handleFilesSelected = async (files: File[]) => {
@@ -178,10 +193,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     setChatState({
       messages: [],
       isStreaming: false,
-      streamEvents: [],
     });
-    clearAccumulator();
-  }, [clearAccumulator]);
+    accumulatedText.current = "";
+  }, []);
 
   // Handle message sending
   const handleSendMessage = useCallback(
@@ -216,7 +230,6 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         ...prev,
         messages: [...prev.messages, userMessage],
         isStreaming: true,
-        streamEvents: [], // Clear previous events for new conversation
       }));
 
       // Create assistant message placeholder
@@ -235,78 +248,33 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
       try {
         const request = {
-          messages, // Use the correct field name!
+          messages,
           thread_id:
             chatState.messages.length > 0 ? currentThread?.id : undefined,
           options: { capture_traces: true },
         };
 
-        // Use agent-specific API streaming
-        const streamGenerator = apiClient.streamAgentExecution(
+        // Clear text accumulator for new response
+        accumulatedText.current = "";
+
+        // Use OpenAI-compatible API streaming - direct event handling
+        const streamGenerator = apiClient.streamAgentExecutionOpenAI(
           selectedAgent.id,
           request
         );
 
-        for await (const event of streamGenerator) {
-          // Add event to debug stream
-          setChatState((prev) => ({
-            ...prev,
-            streamEvents: [...prev.streamEvents, event],
-          }));
+        for await (const openAIEvent of streamGenerator) {
+          // Pass all events to debug panel
+          onDebugEvent(openAIEvent);
 
-          // Emit debug event to parent
-          onDebugEvent(event);
+          // Handle error events from the stream
+          if (openAIEvent.type === "error") {
+            const errorEvent = openAIEvent as ExtendedResponseStreamEvent & { 
+              message?: string; 
+            };
+            const errorMessage = errorEvent.message || "An error occurred";
 
-          // Store thread_id when first received
-          if (event.thread_id && !currentThread) {
-            setCurrentThread({
-              id: event.thread_id,
-              agent_id: selectedAgent.id,
-              created_at: new Date().toISOString(),
-              message_count: 0,
-            });
-          }
-
-          // Update chat message if it's a content update
-          if (event.type === "agent_run_update" && event.update) {
-            const newChunk = extractMessageContent(
-              event.update,
-              functionCallAccumulator
-            );
-            if (newChunk) {
-              setChatState((prev) => ({
-                ...prev,
-                messages: prev.messages.map((msg) =>
-                  msg.id === assistantMessage.id
-                    ? {
-                        ...msg,
-                        contents: updateRichMessageContents(
-                          msg.contents,
-                          newChunk
-                        ),
-                      }
-                    : msg
-                ),
-              }));
-            }
-          }
-
-          // Handle completion
-          if (event.type === "completion") {
-            setChatState((prev) => ({
-              ...prev,
-              isStreaming: false,
-              messages: prev.messages.map((msg) =>
-                msg.id === assistantMessage.id
-                  ? { ...msg, streaming: false }
-                  : msg
-              ),
-            }));
-            break;
-          }
-
-          // Handle errors
-          if (event.type === "error") {
+            // Update assistant message with error and stop streaming
             setChatState((prev) => ({
               ...prev,
               isStreaming: false,
@@ -314,37 +282,67 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 msg.id === assistantMessage.id
                   ? {
                       ...msg,
-                      content: `Error: ${event.error}`,
+                      contents: [{
+                        type: "text",
+                        text: errorMessage
+                      }],
                       streaming: false,
+                      error: true, // Add error flag for styling
                     }
                   : msg
               ),
             }));
-            break;
+            return; // Exit stream processing early on error
           }
+
+          // Handle text delta events for chat
+          if (openAIEvent.type === "response.output_text.delta" && "delta" in openAIEvent && openAIEvent.delta) {
+            accumulatedText.current += openAIEvent.delta;
+
+            // Update assistant message with accumulated content
+            setChatState((prev) => ({
+              ...prev,
+              messages: prev.messages.map((msg) =>
+                msg.id === assistantMessage.id
+                  ? {
+                      ...msg,
+                      contents: [{
+                        type: "text",
+                        text: accumulatedText.current
+                      }],
+                    }
+                  : msg
+              ),
+            }));
+          }
+
+          // Handle completion/error by detecting when streaming stops
+          // (Server will close the stream when done, so we'll exit the loop naturally)
         }
+
+        // Stream ended - mark as complete
+        setChatState((prev) => ({
+          ...prev,
+          isStreaming: false,
+          messages: prev.messages.map((msg) =>
+            msg.id === assistantMessage.id
+              ? { ...msg, streaming: false }
+              : msg
+          ),
+        }));
       } catch (error) {
         console.error("Streaming error:", error);
         setChatState((prev) => ({
           ...prev,
           isStreaming: false,
-          streamEvents: [
-            ...prev.streamEvents,
-            {
-              type: "error",
-              error: error instanceof Error ? error.message : "Unknown error",
-              timestamp: new Date().toISOString(),
-            },
-          ],
           messages: prev.messages.map((msg) =>
             msg.id === assistantMessage.id
               ? {
                   ...msg,
-                  content: `Error: ${
-                    error instanceof Error
-                      ? error.message
-                      : "Failed to get response"
-                  }`,
+                  contents: [{
+                    type: "text",
+                    text: `Error: ${error instanceof Error ? error.message : "Failed to get response"}`
+                  }],
                   streaming: false,
                 }
               : msg
@@ -352,13 +350,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         }));
       }
     },
-    [
-      selectedAgent,
-      currentThread,
-      chatState.messages,
-      functionCallAccumulator,
-      onDebugEvent,
-    ]
+    [selectedAgent, currentThread, chatState.messages, onDebugEvent]
   );
 
   const handleSubmit = async (e: React.FormEvent) => {

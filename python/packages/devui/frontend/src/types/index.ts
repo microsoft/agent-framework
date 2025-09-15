@@ -88,12 +88,23 @@ export interface RunWorkflowRequest {
   input_data: Record<string, unknown>;
 }
 
-// Re-export from agent-framework types with proper typing
+// Legacy types - DEPRECATED - use new structured events from openai.ts instead
+
+// Re-export OpenAI types
 export type {
-  DebugStreamEvent,
-  AgentRunResponseUpdate,
-  WorkflowEvent,
-} from "./agent-framework";
+  ResponseStreamEvent,
+  ResponseTextDeltaEvent,
+  AgentFrameworkRequest,
+  OpenAIResponse,
+  OpenAIError,
+  // New structured event types
+  ExtendedResponseStreamEvent,
+  ResponseWorkflowEventComplete,
+  ResponseFunctionResultComplete,
+  ResponseTraceEventComplete,
+  ResponseUsageEventComplete,
+  StructuredEvent,
+} from "./openai";
 
 export interface HealthResponse {
   status: "healthy";
@@ -110,6 +121,7 @@ export interface ChatMessage {
   streaming?: boolean;
   author_name?: string;
   message_id?: string;
+  error?: boolean; // Flag to indicate this is an error message
 }
 
 // UI State types
@@ -125,5 +137,5 @@ export interface AppState {
 export interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
-  streamEvents: import("./agent-framework").DebugStreamEvent[];
+  // streamEvents removed - use OpenAI events directly instead
 }

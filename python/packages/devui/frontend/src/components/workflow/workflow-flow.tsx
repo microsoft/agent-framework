@@ -19,7 +19,7 @@ import {
   updateNodesWithEvents,
   updateEdgesWithSequenceAnalysis,
 } from "@/utils/workflow-utils";
-import type { DebugStreamEvent } from "@/types/agent-framework";
+import type { ExtendedResponseStreamEvent } from "@/types";
 import type { Workflow } from "@/types/workflow";
 
 const nodeTypes: NodeTypes = {
@@ -28,7 +28,7 @@ const nodeTypes: NodeTypes = {
 
 interface WorkflowFlowProps {
   workflowDump?: Workflow;
-  events: DebugStreamEvent[];
+  events: ExtendedResponseStreamEvent[];
   isStreaming: boolean;
   onNodeSelect?: (executorId: string, data: ExecutorNodeData) => void;
   className?: string;

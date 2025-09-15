@@ -224,29 +224,7 @@ export interface TraceSpan {
   raw_span?: Record<string, unknown>;
 }
 
-// Debug stream event wrapper (from devui)
-export interface DebugStreamEvent {
-  type:
-    | "agent_run_update"
-    | "workflow_event"
-    | "workflow_structure"
-    | "completion"
-    | "error"
-    | "debug_trace"
-    | "trace_span";
-  update?: AgentRunResponseUpdate; // Now properly typed!
-  event?: WorkflowEvent; // Now properly typed!
-  trace_span?: TraceSpan; // Real-time trace span
-  // Workflow structure data
-  workflow_dump?: import("./workflow").Workflow;
-  mermaid_diagram?: string;
-  timestamp: string;
-  debug_metadata?: Record<string, unknown>; // Will be removed
-  error?: string;
-  thread_id?: string;
-}
-
-// Helper type guards
+// Helper type guards for Agent Framework content types
 export function isTextContent(content: Contents): content is TextContent {
   return content.type === "text";
 }
@@ -261,22 +239,4 @@ export function isFunctionResultContent(
   content: Contents
 ): content is FunctionResultContent {
   return content.type === "function_result";
-}
-
-export function isAgentRunUpdateEvent(
-  event: DebugStreamEvent
-): event is DebugStreamEvent & { update: AgentRunResponseUpdate } {
-  return event.type === "agent_run_update" && event.update != null;
-}
-
-export function isWorkflowEvent(
-  event: DebugStreamEvent
-): event is DebugStreamEvent & { event: WorkflowEvent } {
-  return event.type === "workflow_event" && event.event != null;
-}
-
-export function isTraceSpanEvent(
-  event: DebugStreamEvent
-): event is DebugStreamEvent & { trace_span: TraceSpan } {
-  return event.type === "trace_span" && event.trace_span != null;
 }

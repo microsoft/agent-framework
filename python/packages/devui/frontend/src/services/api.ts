@@ -10,6 +10,7 @@ import type {
   RunWorkflowRequest,
   ThreadInfo,
 } from "@/types";
+import type { AgentFrameworkRequest, ExtendedResponseStreamEvent } from "@/types/openai";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined
@@ -51,58 +52,117 @@ class ApiClient {
     return this.request<HealthResponse>("/health");
   }
 
-  // Agent discovery
+  // Entity discovery using new unified endpoint
+  async getEntities(): Promise<{entities: (AgentInfo | import("@/types").WorkflowInfo)[], agents: AgentInfo[], workflows: import("@/types").WorkflowInfo[]}> {
+    const response = await this.request<{entities: any[]}>("/v1/entities");
+    
+    // Separate agents and workflows
+    const agents: AgentInfo[] = [];
+    const workflows: import("@/types").WorkflowInfo[] = [];
+    
+    response.entities.forEach(entity => {
+      if (entity.type === "agent") {
+        agents.push({
+          id: entity.id,
+          name: entity.name,
+          description: entity.description,
+          type: "agent",
+          source: "directory", // Default source
+          tools: entity.tools || [],
+          has_env: false, // Default value
+          module_path: entity.metadata?.module_path,
+        });
+      } else if (entity.type === "workflow") {
+        workflows.push({
+          id: entity.id,
+          name: entity.name,
+          description: entity.description,
+          type: "workflow",
+          source: "directory",
+          executors: entity.tools || [], // Tools are executors for workflows
+          has_env: false,
+          module_path: entity.metadata?.module_path,
+          input_schema: { type: "string" }, // Default schema
+          input_type_name: "Input",
+          start_executor_id: entity.tools?.[0] || "",
+        });
+      }
+    });
+    
+    return { entities: [...agents, ...workflows], agents, workflows };
+  }
+
+  // Legacy methods for compatibility
   async getAgents(): Promise<AgentInfo[]> {
-    return this.request<AgentInfo[]>("/agents");
+    const { agents } = await this.getEntities();
+    return agents;
   }
 
   async getWorkflows(): Promise<import("@/types").WorkflowInfo[]> {
-    return this.request<import("@/types").WorkflowInfo[]>("/workflows");
+    const { workflows } = await this.getEntities();
+    return workflows;
   }
 
   async getAgentInfo(agentId: string): Promise<AgentInfo> {
-    return this.request<AgentInfo>(`/agents/${agentId}/info`);
+    // Get detailed entity info from unified endpoint
+    return this.request<AgentInfo>(`/v1/entities/${agentId}/info`);
   }
 
   async getWorkflowInfo(
     workflowId: string
   ): Promise<import("@/types").WorkflowInfo> {
+    // Get detailed entity info from unified endpoint
     return this.request<import("@/types").WorkflowInfo>(
-      `/workflows/${workflowId}/info`
+      `/v1/entities/${workflowId}/info`
     );
   }
 
-  // Thread management
+  // Thread management (simplified for OpenAI compatibility)
   async createThread(agentId: string): Promise<ThreadInfo> {
-    return this.request<ThreadInfo>(`/agents/${agentId}/threads`, {
-      method: "POST",
-    });
+    // For now, return a mock thread since OpenAI API doesn't use explicit threads
+    return {
+      id: `thread_${Date.now()}`,
+      agent_id: agentId,
+      created_at: new Date().toISOString(),
+      message_count: 0,
+    };
   }
 
-  async getThreads(agentId: string): Promise<ThreadInfo[]> {
-    return this.request<ThreadInfo[]>(`/agents/${agentId}/threads`);
+  async getThreads(_agentId: string): Promise<ThreadInfo[]> {
+    // Return empty array since we're not tracking threads in OpenAI format
+    return [];
   }
 
-  // Note: EventSource doesn't support POST, so we use fetch streaming instead
-
-  // Custom streaming with fetch
-  async *streamAgentExecution(
+  // OpenAI-compatible streaming methods using /v1/responses endpoint
+  
+  // Stream agent execution using OpenAI format - direct event pass-through
+  async *streamAgentExecutionOpenAI(
     agentId: string,
     request: RunAgentRequest
-  ): AsyncGenerator<import("@/types").DebugStreamEvent, void, unknown> {
-    const endpoint = `/agents/${agentId}/run/stream`;
+  ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
+    // Convert to OpenAI format
+    const openAIRequest: AgentFrameworkRequest = {
+      model: "agent-framework", // Placeholder model name
+      input: Array.isArray(request.messages) ? 
+        request.messages.map(m => typeof m === 'string' ? m : JSON.stringify(m)).join('\n') :
+        request.messages,
+      stream: true,
+      extra_body: {
+        entity_id: agentId
+      }
+    };
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    const response = await fetch(`${this.baseUrl}/v1/responses`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(openAIRequest),
     });
 
     if (!response.ok) {
-      throw new Error(`Streaming request failed: ${response.status}`);
+      throw new Error(`OpenAI streaming request failed: ${response.status}`);
     }
 
     const reader = response.body?.getReader();
@@ -129,11 +189,18 @@ class ApiClient {
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
+            const dataStr = line.slice(6);
+            
+            // Handle [DONE] signal
+            if (dataStr === "[DONE]") {
+              return;
+            }
+            
             try {
-              const eventData = JSON.parse(line.slice(6));
-              yield eventData;
+              const openAIEvent: ExtendedResponseStreamEvent = JSON.parse(dataStr);
+              yield openAIEvent;  // Direct pass-through - no conversion!
             } catch (e) {
-              console.error("Failed to parse SSE event:", e);
+              console.error("Failed to parse OpenAI SSE event:", e);
             }
           }
         }
@@ -143,24 +210,32 @@ class ApiClient {
     }
   }
 
-  // Workflow streaming with proper types
-  async *streamWorkflowExecution(
+  // Stream workflow execution using OpenAI format - direct event pass-through
+  async *streamWorkflowExecutionOpenAI(
     workflowId: string,
     request: RunWorkflowRequest
-  ): AsyncGenerator<import("@/types").DebugStreamEvent, void, unknown> {
-    const endpoint = `/workflows/${workflowId}/run/stream`;
+  ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
+    // Convert to OpenAI format
+    const openAIRequest: AgentFrameworkRequest = {
+      model: "agent-framework", // Placeholder model name
+      input: request.input_data,
+      stream: true,
+      extra_body: {
+        entity_id: workflowId
+      }
+    };
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    const response = await fetch(`${this.baseUrl}/v1/responses`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(openAIRequest),
     });
 
     if (!response.ok) {
-      throw new Error(`Streaming request failed: ${response.status}`);
+      throw new Error(`OpenAI streaming request failed: ${response.status}`);
     }
 
     const reader = response.body?.getReader();
@@ -187,11 +262,18 @@ class ApiClient {
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
+            const dataStr = line.slice(6);
+            
+            // Handle [DONE] signal
+            if (dataStr === "[DONE]") {
+              return;
+            }
+            
             try {
-              const eventData = JSON.parse(line.slice(6));
-              yield eventData;
+              const openAIEvent: ExtendedResponseStreamEvent = JSON.parse(dataStr);
+              yield openAIEvent;  // Direct pass-through - no conversion!
             } catch (e) {
-              console.error("Failed to parse SSE event:", e);
+              console.error("Failed to parse OpenAI SSE event:", e);
             }
           }
         }
@@ -200,6 +282,8 @@ class ApiClient {
       reader.releaseLock();
     }
   }
+
+  // REMOVED: Legacy streaming methods - use streamAgentExecutionOpenAI and streamWorkflowExecutionOpenAI instead
 
   // Non-streaming execution (for testing)
   async runAgent(

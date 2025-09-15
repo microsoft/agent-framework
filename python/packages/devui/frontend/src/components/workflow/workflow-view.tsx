@@ -3,35 +3,21 @@
  * Features: Workflow visualization, input forms, execution monitoring
  */
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { CheckCircle, Clock, AlertCircle, Loader2 } from "lucide-react";
 import { LoadingState } from "@/components/ui/loading-state";
 import { WorkflowInputForm } from "@/components/workflow/workflow-input-form";
 import { WorkflowFlow } from "@/components/workflow/workflow-flow";
 import { useWorkflowEventCorrelation } from "@/hooks/useWorkflowEventCorrelation";
 import { apiClient } from "@/services/api";
-import type { DebugEventHandler } from "@/components/shared/chat-base";
-import type { WorkflowInfo } from "@/types";
-import type { DebugStreamEvent } from "@/types/agent-framework";
+import type { WorkflowInfo, ExtendedResponseStreamEvent } from "@/types";
 import type { ExecutorNodeData } from "@/components/workflow/executor-node";
-import type { Workflow } from "@/types/workflow";
+
+type DebugEventHandler = (event: ExtendedResponseStreamEvent) => void;
 
 interface WorkflowViewProps {
   selectedWorkflow: WorkflowInfo;
   onDebugEvent: DebugEventHandler;
-}
-
-interface WorkflowExecution {
-  workflowDump?: Workflow;
-  activeExecutors: string[];
-  executorHistory: Array<{
-    executorId: string;
-    message: string;
-    timestamp: string;
-    status: "running" | "completed" | "error";
-  }>;
-  completionResult?: string;
-  error?: string;
 }
 
 export function WorkflowView({
@@ -40,10 +26,15 @@ export function WorkflowView({
 }: WorkflowViewProps) {
   const [workflowInfo, setWorkflowInfo] = useState<WorkflowInfo | null>(null);
   const [workflowLoading, setWorkflowLoading] = useState(false);
-  const [events, setEvents] = useState<DebugStreamEvent[]>([]);
+  const [openAIEvents, setOpenAIEvents] = useState<
+    ExtendedResponseStreamEvent[]
+  >([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [selectedExecutor, setSelectedExecutor] =
     useState<ExecutorNodeData | null>(null);
+  const [workflowResult, setWorkflowResult] = useState<string>("");
+  const [workflowError, setWorkflowError] = useState<string>("");
+  const accumulatedText = useRef<string>("");
 
   // Panel resize state
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
@@ -53,7 +44,7 @@ export function WorkflowView({
   const [isResizing, setIsResizing] = useState(false);
 
   const { selectExecutor, getExecutorData } = useWorkflowEventCorrelation(
-    events,
+    openAIEvents,
     isStreaming
   );
 
@@ -75,9 +66,12 @@ export function WorkflowView({
     };
 
     // Clear state when workflow changes
-    setEvents([]);
+    setOpenAIEvents([]);
     setIsStreaming(false);
     setSelectedExecutor(null);
+    setWorkflowResult("");
+    setWorkflowError("");
+    accumulatedText.current = "";
 
     loadWorkflowInfo();
   }, [selectedWorkflow.id, selectedWorkflow.type]);
@@ -87,132 +81,46 @@ export function WorkflowView({
     selectExecutor(executorId);
   };
 
-  const workflowExecution = useMemo((): WorkflowExecution => {
-    // Use static workflow info first, fall back to streaming events
-    let workflowDump = workflowInfo?.workflow_dump;
-
-    // Override with streaming data if available (for consistency)
-    const structureEvent = events.find((e) => e.type === "workflow_structure");
-    if (structureEvent?.workflow_dump) {
-      workflowDump = structureEvent.workflow_dump;
-    }
-
-    // Track executor execution history
-    const executorHistory: WorkflowExecution["executorHistory"] = [];
-    const activeExecutors = new Set<string>();
-
-    // Process workflow events to build execution history
-    events.forEach((event) => {
-      if (event.type === "workflow_event" && event.event) {
-        // Check if this is an ExecutorEvent which has executor_id
-        const executorId =
-          "executor_id" in event.event
-            ? (event.event as { executor_id: string }).executor_id
-            : undefined;
-        const eventData = event.event.data;
-
-        if (executorId) {
-          // Determine status and message based on event type and content
-          let status: "running" | "completed" | "error" = "running";
-          let message = "";
-
-          const eventType = event.event.type;
-
-          // Handle based on event type
-          if (eventType === "ExecutorInvokeEvent") {
-            status = "running";
-            message = "Started processing";
-          } else if (eventType === "ExecutorCompletedEvent") {
-            status = "completed";
-            message = "Finished processing";
-          } else if (eventType === "WorkflowCompletedEvent") {
-            status = "completed";
-            message =
-              typeof eventData === "string" ? eventData : "Workflow completed";
-          } else if (eventType?.includes("Error")) {
-            status = "error";
-            message =
-              typeof eventData === "string" ? eventData : "Error occurred";
-          } else {
-            // Fallback to content-based determination
-            if (typeof eventData === "string") {
-              message = eventData;
-              if (
-                eventData.includes("completed") ||
-                eventData.includes("processed") ||
-                eventData.includes("success")
-              ) {
-                status = "completed";
-              } else if (
-                eventData.includes("error") ||
-                eventData.includes("failed")
-              ) {
-                status = "error";
-              }
-            } else if (eventData && typeof eventData === "object") {
-              try {
-                message = JSON.stringify(eventData, null, 2);
-              } catch {
-                message = "[Unable to display event data]";
-              }
-            } else {
-              message = eventType || "Processing...";
-            }
-          }
-
-          executorHistory.push({
-            executorId,
-            message,
-            timestamp: event.timestamp || new Date().toISOString(),
-            status,
-          });
-
-          // Track currently active executors (last few that are running)
-          if (status === "running" || isStreaming) {
-            activeExecutors.add(executorId);
-          }
-        }
-      }
-    });
-
-    // Find completion result
-    const completionEvent = events.find(
-      (e) =>
-        e.type === "completion" ||
-        (e.type === "workflow_event" &&
-          e.event?.type === "WorkflowCompletedEvent")
+  // Extract workflow events from OpenAI events for executor tracking
+  const workflowEvents = useMemo(() => {
+    return openAIEvents.filter(
+      (event) => event.type === "response.workflow_event.complete"
     );
-    let completionResult = "";
-    if (completionEvent?.event?.data) {
-      completionResult =
-        typeof completionEvent.event.data === "string"
-          ? completionEvent.event.data
-          : (() => {
-              try {
-                return JSON.stringify(completionEvent.event.data);
-              } catch {
-                return "[Unable to display completion data]";
-              }
-            })();
-    }
+  }, [openAIEvents]);
 
-    // Find error
-    const errorEvent = events.find((e) => e.type === "error");
-    const error = errorEvent?.error;
+  // Extract executor history from workflow events
+  const executorHistory = useMemo(() => {
+    return workflowEvents.map((event) => {
+      if ("data" in event && event.data && typeof event.data === "object") {
+        const data = event.data as Record<string, unknown>;
+        return {
+          executorId: String(data.executor_id || "unknown"),
+          message: String(data.event_type || "Processing"),
+          timestamp: String(data.timestamp || new Date().toISOString()),
+          status: String(data.event_type || "").includes("Completed")
+            ? ("completed" as const)
+            : String(data.event_type || "").includes("Error")
+            ? ("error" as const)
+            : ("running" as const),
+        };
+      }
+      return {
+        executorId: "unknown",
+        message: "Processing",
+        timestamp: new Date().toISOString(),
+        status: "running" as const,
+      };
+    });
+  }, [workflowEvents]);
 
-    // For active executors, only show the most recent ones if streaming
-    const activeExecutorsList = isStreaming
-      ? Array.from(activeExecutors).slice(-2) // Show last 2 active
-      : []; // Show none if not streaming
-
-    return {
-      workflowDump,
-      activeExecutors: activeExecutorsList,
-      executorHistory,
-      completionResult,
-      error,
-    };
-  }, [workflowInfo, events, isStreaming]);
+  // Track active executors
+  const activeExecutors = useMemo(() => {
+    if (!isStreaming) return [];
+    const recent = executorHistory
+      .filter((h) => h.status === "running")
+      .slice(-2);
+    return recent.map((h) => h.executorId);
+  }, [executorHistory, isStreaming]);
 
   // Save panel height to localStorage
   useEffect(() => {
@@ -258,46 +166,67 @@ export function WorkflowView({
       if (!selectedWorkflow || selectedWorkflow.type !== "workflow") return;
 
       setIsStreaming(true);
-      setEvents([]); // Clear previous events for new execution
+      setOpenAIEvents([]); // Clear previous OpenAI events for new execution
+      setWorkflowResult("");
+      setWorkflowError("");
+      accumulatedText.current = "";
 
       try {
         const request = { input_data: inputData };
 
-        // Use workflow-specific API streaming
-        const streamGenerator = apiClient.streamWorkflowExecution(
+        // Use OpenAI-compatible API streaming - direct event handling
+        const streamGenerator = apiClient.streamWorkflowExecutionOpenAI(
           selectedWorkflow.id,
           request
         );
 
-        for await (const event of streamGenerator) {
-          // Add event to local state
-          setEvents((prev) => [...prev, event]);
+        for await (const openAIEvent of streamGenerator) {
+          // Store all events for processing
+          setOpenAIEvents((prev) => [...prev, openAIEvent]);
 
-          // Emit debug event to parent
-          onDebugEvent(event);
+          // Pass to debug panel
+          onDebugEvent(openAIEvent);
 
-          // Handle completion
-          if (event.type === "completion") {
-            setIsStreaming(false);
-            break;
+          // Handle text output for workflow result
+          if (
+            openAIEvent.type === "response.output_text.delta" &&
+            "delta" in openAIEvent &&
+            openAIEvent.delta
+          ) {
+            accumulatedText.current += openAIEvent.delta;
+            setWorkflowResult(accumulatedText.current);
+          }
+
+          // Handle workflow completion with final result
+          if (
+            openAIEvent.type === "response.workflow_event.complete" &&
+            "data" in openAIEvent &&
+            openAIEvent.data
+          ) {
+            const data = openAIEvent.data as { event_type?: string; data?: unknown };
+            if (data.event_type === "WorkflowCompletedEvent" && data.data) {
+              setWorkflowResult(String(data.data));
+            }
           }
 
           // Handle errors
-          if (event.type === "error") {
-            setIsStreaming(false);
+          if (openAIEvent.type === "error") {
+            setWorkflowError(
+              "error" in openAIEvent
+                ? String(openAIEvent.error)
+                : "Unknown error"
+            );
             break;
           }
         }
+
+        // Stream ended
+        setIsStreaming(false);
       } catch (error) {
         console.error("Workflow execution failed:", error);
-        setEvents((prev) => [
-          ...prev,
-          {
-            type: "error",
-            error: error instanceof Error ? error.message : "Unknown error",
-            timestamp: new Date().toISOString(),
-          },
-        ]);
+        setWorkflowError(
+          error instanceof Error ? error.message : "Unknown error"
+        );
         setIsStreaming(false);
       }
     },
@@ -314,10 +243,7 @@ export function WorkflowView({
     );
   }
 
-  if (
-    !workflowInfo?.workflow_dump &&
-    !workflowExecution.executorHistory.length
-  ) {
+  if (!workflowInfo?.workflow_dump && !executorHistory.length) {
     return (
       <LoadingState
         message="Initializing workflow..."
@@ -345,22 +271,22 @@ export function WorkflowView({
                   </div>
                 )}
                 {!isStreaming &&
-                  !workflowExecution.error &&
-                  workflowExecution.executorHistory.length > 0 && (
+                  !workflowError &&
+                  executorHistory.length > 0 && (
                     <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
                       <CheckCircle className="w-4 h-4" />
                       Completed
                     </div>
                   )}
                 {!isStreaming &&
-                  !workflowExecution.error &&
-                  workflowExecution.executorHistory.length === 0 && (
+                  !workflowError &&
+                  executorHistory.length === 0 && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Clock className="w-4 h-4" />
                       Ready
                     </div>
                   )}
-                {workflowExecution.error && (
+                {workflowError && (
                   <div className="flex items-center gap-2 text-sm text-destructive">
                     <AlertCircle className="w-4 h-4" />
                     Error
@@ -371,7 +297,7 @@ export function WorkflowView({
             <div className="flex-1 min-h-0">
               <WorkflowFlow
                 workflowDump={workflowInfo.workflow_dump}
-                events={events}
+                events={openAIEvents}
                 isStreaming={isStreaming}
                 onNodeSelect={handleNodeSelect}
                 className="h-full"
@@ -383,13 +309,19 @@ export function WorkflowView({
 
       {/* Resize Handle */}
       <div
-        className={`h-1 bg-border hover:bg-accent cursor-row-resize flex-shrink-0 relative group ${
-          isResizing ? "bg-accent" : ""
+        className={`h-1 cursor-row-resize flex-shrink-0 relative group transition-colors duration-200 ease-in-out ${
+          isResizing ? "bg-primary/40" : "bg-border hover:bg-primary/20"
         }`}
         onMouseDown={handleMouseDown}
       >
-        <div className="absolute inset-x-0 -top-1 -bottom-1 flex items-center justify-center">
-          <div className="w-12 rounded-lg bg-primary h-2"></div>
+        <div className="absolute inset-x-0 -top-2 -bottom-2 flex items-center justify-center">
+          <div
+            className={`w-12 h-1 rounded-full transition-all duration-200 ease-in-out ${
+              isResizing
+                ? "bg-primary shadow-lg shadow-primary/25"
+                : "bg-primary/30 group-hover:bg-primary group-hover:shadow-md group-hover:shadow-primary/20"
+            }`}
+          ></div>
         </div>
       </div>
 
@@ -401,15 +333,15 @@ export function WorkflowView({
         {/* Left Half - Execution Details */}
         <div className="flex-1 min-w-0 p-4 overflow-auto">
           {selectedExecutor ||
-          workflowExecution.activeExecutors.length > 0 ||
-          workflowExecution.executorHistory.length > 0 ||
-          workflowExecution.completionResult ||
-          workflowExecution.error ? (
+          activeExecutors.length > 0 ||
+          executorHistory.length > 0 ||
+          workflowResult ||
+          workflowError ? (
             <div className="h-full space-y-4">
               {/* Current/Last Executor Panel */}
               {(selectedExecutor ||
-                workflowExecution.activeExecutors.length > 0 ||
-                workflowExecution.executorHistory.length > 0) && (
+                activeExecutors.length > 0 ||
+                executorHistory.length > 0) && (
                 <div className="border border-border rounded bg-card shadow-sm">
                   <div className="border-b border-border px-4 py-3 bg-muted rounded-t">
                     <h4 className="text-sm font-medium text-foreground">
@@ -417,8 +349,7 @@ export function WorkflowView({
                         ? `Executor: ${
                             selectedExecutor.name || selectedExecutor.executorId
                           }`
-                        : isStreaming &&
-                          workflowExecution.activeExecutors.length > 0
+                        : isStreaming && activeExecutors.length > 0
                         ? "Current Executor"
                         : "Last Executor"}
                     </h4>
@@ -524,24 +455,19 @@ export function WorkflowView({
                     ) : (
                       (() => {
                         const currentExecutorId =
-                          isStreaming &&
-                          workflowExecution.activeExecutors.length > 0
-                            ? workflowExecution.activeExecutors[
-                                workflowExecution.activeExecutors.length - 1
-                              ]
-                            : workflowExecution.executorHistory.length > 0
-                            ? workflowExecution.executorHistory[
-                                workflowExecution.executorHistory.length - 1
-                              ].executorId
+                          isStreaming && activeExecutors.length > 0
+                            ? activeExecutors[activeExecutors.length - 1]
+                            : executorHistory.length > 0
+                            ? executorHistory[executorHistory.length - 1]
+                                .executorId
                             : null;
 
                         if (!currentExecutorId) return null;
 
                         const executorData = getExecutorData(currentExecutorId);
-                        const historyItem =
-                          workflowExecution.executorHistory.find(
-                            (h) => h.executorId === currentExecutorId
-                          );
+                        const historyItem = executorHistory.find(
+                          (h) => h.executorId === currentExecutorId
+                        );
 
                         return (
                           <div
@@ -595,9 +521,6 @@ export function WorkflowView({
                               </p>
                             )}
 
-                            <p className="text-xs text-muted-foreground">
-                              Click to view details
-                            </p>
                           </div>
                         );
                       })()
@@ -607,7 +530,7 @@ export function WorkflowView({
               )}
 
               {/* Enhanced Result Display */}
-              {workflowExecution.completionResult && (
+              {workflowResult && (
                 <div className="border-2 border-emerald-300 dark:border-emerald-600 rounded bg-emerald-50 dark:bg-emerald-950/50 shadow">
                   <div className="border-b border-emerald-300 dark:border-emerald-600 px-4 py-3 bg-emerald-100 dark:bg-emerald-900/50 rounded-t">
                     <div className="flex items-center gap-3">
@@ -619,14 +542,14 @@ export function WorkflowView({
                   </div>
                   <div className="p-4">
                     <div className="text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap break-words text-sm">
-                      {workflowExecution.completionResult}
+                      {workflowResult}
                     </div>
                   </div>
                 </div>
               )}
 
               {/* Enhanced Error Display */}
-              {workflowExecution.error && (
+              {workflowError && (
                 <div className="border-2 border-destructive/70 rounded bg-destructive/5 shadow">
                   <div className="border-b border-destructive/70 px-4 py-3 bg-destructive/10 rounded-t">
                     <div className="flex items-center gap-3">
@@ -638,7 +561,7 @@ export function WorkflowView({
                   </div>
                   <div className="p-4">
                     <div className="text-destructive whitespace-pre-wrap break-words text-sm">
-                      {workflowExecution.error}
+                      {workflowError}
                     </div>
                   </div>
                 </div>

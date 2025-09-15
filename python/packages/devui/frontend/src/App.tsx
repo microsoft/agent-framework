@@ -16,7 +16,7 @@ import type {
   AgentInfo,
   WorkflowInfo,
   AppState,
-  DebugStreamEvent,
+  ExtendedResponseStreamEvent,
 } from "@/types";
 
 export default function App() {
@@ -26,7 +26,9 @@ export default function App() {
     isLoading: true,
   });
 
-  const [debugEvents, setDebugEvents] = useState<DebugStreamEvent[]>([]);
+  const [debugEvents, setDebugEvents] = useState<ExtendedResponseStreamEvent[]>(
+    []
+  );
   const [debugPanelOpen, setDebugPanelOpen] = useState(true);
   const [debugPanelWidth, setDebugPanelWidth] = useState(() => {
     // Initialize from localStorage or default to 320
@@ -123,7 +125,7 @@ export default function App() {
   }, []);
 
   // Handle debug events from active view
-  const handleDebugEvent = useCallback((event: DebugStreamEvent) => {
+  const handleDebugEvent = useCallback((event: ExtendedResponseStreamEvent) => {
     setDebugEvents((prev) => [...prev, event]);
   }, []);
 
@@ -247,15 +249,20 @@ export default function App() {
         {/* Resize Handle */}
         {debugPanelOpen && (
           <div
-            className={`w-1 bg-border hover:bg-accent cursor-col-resize flex-shrink-0 relative group ${
-              isResizing ? "bg-accent" : ""
+            className={`w-1 cursor-col-resize flex-shrink-0 relative group transition-colors duration-200 ease-in-out ${
+              isResizing ? "bg-primary/40" : "bg-border hover:bg-primary/20"
             }`}
             onMouseDown={handleMouseDown}
             onDoubleClick={handleDoubleClick}
           >
-            <div className="absolute inset-y-0 -left-1 -right-1 flex items-center justify-center">
-              {/* <GripVertical className="h-4 w-4 text-muted-foreground group-hover:text-foreground" /> */}
-              <div className="h-12 rounded-lg bg-primary   w-2    "></div>
+            <div className="absolute inset-y-0 -left-2 -right-2 flex items-center justify-center">
+              <div
+                className={`h-12 w-1 rounded-full transition-all duration-200 ease-in-out ${
+                  isResizing
+                    ? "bg-primary shadow-lg shadow-primary/25"
+                    : "bg-primary/30 group-hover:bg-primary group-hover:shadow-md group-hover:shadow-primary/20"
+                }`}
+              ></div>
             </div>
           </div>
         )}

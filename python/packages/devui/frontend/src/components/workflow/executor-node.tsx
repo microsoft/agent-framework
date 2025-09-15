@@ -6,7 +6,6 @@ import {
   Clock,
   Loader2,
   AlertCircle,
-  Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -92,20 +91,20 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
   const config = getExecutorStateConfig(nodeData.state);
   const IconComponent = config.icon;
 
-  const handleClick = () => {
-    nodeData.onNodeClick?.(nodeData.executorId, nodeData);
-  };
-
   const hasData = nodeData.inputData || nodeData.outputData || nodeData.error;
   const isRunning = nodeData.state === "running";
 
-  // Helper to safely render data
-  const renderDataPreview = () => {
+  // Helper to safely render data with full details
+  const renderDataDetails = () => {
+    const details = [];
+
     if (nodeData.error && typeof nodeData.error === "string") {
-      return (
-        <div className="text-red-600 dark:text-red-400 font-medium">
-          Error: {nodeData.error.substring(0, 40)}
-          {nodeData.error.length > 40 && "..."}
+      details.push(
+        <div key="error" className="mb-2">
+          <div className="text-xs font-medium text-red-600 dark:text-red-400 mb-1">Error:</div>
+          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-2 rounded border border-red-200 dark:border-red-800">
+            {nodeData.error}
+          </div>
         </div>
       );
     }
@@ -115,17 +114,22 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
         const outputStr =
           typeof nodeData.outputData === "string"
             ? nodeData.outputData
-            : JSON.stringify(nodeData.outputData);
-        return (
-          <div className="text-gray-600 dark:text-gray-300">
-            Output: {outputStr.substring(0, 40)}
-            {outputStr.length > 40 && "..."}
+            : JSON.stringify(nodeData.outputData, null, 2);
+        details.push(
+          <div key="output" className="mb-2">
+            <div className="text-xs font-medium text-green-600 dark:text-green-400 mb-1">Output:</div>
+            <div className="text-xs text-gray-700 dark:text-gray-300 bg-green-50 dark:bg-green-950/20 p-2 rounded border border-green-200 dark:border-green-800 max-h-20 overflow-auto">
+              <pre className="whitespace-pre-wrap font-mono">{outputStr}</pre>
+            </div>
           </div>
         );
       } catch {
-        return (
-          <div className="text-gray-600 dark:text-gray-300">
-            Output: [Unable to display]
+        details.push(
+          <div key="output" className="mb-2">
+            <div className="text-xs font-medium text-green-600 dark:text-green-400 mb-1">Output:</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400 bg-green-50 dark:bg-green-950/20 p-2 rounded border border-green-200 dark:border-green-800">
+              [Unable to display output data]
+            </div>
           </div>
         );
       }
@@ -136,35 +140,38 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
         const inputStr =
           typeof nodeData.inputData === "string"
             ? nodeData.inputData
-            : JSON.stringify(nodeData.inputData);
-        return (
-          <div className="text-gray-600 dark:text-gray-300">
-            Input: {inputStr.substring(0, 40)}
-            {inputStr.length > 40 && "..."}
+            : JSON.stringify(nodeData.inputData, null, 2);
+        details.push(
+          <div key="input" className="mb-2">
+            <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">Input:</div>
+            <div className="text-xs text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-950/20 p-2 rounded border border-blue-200 dark:border-blue-800 max-h-20 overflow-auto">
+              <pre className="whitespace-pre-wrap font-mono">{inputStr}</pre>
+            </div>
           </div>
         );
       } catch {
-        return (
-          <div className="text-gray-600 dark:text-gray-300">
-            Input: [Unable to display]
+        details.push(
+          <div key="input" className="mb-2">
+            <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">Input:</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400 bg-blue-50 dark:bg-blue-950/20 p-2 rounded border border-blue-200 dark:border-blue-800">
+              [Unable to display input data]
+            </div>
           </div>
         );
       }
     }
 
-    return null;
+    return details.length > 0 ? details : null;
   };
 
   return (
     <div
       className={cn(
-        "group relative w-56 bg-card dark:bg-card rounded border-2 transition-all duration-200 cursor-pointer",
+        "group relative w-64 bg-card dark:bg-card rounded border-2 transition-all duration-200",
         config.borderColor,
         selected ? "ring-2 ring-blue-500 ring-offset-2" : "",
-        isRunning ? config.glow : "shadow-sm hover:shadow-md",
-        "hover:scale-[1.02]"
+        isRunning ? config.glow : "shadow-sm",
       )}
-      onClick={handleClick}
     >
       {/* Only show target handle if not a start node */}
       {!nodeData.isStartNode && (
@@ -206,11 +213,6 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
               </p>
             )}
           </div>
-          {hasData && (
-            <div className="flex-shrink-0">
-              <Eye className="w-4 h-4 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors" />
-            </div>
-          )}
         </div>
 
         {/* State indicator */}
@@ -227,10 +229,10 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
           </span>
         </div>
 
-        {/* Data preview */}
+        {/* Data details */}
         {hasData && (
-          <div className="mt-3 p-2 bg-gray-50 dark:bg-gray-800/50 rounded text-xs">
-            {renderDataPreview()}
+          <div className="mt-3">
+            {renderDataDetails()}
           </div>
         )}
 
