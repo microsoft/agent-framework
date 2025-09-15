@@ -43,7 +43,19 @@ internal sealed class DeclarativeWorkflowModel
             throw new DeclarativeModelException($"Unresolved parent for {executor.Id}: {parentId}.");
         }
 
-        ModelNode stepNode = this.DefineNode(executor, parentNode, executor.GetType(), completionHandler);
+        ModelNode stepNode = this.DefineNode(executor, parentNode, completionHandler);
+
+        parentNode.Children.Add(stepNode);
+    }
+
+    public void AddPort(InputPort port, string parentId)
+    {
+        if (!this.Nodes.TryGetValue(parentId, out ModelNode? parentNode))
+        {
+            throw new DeclarativeModelException($"Unresolved parent for {port.Id}: {parentId}.");
+        }
+
+        ModelNode stepNode = this.DefineNode(port, parentNode);
 
         parentNode.Children.Add(stepNode);
     }
@@ -96,13 +108,32 @@ internal sealed class DeclarativeWorkflowModel
 
             Debug.WriteLine($"> CONNECT: {link.Source.Id} => {link.TargetId}{(link.Condition is null ? string.Empty : " (?)")}");
 
-            workflowBuilder.AddEdge(link.Source.Executor, targetNode.Executor, link.Condition);
+            workflowBuilder.AddEdge(GetExecutorIsh(link.Source), GetExecutorIsh(targetNode), link.Condition);
+        }
+
+        ExecutorIsh GetExecutorIsh(ModelNode node)
+        {
+            if (node.Port is not null)
+            {
+                return node.Port;
+            }
+
+            return node.Executor;
         }
     }
 
-    private ModelNode DefineNode(Executor executor, ModelNode? parentNode = null, Type? executorType = null, Action? completionHandler = null)
+    private ModelNode DefineNode(Executor executor, ModelNode? parentNode = null, Action? completionHandler = null)
     {
-        ModelNode stepNode = new(executor, parentNode, executorType, completionHandler);
+        ModelNode stepNode = new(executor, port: null, parentNode, completionHandler);
+
+        this.Nodes.Add(stepNode.Id, stepNode);
+
+        return stepNode;
+    }
+
+    private ModelNode DefineNode(InputPort port, ModelNode? parentNode = null)
+    {
+        ModelNode stepNode = new(executor: null!, port, parentNode);
 
         this.Nodes.Add(stepNode.Id, stepNode);
 
@@ -134,13 +165,15 @@ internal sealed class DeclarativeWorkflowModel
         return null;
     }
 
-    private sealed class ModelNode(Executor executor, ModelNode? parent = null, Type? executorType = null, Action? completionHandler = null)
+    private sealed class ModelNode(Executor executor, InputPort? port, ModelNode? parent = null, Action? completionHandler = null)
     {
-        public string Id => executor.Id;
+        public string Id => port?.Id ?? executor.Id;
 
         public Executor Executor => executor;
 
-        public Type? ExecutorType => executorType;
+        public InputPort? Port => port;
+
+        public Type? ExecutorType => this.Port?.GetType() ?? this.Executor.GetType();
 
         public ModelNode? Parent { get; } = parent;
 

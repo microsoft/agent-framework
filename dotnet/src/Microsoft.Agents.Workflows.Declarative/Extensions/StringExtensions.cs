@@ -20,6 +20,6 @@ internal static class StringExtensions
         return value.Trim();
     }
 
-    public static FormulaValue ToFormulaValue(this string? value) =>
+    public static FormulaValue ToFormula(this string? value) =>
         string.IsNullOrWhiteSpace(value) ? FormulaValue.NewBlank() : FormulaValue.New(value);
 }

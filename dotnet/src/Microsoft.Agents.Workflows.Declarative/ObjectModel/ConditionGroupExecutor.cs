@@ -3,6 +3,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -33,24 +34,16 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
 
     protected override bool IsDiscreteAction => false;
 
-    public bool IsMatch(ConditionItem conditionItem, object? result)
+    public bool IsMatch(ConditionItem conditionItem, object? message)
     {
-        if (result is not DeclarativeExecutorResult message)
-        {
-            return false;
-        }
-
-        return string.Equals(Steps.Item(this.Model, conditionItem), message.Result as string, StringComparison.Ordinal);
+        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        return string.Equals(Steps.Item(this.Model, conditionItem), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
-    public bool IsElse(object? result)
+    public bool IsElse(object? message)
     {
-        if (result is not DeclarativeExecutorResult message)
-        {
-            return false;
-        }
-
-        return string.Equals(Steps.Else(this.Model), message.Result as string, StringComparison.Ordinal);
+        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        return string.Equals(Steps.Else(this.Model), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
@@ -75,8 +68,8 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         return Steps.Else(this.Model);
     }
 
-    public async ValueTask DoneAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public async ValueTask DoneAsync(IWorkflowContext context, ExecutorResultMessage _, CancellationToken cancellationToken)
     {
-        await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
+        await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
     }
 }

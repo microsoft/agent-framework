@@ -106,12 +106,6 @@ internal static class SystemScope
         await state.SetAsync(VariableScopeNames.System, Names.ConversationId, FormulaValue.New(conversationId), context).ConfigureAwait(false);
     }
 
-    public static FormulaValue GetInternalConversationId(this DeclarativeWorkflowState state) =>
-        state.Get(VariableScopeNames.System, Names.InternalId);
-
-    public static ValueTask SetInternalConversationIdAsync(this DeclarativeWorkflowState state, IWorkflowContext context, string conversationId) =>
-        state.SetAsync(VariableScopeNames.System, Names.InternalId, FormulaValue.New(conversationId), context);
-
     public static async ValueTask SetLastMessageAsync(this DeclarativeWorkflowState state, IWorkflowContext context, ChatMessage message)
     {
         await state.SetAsync(VariableScopeNames.System, Names.LastMessage, message.ToRecord(), context).ConfigureAwait(false);

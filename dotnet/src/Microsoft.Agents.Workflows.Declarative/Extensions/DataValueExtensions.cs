@@ -9,11 +9,11 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class DataValueExtensions
 {
-    public static FormulaValue ToFormulaValue(this DataValue? value) =>
+    public static FormulaValue ToFormula(this DataValue? value) =>
         value switch
         {
             null => FormulaValue.NewBlank(),
-            BlankDataValue blankValue => BlankValue.NewBlank(),
+            BlankDataValue => BlankValue.NewBlank(),
             BooleanDataValue boolValue => FormulaValue.New(boolValue.Value),
             NumberDataValue numberValue => FormulaValue.New(numberValue.Value),
             FloatDataValue floatValue => FormulaValue.New(floatValue.Value),
@@ -53,12 +53,30 @@ internal static class DataValueExtensions
             _ => FormulaType.Unknown,
         };
 
+    public static object? ToObject(this DataValue? value) =>
+        value switch
+        {
+            null => null,
+            BlankDataValue => null,
+            BooleanDataValue boolValue => boolValue.Value,
+            NumberDataValue numberValue => (numberValue.Value),
+            FloatDataValue floatValue => (floatValue.Value),
+            StringDataValue stringValue => (stringValue.Value),
+            DateTimeDataValue dateTimeValue => (dateTimeValue.Value.DateTime),
+            DateDataValue dateValue => dateValue.Value,
+            TimeDataValue timeValue => timeValue.Value,
+            TableDataValue tableValue => tableValue.Values.Select(value => value.ToRecordValue()).ToArray(),
+            RecordDataValue recordValue => recordValue.ToDictionary(),
+            OptionDataValue optionValue => optionValue.Value.Value,
+            _ => throw new DeclarativeModelException($"Unsupported {nameof(DataValue)} type: {value.GetType().Name}"),
+        };
+
     public static FormulaValue NewBlank(this DataType? type) => FormulaValue.NewBlank(type?.ToFormulaType() ?? FormulaType.Blank);
 
     public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>
         FormulaValue.NewRecordFromFields(
             recordDataValue.Properties.Select(
-                property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
+                property => new NamedValue(property.Key, property.Value.ToFormula())));
 
     public static RecordType ToRecordType(this RecordDataType record)
     {
@@ -78,5 +96,15 @@ internal static class DataValueExtensions
             recordType = recordType.Add(property.Key, property.Value.ToFormulaType());
         }
         return recordType;
+    }
+
+    private static Dictionary<string, object?> ToDictionary(this RecordDataValue record)
+    {
+        Dictionary<string, object?> result = [];
+        foreach (KeyValuePair<string, DataValue> property in record.Properties)
+        {
+            result[property.Key] = property.Value.ToObject();
+        }
+        return result;
     }
 }
