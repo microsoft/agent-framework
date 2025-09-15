@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -31,13 +32,7 @@ public class AgentRunOptions
     public bool? AwaitLongRunCompletion { get; set; }
 
     /// <summary>
-    /// Specifies the identifier of an update within a conversation to start generating chat responses after.
+    /// Token to get result of a long-running operation.
     /// </summary>
-    public string? StartAfter { get; set; }
-
-    /// <summary>
-    /// Specifies identifier of either a long-running operation or an identifier
-    /// of an entity representing a long-running operation.
-    /// </summary>
-    public string? ResponseId { get; set; }
+    public ContinuationToken? ContinuationToken { get; set; }
 }

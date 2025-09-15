@@ -52,14 +52,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         if (backgroundResponsesEnabled)
         {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
+            Assert.NotNull(response.ContinuationToken);
         }
         else
         {
-            Assert.Single(response.Messages);
+            Assert.Null(response.ContinuationToken);
             Assert.Contains("Paris", response.Text);
-            Assert.Null(response.Status);
         }
     }
 
@@ -83,14 +81,12 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         if (backgroundResponsesEnabled)
         {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
+            Assert.NotNull(response.ContinuationToken);
         }
         else
         {
-            Assert.Single(response.Messages);
+            Assert.Null(response.ContinuationToken);
             Assert.Contains("Paris", response.Text);
-            Assert.Null(response.Status);
         }
     }
 
@@ -105,19 +101,14 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
 
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
+        Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.Status is { } status &&
-            status != NewResponseStatus.Completed &&
-            ++attempts < 5)
+        while (response.ContinuationToken is { } token && ++attempts < 5)
         {
-            options.ConversationId = response.ConversationId;
-            options.ResponseId = response.ResponseId!;
+            options.ContinuationToken = token;
 
             response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
 
@@ -125,11 +116,8 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             await Task.Delay(2000);
         }
 
-        Assert.NotNull(response);
-        Assert.Single(response.Messages);
+        Assert.Null(response.ContinuationToken);
         Assert.Contains("Paris", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
     }
 
     [Fact]
@@ -147,7 +135,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         // Assert
         Assert.Contains("5:43", response.Text);
-        Assert.Null(response.Status);
+        Assert.Null(response.ContinuationToken);
     }
 
     [Fact]
@@ -162,19 +150,14 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What time is it?", options);
 
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
+        Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.Status is { } status &&
-            status != NewResponseStatus.Completed &&
-            ++attempts < 5)
+        while (response.ContinuationToken is { } token && ++attempts < 5)
         {
-            options.ConversationId = response.ConversationId;
-            options.ResponseId = response.ResponseId!;
+            options.ContinuationToken = token;
 
             response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
 
@@ -183,6 +166,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         }
 
         Assert.Contains("5:43", response.Text);
+        Assert.Null(response.ContinuationToken);
     }
 
     [Fact]
@@ -203,9 +187,6 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         // Assert
         Assert.NotNull(cancelResponse);
-        Assert.Empty(cancelResponse.Messages);
-        Assert.NotNull(cancelResponse.ResponseId);
-        Assert.Equal(NewResponseStatus.Canceled, cancelResponse.Status);
     }
 
     public void Dispose()

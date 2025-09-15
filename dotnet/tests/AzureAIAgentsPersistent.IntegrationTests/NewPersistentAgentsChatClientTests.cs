@@ -37,14 +37,12 @@ public sealed class NewPersistentAgentsChatClientTests
 
         if (backgroundResponsesEnabled)
         {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
+            Assert.NotNull(response.ContinuationToken);
         }
         else
         {
-            Assert.Single(response.Messages);
+            Assert.Null(response.ContinuationToken);
             Assert.Contains("Paris", response.Text);
-            Assert.Null(response.Status);
         }
     }
 
@@ -64,14 +62,12 @@ public sealed class NewPersistentAgentsChatClientTests
 
         if (backgroundResponsesEnabled)
         {
-            Assert.NotNull(response.ResponseId);
-            Assert.Equal(NewResponseStatus.Queued, response.Status);
+            Assert.NotNull(response.ContinuationToken);
         }
         else
         {
-            Assert.Single(response.Messages);
+            Assert.Null(response.ContinuationToken);
             Assert.Contains("Paris", response.Text);
-            Assert.Null(response.Status);
         }
     }
 
@@ -88,19 +84,14 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?", options);
 
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
+        Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.Status is { } status &&
-            status != NewResponseStatus.Completed &&
-            ++attempts < 5)
+        while (response.ContinuationToken is { } token && ++attempts < 5)
         {
-            options.ConversationId = response.ConversationId;
-            options.ResponseId = response.ResponseId!;
+            options.ContinuationToken = token;
 
             response = (NewChatResponse)await client.GetResponseAsync([], options);
 
@@ -108,11 +99,8 @@ public sealed class NewPersistentAgentsChatClientTests
             await Task.Delay(2000);
         }
 
-        Assert.NotNull(response);
-        Assert.Single(response.Messages);
+        Assert.Null(response.ContinuationToken);
         Assert.Contains("Paris", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
     }
 
     [Fact]
@@ -132,7 +120,7 @@ public sealed class NewPersistentAgentsChatClientTests
 
         // Assert
         Assert.Contains("5:43", response.Text);
-        Assert.Null(response.Status);
+        Assert.Null(response.ContinuationToken);
     }
 
     [Fact]
@@ -149,19 +137,14 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What time is it?", options);
 
-        Assert.NotNull(response);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Queued, response.Status);
+        Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.Status is { } status &&
-            status != NewResponseStatus.Completed &&
-            ++attempts < 5)
+        while (response.ContinuationToken is { } token && ++attempts < 5)
         {
-            options.ConversationId = response.ConversationId;
-            options.ResponseId = response.ResponseId!;
+            options.ContinuationToken = token;
 
             response = (NewChatResponse)await client.GetResponseAsync([], options);
 
@@ -170,7 +153,7 @@ public sealed class NewPersistentAgentsChatClientTests
         }
 
         Assert.Contains("5:43", response.Text);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
+        Assert.Null(response.ContinuationToken);
     }
 
     [Fact]
@@ -188,8 +171,6 @@ public sealed class NewPersistentAgentsChatClientTests
 
         // Assert
         Assert.NotNull(cancelResponse);
-
-        Assert.True(cancelResponse.Status == NewResponseStatus.Canceling || cancelResponse.Status == NewResponseStatus.Canceled);
     }
 
     private static async Task<IChatClient> CreateChatClientAsync(bool? backgroundResponsesEnabled = null)

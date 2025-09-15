@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
 using System.Collections.Generic;
 
 namespace Microsoft.Extensions.AI;
@@ -31,12 +32,7 @@ public class NewChatResponseUpdate : ChatResponseUpdate
     }
 
     /// <summary>
-    /// Specifies the status of the response.
+    /// Represent a token that can be used to retrieve result of a long-running operation.
     /// </summary>
-    public NewResponseStatus? Status { get; set; }
-
-    /// <summary>
-    /// Specifies the sequence number of an update within a conversation.
-    /// </summary>
-    public string? SequenceNumber { get; set; }
+    public ContinuationToken? ContinuationToken { get; set; }
 }

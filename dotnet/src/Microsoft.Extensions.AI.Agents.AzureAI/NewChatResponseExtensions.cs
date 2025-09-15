@@ -409,11 +409,11 @@ public static class NewChatResponseExtensions
             }
         }
 
-        if (update is NewChatResponseUpdate { Status: { } status })
+        if (update is NewChatResponseUpdate { ContinuationToken: { } token })
         {
             if (response is NewChatResponse newResponse)
             {
-                newResponse.Status = status;
+                newResponse.ContinuationToken = token;
             }
         }
     }

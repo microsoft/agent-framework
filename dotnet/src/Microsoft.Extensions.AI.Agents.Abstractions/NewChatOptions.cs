@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
 using System.Collections.Generic;
 
 namespace Microsoft.Extensions.AI;
@@ -22,15 +23,9 @@ public class NewChatOptions : ChatOptions
     public bool? AllowBackgroundResponses { get; set; }
 
     /// <summary>
-    /// Specifies the identifier of an update within a conversation to start generating chat responses after.
+    /// Token to get result of a long-running operation.
     /// </summary>
-    public string? StartAfter { get; set; }
-
-    /// <summary>
-    /// Specifies identifier of either a long-running operation or an identifier
-    /// of an entity representing a long-running operation.
-    /// </summary>
-    public string? ResponseId { get; set; }
+    public ContinuationToken? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override ChatOptions Clone()
@@ -66,8 +61,7 @@ public class NewChatOptions : ChatOptions
 
         // The following properties are specific to NewChatOptions
         options.AllowBackgroundResponses = this.AllowBackgroundResponses;
-        options.StartAfter = this.StartAfter;
-        options.ResponseId = this.ResponseId;
+        options.ContinuationToken = this.ContinuationToken;
 
         return options;
     }

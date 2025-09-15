@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -30,18 +31,17 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             AllowBackgroundResponses = enableBackgroundResponses
         };
 
-        List<NewResponseStatus> statuses = [];
         string responseText = "";
+        ContinuationToken? firstContinuationToken = null;
+        ContinuationToken? lastContinuationToken = null;
 
         // Act
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
+            firstContinuationToken ??= update.ContinuationToken;
 
             responseText += update;
+            lastContinuationToken = update.ContinuationToken;
         }
 
         // Assert
@@ -49,13 +49,13 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         if (enableBackgroundResponses)
         {
-            Assert.Contains(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.NotNull(firstContinuationToken);
+            Assert.Null(lastContinuationToken);
         }
         else
         {
-            Assert.Empty(statuses);
+            Assert.Null(firstContinuationToken);
+            Assert.Null(lastContinuationToken);
         }
     }
 
@@ -67,18 +67,17 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         // Arrange
         using var client = await CreateChatClientAsync(enableBackgroundResponses);
 
-        List<NewResponseStatus> statuses = [];
         string responseText = "";
+        ContinuationToken? firstContinuationToken = null;
+        ContinuationToken? lastContinuationToken = null;
 
         // Act
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?").Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
+            firstContinuationToken ??= update.ContinuationToken;
 
             responseText += update;
+            lastContinuationToken = update.ContinuationToken;
         }
 
         // Assert
@@ -86,13 +85,13 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         if (enableBackgroundResponses)
         {
-            Assert.Contains(NewResponseStatus.Queued, statuses);
-            Assert.Contains(NewResponseStatus.InProgress, statuses);
-            Assert.Contains(NewResponseStatus.Completed, statuses);
+            Assert.NotNull(firstContinuationToken);
+            Assert.Null(lastContinuationToken);
         }
         else
         {
-            Assert.Empty(statuses);
+            Assert.Null(firstContinuationToken);
+            Assert.Null(lastContinuationToken);
         }
     }
 
@@ -107,51 +106,40 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             AllowBackgroundResponses = true
         };
 
-        List<NewResponseStatus> statuses = [];
+        ContinuationToken? firstContinuationToken = null;
+        ContinuationToken? lastContinuationToken = null;
         string responseText = "";
-        string? responseId = null;
-        string? conversationId = null;
 
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
-
             responseText += update;
 
-            // Capture the response id, conversation id and sequence number of the first event so we
-            // can continue getting the rest of the events starting from the same point in the test below.
-            responseId = update.ResponseId;
-            conversationId = update.ConversationId;
+            // Capture continuation token of the first event so we  can continue getting
+            // the rest of the events starting from the same point in the test below.
+            firstContinuationToken = update.ContinuationToken;
 
             break;
         }
 
-        Assert.Contains(NewResponseStatus.Queued, statuses);
+        Assert.NotNull(firstContinuationToken);
         Assert.NotNull(responseText);
-        Assert.NotNull(responseId);
-        Assert.NotNull(conversationId);
 
-        // Part 2: Continue getting the rest of the response from the saved point
-        options.ConversationId = conversationId;
-        options.ResponseId = responseId;
-        statuses.Clear();
+        // Part 2: Continue getting the rest of the response from the saved point represented by the continuation token.
+        options.ContinuationToken = firstContinuationToken;
+        NewChatResponseUpdate? firstContinuationUpdate = null;
 
         await foreach (var update in client.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
+            firstContinuationUpdate ??= update;
 
             responseText += update;
+
+            lastContinuationToken = update.ContinuationToken;
         }
 
         Assert.Contains("Paris", responseText);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        Assert.Null(lastContinuationToken);
+        Assert.NotNull(firstContinuationUpdate?.RawRepresentation);
     }
 
     [Fact]
@@ -166,23 +154,18 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        List<NewResponseStatus> statuses = [];
         string responseText = "";
 
         // Act
         await foreach (var update in client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
-
             responseText += update;
+
+            Assert.Null(update.ContinuationToken);
         }
 
         // Assert
         Assert.Contains("5:43", responseText);
-        Assert.Empty(statuses);
     }
 
     [Fact]
@@ -197,51 +180,36 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        List<NewResponseStatus> statuses = [];
         string responseText = "";
-        string? responseId = null;
-        string? conversationId = null;
+        ContinuationToken? firstContinuationToken = null;
+        ContinuationToken? lastContinuationToken = null;
 
         await foreach (var update in client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
-
             responseText += update;
 
-            // Capture the response id, conversation id and sequence number of the first event so we
-            // can continue getting the rest of the events starting from the same point in the test below.
-            responseId = update.ResponseId;
-            conversationId = update.ConversationId;
+            // Capture continuation token of the first event so we  can continue getting
+            // the rest of the events starting from the same point in the test below.
+            firstContinuationToken = update.ContinuationToken;
 
             break;
         }
 
-        Assert.Contains(NewResponseStatus.Queued, statuses);
+        Assert.NotNull(firstContinuationToken);
         Assert.NotNull(responseText);
-        Assert.NotNull(responseId);
-        Assert.NotNull(conversationId);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        options.ConversationId = conversationId;
-        options.ResponseId = responseId;
-        statuses.Clear();
+        options.ContinuationToken = firstContinuationToken;
 
         await foreach (var update in client.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
         {
-            if (update.Status is { } status)
-            {
-                statuses.Add(status);
-            }
-
             responseText += update;
+
+            lastContinuationToken = update.ContinuationToken;
         }
 
         Assert.Contains("5:43", responseText);
-        Assert.Contains(NewResponseStatus.InProgress, statuses);
-        Assert.Contains(NewResponseStatus.Completed, statuses);
+        Assert.Null(lastContinuationToken);
     }
 
     //[Theory]
@@ -319,8 +287,6 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         // Assert
         Assert.NotNull(response);
-
-        Assert.True(response.Status == NewResponseStatus.Canceling || response.Status == NewResponseStatus.Canceled);
     }
 
     private static async Task<IChatClient> CreateChatClientAsync(bool? backgroundResponsesEnabled = null)

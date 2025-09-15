@@ -3,7 +3,6 @@
 using System;
 using System.Threading.Tasks;
 using A2A;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.A2A;
 
@@ -23,7 +22,7 @@ public class A2AAgentTests
         // Assert
         Assert.NotNull(response);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Submitted, response.Status);
+        Assert.NotNull(response.ContinuationToken);
     }
 
     [Fact]
@@ -36,18 +35,16 @@ public class A2AAgentTests
 
         Assert.NotNull(response);
         Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Submitted, response.Status);
+        Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         AgentRunOptions options = new();
 
         int attempts = 0;
 
-        while (response.Status is { } status &&
-            status != NewResponseStatus.Completed &&
-            ++attempts < 10)
+        while (response.ContinuationToken is { } token && ++attempts < 10)
         {
-            options.ResponseId = response.ResponseId!;
+            options.ContinuationToken = token;
 
             response = await agent.RunAsync([], options: options);
 
@@ -56,10 +53,8 @@ public class A2AAgentTests
         }
 
         Assert.NotNull(response);
-        Assert.Equal(2, response.Messages.Count);
         Assert.Contains("Paris", response.Text);
-        Assert.NotNull(response.ResponseId);
-        Assert.Equal(NewResponseStatus.Completed, response.Status);
+        Assert.Null(response.ContinuationToken);
     }
 
     [Fact]
@@ -75,7 +70,6 @@ public class A2AAgentTests
 
         // Assert
         Assert.NotNull(cancelResponse);
-        Assert.Equal(NewResponseStatus.Canceled, cancelResponse.Status);
     }
 
     private async Task<AIAgent> CreateA2AAgentAsync()

@@ -64,10 +64,10 @@ internal sealed class A2AAgent : AIAgent
 
         A2AResponse? a2aResponse;
 
-        // The response id, provided by a caller, indicates that the caller is interested in the status/result of the task.
-        if (options is { ResponseId: { } taskId })
+        // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of the task.
+        if (options is { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
         {
-            a2aResponse = await this._a2aClient.GetTaskAsync(taskId, cancellationToken).ConfigureAwait(false);
+            a2aResponse = await this._a2aClient.GetTaskAsync(longRunToken.TaskId, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -87,7 +87,7 @@ internal sealed class A2AAgent : AIAgent
         {
             UpdateThreadConversationId(thread, task.ContextId);
 
-            return this.ConvertToAgentResponse(task, options);
+            return this.ConvertToAgentResponse(task);
         }
 
         throw new NotSupportedException($"Only message and task responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
@@ -126,7 +126,7 @@ internal sealed class A2AAgent : AIAgent
             {
                 contextId = task.ContextId;
 
-                foreach (var update in this.ConvertToAgentResponse(task, options).ToAgentRunResponseUpdates())
+                foreach (var update in this.ConvertToAgentResponse(task).ToAgentRunResponseUpdates())
                 {
                     yield return update;
                 }
@@ -153,8 +153,7 @@ internal sealed class A2AAgent : AIAgent
 
         var agentTask = await this._a2aClient.CancelTaskAsync(new TaskIdParams { Id = id }, cancellationToken).ConfigureAwait(false);
 
-        // Setting AwaitLongRunCompletion to false here only to get the `Status` property set in the response.
-        return this.ConvertToAgentResponse(agentTask, new AgentRunOptions() { AwaitLongRunCompletion = false });
+        return this.ConvertToAgentResponse(agentTask, throwIfOperationCancelled: false);
     }
 
     /// <inheritdoc/>
@@ -201,7 +200,7 @@ internal sealed class A2AAgent : AIAgent
         thread.ConversationId ??= contextId;
     }
 
-    private AgentRunResponse ConvertToAgentResponse(AgentTask task, AgentRunOptions? options)
+    private AgentRunResponse ConvertToAgentResponse(AgentTask task, bool throwIfOperationCancelled = true)
     {
         AgentRunResponse response = new()
         {
@@ -209,7 +208,7 @@ internal sealed class A2AAgent : AIAgent
             ResponseId = task.Id,
             RawRepresentation = task,
             Messages = task.History?.ToChatMessages(this.Name, task.Artifacts) ?? [],
-            Status = task.Status.ToResponseStatus(),
+            ContinuationToken = GetContinuationToken(task.Id, task.Status.State, throwIfOperationCancelled),
             AdditionalProperties = task.Metadata.ToAdditionalProperties() ?? [],
         };
 
@@ -265,25 +264,15 @@ internal sealed class A2AAgent : AIAgent
 
         if (taskUpdateEvent is TaskStatusUpdateEvent statusUpdateEvent)
         {
-            if (statusUpdateEvent is { Status: { } status })
-            {
-                responseUpdate.Status = status.ToResponseStatus();
-
-                responseUpdate.AdditionalProperties["Status.Timestamp"] = status.Timestamp;
-
-                if (status.Message is { } statusMessage)
-                {
-                    responseUpdate.AdditionalProperties["Status.Message"] = statusMessage.ToChatMessage();
-                }
-            }
-
+            responseUpdate.ContinuationToken = GetContinuationToken(statusUpdateEvent.TaskId, statusUpdateEvent.Status.State);
+            responseUpdate.AdditionalProperties[nameof(TaskStatusUpdateEvent.Status)] = statusUpdateEvent.Status;
             responseUpdate.AdditionalProperties[nameof(TaskStatusUpdateEvent.Final)] = statusUpdateEvent.Final;
-
             return responseUpdate;
         }
 
         if (taskUpdateEvent is TaskArtifactUpdateEvent artifactUpdateEvent)
         {
+            responseUpdate.ContinuationToken = GetContinuationToken(artifactUpdateEvent.TaskId, TaskState.Working);
             responseUpdate.Contents = artifactUpdateEvent.Artifact.ToAIContents();
 
             if (artifactUpdateEvent.Append is { } append)
@@ -300,5 +289,30 @@ internal sealed class A2AAgent : AIAgent
         }
 
         return responseUpdate;
+    }
+
+    private static LongRunContinuationToken? GetContinuationToken(string taskId, TaskState state, bool? throwIfOperationCancelled = true)
+    {
+        if (state == TaskState.Failed)
+        {
+            throw new InvalidOperationException("The task execution failed.");
+        }
+
+        if (state == TaskState.Canceled && throwIfOperationCancelled is true)
+        {
+            throw new TaskCanceledException("The task execution is canceled.");
+        }
+
+        if (state == TaskState.Rejected)
+        {
+            throw new TaskCanceledException("The task is rejected.");
+        }
+
+        if (state != TaskState.Completed)
+        {
+            return new LongRunContinuationToken(taskId);
+        }
+
+        return null;
     }
 }

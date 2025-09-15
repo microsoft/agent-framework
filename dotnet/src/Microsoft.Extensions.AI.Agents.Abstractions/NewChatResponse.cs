@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
+
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
@@ -14,7 +16,7 @@ namespace Microsoft.Extensions.AI;
 public class NewChatResponse : ChatResponse
 {
     /// <summary>
-    /// Specifies the status of the response.
+    /// Represent a token that can be used to retrieve result of a long-running operation.
     /// </summary>
-    public NewResponseStatus? Status { get; set; }
+    public ContinuationToken? ContinuationToken { get; set; }
 }

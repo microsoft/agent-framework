@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
+
 #if NET9_0_OR_GREATER
 using System.Buffers;
 #endif
@@ -123,9 +125,9 @@ public class AgentRunResponse
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 
     /// <summary>
-    /// Specifies the status of the response.
+    /// Represent a token that can be used to retrieve result of a long-running operation.
     /// </summary>
-    public NewResponseStatus? Status { get; set; }
+    public ContinuationToken? ContinuationToken { get; set; }
 
     /// <inheritdoc />
     public override string ToString() => this.Text;
@@ -162,7 +164,6 @@ public class AgentRunResponse
                 Contents = message.Contents,
                 RawRepresentation = message.RawRepresentation,
                 Role = message.Role,
-                Status = this.Status,
 
                 AgentId = this.AgentId,
                 ResponseId = this.ResponseId,
