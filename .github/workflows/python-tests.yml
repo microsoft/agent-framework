@@ -27,8 +27,9 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v5
-      - uses: ./.github/python_setup.yml
-        name: Set up python and install the project
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
         with:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
