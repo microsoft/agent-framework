@@ -563,6 +563,7 @@ async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
 
 
 @skip_if_azure_integration_tests_disabled
+@pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
 async def test_azure_responses_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
     azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
@@ -588,6 +589,7 @@ async def test_azure_responses_client_file_search() -> None:
 
 
 @skip_if_azure_integration_tests_disabled
+@pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
 async def test_azure_responses_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
     azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
