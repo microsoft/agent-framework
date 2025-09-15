@@ -1,106 +1,146 @@
-# Agent Step 11: Callback Middleware
+# Agent Step 13: Agent Running Processor Pattern
 
-This sample demonstrates how to use the callback middleware system with Azure AI Foundry agents to implement cross-cutting concerns such as timing and custom processing.
+This sample demonstrates how to implement agent middleware using the processor pattern with Azure AI Foundry agents. It shows how to use `CallbackMiddlewareProcessor` and `CallbackEnabledAgent` to create reusable middleware components for content filtering and guardrails.
 
 ## What This Sample Shows
 
 1. **Azure AI Foundry Integration**: Using Azure AI Foundry agents as the backend
-2. **Custom Middleware**: Creating and using custom middleware for timing measurements
-3. **Fluent Configuration**: Using the `WithCallbacks` builder pattern to configure middleware
-4. **Streaming Support**: How middleware works with both regular and streaming agent responses
-5. **Response Access**: How middleware can access and process agent responses
+2. **Processor Pattern**: Using `CallbackMiddlewareProcessor` to manage middleware collections
+3. **Callback Middleware**: Creating reusable middleware classes inheriting from `CallbackMiddleware<TContext>`
+4. **Fluent Configuration**: Using `.UseCallbacks()` builder pattern to configure middleware
+5. **Content Filtering**: Implementing PII detection and content guardrails as middleware
+6. **Streaming Support**: How processor-based middleware works with both regular and streaming responses
 
 ## Key Concepts
 
-### Callback Middleware Architecture
+### Processor Pattern Architecture
 
-The callback middleware system provides a clean way to intercept and process agent operations:
+This sample demonstrates the processor-based approach for agent middleware:
 
-- **`AgentInvokeCallbackContext`**: Provides context information for agent invocation operations
-- **`CallbackMiddleware<TContext>`**: Base class for implementing middleware
-- **Fluent Configuration**: Use `WithCallbacks` builder pattern to configure middleware
+- **`CallbackMiddlewareProcessor`**: Manages collections of middleware and orchestrates execution
+- **`CallbackEnabledAgent`**: Decorator that integrates with the processor for middleware execution
+- **`CallbackMiddleware<TContext>`**: Type-safe base class for implementing middleware
+- **`AgentInvokeCallbackContext`**: Rich context object providing access to messages, options, and responses
 
-### Middleware Execution
+### Middleware Execution Pipeline
 
-Middleware receives the context and a `next` delegate:
-1. Middleware can perform operations before calling `next`
-2. Call `next(context)` to continue the pipeline
-3. Middleware can perform operations after `next` returns
-4. Access response data through the context properties
+The processor manages middleware execution in a chain:
+1. Processor identifies applicable middleware for the context type
+2. Each middleware receives the context and a `next` delegate
+3. Middleware can perform pre-processing before calling `next`
+4. Middleware can perform post-processing after `next` returns
+5. Context provides access to both input and output data
 
-### Response Access
+### Type-Safe Middleware Design
 
-Middleware can access different types of responses:
-- **Regular responses**: Access via `context.RunResponse`
-- **Streaming responses**: Access via `context.RunStreamingResponse`
-- **Error handling**: Use try/catch blocks around the `next` call
+The processor pattern provides strong typing:
+- **Context-specific**: Middleware only processes contexts it can handle
+- **Thread-safe**: Processor uses `ConcurrentBag` for safe concurrent access
+- **Extensible**: Easy to add new middleware types without changing existing code
 
 ## Usage Examples
 
-### Basic Middleware Setup
+### Processor Pattern Setup
 
 ```csharp
 // Create Azure AI Foundry client
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
-// Create agent with middleware using fluent configuration
+// Create agent with processor-based middleware
 var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
+    .AsBuilder()
+    .UseCallbacks(config =>
     {
-        builder.AddCallback(new TimingCallbackMiddleware());
-    });
+        config.AddCallback(new PiiDetectionMiddleware());
+        config.AddCallback(new GuardrailCallbackMiddleware());
+    }).Build();
 ```
 
-### Custom Middleware Implementation
+### PII Detection Middleware Implementation
 
 ```csharp
-internal sealed class TimingCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
+internal sealed class PiiDetectionMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
 {
     public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
     {
-        Console.WriteLine($"[TIMING] Starting invocation for agent: {context.Agent.DisplayName}");
-        var timingStart = DateTime.UtcNow;
+        // Pre-processing: Filter input messages for PII
+        context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+        Console.WriteLine($"PII Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
 
-        try
+        await next(context).ConfigureAwait(false);
+
+        // Post-processing: Filter output messages
+        if (!context.IsStreaming)
         {
-            await next(context).ConfigureAwait(false);
-
-            // Access response based on operation type
-            if (!context.IsStreaming)
-            {
-                Console.WriteLine($"Response: {context.RunResponse?.Messages[0].Text}");
-            }
-            else
-            {
-                // Process streaming response
-                await foreach (var update in context.RunStreamingResponse!)
-                {
-                    Console.WriteLine($"Streaming update: {update.Text}");
-                }
-            }
-
-            var duration = DateTime.UtcNow - timingStart;
-            Console.WriteLine($"[TIMING] Completed invocation in {duration.TotalMilliseconds:F1}ms");
+            context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
         }
-        catch (Exception exception)
+        else
         {
-            Console.WriteLine($"[TIMING] Error: {exception.Message}");
-            throw;
+            context.SetRawResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
         }
+    }
+
+    private static string FilterPii(string content)
+    {
+        var piiPatterns = new[]
+        {
+            new Regex(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled), // Phone number
+            new Regex(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled), // Email
+            new Regex(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled) // Full name
+        };
+
+        foreach (var pattern in piiPatterns)
+        {
+            content = pattern.Replace(content, "[REDACTED: PII]");
+        }
+        return content;
     }
 }
 ```
 
-### Multiple Middleware
+### Guardrail Middleware Implementation
 
 ```csharp
-var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
+internal sealed class GuardrailCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
+{
+    private readonly string[] _forbiddenKeywords = { "harmful", "illegal", "violence" };
+
+    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
     {
-        builder.AddCallback(new LoggingCallbackMiddleware());
-        builder.AddCallback(new TimingCallbackMiddleware());
-        builder.AddCallback(new CustomAuthMiddleware());
-    });
+        // Pre-processing: Filter input messages for forbidden content
+        context.Messages = this.FilterMessages(context.Messages);
+        Console.WriteLine($"Guardrail Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
+
+        await next(context).ConfigureAwait(false);
+
+        // Post-processing: Filter output messages
+        if (!context.IsStreaming)
+        {
+            context.Messages = this.FilterMessages(context.Messages);
+        }
+        else
+        {
+            context.SetRawResponse(StreamingGuardRailAsync(context.RunStreamingResponse!));
+        }
+    }
+
+    private List<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages)
+    {
+        return messages.Select(m => new ChatMessage(m.Role, this.FilterContent(m.Text))).ToList();
+    }
+
+    private string FilterContent(string content)
+    {
+        foreach (var keyword in this._forbiddenKeywords)
+        {
+            if (content.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[REDACTED: Forbidden content]";
+            }
+        }
+        return content;
+    }
+}
 ```
 
 ## Prerequisites
@@ -119,20 +159,33 @@ Before running this sample, you need to set up Azure AI Foundry:
 ## Running the Sample
 
 ```bash
-cd dotnet/samples/GettingStarted/Agents/Agent_Step11_CallbackMiddleware
+cd dotnet/samples/GettingStarted/Agents/Agent_Step13_Callbacks_AgentRunningProcessor
 dotnet run
 ```
 
 ## Expected Output
 
 The sample will demonstrate:
-- Custom timing measurements for agent invocations
-- Response processing for both regular and streaming operations
-- Clean middleware implementation using the fluent configuration pattern
+- Processor-based middleware execution with `CallbackMiddlewareProcessor`
+- Content guardrails filtering harmful requests like "Tell me something harmful"
+- PII detection and redaction for phone numbers, emails, and names
+- Both regular and streaming response filtering through middleware
+- Type-safe middleware implementation with `CallbackMiddleware<TContext>`
+
+Example output:
+```
+=== Wording Guardrail ===
+Guardrail Middleware - Filtered messages: [REDACTED: Forbidden content]
+PII Middleware - Filtered messages: [REDACTED: Forbidden content]
+
+=== PII detection ===
+PII Middleware - Filtered messages: My name is [REDACTED: PII], call me at [REDACTED: PII] or email me at [REDACTED: PII]
+```
 
 ## Next Steps
 
-- Explore creating custom middleware for authentication, caching, or rate limiting
-- Implement middleware that modifies requests or responses
-- Use middleware for telemetry and monitoring in production applications
-- Combine multiple middleware for complex processing pipelines
+- Explore creating custom middleware classes for authentication, caching, or rate limiting
+- Implement middleware that modifies requests or responses based on business rules
+- Use the processor pattern for telemetry and monitoring in production applications
+- Study the differences between processor pattern and decorator pattern approaches
+- Create reusable middleware libraries that can be shared across multiple agents

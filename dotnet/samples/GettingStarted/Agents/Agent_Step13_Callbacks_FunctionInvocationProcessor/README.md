@@ -1,106 +1,122 @@
-# Agent Step 11: Callback Middleware
+# Agent Step 13: Function Invocation Processor Pattern
 
-This sample demonstrates how to use the callback middleware system with Azure AI Foundry agents to implement cross-cutting concerns such as timing and custom processing.
+This sample demonstrates how to implement function invocation middleware using the processor pattern with Azure AI Foundry agents. It shows how to create reusable middleware classes for intercepting and processing function calls using the `CallbackMiddlewareProcessor` architecture.
 
 ## What This Sample Shows
 
 1. **Azure AI Foundry Integration**: Using Azure AI Foundry agents as the backend
-2. **Custom Middleware**: Creating and using custom middleware for timing measurements
-3. **Fluent Configuration**: Using the `WithCallbacks` builder pattern to configure middleware
-4. **Streaming Support**: How middleware works with both regular and streaming agent responses
-5. **Response Access**: How middleware can access and process agent responses
+2. **Function Invocation Processor**: Using processor pattern for function-level middleware
+3. **Callback Middleware Classes**: Creating reusable middleware inheriting from `CallbackMiddleware<TContext>`
+4. **Fluent Configuration**: Using `.UseCallbacks()` builder pattern for function middleware
+5. **Function Context Processing**: Working with function invocation contexts and arguments
+6. **Tool Integration**: Intercepting AI function calls in a structured, reusable way
 
 ## Key Concepts
 
-### Callback Middleware Architecture
+### Function Invocation Processor Architecture
 
-The callback middleware system provides a clean way to intercept and process agent operations:
+This sample demonstrates the processor-based approach for function invocation middleware:
 
-- **`AgentInvokeCallbackContext`**: Provides context information for agent invocation operations
-- **`CallbackMiddleware<TContext>`**: Base class for implementing middleware
-- **Fluent Configuration**: Use `WithCallbacks` builder pattern to configure middleware
+- **`CallbackMiddlewareProcessor`**: Manages collections of function invocation middleware
+- **`CallbackEnabledAgent`**: Integrates with the processor for function middleware execution
+- **`CallbackMiddleware<TContext>`**: Type-safe base class for function invocation middleware
+- **Function Invocation Context**: Rich context providing access to function arguments and execution state
 
-### Middleware Execution
+### Function Middleware Execution Pipeline
 
-Middleware receives the context and a `next` delegate:
-1. Middleware can perform operations before calling `next`
-2. Call `next(context)` to continue the pipeline
-3. Middleware can perform operations after `next` returns
-4. Access response data through the context properties
+The processor manages function middleware execution:
+1. Processor identifies applicable middleware for function invocation contexts
+2. Each middleware receives the function context and a `next` delegate
+3. Middleware can inspect or modify function arguments before calling `next`
+4. Middleware can process function results after execution
+5. Context provides access to function metadata and execution state
 
-### Response Access
+### Reusable Function Middleware Design
 
-Middleware can access different types of responses:
-- **Regular responses**: Access via `context.RunResponse`
-- **Streaming responses**: Access via `context.RunStreamingResponse`
-- **Error handling**: Use try/catch blocks around the `next` call
+The processor pattern enables reusable function middleware:
+- **Context-specific**: Middleware only processes function invocation contexts
+- **Type-safe**: Strong typing for function invocation context and arguments
+- **Composable**: Easy to combine multiple function middleware in a pipeline
+- **Testable**: Middleware can be unit tested independently
 
 ## Usage Examples
 
-### Basic Middleware Setup
+### Function Invocation Processor Setup
 
 ```csharp
 // Create Azure AI Foundry client
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
-// Create agent with middleware using fluent configuration
+// Create agent with function invocation middleware using processor pattern
 var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
+    .AsBuilder()
+    .UseCallbacks(config =>
     {
-        builder.AddCallback(new TimingCallbackMiddleware());
-    });
+        config.AddCallback(new UsedApiFunctionInvocationCallback());
+        config.AddCallback(new CityInformationFunctionInvocationCallback());
+    }).Build();
 ```
 
-### Custom Middleware Implementation
+### Function Usage Tracking Middleware
 
 ```csharp
-internal sealed class TimingCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
+internal sealed class UsedApiFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationCallbackContext>
 {
-    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
+    public override async Task OnProcessAsync(AgentFunctionInvocationCallbackContext context, Func<AgentFunctionInvocationCallbackContext, Task> next, CancellationToken cancellationToken)
     {
-        Console.WriteLine($"[TIMING] Starting invocation for agent: {context.Agent.DisplayName}");
-        var timingStart = DateTime.UtcNow;
+        Console.WriteLine($"[FUNCTION USAGE] Function '{context.Function.Metadata.Name}' is being invoked");
+        Console.WriteLine($"[FUNCTION USAGE] IsStreaming: {context.IsStreaming}");
 
-        try
-        {
-            await next(context).ConfigureAwait(false);
+        var startTime = DateTime.UtcNow;
 
-            // Access response based on operation type
-            if (!context.IsStreaming)
-            {
-                Console.WriteLine($"Response: {context.RunResponse?.Messages[0].Text}");
-            }
-            else
-            {
-                // Process streaming response
-                await foreach (var update in context.RunStreamingResponse!)
-                {
-                    Console.WriteLine($"Streaming update: {update.Text}");
-                }
-            }
+        await next(context).ConfigureAwait(false);
 
-            var duration = DateTime.UtcNow - timingStart;
-            Console.WriteLine($"[TIMING] Completed invocation in {duration.TotalMilliseconds:F1}ms");
-        }
-        catch (Exception exception)
-        {
-            Console.WriteLine($"[TIMING] Error: {exception.Message}");
-            throw;
-        }
+        var duration = DateTime.UtcNow - startTime;
+        Console.WriteLine($"[FUNCTION USAGE] Function '{context.Function.Metadata.Name}' completed in {duration.TotalMilliseconds:F1}ms");
     }
 }
 ```
 
-### Multiple Middleware
+### Parameter Inspection Middleware
 
 ```csharp
-var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
+internal sealed class CityInformationFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationCallbackContext>
+{
+    public override async Task OnProcessAsync(AgentFunctionInvocationCallbackContext context, Func<AgentFunctionInvocationCallbackContext, Task> next, CancellationToken cancellationToken)
     {
-        builder.AddCallback(new LoggingCallbackMiddleware());
-        builder.AddCallback(new TimingCallbackMiddleware());
-        builder.AddCallback(new CustomAuthMiddleware());
-    });
+        // Inspect function arguments before execution
+        if (context.Arguments.TryGetValue("location", out var location))
+        {
+            Console.WriteLine($"[CITY INFO] Requesting weather for city: {location}");
+
+            // Could add validation, logging, or modification here
+            if (string.IsNullOrWhiteSpace(location?.ToString()))
+            {
+                Console.WriteLine($"[CITY INFO] Warning: Empty location provided");
+            }
+        }
+
+        await next(context).ConfigureAwait(false);
+
+        // Could process function results here
+        Console.WriteLine($"[CITY INFO] Function execution completed");
+    }
+}
+```
+
+### Running with Tools
+
+```csharp
+// Define a weather function
+[Description("Get the weather for a given location.")]
+static string GetWeather([Description("The location to get the weather for.")] string location)
+    => $"The weather in {location} is cloudy with a high of 15°C.";
+
+var thread = agent.GetNewThread();
+var options = new ChatClientAgentRunOptions(new() { Tools = [AIFunctionFactory.Create(GetWeather)] });
+
+// This will trigger the function middleware
+var response = await agent.RunAsync("What's the weather in Seattle?", thread, options);
 ```
 
 ## Prerequisites
@@ -119,20 +135,32 @@ Before running this sample, you need to set up Azure AI Foundry:
 ## Running the Sample
 
 ```bash
-cd dotnet/samples/GettingStarted/Agents/Agent_Step11_CallbackMiddleware
+cd dotnet/samples/GettingStarted/Agents/Agent_Step13_Callbacks_FunctionInvocationProcessor
 dotnet run
 ```
 
 ## Expected Output
 
 The sample will demonstrate:
-- Custom timing measurements for agent invocations
-- Response processing for both regular and streaming operations
-- Clean middleware implementation using the fluent configuration pattern
+- Function invocation middleware using the processor pattern
+- Function usage tracking and timing measurements
+- Parameter inspection and validation for function calls
+- Reusable middleware classes for function-level processing
+
+Example output:
+```
+[FUNCTION USAGE] Function 'GetWeather' is being invoked
+[FUNCTION USAGE] IsStreaming: False
+[CITY INFO] Requesting weather for city: Seattle
+[CITY INFO] Function execution completed
+[FUNCTION USAGE] Function 'GetWeather' completed in 2.3ms
+```
 
 ## Next Steps
 
-- Explore creating custom middleware for authentication, caching, or rate limiting
-- Implement middleware that modifies requests or responses
-- Use middleware for telemetry and monitoring in production applications
-- Combine multiple middleware for complex processing pipelines
+- Explore creating custom function middleware for authentication, validation, or rate limiting
+- Implement middleware that modifies function arguments or results
+- Use function middleware for telemetry and monitoring of tool usage in production
+- Create reusable function middleware libraries that can be shared across multiple agents
+- Study the differences between function invocation processor and decorator patterns
+- Combine function-level and agent-level middleware for comprehensive processing pipelines

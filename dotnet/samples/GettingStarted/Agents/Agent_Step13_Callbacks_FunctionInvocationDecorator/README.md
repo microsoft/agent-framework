@@ -1,107 +1,96 @@
-# Agent Step 11: Callback Middleware
+# Agent Step 13: Function Invocation Decorator Pattern
 
-This sample demonstrates how to use the callback middleware system with Azure AI Foundry agents to implement cross-cutting concerns such as timing and custom processing.
+This sample demonstrates how to implement function invocation middleware using the decorator pattern with Azure AI Foundry agents. It shows how to intercept and process function calls before they are executed, providing logging and parameter inspection capabilities.
 
 ## What This Sample Shows
 
 1. **Azure AI Foundry Integration**: Using Azure AI Foundry agents as the backend
-2. **Custom Middleware**: Creating and using custom middleware for timing measurements
-3. **Fluent Configuration**: Using the `WithCallbacks` builder pattern to configure middleware
-4. **Streaming Support**: How middleware works with both regular and streaming agent responses
-5. **Response Access**: How middleware can access and process agent responses
+2. **Function Invocation Middleware**: Intercepting function calls before execution
+3. **Decorator Pattern**: Using `.Use()` method to chain function invocation middleware
+4. **Parameter Inspection**: Accessing and logging function arguments
+5. **Streaming Context**: Understanding streaming vs non-streaming function invocation contexts
+6. **Tool Integration**: Working with AI functions and tools in the middleware pipeline
 
 ## Key Concepts
 
-### Callback Middleware Architecture
+### Function Invocation Middleware Architecture
 
-The callback middleware system provides a clean way to intercept and process agent operations:
+This sample demonstrates function-level middleware using the decorator pattern:
 
-- **`AgentInvokeCallbackContext`**: Provides context information for agent invocation operations
-- **`CallbackMiddleware<TContext>`**: Base class for implementing middleware
-- **Fluent Configuration**: Use `WithCallbacks` builder pattern to configure middleware
+- **Function Invocation Context**: Access to function arguments, streaming state, and execution context
+- **Decorator Pattern**: Using `.Use()` method to chain multiple function middleware
+- **Parameter Access**: Inspecting and logging function arguments before execution
+- **Streaming Awareness**: Understanding whether the function is called in streaming or non-streaming context
 
-### Middleware Execution
+### Function Middleware Execution
 
-Middleware receives the context and a `next` delegate:
-1. Middleware can perform operations before calling `next`
-2. Call `next(context)` to continue the pipeline
-3. Middleware can perform operations after `next` returns
-4. Access response data through the context properties
+Function middleware receives context and next delegate:
+1. Middleware can inspect function arguments and context
+2. Middleware can log or modify parameters before calling `next`
+3. Call `next(arguments, cancellationToken)` to continue to the actual function
+4. Middleware can process results after function execution
 
-### Response Access
+### Tool Integration Features
 
-Middleware can access different types of responses:
-- **Regular responses**: Access via `context.RunResponse`
-- **Streaming responses**: Access via `context.RunStreamingResponse`
-- **Error handling**: Use try/catch blocks around the `next` call
+The sample demonstrates practical function middleware:
+- **Parameter Logging**: Automatically log function arguments for debugging
+- **Streaming Detection**: Identify whether function calls are in streaming context
+- **Argument Inspection**: Access specific parameters like location for weather functions
 
 ## Usage Examples
 
-### Basic Middleware Setup
+### Function Invocation Middleware Setup
 
 ```csharp
 // Create Azure AI Foundry client
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
-// Create agent with middleware using fluent configuration
+// Define a function tool
+[Description("Get the weather for a given location.")]
+static string GetWeather([Description("The location to get the weather for.")] string location)
+    => $"The weather in {location} is cloudy with a high of 15°C.";
+
+// Create agent with function invocation middleware
 var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
+    .AsBuilder()
+    .Use((functionInvocationContext, next, ct) =>
     {
-        builder.AddCallback(new TimingCallbackMiddleware());
-    });
+        Console.WriteLine($"IsStreaming: {functionInvocationContext!.IsStreaming}");
+        return next(functionInvocationContext.Arguments, ct);
+    })
+    .Use((functionInvocationContext, next, ct) =>
+    {
+        Console.WriteLine($"City Name: {(functionInvocationContext!.Arguments.TryGetValue("location", out var location) ? location : "not provided")}");
+        return next(functionInvocationContext.Arguments, ct);
+    })
+    .Build();
 ```
 
-### Custom Middleware Implementation
+### Running the Agent with Tools
 
 ```csharp
-internal sealed class TimingCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
-{
-    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
-    {
-        Console.WriteLine($"[TIMING] Starting invocation for agent: {context.Agent.DisplayName}");
-        var timingStart = DateTime.UtcNow;
+var thread = agent.GetNewThread();
 
-        try
-        {
-            await next(context).ConfigureAwait(false);
+// Configure the agent to use the weather function
+var options = new ChatClientAgentRunOptions(new() { Tools = [AIFunctionFactory.Create(GetWeather)] });
 
-            // Access response based on operation type
-            if (!context.IsStreaming)
-            {
-                Console.WriteLine($"Response: {context.RunResponse?.Messages[0].Text}");
-            }
-            else
-            {
-                // Process streaming response
-                await foreach (var update in context.RunStreamingResponse!)
-                {
-                    Console.WriteLine($"Streaming update: {update.Text}");
-                }
-            }
-
-            var duration = DateTime.UtcNow - timingStart;
-            Console.WriteLine($"[TIMING] Completed invocation in {duration.TotalMilliseconds:F1}ms");
-        }
-        catch (Exception exception)
-        {
-            Console.WriteLine($"[TIMING] Error: {exception.Message}");
-            throw;
-        }
-    }
-}
+// Ask a question that will trigger the function
+var response = await agent.RunAsync("What's the weather in Seattle?", thread, options);
+Console.WriteLine(response);
 ```
 
-### Multiple Middleware
+### Expected Function Middleware Output
 
-```csharp
-var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
-    {
-        builder.AddCallback(new LoggingCallbackMiddleware());
-        builder.AddCallback(new TimingCallbackMiddleware());
-        builder.AddCallback(new CustomAuthMiddleware());
-    });
+When the agent calls the weather function, the middleware will output:
 ```
+IsStreaming: False
+City Name: Seattle
+```
+
+This shows that:
+1. The function is being called in non-streaming mode
+2. The location parameter "Seattle" was extracted from the function arguments
+3. Both middleware components executed in sequence before the actual function call
 
 ## Prerequisites
 
@@ -119,20 +108,30 @@ Before running this sample, you need to set up Azure AI Foundry:
 ## Running the Sample
 
 ```bash
-cd dotnet/samples/GettingStarted/Agents/Agent_Step11_CallbackMiddleware
+cd dotnet/samples/GettingStarted/Agents/Agent_Step13_Callbacks_FunctionInvocationDecorator
 dotnet run
 ```
 
 ## Expected Output
 
 The sample will demonstrate:
-- Custom timing measurements for agent invocations
-- Response processing for both regular and streaming operations
-- Clean middleware implementation using the fluent configuration pattern
+- Function invocation middleware intercepting tool calls
+- Parameter inspection and logging for function arguments
+- Streaming context detection for function calls
+- Decorator pattern implementation for function-level middleware
+
+Example output:
+```
+=== Example: Agent with custom function middleware ===
+IsStreaming: False
+City Name: Seattle
+The weather in Seattle is cloudy with a high of 15°C.
+```
 
 ## Next Steps
 
-- Explore creating custom middleware for authentication, caching, or rate limiting
-- Implement middleware that modifies requests or responses
-- Use middleware for telemetry and monitoring in production applications
-- Combine multiple middleware for complex processing pipelines
+- Explore creating custom function middleware for authentication, validation, or rate limiting
+- Implement middleware that modifies function arguments or results
+- Use function middleware for telemetry and monitoring of tool usage
+- Combine function-level and agent-level middleware for comprehensive processing pipelines
+- Study the difference between function invocation middleware and agent running middleware

@@ -1,106 +1,120 @@
-# Agent Step 11: Callback Middleware
+# Agent Step 13: Agent Running Decorator Pattern
 
-This sample demonstrates how to use the callback middleware system with Azure AI Foundry agents to implement cross-cutting concerns such as timing and custom processing.
+This sample demonstrates how to implement agent middleware using the decorator pattern with Azure AI Foundry agents. It shows two approaches: direct decorator classes and context-based middleware for implementing guardrails and content filtering.
 
 ## What This Sample Shows
 
 1. **Azure AI Foundry Integration**: Using Azure AI Foundry agents as the backend
-2. **Custom Middleware**: Creating and using custom middleware for timing measurements
-3. **Fluent Configuration**: Using the `WithCallbacks` builder pattern to configure middleware
-4. **Streaming Support**: How middleware works with both regular and streaming agent responses
-5. **Response Access**: How middleware can access and process agent responses
+2. **Decorator Pattern**: Creating custom agent decorators that inherit from `DelegatingAIAgent`
+3. **Context-Based Middleware**: Using `AgentInvokeCallbackContext` for flexible middleware processing
+4. **Content Filtering**: Implementing PII detection and content guardrails
+5. **Streaming Support**: How decorators work with both regular and streaming agent responses
+6. **Fluent Builder Pattern**: Using `.Use()` method to chain multiple middleware components
 
 ## Key Concepts
 
-### Callback Middleware Architecture
+### Decorator Pattern Architecture
 
-The callback middleware system provides a clean way to intercept and process agent operations:
+This sample demonstrates two decorator approaches for agent middleware:
 
-- **`AgentInvokeCallbackContext`**: Provides context information for agent invocation operations
-- **`CallbackMiddleware<TContext>`**: Base class for implementing middleware
-- **Fluent Configuration**: Use `WithCallbacks` builder pattern to configure middleware
+- **`DelegatingAIAgent`**: Base class for creating agent decorators that wrap inner agents
+- **`GuardrailCallbackAgent`**: Custom decorator implementing content filtering logic
+- **`AgentInvokeCallbackContext`**: Context object for context-based middleware processing
+- **Builder Integration**: Seamless integration with the agent builder pattern
 
-### Middleware Execution
+### Decorator Implementation Approaches
 
-Middleware receives the context and a `next` delegate:
-1. Middleware can perform operations before calling `next`
-2. Call `next(context)` to continue the pipeline
-3. Middleware can perform operations after `next` returns
-4. Access response data through the context properties
+1. **Direct Decorator Class**: Create a class inheriting from `DelegatingAIAgent` and override methods
+2. **Context-Based Middleware**: Use `.Use()` with context and next delegate for inline processing
+3. **Chaining**: Combine multiple decorators and context-based middleware in a single pipeline
 
-### Response Access
+### Content Filtering Features
 
-Middleware can access different types of responses:
-- **Regular responses**: Access via `context.RunResponse`
-- **Streaming responses**: Access via `context.RunStreamingResponse`
-- **Error handling**: Use try/catch blocks around the `next` call
+The sample implements practical guardrails:
+- **PII Detection**: Automatically redacts phone numbers, emails, and names
+- **Content Guardrails**: Filters harmful or illegal content requests
+- **Streaming Support**: Applies filtering to both regular and streaming responses
 
 ## Usage Examples
 
-### Basic Middleware Setup
+### Decorator Pattern Setup
 
 ```csharp
 // Create Azure AI Foundry client
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
-// Create agent with middleware using fluent configuration
-var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
+// Create agent with decorator and context-based middleware
+var agent = persistentAgentsClient.CreateAIAgent(model).AsBuilder()
+    .Use((innerAgent) => new GuardrailCallbackAgent(innerAgent)) // Direct decorator
+    .Use(async (context, next) => // Context-based middleware
     {
-        builder.AddCallback(new TimingCallbackMiddleware());
-    });
+        // Pre-processing: Filter input messages for PII
+        context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+        Console.WriteLine($"PII Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
+
+        await next(context).ConfigureAwait(false);
+
+        // Post-processing: Filter output messages
+        if (!context.IsStreaming)
+        {
+            context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+        }
+        else
+        {
+            context.SetRawResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
+        }
+    })
+    .Build();
 ```
 
-### Custom Middleware Implementation
+### Custom Decorator Implementation
 
 ```csharp
-internal sealed class TimingCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
+internal sealed class GuardrailCallbackAgent : DelegatingAIAgent
 {
-    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
+    private readonly string[] _forbiddenKeywords = { "harmful", "illegal", "violence" };
+
+    public GuardrailCallbackAgent(AIAgent innerAgent) : base(innerAgent) { }
+
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        Console.WriteLine($"[TIMING] Starting invocation for agent: {context.Agent.DisplayName}");
-        var timingStart = DateTime.UtcNow;
+        var filteredMessages = this.FilterMessages(messages);
+        Console.WriteLine($"Guardrail Middleware - Filtered messages: {new ChatResponse(filteredMessages).Text}");
 
-        try
+        var response = await this.InnerAgent.RunAsync(filteredMessages, thread, options, cancellationToken);
+        response.Messages = response.Messages.Select(m => new ChatMessage(m.Role, this.FilterContent(m.Text))).ToList();
+
+        return response;
+    }
+
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var filteredMessages = this.FilterMessages(messages);
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(filteredMessages, thread, options, cancellationToken))
         {
-            await next(context).ConfigureAwait(false);
-
-            // Access response based on operation type
-            if (!context.IsStreaming)
+            if (update.Text != null)
             {
-                Console.WriteLine($"Response: {context.RunResponse?.Messages[0].Text}");
+                yield return new AgentRunResponseUpdate(update.Role, this.FilterContent(update.Text));
             }
             else
             {
-                // Process streaming response
-                await foreach (var update in context.RunStreamingResponse!)
-                {
-                    Console.WriteLine($"Streaming update: {update.Text}");
-                }
+                yield return update;
             }
-
-            var duration = DateTime.UtcNow - timingStart;
-            Console.WriteLine($"[TIMING] Completed invocation in {duration.TotalMilliseconds:F1}ms");
-        }
-        catch (Exception exception)
-        {
-            Console.WriteLine($"[TIMING] Error: {exception.Message}");
-            throw;
         }
     }
-}
-```
 
-### Multiple Middleware
-
-```csharp
-var agent = persistentAgentsClient.CreateAIAgent(model)
-    .WithCallbacks(builder =>
+    private string FilterContent(string content)
     {
-        builder.AddCallback(new LoggingCallbackMiddleware());
-        builder.AddCallback(new TimingCallbackMiddleware());
-        builder.AddCallback(new CustomAuthMiddleware());
-    });
+        foreach (var keyword in this._forbiddenKeywords)
+        {
+            if (content.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[REDACTED: Forbidden content]";
+            }
+        }
+        return content;
+    }
+}
 ```
 
 ## Prerequisites
@@ -119,20 +133,33 @@ Before running this sample, you need to set up Azure AI Foundry:
 ## Running the Sample
 
 ```bash
-cd dotnet/samples/GettingStarted/Agents/Agent_Step11_CallbackMiddleware
+cd dotnet/samples/GettingStarted/Agents/Agent_Step13_Callbacks_AgentRunningDecorator
 dotnet run
 ```
 
 ## Expected Output
 
 The sample will demonstrate:
-- Custom timing measurements for agent invocations
-- Response processing for both regular and streaming operations
-- Clean middleware implementation using the fluent configuration pattern
+- Content guardrails filtering harmful requests like "Tell me something harmful"
+- PII detection and redaction for phone numbers, emails, and names
+- Both regular and streaming response filtering
+- Decorator pattern implementation with `DelegatingAIAgent`
+- Context-based middleware using `AgentInvokeCallbackContext`
+
+Example output:
+```
+=== Wording Guardrail ===
+Guardrail Middleware - Filtered messages: [REDACTED: Forbidden content]
+PII Middleware - Filtered messages: [REDACTED: Forbidden content]
+
+=== PII detection ===
+PII Middleware - Filtered messages: My name is [REDACTED: PII], call me at [REDACTED: PII] or email me at [REDACTED: PII]
+```
 
 ## Next Steps
 
-- Explore creating custom middleware for authentication, caching, or rate limiting
-- Implement middleware that modifies requests or responses
-- Use middleware for telemetry and monitoring in production applications
-- Combine multiple middleware for complex processing pipelines
+- Explore creating custom decorators for authentication, caching, or rate limiting
+- Implement decorators that modify requests or responses based on business logic
+- Use decorators for telemetry and monitoring in production applications
+- Combine multiple decorators and context-based middleware for complex processing pipelines
+- Study the difference between decorator pattern and processor pattern approaches
