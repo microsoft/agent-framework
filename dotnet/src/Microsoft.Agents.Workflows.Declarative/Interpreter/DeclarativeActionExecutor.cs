@@ -73,7 +73,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
 
         try
         {
-            object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State), cancellationToken: default).ConfigureAwait(false);
 
             if (this.EmitResultEvent)
             {
