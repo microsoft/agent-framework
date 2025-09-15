@@ -6,7 +6,7 @@ import sys
 from collections.abc import MutableSequence, Sequence
 from typing import Any, Final, Literal
 
-from agent_framework import ChatMessage, Context, ContextProvider
+from agent_framework import ChatMessage, Context, ContextProvider, TextContent
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 
 if sys.version_info >= (3, 11):
@@ -14,11 +14,13 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
-
+import numpy as np
+from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import FilterQuery, TextQuery
+from redisvl.query import FilterQuery, HybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression
 from redisvl.utils.token_escaper import TokenEscaper
+from redisvl.utils.vectorize import HFTextVectorizer, OpenAITextVectorizer
 
 DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
 
@@ -37,8 +39,10 @@ class RedisProvider(ContextProvider):
     storage_type: Literal["hash", "json"] = "hash"
 
     # Vector configuration (optional)
+    vectorizer_api_key: str | None = None
+    vectorizer_choice: Literal["openai", "hf"] | None = None
+    vectorizer: OpenAITextVectorizer | HFTextVectorizer | None = None
     vector_field_name: str | None = None
-    vector_dims: int | None = None
     vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None
     vector_algorithm: Literal["flat", "hnsw"] | None = None
     vector_distance_metric: Literal["cosine", "ip", "l2"] | None = None
@@ -67,6 +71,8 @@ class RedisProvider(ContextProvider):
         key_separator: str = ":",
         storage_type: Literal["hash", "json"] = "hash",
         # Vector: all optional; omit to disable KNN
+        vectorizer_api_key: str | None = None,
+        vectorizer_choice: Literal["openai", "hf"] | None = None,
         vector_field_name: str | None = None,
         vector_dims: int | None = None,
         vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None,
@@ -82,6 +88,22 @@ class RedisProvider(ContextProvider):
         overwrite_redis_index: bool = True,
         drop_redis_index: bool = True,
     ):
+        if vectorizer_choice == "openai":
+            vectorizer = OpenAITextVectorizer(
+                model="text-embedding-ada-002",
+                api_config={"api_key": vectorizer_api_key},
+                cache=EmbeddingsCache(name="openai_embeddings_cache"),
+            )
+            vector_dims = vectorizer.dims
+        elif vectorizer_choice == "hf":
+            vectorizer = HFTextVectorizer(
+                model="sentence-transformers/all-MiniLM-L6-v2", cache=EmbeddingsCache(name="hf_embeddings_cache")
+            )
+            vector_dims = vectorizer.dims
+        else:
+            vectorizer = None
+            vector_dims = None
+
         schema_dict = self._build_schema_dict(
             index_name=index_name,
             prefix=prefix,
@@ -93,6 +115,7 @@ class RedisProvider(ContextProvider):
             vector_algorithm=vector_algorithm,
             vector_distance_metric=vector_distance_metric,
         )
+
         redis_index = AsyncSearchIndex.from_dict(schema_dict, redis_url=redis_url, validate_on_load=True)
 
         token_escaper = TokenEscaper()
@@ -103,6 +126,9 @@ class RedisProvider(ContextProvider):
             prefix=prefix,  # type: ignore[reportCallIssue]
             key_separator=key_separator,  # type: ignore[reportCallIssue]
             storage_type=storage_type,  # type: ignore[reportCallIssue]
+            vectorizer_api_key=vectorizer_api_key,  # type: ignore[reportCallIssue]
+            vectorizer_choice=vectorizer_choice,  # type: ignore[reportCallIssue]
+            vectorizer=vectorizer,  # type: ignore[reportCallIssue]
             vector_field_name=vector_field_name,  # type: ignore[reportCallIssue]
             vector_dims=vector_dims,  # type: ignore[reportCallIssue]
             vector_datatype=vector_datatype,  # type: ignore[reportCallIssue]
@@ -209,11 +235,20 @@ class RedisProvider(ContextProvider):
 
             prepared.append(d)
 
+        # Batch embed contents for every message
+        if self.vectorizer and self.vector_field_name:
+            text_list = [d["content"] for d in prepared]
+            embeddings = await self.vectorizer.aembed_many(text_list, batch_size=len(text_list))
+            for i, d in enumerate(prepared):
+                vec = np.asarray(embeddings[i], dtype=np.float32).tobytes()
+                field_name: str = self.vector_field_name
+                d[field_name] = vec
+
         # Load all at once if supported
         await self.redis_index.load(prepared)
         return
 
-    async def text_search(
+    async def redis_search(
         self,
         text: str,
         *,
@@ -228,6 +263,8 @@ class RedisProvider(ContextProvider):
         in_order: bool = False,
         params: dict[str, Any] | None = None,
         stopwords: str | set[str] | None = "english",
+        alpha: float = 0.7,
+        dtype: Literal["float32", "float16", "bfloat16"] = "float32",
     ) -> list[dict[str, Any]]:
         """Fulltext search over a text field with optional filters.
 
@@ -278,8 +315,27 @@ class RedisProvider(ContextProvider):
         normalized_stopwords: str | set[str] | None = stopwords
         if isinstance(stopwords, list):
             normalized_stopwords = set(stopwords)
-
         try:
+            if self.vectorizer and self.vector_field_name:
+                # Build hybrid query: combine full-text and vector similarity
+                embed_list = await self.vectorizer.aembed_many([q], batch_size=1)
+                vector: list[float] = [float(x) for x in (embed_list[0] or [])]
+                query = HybridQuery(
+                    text=q,
+                    text_field_name=text_field_name,
+                    vector=vector,
+                    vector_field_name=self.vector_field_name,
+                    text_scorer=text_scorer,
+                    filter_expression=combined_filter,
+                    alpha=alpha,
+                    dtype=dtype,
+                    num_results=num_results,
+                    return_fields=return_fields,
+                    stopwords=normalized_stopwords,
+                    dialect=dialect,
+                )
+                return await self.redis_index.query(query)
+            # Text-only search
             query = TextQuery(
                 text=q,
                 text_field_name=text_field_name,
@@ -289,6 +345,7 @@ class RedisProvider(ContextProvider):
                 return_fields=return_fields,
                 stopwords=normalized_stopwords,
                 dialect=dialect,
+                # return_score supported on TextQuery; omit on HybridQuery for compatibility
                 return_score=return_score,
                 sort_by=sort_by,
                 in_order=in_order,
@@ -313,36 +370,54 @@ class RedisProvider(ContextProvider):
         return self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id
 
     async def thread_created(self, thread_id: str | None) -> None:
-        """Called just after a new thread is created.
+        """Called when a new thread is created.
 
-        Mirrors Mem0Provider semantics: validate per-operation thread usage
-        when scoping is enabled and capture the thread id for this operation.
+        Args:
+            thread_id: The ID of the thread or None.
         """
         self._validate_per_operation_thread_id(thread_id)
         self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
     async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Called just before messages are added to the chat by any participant.
+        """Called when a new message is being added to the thread.
 
-        Validate provider scope presence and per-operation thread semantics,
-        then capture the per-operation thread id when appropriate.
+        Args:
+            thread_id: The ID of the thread or None.
+            new_messages: New messages to add.
         """
         self._validate_filters()
         self._validate_per_operation_thread_id(thread_id)
         self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
-        """Called just before the Model/Agent/etc. is invoked.
+        messages_list = [new_messages] if isinstance(new_messages, ChatMessage) else list(new_messages)
 
-        Implementers can load any additional context required at this time,
-        and they should return any context that should be passed to the agent.
+        messages: list[dict[str, str]] = [
+            {"role": message.role.value, "content": message.text}
+            for message in messages_list
+            if message.role.value in {"user", "assistant", "system"} and message.text and message.text.strip()
+        ]
+        if messages:
+            await self.add(data=messages)
+
+    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
+        """Called before invoking the AI model to provide context.
 
         Args:
-            messages: The most recent messages that the agent is being invoked with.
+            messages: List of new messages in the thread.
+
+        Returns:
+            Context: Context object containing instructions with memories.
         """
-        # Keep symmetry with Mem0Provider by ensuring scope is present
         self._validate_filters()
-        return Context()
+        messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
+        input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
+
+        memories = await self.redis_search(text=input_text)
+        line_separated_memories = "\n".join(
+            str(memory.get("content", "")) for memory in memories if memory.get("content")
+        )
+        content = TextContent(f"{self.context_prompt}\n{line_separated_memories}") if line_separated_memories else None
+        return Context(contents=[content] if content else None)
 
     async def __aenter__(self) -> Self:
         # Nothing special to do for Redis client; keep for symmetry with Mem0Provider

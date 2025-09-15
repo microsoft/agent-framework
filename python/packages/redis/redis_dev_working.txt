@@ -1,6 +1,8 @@
 import asyncio
 
+from agent_framework import ChatMessage, Role
 from agent_framework_redis._provider import RedisProvider
+
 
 
 async def main():
@@ -29,21 +31,38 @@ async def main():
         application_id="appA",
         agent_id="agentX",
         user_id="u1",
+        vectorizer_choice="openai",
+        vector_field_name="vector",
     )
 
     print("\n[1/4] Creating index...")
     await provider.create_redis_index()
 
-    # Mix of docs; only those matching provider scope (appA, agentX, u1) should be returned
-    test_data = [
-        {"role": "user", "content": "Hello from u1 in appA."},
-        {"role": "bot", "content": "Hello again, world from u1 in appA."},
-        {"role": "user", "content": "Hello from u1 in appB.", "application_id": "appB"},
-        {"role": "user", "content": "Hello from u2 in appA.", "user_id": "u2"},
-        {"role": "user", "content": "Irrelevant text", "user_id": "u2", "application_id": "appB"},
+    # Insert via messages_adding (provider-scoped). Only these should be visible to this provider.
+    messages_in_scope = [
+        ChatMessage(role=Role.USER, text="Hello from u1 in appA."),
+        ChatMessage(role=Role.ASSISTANT, text="Hello again, world from u1 in appA."),
+        ChatMessage(role=Role.SYSTEM, text="System notice within appA/u1."),
     ]
-    print("[2/4] Inserting mixed-scope documents...")
-    await provider.add(data=test_data)
+    print("[2/4] Inserting in-scope messages via messages_adding()...")
+    await provider.messages_adding(thread_id="runA", new_messages=messages_in_scope)
+
+    # Insert out-of-scope messages via a second provider (different user/app)
+    other = RedisProvider(
+        redis_url="redis://localhost:6379",
+        overwrite_redis_index=False,
+        drop_redis_index=False,
+        application_id="appB",
+        agent_id="agentX",
+        user_id="u2",
+        vectorizer_choice="openai",
+        vector_field_name="vector",
+    )
+    messages_out_of_scope = [
+        ChatMessage(role=Role.USER, text="Hello from u2 in appB (should be invisible to appA/u1)."),
+        ChatMessage(role=Role.ASSISTANT, text="Another hello from u2/appB (out of scope)."),
+    ]
+    await other.messages_adding(thread_id="runB", new_messages=messages_out_of_scope)
 
     exists = await provider.redis_index.exists()
     print("Index exists?", exists, "(Expected: True)")
@@ -51,25 +70,28 @@ async def main():
     info = await provider.redis_index.info()
     print("Index info:", info)
 
-    # 1) Basic search within provider scope
-    print("\n[3/4] Basic search within provider scope...")
-    res_all = await provider.text_search("hello")
-    print("Search 'hello' within provider scope ->", len(res_all), "(Expected: 2)")
-    for r in res_all:
-        print({k: r.get(k) for k in ["content", "role", "application_id", "agent_id", "user_id"]})
-    assert all(
-        r.get("application_id") == "appA" and r.get("agent_id") == "agentX" and r.get("user_id") == "u1"
-        for r in res_all
-    )
+    # 1) Basic context retrieval via model_invoking (drives search)
+    print("\n[3/4] model_invoking triggers scoped search and returns context...")
+    ctx = await provider.model_invoking([
+        ChatMessage(role=Role.USER, text="hello"),
+        ChatMessage(role=Role.ASSISTANT, text="reply"),
+    ])
+    # Print the instruction content returned
+    contents = getattr(ctx, "contents", None) or []
+    print("Context contents count:", len(contents))
+    if contents:
+        first = contents[0]
+        text = getattr(first, "text", None) or getattr(first, "data", None)
+        print("Context preview:\n", str(text)[:300])
 
-    # 2) Attempt to override user_id at query time: should return 0 (conflicts with provider scope)
+    # 2) Attempt to override user_id at query time via search (still unsupported)
     print("\n[4/4] Attempt to override provider-scoped user_id at query time...")
-    res_override = await provider.text_search("hello", filter_expression="@user_id:{u2}")
+    res_override = await provider.redis_search("hello", filter_expression="@user_id:{u2}")
     print("Attempt override @user_id:{u2} ->", len(res_override), "(Expected: 0)")
     assert len(res_override) == 0
 
     # 3) Non-ID filtering still works (e.g., role) within provider scope
-    res_role_user = await provider.text_search("hello", filter_expression="@role:{user}")
+    res_role_user = await provider.redis_search("hello", filter_expression="@role:{user}")
     print("Filter by role within scope ->", len(res_role_user), "(Expected: 1)")
     assert all(r.get("role") == "user" and r.get("user_id") == "u1" for r in res_role_user)
 
@@ -77,14 +99,14 @@ async def main():
 
     # Example expected output (truncated):
     # [1/4] Creating index...
-    # [2/4] Inserting mixed-scope documents...
+    # [2/4] Inserting in-scope messages via messages_adding()...
     # Index exists? True (Expected: True)
     # Index info: {...}
     #
     # [3/4] Basic search within provider scope...
     # Search 'hello' within provider scope -> 2 (Expected: 2)
     # {'content': 'Hello from u1 in appA.', 'role': 'user', 'application_id': 'appA', 'agent_id': 'agentX', 'user_id': 'u1'}
-    # {'content': 'Hello again, world from u1 in appA.', 'role': 'bot', 'application_id': 'appA', 'agent_id': 'agentX', 'user_id': 'u1'}
+    # {'content': 'Hello again, world from u1 in appA.', 'role': 'assistant', 'application_id': 'appA', 'agent_id': 'agentX', 'user_id': 'u1'}
     #
     # [4/4] Attempt to override provider-scoped user_id at query time...
     # Attempt override @user_id:{u2} -> 0 (Expected: 0)

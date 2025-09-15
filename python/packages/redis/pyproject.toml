@@ -26,6 +26,7 @@ dependencies = [
     "agent-framework",
     "redis>=6.4.0",
     "redisvl>=0.8.2",
+    "numpy",
     "sentence-transformers",
     "nltk"
 ]
