@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Core.Pipeline;
-using Azure.Identity;
 using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Declarative;
@@ -34,7 +33,7 @@ public abstract class WorkflowAgentProvider
 /// <param name="projectEndpoint">The endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
 /// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
-public sealed class FoundryAgentProvider(string projectEndpoint, TokenCredential? projectCredentials = null, HttpClient? httpClient = null) : WorkflowAgentProvider
+public sealed class FoundryAgentProvider(string projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
     private PersistentAgentsClient? _agentsClient;
 
@@ -57,7 +56,7 @@ public sealed class FoundryAgentProvider(string projectEndpoint, TokenCredential
                 clientOptions.Transport = new HttpClientTransport(httpClient);
             }
 
-            PersistentAgentsClient newClient = new(projectEndpoint, projectCredentials ?? new DefaultAzureCredential(), clientOptions);
+            PersistentAgentsClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
 
             Interlocked.CompareExchange(ref this._agentsClient, newClient, null);
         }

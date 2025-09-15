@@ -15,7 +15,7 @@ internal static class A2APartExtensions
     /// </summary>
     /// <param name="part">The A2A part to convert.</param>
     /// <returns>The corresponding <see cref="AIContent"/>.</returns>
-    public static AIContent ToAIContent(this Part part)
+    internal static AIContent ToAIContent(this Part part)
     {
         return part switch
         {

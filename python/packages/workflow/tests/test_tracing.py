@@ -22,8 +22,8 @@ from agent_framework_workflow._workflow_context import WorkflowContext
 @pytest.fixture
 def tracing_enabled() -> Generator[None, None, None]:
     """Enable tracing for tests."""
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = "true"
+    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL")
+    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = "true"
 
     # Force reload the settings to pick up the environment variable
     from agent_framework_workflow._telemetry import WorkflowDiagnosticSettings
@@ -34,9 +34,9 @@ def tracing_enabled() -> Generator[None, None, None]:
 
     # Restore original value
     if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS", None)
+        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL", None)
     else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = original_value
+        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = original_value
 
     # Reload settings again
     workflow_tracer.settings = WorkflowDiagnosticSettings()
@@ -142,7 +142,6 @@ class FanInAggregator(Executor):
         return self._processed_messages
 
 
-@pytest.mark.asyncio
 async def test_workflow_tracer_configuration() -> None:
     """Test that workflow tracer can be enabled and disabled."""
     # Test disabled by default
@@ -150,8 +149,8 @@ async def test_workflow_tracer_configuration() -> None:
     assert not tracer.enabled
 
     # Test enabled with environment variable
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = "true"
+    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL")
+    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = "true"
 
     # Force reload the settings to pick up the environment variable
     from agent_framework_workflow._telemetry import WorkflowDiagnosticSettings
@@ -162,15 +161,14 @@ async def test_workflow_tracer_configuration() -> None:
 
     # Restore original value
     if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS", None)
+        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL", None)
     else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = original_value
+        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = original_value
 
     # Reload settings again
     tracer.settings = WorkflowDiagnosticSettings()
 
 
-@pytest.mark.asyncio
 async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test creation and attributes of all span types (workflow, processing, sending)."""
     # Create a mock workflow object
@@ -228,7 +226,6 @@ async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter:
     assert sending_span.attributes.get("message.destination_executor_id") == "target-789"
 
 
-@pytest.mark.asyncio
 async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test trace context propagation and handling in messages and executors."""
     shared_state = SharedState()

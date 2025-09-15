@@ -33,6 +33,8 @@ public static class OpenAIResponseClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
     public static AIAgent CreateAIAgent(this OpenAIResponseClient client, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
     {
+        Throw.IfNull(client);
+
         return client.CreateAIAgent(
             new ChatClientAgentOptions()
             {
@@ -60,17 +62,6 @@ public static class OpenAIResponseClientExtensions
         Throw.IfNull(client);
         Throw.IfNull(options);
 
-#pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = client.AsNewIChatClient();
-#pragma warning restore CA2000 // Dispose objects before losing scope
-        ChatClientAgent agent = new(chatClient, options, loggerFactory);
-        return agent;
+        return new ChatClientAgent(client.AsIChatClient(), options, loggerFactory);
     }
-
-    /// <summary>Gets an <see cref="IChatClient"/> for use with this <see cref="OpenAIResponseClient"/>.</summary>
-    /// <param name="responseClient">The client.</param>
-    /// <returns>An <see cref="IChatClient"/> that can be used to converse via the <see cref="OpenAIResponseClient"/>.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public static IChatClient AsNewIChatClient(this OpenAIResponseClient responseClient) =>
-        new NewOpenAIResponsesChatClient(responseClient);
 }
