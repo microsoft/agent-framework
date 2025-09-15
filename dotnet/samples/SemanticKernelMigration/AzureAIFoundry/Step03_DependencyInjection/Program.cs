@@ -66,7 +66,7 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton((sp) => AzureAIAgent.CreateAgentsClient(azureEndpoint, new AzureCliCredential()));
+    serviceCollection.AddSingleton((sp) => new PersistentAgentsClient(azureEndpoint, new AzureCliCredential()));
     serviceCollection.AddTransient<AIAgent>((sp) =>
     {
         var azureAgentClient = sp.GetRequiredService<PersistentAgentsClient>();

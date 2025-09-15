@@ -10,16 +10,16 @@ using Moq;
 namespace Microsoft.Extensions.AI.Agents.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AgentAIFunctionFactory"/> class.
+/// Unit tests for the <see cref="AgentExtensions.AsAIFunction"/> method.
 /// </summary>
-public class AgentAIFunctionFactoryTests
+public class AgentExtensionsTests
 {
     [Fact]
     public void CreateFromAgent_WithNullAgent_ThrowsArgumentNullException()
     {
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            AgentAIFunctionFactory.CreateFromAgent(null!));
+            AgentExtensions.AsAIFunction(null!));
 
         Assert.Equal("agent", exception.ParamName);
     }
@@ -33,7 +33,7 @@ public class AgentAIFunctionFactoryTests
         mockAgent.Setup(a => a.Description).Returns("Test agent description");
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object);
+        var result = mockAgent.Object.AsAIFunction();
 
         // Assert
         Assert.NotNull(result);
@@ -51,7 +51,7 @@ public class AgentAIFunctionFactoryTests
         mockAgent.Setup(a => a.Description).Returns("Test description");
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object);
+        var result = mockAgent.Object.AsAIFunction();
 
         // Assert
         Assert.NotNull(result);
@@ -60,7 +60,7 @@ public class AgentAIFunctionFactoryTests
     }
 
     [Fact]
-    public void CreateFromAgent_WithAgentHavingNullDescription_UsesEmptyDescription()
+    public void CreateFromAgent_WithAgentHavingNullDescription_UsesDefaultDescription()
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
@@ -68,12 +68,12 @@ public class AgentAIFunctionFactoryTests
         mockAgent.Setup(a => a.Description).Returns((string?)null);
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object);
+        var result = mockAgent.Object.AsAIFunction();
 
         // Assert
         Assert.NotNull(result);
         Assert.Equal("TestAgent", result.Name);
-        Assert.Equal(string.Empty, result.Description);
+        Assert.Equal("Invoke an agent to retrieve some information.", result.Description);
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public class AgentAIFunctionFactoryTests
         };
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object, customOptions);
+        var result = mockAgent.Object.AsAIFunction(customOptions);
 
         // Assert
         Assert.NotNull(result);
@@ -108,7 +108,7 @@ public class AgentAIFunctionFactoryTests
         mockAgent.Setup(a => a.Description).Returns("Test agent description");
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object, null);
+        var result = mockAgent.Object.AsAIFunction(null);
 
         // Assert
         Assert.NotNull(result);
@@ -123,7 +123,7 @@ public class AgentAIFunctionFactoryTests
         var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
 
-        var aiFunction = AgentAIFunctionFactory.CreateFromAgent(testAgent);
+        var aiFunction = testAgent.AsAIFunction();
 
         // Act
         var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
@@ -143,7 +143,7 @@ public class AgentAIFunctionFactoryTests
         using var cancellationTokenSource = new CancellationTokenSource();
         var cancellationToken = cancellationTokenSource.Token;
 
-        var aiFunction = AgentAIFunctionFactory.CreateFromAgent(testAgent);
+        var aiFunction = testAgent.AsAIFunction();
 
         // Act
         var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
@@ -161,7 +161,7 @@ public class AgentAIFunctionFactoryTests
         var expectedException = new InvalidOperationException("Test exception");
         var testAgent = new TestAgent("TestAgent", "Test description", expectedException);
 
-        var aiFunction = AgentAIFunctionFactory.CreateFromAgent(testAgent);
+        var aiFunction = testAgent.AsAIFunction();
 
         // Act & Assert
         var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
@@ -180,7 +180,7 @@ public class AgentAIFunctionFactoryTests
         mockAgent.Setup(a => a.Description).Returns("Test description");
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object);
+        var result = mockAgent.Object.AsAIFunction();
 
         // Assert
         Assert.NotNull(result);
@@ -204,7 +204,7 @@ public class AgentAIFunctionFactoryTests
         mockAgent.Setup(a => a.Description).Returns("Test description");
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object);
+        var result = mockAgent.Object.AsAIFunction();
 
         // Assert
         Assert.NotNull(result);
@@ -221,7 +221,7 @@ public class AgentAIFunctionFactoryTests
         mockAgent.Setup(a => a.Description).Returns(string.Empty);
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object);
+        var result = mockAgent.Object.AsAIFunction();
 
         // Assert
         Assert.NotNull(result);
@@ -244,7 +244,7 @@ public class AgentAIFunctionFactoryTests
         };
 
         // Act
-        var result = AgentAIFunctionFactory.CreateFromAgent(mockAgent.Object, customOptions);
+        var result = mockAgent.Object.AsAIFunction(customOptions);
 
         // Assert
         Assert.NotNull(result);
@@ -265,7 +265,7 @@ public class AgentAIFunctionFactoryTests
         };
 
         var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
-        var aiFunction = AgentAIFunctionFactory.CreateFromAgent(testAgent);
+        var aiFunction = testAgent.AsAIFunction();
 
         // Act
         var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
