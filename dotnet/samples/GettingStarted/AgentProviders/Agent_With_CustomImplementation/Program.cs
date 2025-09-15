@@ -30,7 +30,7 @@ namespace SampleApp
     // Custom agent that parrot's the user input back in upper case.
     internal sealed class UpperCaseParrotAgent : AIAgent
     {
-        public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -50,7 +50,7 @@ namespace SampleApp
             };
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -76,7 +76,7 @@ namespace SampleApp
             }
         }
 
-        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IReadOnlyCollection<ChatMessage> messages, string agentName) => messages.Select(x =>
+        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IEnumerable<ChatMessage> messages, string agentName) => messages.Select(x =>
             {
                 // Clone the message and update its author to be the agent.
                 var messageClone = x.Clone();
