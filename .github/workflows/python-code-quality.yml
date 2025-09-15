@@ -36,7 +36,7 @@ jobs:
           cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
-        run: uv sync --all-packages --dev
+        run: uv sync --all-packages --dev --no-group=docs
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit

@@ -76,7 +76,7 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: |
-          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit
+          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit --no-group=docs
       - name: Test with pytest
         timeout-minutes: 10
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
@@ -137,7 +137,7 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: |
-          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit
+          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit --no-group=docs
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
@@ -204,7 +204,7 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: |
-          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit
+          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit --no-group=docs
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2

@@ -34,7 +34,7 @@ jobs:
           cache-suffix: ${{ runner.os }}-${{ env.UV_PYTHON }}
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
-        run: uv sync --all-packages --dev
+        run: uv sync --all-packages --dev --no-group=docs
       - name: Run all tests with coverage report
         run: uv run poe all-tests  -n logical --dist loadfile --dist worksteal --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
       - name: Upload coverage report
