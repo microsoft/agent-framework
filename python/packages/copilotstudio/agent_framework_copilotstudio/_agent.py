@@ -15,6 +15,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
+from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 from pydantic import ValidationError
 
 from ._acquire_token import acquire_token
@@ -53,15 +54,15 @@ class CopilotStudioSettings(AFBaseSettings):
 class CopilotStudioAgent(BaseAgent):
     """A Copilot Studio Agent."""
 
-    client: Any  # CopilotClient
-    settings: Any | None  # ConnectionSettings | None
+    client: CopilotClient
+    settings: ConnectionSettings | None
     environment_id: str | None
     agent_identifier: str | None
     client_id: str | None
     tenant_id: str | None
     token: str | None
-    cloud: Any | None  # PowerPlatformCloud | None
-    agent_type: Any | None  # AgentType | None
+    cloud: PowerPlatformCloud | None
+    agent_type: AgentType | None
     custom_power_platform_cloud: str | None
     username: str | None
     token_cache: Any | None
@@ -69,15 +70,15 @@ class CopilotStudioAgent(BaseAgent):
 
     def __init__(
         self,
-        client: Any | None = None,  # CopilotClient | None
-        settings: Any | None = None,  # ConnectionSettings | None
+        client: CopilotClient | None = None,
+        settings: ConnectionSettings | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
         client_id: str | None = None,
         tenant_id: str | None = None,
         token: str | None = None,
-        cloud: Any | None = None,  # PowerPlatformCloud | None
-        agent_type: Any | None = None,  # AgentType | None
+        cloud: PowerPlatformCloud | None = None,
+        agent_type: AgentType | None = None,
         custom_power_platform_cloud: str | None = None,
         username: str | None = None,
         token_cache: Any | None = None,
@@ -142,8 +143,6 @@ class CopilotStudioAgent(BaseAgent):
                         "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
                     )
 
-                from microsoft_agents.copilotstudio.client import ConnectionSettings
-
                 settings = ConnectionSettings(
                     environment_id=copilot_studio_settings.environmentid,
                     agent_identifier=copilot_studio_settings.schemaname,
@@ -172,8 +171,6 @@ class CopilotStudioAgent(BaseAgent):
                     token_cache=token_cache,
                     scopes=scopes,
                 )
-
-            from microsoft_agents.copilotstudio.client import CopilotClient
 
             client = CopilotClient(settings=settings, token=token)
 
