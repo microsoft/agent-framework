@@ -50,7 +50,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
             proceed =
                 mode switch
                 {
-                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => !(await this._hasExecuted.ReadAsync(context).ConfigureAwait(false)),
+                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => !await this._hasExecuted.ReadAsync(context).ConfigureAwait(false),
                     SkipQuestionMode.AlwaysSkipIfVariableHasValue => hasValue,
                     SkipQuestionMode.AlwaysAsk => true,
                     _ => true,
@@ -124,6 +124,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         {
             ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
             DataValue defaultValue = this.State.Evaluator.GetValue(defaultValueExpression).Value;
+            await this.AssignAsync(this.Model.Variable?.Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim())).ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);

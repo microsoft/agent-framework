@@ -141,7 +141,7 @@ internal static class ChatMessageExtensions
         }
 
         AgentMessageRole? role = null;
-        if (Enum.TryParse<AgentMessageRole>(roleValue.Value, out AgentMessageRole parsedRole))
+        if (Enum.TryParse(roleValue.Value, out AgentMessageRole parsedRole))
         {
             role = parsedRole;
         }
@@ -188,13 +188,13 @@ internal static class ChatMessageExtensions
         yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormula());
-        yield return new NamedValue(TypeSchema.Message.Fields.Content, TableValue.NewTable(s_contentRecordType, message.GetContentRecords()));
+        yield return new NamedValue(TypeSchema.Message.Fields.Content, FormulaValue.NewTable(s_contentRecordType, message.GetContentRecords()));
         yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToRecord());
     }
 
     private static IEnumerable<RecordValue> GetContentRecords(this ChatMessage message) =>
-        message.Contents.Select(content => RecordValue.NewRecordFromFields(content.GetContentFields()));
+        message.Contents.Select(content => FormulaValue.NewRecordFromFields(content.GetContentFields()));
 
     private static IEnumerable<NamedValue> GetContentFields(this AIContent content)
     {
