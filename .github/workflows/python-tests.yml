@@ -36,7 +36,7 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit
 
       # Main package tests
       - name: Set environment variables - main - win

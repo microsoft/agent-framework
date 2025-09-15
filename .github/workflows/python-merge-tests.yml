@@ -137,7 +137,7 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
@@ -204,7 +204,7 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
       - name: Install the project
         run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          uv sync --all-packages --dev -U --prerelease=if-necessary-or-explicit
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
