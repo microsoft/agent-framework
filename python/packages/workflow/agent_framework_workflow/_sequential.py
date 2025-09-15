@@ -23,8 +23,8 @@ Why include the small internal adapter executors?
   `list[ChatMessage]` regardless of whether callers pass a `str`, a single `ChatMessage`,
   or a list. This keeps the first hop strongly typed and avoids boilerplate in participants.
 - Agent response adaptation ("to-conversation:<participant>"): agents (via AgentExecutor)
-  emit `AgentExecutorResponse`. The adapter converts that to a `list[ChatMessage]`,
-  preferring `full_conversation` so original prompts aren't lost when chaining.
+  emit `AgentExecutorResponse`. The adapter converts that to a `list[ChatMessage]`
+  using `full_conversation` so original prompts aren't lost when chaining.
 - Explicit completion ("complete"): emits a `WorkflowCompletedEvent` with the final
   conversation list, giving a consistent terminal payload shape for both agents and
   custom executors.
@@ -76,16 +76,10 @@ class _ResponseToConversation(Executor):
 
     @handler
     async def convert(self, response: AgentExecutorResponse, ctx: WorkflowContext[list[ChatMessage]]) -> None:
-        # Prefer full_conversation when provided to preserve original prompts
-        if response.full_conversation is not None:
-            await ctx.send_message(list(response.full_conversation))
-            return
-
-        # Fallback to agent_run_response messages
-        msgs: list[ChatMessage] = list(response.agent_run_response.messages)
-        if not msgs:
-            logger.warning("AgentExecutorResponse contained no messages; passing empty conversation downstream")
-        await ctx.send_message(msgs)
+        # Always use full_conversation; AgentExecutor guarantees it is populated.
+        if response.full_conversation is None:  # Defensive: indicates a contract violation
+            raise RuntimeError("AgentExecutorResponse.full_conversation missing. AgentExecutor must populate it.")
+        await ctx.send_message(list(response.full_conversation))
 
 
 class _CompleteWithConversation(Executor):
