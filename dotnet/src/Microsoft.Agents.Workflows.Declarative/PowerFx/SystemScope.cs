@@ -108,12 +108,6 @@ internal static class SystemScope
         state.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
     }
 
-    public static FormulaValue GetInternalConversationId(this WorkflowFormulaState state) =>
-        state.Get(Names.InternalId, VariableScopeNames.System);
-
-    public static void SetInternalConversationId(this WorkflowFormulaState state, string conversationId) =>
-        state.Set(Names.InternalId, FormulaValue.New(conversationId), VariableScopeNames.System);
-
     public static void SetLastMessage(this WorkflowFormulaState state, ChatMessage message)
     {
         state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
