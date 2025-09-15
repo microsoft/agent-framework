@@ -62,14 +62,14 @@ async def test_executor_failed_event_emitted_on_direct_execute():
 
 
 class Requester(Executor):
-    """Executor that always requests external info to test WAITING_FOR_INPUT state."""
+    """Executor that always requests external info to test idle-with-requests state."""
 
     @handler
     async def ask(self, _: str, ctx: WorkflowContext[RequestInfoMessage]) -> None:  # pragma: no cover
         await ctx.send_message(RequestInfoMessage())
 
 
-async def test_waiting_for_input_status_streaming():
+async def test_idle_with_pending_requests_status_streaming():
     req = Requester(id="req")
     rie = RequestInfoExecutor(id="rie")
     wf = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
@@ -78,9 +78,10 @@ async def test_waiting_for_input_status_streaming():
 
     # Ensure a request was emitted
     assert any(isinstance(e, RequestInfoEvent) for e in events)
-    # Final status should be WAITING_FOR_INPUT
-    final_status = [e for e in events if isinstance(e, WorkflowStatusEvent)][-1]
-    assert final_status.state == WorkflowRunState.WAITING_FOR_INPUT
+    status_events = [e for e in events if isinstance(e, WorkflowStatusEvent)]
+    assert len(status_events) >= 3
+    assert status_events[-2].state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+    assert status_events[-1].state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
 
 class Completer(Executor):
@@ -107,12 +108,12 @@ async def test_non_streaming_final_state_helpers():
     result1: WorkflowRunResult = await wf1.run("done")
     assert result1.get_final_state() == WorkflowRunState.COMPLETED
 
-    # Waiting-for-input case
+    # Idle-with-pending-request case
     req = Requester(id="req")
     rie = RequestInfoExecutor(id="rie")
     wf2 = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
     result2: WorkflowRunResult = await wf2.run("start")
-    assert result2.get_final_state() == WorkflowRunState.WAITING_FOR_INPUT
+    assert result2.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
 
 async def test_run_includes_status_events_completed():
@@ -124,11 +125,13 @@ async def test_run_includes_status_events_completed():
     assert timeline[-1].state == WorkflowRunState.COMPLETED
 
 
-async def test_run_includes_status_events_waiting():
+async def test_run_includes_status_events_idle_with_requests():
     req = Requester(id="req2")
     rie = RequestInfoExecutor(id="rie2")
     wf = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
     result: WorkflowRunResult = await wf.run("start")
     timeline = result.status_timeline()
     assert timeline, "Expected status timeline in non-streaming run() results"
-    assert timeline[-1].state == WorkflowRunState.WAITING_FOR_INPUT
+    assert len(timeline) >= 3
+    assert timeline[-2].state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+    assert timeline[-1].state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS

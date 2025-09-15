@@ -239,6 +239,7 @@ class Workflow(AFBaseModel):
         with workflow_tracer.create_workflow_run_span(self):
             saw_completed = False
             saw_request = False
+            emitted_in_progress_pending = False
             try:
                 # Add workflow started event (telemetry + surface state to consumers)
                 workflow_tracer.add_workflow_event("workflow.started")
@@ -263,12 +264,17 @@ class Workflow(AFBaseModel):
                         saw_request = True
                     yield event
 
+                    if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending and not saw_completed:
+                        emitted_in_progress_pending = True
+                        yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+
                 # Success path: emit a final status based on observed terminal signals
                 if saw_completed:
                     yield WorkflowStatusEvent(WorkflowRunState.COMPLETED)
                 elif saw_request:
-                    yield WorkflowStatusEvent(WorkflowRunState.WAITING_FOR_INPUT)
-                # Else: ambiguous/no-op; omit final status
+                    yield WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                else:
+                    yield WorkflowStatusEvent(WorkflowRunState.IDLE)
 
                 workflow_tracer.add_workflow_event("workflow.completed")
             except Exception as e:

@@ -212,7 +212,9 @@ async def main() -> None:
             workflow.send_responses_streaming(pending_responses) if pending_responses else workflow.run_stream("start")
         )
         # Collect events for this turn. Among these you may see WorkflowStatusEvent
-        # with state WAITING_FOR_INPUT when the workflow pauses for human input.
+        # with state IDLE_WITH_PENDING_REQUESTS when the workflow pauses for
+        # human input, preceded by IN_PROGRESS_PENDING_REQUESTS as requests are
+        # emitted.
         events = [event async for event in stream]
         pending_responses = None
 
@@ -227,11 +229,20 @@ async def main() -> None:
             # Other events are ignored for brevity.
 
         # Detect run state transitions for a better developer experience.
-        waiting = any(
-            isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.WAITING_FOR_INPUT for e in events
+        pending_status = any(
+            isinstance(e, WorkflowStatusEvent)
+            and e.state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+            for e in events
         )
-        if waiting:
-            print("State: WAITING_FOR_INPUT (awaiting human input)")
+        idle_with_requests = any(
+            isinstance(e, WorkflowStatusEvent)
+            and e.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+            for e in events
+        )
+        if pending_status:
+            print("State: IN_PROGRESS_PENDING_REQUESTS (requests outstanding)")
+        if idle_with_requests:
+            print("State: IDLE_WITH_PENDING_REQUESTS (awaiting human input)")
 
         # If we have any human requests, prompt the user and prepare responses.
         if requests and not completed:

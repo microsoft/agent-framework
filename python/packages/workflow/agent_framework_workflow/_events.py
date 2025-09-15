@@ -75,9 +75,17 @@ class WorkflowRunState(str, Enum):
         running). This status is emitted at the beginning of a run and can be
         followed by other statuses as the run progresses.
 
-      - WAITING_FOR_INPUT: The workflow is paused awaiting external input
-        (e.g., emitted a `RequestInfoEvent`). This is a non-terminal state; the
-        workflow can resume when responses are supplied.
+      - IN_PROGRESS_PENDING_REQUESTS: Active execution while one or more
+        request-for-information operations are outstanding. New work may still
+        be scheduled while requests are in flight.
+
+      - IDLE: The workflow is quiescent with no outstanding requests, but has
+        not yet emitted a terminal result. Rare in practice but provided for
+        orchestration integrations that distinguish a quiescent state.
+
+      - IDLE_WITH_PENDING_REQUESTS: The workflow is paused awaiting external
+        input (e.g., emitted a `RequestInfoEvent`). This is a non-terminal
+        state; the workflow can resume when responses are supplied.
 
       - COMPLETED: Normal terminal state indicating successful completion.
 
@@ -91,7 +99,9 @@ class WorkflowRunState(str, Enum):
 
     STARTED = "STARTED"  # Explicit pre-work phase (rarely emitted as status; see note above)
     IN_PROGRESS = "IN_PROGRESS"  # Active execution is underway
-    WAITING_FOR_INPUT = "WAITING_FOR_INPUT"  # Paused awaiting external responses
+    IN_PROGRESS_PENDING_REQUESTS = "IN_PROGRESS_PENDING_REQUESTS"  # Active execution with outstanding requests
+    IDLE = "IDLE"  # No active work and no outstanding requests
+    IDLE_WITH_PENDING_REQUESTS = "IDLE_WITH_PENDING_REQUESTS"  # Paused awaiting external responses
     COMPLETED = "COMPLETED"  # Finished successfully
     FAILED = "FAILED"  # Finished with an error
     CANCELLED = "CANCELLED"  # Finished due to cancellation

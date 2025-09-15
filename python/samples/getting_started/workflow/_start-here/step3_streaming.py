@@ -126,8 +126,12 @@ async def main():
                 print("State: IN_PROGRESS")
             elif event.state == WorkflowRunState.COMPLETED:
                 print("State: COMPLETED")
-            elif event.state == WorkflowRunState.WAITING_FOR_INPUT:
-                print("State: WAITING_FOR_INPUT (prompt user or UI now)")
+            elif event.state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS:
+                print("State: IN_PROGRESS_PENDING_REQUESTS (requests in flight)")
+            elif event.state == WorkflowRunState.IDLE:
+                print("State: IDLE (no active work)")
+            elif event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+                print("State: IDLE_WITH_PENDING_REQUESTS (prompt user or UI now)")
             else:
                 print(f"State: {event.state}")
         elif isinstance(event, ExecutorFailedEvent):
