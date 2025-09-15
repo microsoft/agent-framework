@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Microsoft.Shared.Diagnostics;
 
@@ -24,14 +25,14 @@ public sealed class AgentInvokeCallbackContext : CallbackContext
     /// <param name="cancellationToken">The cancellation token for the operation.</param>
     public AgentInvokeCallbackContext(
         AIAgent agent,
-        IList<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread,
         AgentRunOptions? options,
         bool isStreaming,
         CancellationToken cancellationToken)
         : base(agent, cancellationToken)
     {
-        this.Messages = Throw.IfNull(messages);
+        this.Messages = Throw.IfNull(messages).ToList();
         this.Thread = thread;
         this.Options = options;
         this.IsStreaming = isStreaming;

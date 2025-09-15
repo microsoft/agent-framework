@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using Moq;
@@ -72,7 +72,7 @@ public class CallbackEnabledAIAgentBuilderExtensionsTests
         var builder = new AIAgentBuilder(mockAgent.Object);
 
         // Act
-        var result = builder.UseCallbacks(null).Build();
+        var result = builder.UseCallbacks((Action<CallbackMiddlewareProcessor>?)null).Build();
 
         // Assert
         Assert.IsType<CallbackEnabledAgent>(result);

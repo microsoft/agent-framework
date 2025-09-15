@@ -25,7 +25,7 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var context = new AgentInvokeCallbackContext(this, messages, thread, options, isStreaming: false, cancellationToken);
 
@@ -42,7 +42,7 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var context = new AgentInvokeCallbackContext(this, messages, thread, options, isStreaming: true, cancellationToken);
 

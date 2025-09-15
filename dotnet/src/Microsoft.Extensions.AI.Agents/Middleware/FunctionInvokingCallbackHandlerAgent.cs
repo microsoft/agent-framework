@@ -23,10 +23,10 @@ internal sealed class FunctionInvokingCallbackHandlerAgent : DelegatingAIAgent
         this._func = func;
     }
 
-    public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.InnerAgent.RunAsync(messages, thread, this.WithAIFunctionMiddleware(options), cancellationToken);
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.InnerAgent.RunStreamingAsync(messages, thread, this.WithAIFunctionMiddleware(options), cancellationToken);
 
     // Decorate options to add the middleware function

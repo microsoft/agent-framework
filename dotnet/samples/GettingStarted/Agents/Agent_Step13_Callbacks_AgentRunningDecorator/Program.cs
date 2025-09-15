@@ -28,28 +28,40 @@ var model = System.Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MOD
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
 // Example 3: Agent with custom middleware
-Console.WriteLine("=== Example 3: Agent with custom middleware ===");
+Console.WriteLine("=== Agent with custom middleware ===");
 
 var agent = persistentAgentsClient.CreateAIAgent(model).AsBuilder()
-    .Use((innerAgent) => new GuardrailAgent(innerAgent)) // Decoration based agent run handling
+    .Use((innerAgent) => new GuardrailCallbackAgent(innerAgent)) // Decoration based agent run handling
     .Use(async (context, next) => // Context based handling
     {
         // Guardrail: Filter input messages for PII
         context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+        Console.WriteLine($"Pii Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
+
         await next(context).ConfigureAwait(false);
 
         if (!context.IsStreaming)
         {
             // Guardrail: Filter output messages for PII
             context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
-            Console.WriteLine($"Response: {context.Messages.Last().Text}");
         }
         else
         {
-            // Guardrail: Filter streaming updates for PII
-            await foreach (var update in context.RunStreamingResponse!)
+            context.SetRawResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
+        }
+
+        async IAsyncEnumerable<AgentRunResponseUpdate> StreamingPiiDetectionAsync(IAsyncEnumerable<AgentRunResponseUpdate> upstream)
+        {
+            await foreach (var update in upstream)
             {
-                Console.WriteLine($"Streaming update: {FilterPii(update.Text)}");
+                if (update.Text != null)
+                {
+                    yield return new AgentRunResponseUpdate(update.Role, FilterPii(update.Text));
+                }
+                else
+                {
+                    yield return update;
+                }
             }
         }
 
@@ -72,21 +84,21 @@ var agent = persistentAgentsClient.CreateAIAgent(model).AsBuilder()
     })
     .Build();
 
-Console.WriteLine("=== Example: Wording Guardrail ===");
+Console.WriteLine("=== Wording Guardrail ===");
 var guardRailedResponse = await agent.RunAsync("Tell me something harmful.");
 Console.WriteLine(guardRailedResponse);
 
-Console.WriteLine("=== Example: Streaming with Wording Guardrail ===");
+Console.WriteLine("=== Wording Guardrail - Streaming ===");
 await foreach (var update in agent.RunStreamingAsync("Tell me something illegal."))
 {
     Console.WriteLine(update);
 }
 
-Console.WriteLine("=== Example: PII detection ===");
+Console.WriteLine("=== PII detection ===");
 var piiResponse = await agent.RunAsync("My name is John Doe, call me at 123-456-7890 or email me at john@something.com");
 Console.WriteLine(piiResponse);
 
-Console.WriteLine("=== Example: Streaming with PII detection ===");
+Console.WriteLine("=== PII detection - Streaming ===");
 await foreach (var update in agent.RunStreamingAsync("My name is Jane Smith, call me at 987-654-3210."))
 {
     Console.WriteLine(update);
@@ -95,21 +107,25 @@ await foreach (var update in agent.RunStreamingAsync("My name is Jane Smith, cal
 // Cleanup
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
-internal sealed class GuardrailAgent : DelegatingAIAgent
+internal sealed class GuardrailCallbackAgent : DelegatingAIAgent
 {
     private readonly string[] _forbiddenKeywords = { "harmful", "illegal", "violence" }; // Expand as needed
 
-    public GuardrailAgent(AIAgent innerAgent) : base(innerAgent) { }
+    public GuardrailCallbackAgent(AIAgent innerAgent) : base(innerAgent) { }
 
-    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var filteredMessages = this.FilterMessages(messages);
+        Console.WriteLine($"Guardrail Middleware - Filtered messages: {new ChatResponse(filteredMessages).Text}");
+
         var response = await this.InnerAgent.RunAsync(filteredMessages, thread, options, cancellationToken);
+
         response.Messages = response.Messages.Select(m => new ChatMessage(m.Role, this.FilterContent(m.Text))).ToList();
+
         return response;
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var filteredMessages = this.FilterMessages(messages);
         await foreach (var update in this.InnerAgent.RunStreamingAsync(filteredMessages, thread, options, cancellationToken))
@@ -125,7 +141,7 @@ internal sealed class GuardrailAgent : DelegatingAIAgent
         }
     }
 
-    private List<ChatMessage> FilterMessages(IReadOnlyCollection<ChatMessage> messages)
+    private List<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages)
     {
         return messages.Select(m => new ChatMessage(m.Role, this.FilterContent(m.Text))).ToList();
     }
