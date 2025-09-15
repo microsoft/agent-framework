@@ -249,7 +249,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
                 ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
-                this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]"); // %%% IS THIS HIT?
+                this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {

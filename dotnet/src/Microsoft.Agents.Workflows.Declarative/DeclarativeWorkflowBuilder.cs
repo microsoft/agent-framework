@@ -2,7 +2,6 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -80,23 +79,4 @@ public static class DeclarativeWorkflowBuilder
                 string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
                 _ => new(ChatRole.User, $"{message}")
             };
-
-    // Wrap with bot to ensure schema is set.
-    private static AdaptiveDialog WrapWithBot(AdaptiveDialog dialog)
-    {
-        BotDefinition bot
-            = new BotDefinition.Builder
-            {
-                Components =
-                    {
-                        new DialogComponent.Builder
-                        {
-                            SchemaName = dialog.HasSchemaName ? dialog.SchemaName : "default-schema",
-                            Dialog = new AdaptiveDialog.Builder(dialog),
-                        }
-                    }
-            }.Build();
-
-        return bot.Descendants().OfType<AdaptiveDialog>().First();
-    }
 }

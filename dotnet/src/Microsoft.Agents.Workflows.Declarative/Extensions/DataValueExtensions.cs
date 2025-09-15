@@ -112,7 +112,7 @@ internal static class DataValueExtensions
         return recordType;
     }
 
-    private static Dictionary<string, object?> ToDictionary(this RecordDataValue record) // %%% WHERE USED ???
+    private static Dictionary<string, object?> ToDictionary(this RecordDataValue record)
     {
         Dictionary<string, object?> result = [];
         foreach (KeyValuePair<string, DataValue> property in record.Properties)

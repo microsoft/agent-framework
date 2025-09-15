@@ -9,7 +9,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
-internal sealed class DeclarativeWorkflowContext : IWorkflowContext // %%% TODO: IMySpecialContextType (AVOID ALLOWING ININTENTIAL PRO_CODE PATTERN)
+internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 {
     public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state)
     {
