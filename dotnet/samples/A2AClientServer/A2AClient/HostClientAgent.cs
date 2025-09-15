@@ -25,7 +25,7 @@ internal sealed class HostClientAgent
             // Connect to the remote agents via A2A
             var createAgentTasks = agentUrls.Select(agentUrl => this.CreateAgentAsync(agentUrl));
             var agents = await Task.WhenAll(createAgentTasks);
-            var tools = agents.Select(agent => (AITool)AgentAIFunctionFactory.CreateFromAgent(agent)).ToList();
+            var tools = agents.Select(agent => (AITool)agent.AsAIFunction()).ToList();
 
             // Create the agent that uses the remote agents as tools
             this.Agent = new OpenAIClient(new ApiKeyCredential(apiKey))
