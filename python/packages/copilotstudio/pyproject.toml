@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-runtime"
-description = "Runtime integration for Microsoft Agent Framework."
+name = "agent-framework-copilotstudio"
+description = "Copilot Studio integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework",
+    "microsoft-agents-copilotstudio-client>=0.3.1",
 ]
 
 [tool.uv]
@@ -41,7 +42,9 @@ testpaths = 'tests'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = []
+filterwarnings = [
+    "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
+]
 timeout = 120
 
 [tool.ruff]
@@ -71,18 +74,18 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework_runtime"]
+targets = ["agent_framework_copilotstudio"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_runtime"
-test = "pytest --cov=agent_framework_runtime --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_copilotstudio"
+test = "pytest --cov=agent_framework_copilotstudio --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
-module-name = "agent_framework_runtime"
+module-name = "agent_framework_copilotstudio"
 module-root = ""
 
 [build-system]
