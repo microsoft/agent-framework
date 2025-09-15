@@ -27,7 +27,7 @@ namespace Microsoft.Extensions.AI;
 
 /// <summary>Represents an <see cref="IChatClient"/> for an <see cref="OpenAIResponseClient"/>.</summary>
 [ExcludeFromCodeCoverage]
-internal sealed class NewOpenAIResponsesChatClient : ICancelableChatClient
+internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableChatClient
 {
     // Fix this to not use reflection once https://github.com/openai/openai-dotnet/issues/643 is addressed.
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]

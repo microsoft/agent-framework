@@ -8,7 +8,7 @@ namespace Microsoft.Extensions.AI;
 /// <summary>
 /// Represents a chat client that supports cancellation of response.
 /// </summary>
-public interface ICancelableChatClient : IChatClient
+public interface ICancelableChatClient
 {
     /// <summary>
     /// Cancels a response.

@@ -194,9 +194,9 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
             AllowBackgroundResponses = true
         };
 
-        ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;
-
         NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What is the capital of France?", options);
+
+        ICancelableChatClient cancelableChatClient = this._chatClient.GetService<ICancelableChatClient>()!;
 
         // Act
         NewChatResponse? cancelResponse = (NewChatResponse?)await cancelableChatClient.CancelResponseAsync(response.ResponseId!);
