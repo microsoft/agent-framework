@@ -87,7 +87,7 @@ class DevServer:
         """Create the FastAPI application."""
 
         @asynccontextmanager
-        async def lifespan(app: FastAPI):
+        async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # Startup
             logger.info("Starting Agent Framework Server")
             await self._ensure_executor()
@@ -261,7 +261,7 @@ class DevServer:
                 error = OpenAIError.create(f"Execution failed: {e!s}")
                 return JSONResponse(status_code=500, content=error.model_dump())
 
-    async def _stream_execution(self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest):
+    async def _stream_execution(self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest) -> AsyncGenerator[str, None]:
         """Stream execution directly through executor."""
         try:
             # Direct call to executor - simple and clean

@@ -4,6 +4,7 @@
 """Focused tests for execution flow functionality."""
 
 import asyncio
+import os
 import tempfile
 from pathlib import Path
 
@@ -60,6 +61,7 @@ async def test_executor_get_entity_info(executor):
     assert entity_info.type in ["agent", "workflow"]
 
 
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="requires OpenAI API key")
 @pytest.mark.asyncio
 async def test_executor_sync_execution(executor):
     """Test synchronous execution."""
@@ -84,6 +86,7 @@ async def test_executor_sync_execution(executor):
     assert response.usage.total_tokens > 0
 
 
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="requires OpenAI API key")
 @pytest.mark.asyncio
 async def test_executor_streaming_execution(executor):
     """Test streaming execution."""

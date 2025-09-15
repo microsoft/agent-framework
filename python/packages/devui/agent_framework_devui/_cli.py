@@ -10,7 +10,7 @@ import sys
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(level: str = "INFO"):
+def setup_logging(level: str = "INFO") -> None:
     """Configure logging for the server."""
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     logging.basicConfig(
@@ -116,7 +116,7 @@ def validate_directory(directory: str) -> str:
     return abs_dir
 
 
-def print_startup_info(entities_dir: str, host: str, port: int, ui_enabled: bool, reload: bool):
+def print_startup_info(entities_dir: str, host: str, port: int, ui_enabled: bool, reload: bool) -> None:
     """Print startup information."""
     print("🤖 Agent Framework DevUI")
     print("=" * 50)
@@ -128,7 +128,7 @@ def print_startup_info(entities_dir: str, host: str, port: int, ui_enabled: bool
     print("🔍 Scanning for entities...")
 
 
-def main():
+def main() -> None:
     """Main CLI entry point."""
     parser = create_cli_parser()
     args = parser.parse_args()

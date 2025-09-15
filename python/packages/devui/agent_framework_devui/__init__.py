@@ -55,7 +55,7 @@ def serve(
     app = server.get_app()
 
     if auto_open:
-        def open_browser():
+        def open_browser() -> None:
             import time
             time.sleep(1.5)
             webbrowser.open(f"http://{host}:{port}")
@@ -67,7 +67,7 @@ def serve(
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
-def main():
+def main() -> None:
     """CLI entry point for devui command."""
     from ._cli import main as cli_main
     cli_main()
