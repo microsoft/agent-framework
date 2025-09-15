@@ -1,241 +1,87 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Agent Framework Debug UI - Public API.
-
-Provides high-level convenience functions for debugging Agent Framework
-agents and workflows with minimal setup.
-"""
+"""Agent Framework DevUI - Debug interface with OpenAI compatible API server."""
 
 import logging
 import webbrowser
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 
-if TYPE_CHECKING:
-    from agent_framework import AgentProtocol
-    from agent_framework.workflow import Workflow
-    from fastapi import FastAPI
+from ._server import DevServer
+from .models import AgentFrameworkRequest, OpenAIError, OpenAIResponse, ResponseStreamEvent
+from .models._discovery_models import DiscoveryResponse, EntityInfo
 
-from ._discovery import DirectoryScanner
-from ._execution import ExecutionEngine
-from ._models import AgentInfo, DebugStreamEvent, RunAgentRequest, SessionInfo, ThreadInfo
-from ._registry import AgentRegistry
-from ._server import AgentFrameworkDebugServer, create_debug_server
-from ._sessions import SessionManager
-from ._tracing import TracingManager
-
-logger: logging.Logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 __version__ = "0.1.0"
 
 
-# Main convenience function
-def debug(
-    agents: Optional[Dict[str, "AgentProtocol"]] = None,
-    workflows: Optional[Dict[str, "Workflow"]] = None,
-    agents_dir: Optional[str] = None,
+def serve(
+    entities: Optional[list[Any]] = None,
+    entities_dir: Optional[str] = None,
     port: int = 8080,
-    auto_open: bool = False,
     host: str = "127.0.0.1",
-    telemetry_mode: str = "framework",
-    include_sensitive_data: bool = False,
+    auto_open: bool = False,
+    cors_origins: Optional[list[str]] = None,
+    ui_enabled: bool = True
 ) -> None:
-    """Launch Agent Framework debug UI with type-safe agent/workflow registration.
-
-    This is the main entry point for debugging Agent Framework agents and workflows.
-    Supports both in-memory registration and directory-based discovery.
-
+    """Launch Agent Framework DevUI with simple API.
+    
     Args:
-        agents: Dictionary of agent_id -> AgentProtocol for in-memory registration
-        workflows: Dictionary of workflow_id -> Workflow for in-memory registration
-        agents_dir: Optional directory to scan for agents (following conventions)
-        port: Port to run the debug server on
+        entities: List of entities for in-memory registration (IDs auto-generated)
+        entities_dir: Directory to scan for entities
+        port: Port to run server on
+        host: Host to bind server to
         auto_open: Whether to automatically open browser
-        host: Host to bind the server to
-        telemetry_mode: Telemetry collection mode (none|framework|workflow|all)
-        include_sensitive_data: Whether to include sensitive data in traces
-
-    Example:
-        ```python
-        from agent_framework import ChatClientAgent
-        from agent_framework.openai import OpenAIChatClient
-        from devui import debug
-
-        # Create agent
-        agent = ChatClientAgent(name="WeatherAgent", chat_client=OpenAIChatClient(), tools=[get_weather])
-
-        # Launch debug UI
-        debug(agents={"weather": agent}, auto_open=True)
-        ```
+        cors_origins: List of allowed CORS origins
+        ui_enabled: Whether to enable the UI
     """
     import uvicorn
 
-    # Create server instance with telemetry configuration
-    server = DebugServer(
-        agents_dir=agents_dir, 
-        port=port, 
+    # Create server with direct parameters
+    server = DevServer(
+        entities_dir=entities_dir,
+        port=port,
         host=host,
-        telemetry_mode=telemetry_mode,
-        include_sensitive_data=include_sensitive_data
+        cors_origins=cors_origins,
+        ui_enabled=ui_enabled
     )
 
-    # Register in-memory agents and workflows
-    if agents:
-        for agent_id, agent in agents.items():
-            server.register_agent(agent_id, agent)
+    # Register in-memory entities if provided
+    if entities:
+        logger.info(f"Registering {len(entities)} in-memory entities")
+        # Store entities for later registration during server startup
+        server._pending_entities = entities
 
-    if workflows:
-        for workflow_id, workflow in workflows.items():
-            server.register_workflow(workflow_id, workflow)
+    app = server.get_app()
 
-    # Start server
-    server.start(auto_open=auto_open)
+    if auto_open:
+        def open_browser():
+            import time
+            time.sleep(1.5)
+            webbrowser.open(f"http://{host}:{port}")
 
+        import threading
+        threading.Thread(target=open_browser, daemon=True).start()
 
-class DebugServer:
-    """Main debug server class for programmatic control with strict typing.
-
-    Provides fine-grained control over the debug server for advanced use cases.
-    """
-
-    def __init__(
-        self, 
-        agents_dir: Optional[str] = None, 
-        port: int = 8080, 
-        host: str = "127.0.0.1",
-        telemetry_mode: str = "framework",
-        include_sensitive_data: bool = False
-    ) -> None:
-        """Initialize debug server.
-
-        Args:
-            agents_dir: Optional directory to scan for agents
-            port: Port to run server on
-            host: Host to bind server to
-            telemetry_mode: Telemetry collection mode (none|framework|workflow|all)
-            include_sensitive_data: Whether to include sensitive data in traces
-        """
-        self._server = AgentFrameworkDebugServer(
-            agents_dir=agents_dir,
-            telemetry_mode=telemetry_mode,
-            include_sensitive_data=include_sensitive_data
-        )
-        self.port = port
-        self.host = host
-        self._app: Optional["FastAPI"] = None
-
-    def register_agent(self, agent_id: str, agent: "AgentProtocol") -> None:
-        """Register an in-memory agent with type validation.
-
-        Args:
-            agent_id: Unique identifier for the agent
-            agent: Agent Framework agent instance
-        """
-        self._server.register_agent(agent_id, agent)
-
-    def register_workflow(self, workflow_id: str, workflow: "Workflow") -> None:
-        """Register an in-memory workflow with type validation.
-
-        Args:
-            workflow_id: Unique identifier for the workflow
-            workflow: Agent Framework workflow instance
-        """
-        self._server.register_workflow(workflow_id, workflow)
-
-    def get_app(self) -> "FastAPI":
-        """Get the FastAPI application instance.
-
-        Returns:
-            FastAPI application that can be embedded or extended
-        """
-        if self._app is None:
-            self._app = self._server.create_app()
-        return self._app
-
-    def start(self, auto_open: bool = False) -> None:
-        """Start the debug server.
-
-        Args:
-            auto_open: Whether to automatically open browser to debug UI
-        """
-        import uvicorn
-
-        app = self.get_app()
-
-        if auto_open:
-            # Open browser after short delay
-            def open_browser():
-                import time
-
-                time.sleep(1.5)  # Give server time to start
-                webbrowser.open(f"http://{self.host}:{self.port}")
-
-            import threading
-
-            threading.Thread(target=open_browser, daemon=True).start()
-
-        logger.info(f"Starting Agent Framework Debug Server on {self.host}:{self.port}")
-
-        uvicorn.run(app, host=self.host, port=self.port, log_level="info")
+    logger.info(f"Starting Agent Framework DevUI on {host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 def main():
     """CLI entry point for devui command."""
-    import argparse
-    import os
-
-    parser = argparse.ArgumentParser(description="Launch Agent Framework Debug UI")
-    parser.add_argument(
-        "directory", nargs="?", default=".", help="Directory to scan for agents (default: current directory)"
-    )
-    parser.add_argument("--port", "-p", type=int, default=8080, help="Port to run server on (default: 8080)")
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind server to (default: 127.0.0.1)")
-    parser.add_argument("--no-open", action="store_true", help="Don't automatically open browser")
-    
-    # Telemetry configuration
-    parser.add_argument(
-        "--telemetry", 
-        choices=["none", "framework", "workflow", "all"], 
-        default="framework",
-        help="Enable telemetry collection (default: framework)"
-    )
-    parser.add_argument("--sensitive-data", action="store_true", help="Include sensitive data in traces")
-
-    args = parser.parse_args()
-
-    # Convert to absolute path
-    agents_dir = os.path.abspath(args.directory)
-
-    print(f"🔍 Scanning {agents_dir} for agents...")
-
-    # Quick discovery check to provide feedback
-
-    scanner = DirectoryScanner(agents_dir)
-    discovered = scanner.discover_entities()
-
-    if discovered:
-        print(f"📋 Found {len(discovered)} agents/workflows:")
-        for item in discovered:
-            print(f"   • {item.id} ({item.type})")
-    else:
-        print(f"⚠️  No agents found in {agents_dir}")
-        print("   Make sure the directory contains valid agent/workflow modules")
-        print("   See documentation for directory structure requirements")
-
-    print(f"🚀 Starting devui on http://{args.host}:{args.port}")
-    print(f"📊 Telemetry mode: {args.telemetry}")
-    if args.sensitive_data:
-        print("⚠️  Sensitive data collection enabled")
-
-    # Launch debug UI with telemetry configuration
-    debug(
-        agents_dir=agents_dir, 
-        port=args.port, 
-        host=args.host, 
-        auto_open=not args.no_open,
-        telemetry_mode=args.telemetry,
-        include_sensitive_data=args.sensitive_data
-    )
+    from ._cli import main as cli_main
+    cli_main()
 
 
 # Export main public API
-__all__ = ["AgentFrameworkDebugServer", "AgentInfo", "AgentRegistry", "DebugServer", "DebugStreamEvent", "ExecutionEngine", "RunAgentRequest", "SessionInfo", "SessionManager", "ThreadInfo", "TracingManager", "create_debug_server", "debug"]
+__all__ = [
+    "AgentFrameworkRequest",
+    "DevServer",
+    "DiscoveryResponse",
+    "EntityInfo",
+    "OpenAIError",
+    "OpenAIResponse",
+    "ResponseStreamEvent",
+    "main",
+    "serve"
+]

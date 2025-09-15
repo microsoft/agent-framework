@@ -1,490 +1,305 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""FastAPI server for Agent Framework debug UI."""
+"""FastAPI server implementation."""
 
 import logging
-import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-if TYPE_CHECKING:
-    from agent_framework import AgentProtocol, AgentThread
-    from agent_framework.workflow import Workflow
+from .executors.agent_framework._discovery import AgentFrameworkEntityDiscovery
+from .executors.agent_framework._executor import AgentFrameworkExecutor
+from .executors.agent_framework._mapper import AgentFrameworkMessageMapper
+from .models import AgentFrameworkRequest, OpenAIError
+from .models._discovery_models import DiscoveryResponse, EntityInfo
 
-from ._execution import ExecutionEngine
-from ._models import (
-    AgentInfo,
-    CreateThreadRequest,
-    DebugStreamEvent,
-    HealthResponse,
-    RunAgentRequest,
-    RunWorkflowRequest,
-    SessionInfo,
-    ThreadInfo,
-    WorkflowInfo,
-)
-from ._registry import AgentRegistry
-from ._sessions import SessionManager
-from ._tracing import TracingManager
-from .utils.messages import frontend_messages_to_chat_messages
+# Removed ExecutionEngine import - using direct executor approach
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
-class AgentFrameworkDebugServer:
-    """FastAPI server for debugging Agent Framework agents and workflows.
-
-    Provides a minimal API layer over Agent Framework's native capabilities,
-    following the principle of "just another view to see or test agents".
-    """
+class DevServer:
+    """Development Server - OpenAI compatible API server for debugging agents."""
 
     def __init__(
-        self, 
-        agents_dir: Optional[str] = None, 
-        enable_cors: bool = True, 
+        self,
+        entities_dir: Optional[str] = None,
+        port: int = 8080,
+        host: str = "127.0.0.1",
         cors_origins: Optional[List[str]] = None,
-        telemetry_mode: str = "framework",
-        include_sensitive_data: bool = False
+        ui_enabled: bool = True
     ) -> None:
-        """Initialize the debug server.
-
+        """Initialize the development server.
+        
         Args:
-            agents_dir: Optional directory to scan for agents
-            enable_cors: Whether to enable CORS middleware
+            entities_dir: Directory to scan for entities
+            port: Port to run server on
+            host: Host to bind server to  
             cors_origins: List of allowed CORS origins
-            telemetry_mode: Telemetry collection mode (none|framework|workflow|all)
-            include_sensitive_data: Whether to include sensitive data in traces
+            ui_enabled: Whether to enable the UI
         """
-        self.registry = AgentRegistry(agents_dir)
-        self.session_manager = SessionManager()
-        self.enable_cors = enable_cors
+        self.entities_dir = entities_dir
+        self.port = port
+        self.host = host
         self.cors_origins = cors_origins or ["*"]
-        self.tracing_manager = TracingManager()
-        
-        # Configure telemetry based on CLI flags
-        self.telemetry_config = self._parse_telemetry_config(telemetry_mode, include_sensitive_data)
-        
-        # Initialize execution engine with telemetry config
-        self.execution_engine = ExecutionEngine(telemetry_config=self.telemetry_config)
+        self.ui_enabled = ui_enabled
+        self.executor: Optional[AgentFrameworkExecutor] = None
+        self._app: Optional[FastAPI] = None
+        self._pending_entities: Optional[List[Any]] = None
 
-        # Thread ID mapping for in-memory threads
-        self._thread_ids: Dict[int, str] = {}
+    async def _ensure_executor(self) -> AgentFrameworkExecutor:
+        """Ensure executor is initialized."""
+        if self.executor is None:
+            logger.info("Initializing Agent Framework executor...")
 
-    def _parse_telemetry_config(self, telemetry_mode: str, include_sensitive_data: bool) -> Dict[str, bool]:
-        """Parse telemetry mode into configuration flags.
-        
-        Args:
-            telemetry_mode: One of 'none', 'framework', 'workflow', 'all'
-            include_sensitive_data: Whether to include sensitive data in traces
-            
-        Returns:
-            Dictionary with telemetry configuration flags
-        """
-        config = {
-            'enable_framework_traces': False,
-            'enable_workflow_traces': False,
-            'enable_sensitive_data': include_sensitive_data,
-        }
-        
-        if telemetry_mode == "framework":
-            config['enable_framework_traces'] = True
-        elif telemetry_mode == "workflow":
-            config['enable_workflow_traces'] = True
-        elif telemetry_mode == "all":
-            config['enable_framework_traces'] = True
-            config['enable_workflow_traces'] = True
-        # 'none' keeps all flags False
-        
-        # Set environment variables for Agent Framework components
-        import os
-        if config['enable_framework_traces']:
-            os.environ['AGENT_FRAMEWORK_ENABLE_OTEL'] = 'true'
-        if config['enable_workflow_traces']:
-            os.environ['AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL'] = 'true'
-        if config['enable_sensitive_data']:
-            os.environ['AGENT_FRAMEWORK_ENABLE_SENSITIVE_DATA'] = 'true'
-            
-        return config
+            # Create components directly
+            entity_discovery = AgentFrameworkEntityDiscovery("agent_framework", self.entities_dir)
+            message_mapper = AgentFrameworkMessageMapper()
+            self.executor = AgentFrameworkExecutor(entity_discovery, message_mapper)
 
-    def _dummy_trace_callback(self, event: DebugStreamEvent) -> None:
-        """Dummy callback for initial tracing setup."""
-        logger.debug(f"Received trace event during initialization: {event.type}")
+            # Discover entities from directory
+            discovered_entities = await self.executor.discover_entities()
+            logger.info(f"Discovered {len(discovered_entities)} entities from directory")
 
-    def _get_thread_id(self, thread: "AgentThread") -> str:
-        """Get thread ID from AgentThread, generating one if needed."""
-        # Use service_thread_id if available (for service-managed threads)
-        if thread.service_thread_id:
-            return thread.service_thread_id
+            # Register any pending in-memory entities
+            if self._pending_entities:
+                discovery = self.executor.entity_discovery
+                for entity in self._pending_entities:
+                    try:
+                        entity_info = await discovery.create_entity_info_from_object(entity)
+                        discovery.register_entity(entity_info.id, entity_info, entity)
+                        logger.info(f"Registered in-memory entity: {entity_info.id}")
+                    except Exception as e:
+                        logger.error(f"Failed to register in-memory entity: {e}")
+                self._pending_entities = None  # Clear after registration
 
-        # For in-memory threads, generate a unique ID based on object identity
-        thread_obj_id = id(thread)
-        if thread_obj_id not in self._thread_ids:
-            self._thread_ids[thread_obj_id] = str(uuid.uuid4())
+            # Get the final entity count after all registration
+            all_entities = self.executor.entity_discovery.list_entities()
+            logger.info(f"Total entities available: {len(all_entities)}")
 
-        return self._thread_ids[thread_obj_id]
+        return self.executor
 
     def create_app(self) -> FastAPI:
-        """Create the FastAPI application with all endpoints."""
+        """Create the FastAPI application."""
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
             # Startup
-            logger.info("Starting Agent Framework Debug Server")
-            # Set up one-time tracing initialization
-            self.tracing_manager.setup_streaming_tracing(self._dummy_trace_callback)
+            logger.info("Starting Agent Framework Server")
+            await self._ensure_executor()
             yield
             # Shutdown
-            logger.info("Shutting down Agent Framework Debug Server")
-            await self.session_manager.cleanup()
+            logger.info("Shutting down Agent Framework Server")
 
         app = FastAPI(
-            title="Agent Framework Debug Server",
-            description="Lightweight debug API for Agent Framework agents and workflows",
+            title="Agent Framework Server",
+            description="OpenAI-compatible API server for Agent Framework and other AI frameworks",
             version="1.0.0",
             lifespan=lifespan,
         )
 
-        if self.enable_cors:
-            app.add_middleware(
-                CORSMiddleware,
-                allow_origins=self.cors_origins,
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
-            )
+        # Add CORS middleware
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=self.cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
         self._register_routes(app)
         self._mount_ui(app)
+
         return app
 
-    def register_agent(self, agent_id: str, agent: "AgentProtocol") -> None:
-        """Register an in-memory agent.
+    def _register_routes(self, app: FastAPI) -> None:
+        """Register API routes."""
 
-        Args:
-            agent_id: Unique identifier for the agent
-            agent: Agent Framework agent instance
-        """
-        self.registry.register_agent(agent_id, agent)
+        @app.get("/health")
+        async def health_check() -> Dict[str, Any]:
+            """Health check endpoint."""
+            executor = await self._ensure_executor()
+            entities = await executor.discover_entities()
 
-    def register_workflow(self, workflow_id: str, workflow: "Workflow") -> None:
-        """Register an in-memory workflow.
+            return {
+                "status": "healthy",
+                "entities_count": len(entities),
+                "framework": executor.framework_name
+            }
 
-        Args:
-            workflow_id: Unique identifier for the workflow
-            workflow: Agent Framework workflow instance
-        """
-        self.registry.register_workflow(workflow_id, workflow)
+        @app.get("/v1/entities", response_model=DiscoveryResponse)
+        async def discover_entities() -> DiscoveryResponse:
+            """List all registered entities."""
+            try:
+                executor = await self._ensure_executor()
+                # Use list_entities() instead of discover_entities() to get already-registered entities
+                entities = executor.entity_discovery.list_entities()
+                return DiscoveryResponse(entities=entities)
+            except Exception as e:
+                logger.error(f"Error listing entities: {e}")
+                raise HTTPException(status_code=500, detail=f"Entity listing failed: {e!s}")
+
+        @app.get("/v1/entities/{entity_id}/info", response_model=EntityInfo)
+        async def get_entity_info(entity_id: str) -> EntityInfo:
+            """Get detailed information about a specific entity."""
+            try:
+                executor = await self._ensure_executor()
+                entity_info = executor.get_entity_info(entity_id)
+
+                if not entity_info:
+                    raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
+
+                # For workflows, populate additional detailed information
+                if entity_info.type == "workflow":
+                    entity_obj = executor.entity_discovery.get_entity_object(entity_id)
+                    if entity_obj:
+                        # Get workflow structure
+                        workflow_dump = None
+                        if hasattr(entity_obj, "model_dump"):
+                            workflow_dump = entity_obj.model_dump()
+                        elif hasattr(entity_obj, "__dict__"):
+                            workflow_dump = {k: v for k, v in entity_obj.__dict__.items()
+                                           if not k.startswith("_")}
+
+                        # Get input schema information
+                        input_schema = {}
+                        input_type_name = "Unknown"
+                        start_executor_id = ""
+
+                        try:
+                            start_executor = entity_obj.get_start_executor()
+                            if start_executor and hasattr(start_executor, "_handlers"):
+                                message_types = list(start_executor._handlers.keys())
+                                if message_types:
+                                    input_type = message_types[0]
+                                    input_type_name = getattr(input_type, "__name__", str(input_type))
+
+                                    # Basic schema generation for common types
+                                    if input_type == str:
+                                        input_schema = {"type": "string"}
+                                    elif input_type == dict:
+                                        input_schema = {"type": "object"}
+                                    elif hasattr(input_type, "model_json_schema"):
+                                        input_schema = input_type.model_json_schema()
+
+                                    start_executor_id = getattr(start_executor, "executor_id", "")
+                        except Exception as e:
+                            logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
+
+                        # Get executor list
+                        executor_list = []
+                        if hasattr(entity_obj, "executors") and entity_obj.executors:
+                            executor_list = [getattr(ex, "executor_id", str(ex)) for ex in entity_obj.executors]
+
+                        # Create copy of entity info and populate workflow-specific fields
+                        enhanced_info = entity_info.model_copy()
+                        enhanced_info.workflow_dump = workflow_dump
+                        enhanced_info.input_schema = input_schema
+                        enhanced_info.input_type_name = input_type_name
+                        enhanced_info.start_executor_id = start_executor_id
+
+                        # Update executors field if we found better data
+                        if executor_list:
+                            enhanced_info.executors = executor_list
+                        return enhanced_info
+
+                # For non-workflow entities, return as-is
+                return entity_info
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error getting entity info for {entity_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to get entity info: {e!s}")
+
+        @app.post("/v1/responses")
+        async def create_response(request: AgentFrameworkRequest, raw_request: Request) -> Any:
+            """OpenAI Responses API endpoint."""
+            try:
+                # Debug: log the incoming request
+                raw_body = await raw_request.body()
+                logger.info(f"Raw request body: {raw_body.decode()}")
+                logger.info(f"Parsed request: model={request.model}, extra_body={request.extra_body}")
+
+                # Get entity_id using the new method
+                entity_id = request.get_entity_id()
+                logger.info(f"Extracted entity_id: {entity_id}")
+
+                if not entity_id:
+                    error = OpenAIError.create(f"Missing entity_id. Request extra_body: {request.extra_body}")
+                    return JSONResponse(status_code=400, content=error.model_dump())
+
+                # Get executor and validate entity exists
+                executor = await self._ensure_executor()
+                try:
+                    entity_info = executor.get_entity_info(entity_id)
+                    logger.info(f"Found entity: {entity_info.name} ({entity_info.type})")
+                except Exception:
+                    error = OpenAIError.create(f"Entity not found: {entity_id}")
+                    return JSONResponse(status_code=404, content=error.model_dump())
+
+                # Execute request
+                if request.stream:
+                    return StreamingResponse(
+                        self._stream_execution(executor, request),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "Access-Control-Allow-Origin": "*",
+                        }
+                    )
+                result = await executor.execute_sync(request)
+                return result
+
+            except Exception as e:
+                logger.error(f"Error executing request: {e}")
+                error = OpenAIError.create(f"Execution failed: {e!s}")
+                return JSONResponse(status_code=500, content=error.model_dump())
+
+    async def _stream_execution(self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest):
+        """Stream execution directly through executor."""
+        try:
+            # Direct call to executor - simple and clean
+            async for event in executor.execute_streaming(request):
+                yield f"data: {event.model_dump_json()}\n\n"
+
+            # Send final done event
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"Error in streaming execution: {e}")
+            error_event = {
+                "id": "error",
+                "object": "error",
+                "error": {"message": str(e), "type": "execution_error"}
+            }
+            yield f"data: {error_event}\n\n"
 
     def _mount_ui(self, app: FastAPI) -> None:
-        """Mount the built UI as static files."""
+        """Mount the UI as static files."""
         from pathlib import Path
 
-        # Get the directory where this module is located
-        module_dir = Path(__file__).parent
-        ui_dir = module_dir / "ui"
-
-        # Only mount if UI directory exists
-        if ui_dir.exists() and ui_dir.is_dir():
+        ui_dir = Path(__file__).parent / "ui"
+        if ui_dir.exists() and ui_dir.is_dir() and self.ui_enabled:
             app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
-    def _register_routes(self, app: FastAPI) -> None:
-        """Register all API routes."""
+    def register_entities(self, entities: List[Any]) -> None:
+        """Register entities to be discovered when server starts.
+        
+        Args:
+            entities: List of entity objects to register
+        """
+        if self._pending_entities is None:
+            self._pending_entities = []
+        self._pending_entities.extend(entities)
 
-        @app.get("/health", response_model=HealthResponse)
-        async def health_check():
-            """Health check endpoint."""
-            return HealthResponse(
-                status="healthy",
-                agents_dir=str(self.registry.directory_scanner.agents_dir) if self.registry.directory_scanner else None,
-            )
-
-        @app.get("/agents", response_model=List[AgentInfo])
-        async def list_agents():
-            """List all available agents."""
-            try:
-                agents = self.registry.list_agents()
-                return agents
-            except Exception as e:
-                logger.error(f"Error listing agents: {e}")
-                raise HTTPException(status_code=500, detail=f"Agent listing failed: {e!s}")
-
-        @app.get("/workflows", response_model=List[WorkflowInfo])
-        async def list_workflows():
-            """List all available workflows."""
-            try:
-                workflows = self.registry.list_workflows()
-                return workflows
-            except Exception as e:
-                logger.error(f"Error listing workflows: {e}")
-                raise HTTPException(status_code=500, detail=f"Workflow listing failed: {e!s}")
-
-        @app.get("/agents/{agent_id}/info", response_model=AgentInfo)
-        async def get_agent_info(agent_id: str):
-            """Get detailed information about a specific agent."""
-            agent = self.registry.get_agent(agent_id)
-            if not agent:
-                raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-            agents = self.registry.list_agents()
-            agent_info = next((a for a in agents if a.id == agent_id), None)
-            if not agent_info:
-                raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-            return agent_info
-
-        @app.get("/workflows/{workflow_id}/info", response_model=WorkflowInfo)
-        async def get_workflow_info(workflow_id: str):
-            """Get detailed information about a specific workflow including input schema."""
-            workflow = self.registry.get_workflow(workflow_id)
-            if not workflow:
-                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
-
-            workflows = self.registry.list_workflows()
-            workflow_info = next((w for w in workflows if w.id == workflow_id), None)
-            if not workflow_info:
-                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
-
-            return workflow_info
-
-        @app.post("/agents/{agent_id}/threads", response_model=ThreadInfo)
-        async def create_thread(agent_id: str, request: CreateThreadRequest):
-            """Create a new conversation thread for an agent."""
-            # Get agent object
-            agent_obj = self.registry.get_agent(agent_id)
-            if not agent_obj:
-                raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-
-            try:
-                # Create thread using Agent Framework's native threading
-                thread: "AgentThread" = agent_obj.get_new_thread()
-
-                # Store in session manager
-                thread_id = self._get_thread_id(thread)
-                session_info = self.session_manager.create_session(
-                    agent_id=agent_id, thread_id=thread_id, thread=thread
-                )
-
-                return ThreadInfo(
-                    id=session_info.thread_id, agent_id=agent_id, created_at=session_info.created_at, message_count=0
-                )
-
-            except Exception as e:
-                logger.error(f"Error creating thread for {agent_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Thread creation failed: {e!s}")
-
-        @app.get("/agents/{agent_id}/threads", response_model=List[ThreadInfo])
-        async def list_threads(agent_id: str):
-            """List all threads for an agent."""
-            sessions = self.session_manager.list_sessions(agent_id)
-            return [
-                ThreadInfo(
-                    id=session.thread_id,
-                    agent_id=session.agent_id,
-                    created_at=session.created_at,
-                    message_count=len(session.messages),
-                )
-                for session in sessions
-            ]
-
-        @app.post("/agents/{agent_id}/run")
-        async def run_agent(agent_id: str, request: RunAgentRequest):
-            """Execute an agent (non-streaming)."""
-            agent_obj = self.registry.get_agent(agent_id)
-            if not agent_obj:
-                raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-
-            try:
-                # Get or create thread
-                thread = None
-                if request.thread_id:
-                    thread = self.session_manager.get_thread(request.thread_id)
-
-                if thread is None:
-                    thread = agent_obj.get_new_thread()
-                    thread_id = self._get_thread_id(thread)
-                    self.session_manager.create_session(agent_id, thread_id, thread)
-
-                # Convert frontend messages to Agent Framework format
-                try:
-                    converted_messages = frontend_messages_to_chat_messages(request.messages)
-                except Exception as e:
-                    logger.error(f"Error converting messages: {e}")
-                    raise HTTPException(status_code=400, detail=f"Invalid message format: {e!s}")
-
-                # Execute agent using framework's native method
-                result = await agent_obj.run(converted_messages, thread=thread)
-
-                # Store result in session
-                thread_id = self._get_thread_id(thread)
-                self.session_manager.add_message(
-                    thread_id,
-                    {
-                        "user_messages": request.messages,  # Store original frontend format
-                        "agent_response": [
-                            msg.model_dump() if hasattr(msg, "model_dump") else str(msg) for msg in result.messages
-                        ],
-                        "timestamp": datetime.now().isoformat(),
-                    },
-                )
-
-                return {
-                    "thread_id": thread_id,
-                    "result": [msg.model_dump() if hasattr(msg, "model_dump") else str(msg) for msg in result.messages],
-                    "message_count": len(result.messages),
-                }
-
-            except Exception as e:
-                logger.error(f"Error running agent {agent_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Execution failed: {e!s}")
-
-        @app.post("/workflows/{workflow_id}/run")
-        async def run_workflow(workflow_id: str, request: RunWorkflowRequest):
-            """Execute a workflow (non-streaming)."""
-            workflow_obj = self.registry.get_workflow(workflow_id)
-            if not workflow_obj:
-                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
-
-            try:
-                # Collect all events from streaming execution
-                events = []
-                async for event in self.execution_engine.execute_workflow_streaming(
-                    workflow=workflow_obj,
-                    input_data=request.input_data,
-                    tracing_manager=self.tracing_manager,
-                ):
-                    events.append(event)
-
-                # Return the final result
-                completion_events = [e for e in events if e.type == "completion"]
-                if completion_events:
-                    return {"result": "Workflow completed successfully", "events": len(events), "message_count": 1}
-                return {
-                    "result": "Workflow executed with events",
-                    "events": len(events),
-                    "message_count": len(events),
-                }
-
-            except Exception as e:
-                logger.error(f"Error running workflow {workflow_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Execution failed: {e!s}")
-
-        @app.post("/agents/{agent_id}/run/stream")
-        async def run_agent_streaming(agent_id: str, request: RunAgentRequest):
-            """Execute an agent with streaming response (SSE)."""
-            agent_obj = self.registry.get_agent(agent_id)
-            if not agent_obj:
-                raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-
-            async def event_generator():
-                try:
-                    # Get or create thread
-                    thread = None
-                    if request.thread_id:
-                        thread = self.session_manager.get_thread(request.thread_id)
-
-                    if thread is None:
-                        thread = agent_obj.get_new_thread()
-                        thread_id = self._get_thread_id(thread)
-                        self.session_manager.create_session(agent_id, thread_id, thread)
-                    else:
-                        thread_id = self._get_thread_id(thread)
-
-                    # Convert frontend messages to Agent Framework format
-                    try:
-                        converted_messages = frontend_messages_to_chat_messages(request.messages)
-                    except Exception as e:
-                        logger.error(f"Error converting messages: {e}")
-                        error_event = DebugStreamEvent(
-                            type="error",
-                            error=f"Invalid message format: {e!s}",
-                            timestamp=datetime.now().isoformat(),
-                        )
-                        yield f"data: {error_event.model_dump_json()}\n\n"
-                        return
-
-                    # Execute with streaming
-                    async for event in self.execution_engine.execute_agent_streaming(
-                        agent=agent_obj,
-                        message=converted_messages,
-                        thread=thread,
-                        thread_id=thread_id,  # Pass thread_id to execution engine
-                        tracing_manager=self.tracing_manager,  # Pass tracing manager for real-time trace streaming
-                    ):
-                        yield f"data: {event.model_dump_json()}\n\n"
-
-                except Exception as e:
-                    logger.error(f"Error in streaming execution for {agent_id}: {e}")
-                    error_event = DebugStreamEvent(type="error", error=str(e), timestamp=datetime.now().isoformat())
-                    yield f"data: {error_event.model_dump_json()}\n\n"
-
-            return StreamingResponse(
-                event_generator(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "Access-Control-Allow-Origin": "*"},
-            )
-
-        @app.post("/workflows/{workflow_id}/run/stream")
-        async def run_workflow_streaming(workflow_id: str, request: RunWorkflowRequest):
-            """Execute a workflow with streaming response (SSE)."""
-            workflow_obj = self.registry.get_workflow(workflow_id)
-            if not workflow_obj:
-                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
-
-            async def event_generator():
-                try:
-                    # Execute workflow
-                    async for event in self.execution_engine.execute_workflow_streaming(
-                        workflow=workflow_obj,
-                        input_data=request.input_data,
-                        tracing_manager=self.tracing_manager,
-                    ):
-                        yield f"data: {event.model_dump_json()}\n\n"
-
-                except Exception as e:
-                    logger.error(f"Error in streaming execution for {workflow_id}: {e}")
-                    error_event = DebugStreamEvent(type="error", error=str(e), timestamp=datetime.now().isoformat())
-                    yield f"data: {error_event.model_dump_json()}\n\n"
-
-            return StreamingResponse(
-                event_generator(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "Access-Control-Allow-Origin": "*"},
-            )
-
-        @app.get("/sessions/{session_id}", response_model=SessionInfo)
-        async def get_session(session_id: str):
-            """Get session details and message history."""
-            session = self.session_manager.get_session(session_id)
-            if not session:
-                raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-            return session
-
-        @app.get("/sessions/{session_id}/traces")
-        async def get_session_traces(session_id: str):
-            """Get OpenTelemetry traces for a session."""
-            traces = self.tracing_manager.get_session_traces(session_id)
-            return {"session_id": session_id, "traces": traces}
-
-        @app.delete("/cache")
-        async def clear_cache():
-            """Clear agent cache for hot reloading."""
-            self.registry.clear_cache()
-            return {"status": "cache_cleared"}
-
-
-def create_debug_server(agents_dir: Optional[str] = None, **kwargs: Any) -> FastAPI:
-    """Create FastAPI app for embedding in larger applications.
-
-    Args:
-        agents_dir: Optional directory to scan for agents
-        **kwargs: Additional arguments passed to AgentFrameworkDebugServer
-
-    Returns:
-        FastAPI application instance
-    """
-    server = AgentFrameworkDebugServer(agents_dir=agents_dir, **kwargs)
-    return server.create_app()
+    def get_app(self) -> FastAPI:
+        """Get the FastAPI application instance."""
+        if self._app is None:
+            self._app = self.create_app()
+        return self._app

@@ -1,521 +1,333 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Execution engine that wraps Agent Framework's native streaming."""
+"""Execution engine with simplified tracing support."""
 
-import json
 import logging
+import time
+import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, List, Optional, Union
 
-if TYPE_CHECKING:
-    from agent_framework import AgentProtocol, AgentThread
-    from agent_framework.workflow import Workflow
+from opentelemetry import trace
 
-    from ._tracing import TracingManager
+from .executors._base import FrameworkExecutor  # Import the correct executor base class
+from .models import AgentFrameworkRequest, OpenAIResponse, ResponseStreamEvent, ResponseTraceEvent
 
-from ._models import DebugStreamEvent
+# Type aliases for better readability
+SessionData = Dict[str, Any]
+RequestRecord = Dict[str, Any]
+SessionSummary = Dict[str, Any]
+TracingAttributes = Dict[str, Union[str, int, float, bool]]
 
-
-def _format_message_for_telemetry(message) -> str:
-    """Format message for telemetry attributes (OpenTelemetry requires primitive types)."""
-    if isinstance(message, str):
-        return message[:100] + "..." if len(message) > 100 else message
-    if hasattr(message, "text"):  # ChatMessage or similar
-        text = message.text
-        return text[:100] + "..." if len(text) > 100 else text
-    if isinstance(message, list):
-        # Handle list of ChatMessage objects
-        texts = []
-        for msg in message:
-            if hasattr(msg, "text"):
-                texts.append(msg.text)
-            else:
-                texts.append(str(msg))
-        combined = " ".join(texts)
-        return combined[:100] + "..." if len(combined) > 100 else combined
-    return str(message)[:100] + "..." if len(str(message)) > 100 else str(message)
-
-
-logger: logging.Logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ExecutionEngine:
-    """Wraps Agent Framework execution with minimal overhead.
+    """Execution engine with simplified tracing and session management."""
 
-    Passes through native framework types with optional debug metadata.
-    This ensures zero maintenance burden while preserving all framework capabilities.
-    """
-
-    def __init__(self, telemetry_config: Optional[Dict[str, bool]] = None) -> None:
+    def __init__(self, tracing_enabled: bool = False, otlp_endpoint: Optional[str] = None) -> None:
         """Initialize the execution engine.
         
         Args:
-            telemetry_config: Optional telemetry configuration from server
+            tracing_enabled: Whether to enable tracing
+            otlp_endpoint: OTLP endpoint for tracing
         """
-        self.telemetry_config = telemetry_config or {
-            'enable_framework_traces': True,
-            'enable_workflow_traces': False,
-            'enable_sensitive_data': False,
+        self.tracing_enabled = tracing_enabled
+        self.otlp_endpoint = otlp_endpoint
+        self.sessions: Dict[str, SessionData] = {}
+
+        # Setup tracing
+        self._setup_tracing()
+        self.tracer: trace.Tracer = trace.get_tracer(__name__)
+
+    def _setup_tracing(self) -> None:
+        """Setup OpenTelemetry tracing via Agent Framework."""
+        if not self.tracing_enabled:
+            return
+
+        # Set Agent Framework environment variables
+        import os
+        os.environ["AGENT_FRAMEWORK_ENABLE_OTEL"] = "1"
+        if self.otlp_endpoint:
+            os.environ["AGENT_FRAMEWORK_OTLP_ENDPOINT"] = self.otlp_endpoint
+        else:
+            os.environ["AGENT_FRAMEWORK_OTLP_ENDPOINT"] = "http://localhost:4317"  # Dummy
+        logger.info("Enabled Agent Framework automatic telemetry")
+
+    def create_session(self, session_id: Optional[str] = None) -> str:
+        """Create a new execution session.
+        
+        Args:
+            session_id: Optional session ID, if not provided a new one is generated
+            
+        Returns:
+            Session ID
+        """
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        self.sessions[session_id] = {
+            "id": session_id,
+            "created_at": datetime.now(),
+            "requests": [],
+            "context": {},
+            "active": True
         }
 
-    async def execute_agent_streaming(
-        self,
-        agent: "AgentProtocol",
-        message: Union[str, List[Any]],
-        thread: Optional["AgentThread"] = None,
-        thread_id: Optional[str] = None,
-        tracing_manager: Optional["TracingManager"] = None,
-    ) -> AsyncGenerator[DebugStreamEvent, None]:
-        """Execute agent and yield native AgentRunResponseUpdate wrapped in debug envelope.
+        logger.debug(f"Created session: {session_id}")
+        return session_id
 
+    def get_session(self, session_id: str) -> Optional[SessionData]:
+        """Get session information.
+        
         Args:
-            agent: The Agent Framework agent to execute
-            message: The message to send to the agent
-            thread: Optional conversation thread
-            thread_id: Optional thread identifier for session tracking
-            tracing_manager: Optional tracing manager for span streaming
-
-        Yields:
-            DebugStreamEvent containing native AgentRunResponseUpdate
+            session_id: Session ID
+            
+        Returns:
+            Session data or None if not found
         """
-        # Store trace events to yield alongside regular events
-        trace_events = []
+        return self.sessions.get(session_id)
 
-        # Set up tracing with callback to collect trace events
-        enable_traces = self.telemetry_config.get('enable_framework_traces', False)
-        if tracing_manager and thread_id and enable_traces:
+    def close_session(self, session_id: str) -> None:
+        """Close and cleanup a session.
+        
+        Args:
+            session_id: Session ID to close
+        """
+        if session_id in self.sessions:
+            self.sessions[session_id]["active"] = False
+            logger.debug(f"Closed session: {session_id}")
 
-            def collect_trace_event(trace_event: DebugStreamEvent):
-                trace_events.append(trace_event)
+    @asynccontextmanager
+    async def trace_execution(
+        self,
+        operation_name: str,
+        **attributes: Union[str, int, float, bool]
+    ) -> AsyncIterator[Optional[trace.Span]]:
+        """Context manager for tracing execution with automatic error handling.
+        
+        Args:
+            operation_name: Name of the operation being traced
+            **attributes: Additional attributes to add to the span
+            
+        Yields:
+            Span object if tracing is enabled, None otherwise
+        """
+        if not self.tracing_enabled:
+            # No tracing, just yield
+            yield None
+            return
 
-            tracing_manager.setup_streaming_tracing(collect_trace_event)
+        span = self.tracer.start_span(operation_name)
 
         try:
-            # Create a manual span for agent execution if tracing is enabled
-            if tracing_manager and thread_id:
-                try:
-                    from opentelemetry import trace
+            # Add attributes
+            for key, value in attributes.items():
+                span.set_attribute(key, str(value))
 
-                    tracer = trace.get_tracer("devui.execution")
+            span.set_attribute("execution.start_time", datetime.now().isoformat())
 
-                    # Create a top-level span for this agent execution
-                    with tracer.start_as_current_span(
-                        f"agent_execution.{getattr(agent, 'name', 'unknown')}",
-                        attributes={
-                            "thread_id": thread_id,
-                            "agent_name": getattr(agent, "name", "unknown"),
-                            "message": _format_message_for_telemetry(message),
-                        },
-                    ) as span:
-                        span.set_attribute("devui.session_id", thread_id)
+            yield span
 
-                        try:
-                            # Execute agent using framework's native streaming
-                            update_count = 0
-                            async for update in agent.run_stream(message, thread=thread):
-                                update_count += 1
-                                # Yield any pending trace events first
-                                while trace_events:
-                                    yield trace_events.pop(0)
-
-                                # Minimal wrapping - preserve native types completely
-                                yield DebugStreamEvent(
-                                    type="agent_run_update",
-                                    update=update,  # Native AgentRunResponseUpdate - no modification
-                                    timestamp=self._get_timestamp(),
-                                    thread_id=thread_id,
-                                    debug_metadata=self._get_debug_metadata(update) if enable_traces else None,
-                                )
-
-                            # Mark span as successful after processing all updates
-                            span.set_status(trace.Status(trace.StatusCode.OK))
-                            span.set_attribute("devui.update_count", update_count)
-
-                        except Exception as e:
-                            # Mark span as failed on exception
-                            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                            span.record_exception(e)
-                            raise
-                except ImportError:
-                    logger.debug("OpenTelemetry not available for manual span creation")
-                    # Fall back to execution without spans
-                    try:
-                        async for update in agent.run_stream(message, thread=thread):
-                            # Yield any pending trace events first
-                            while trace_events:
-                                yield trace_events.pop(0)
-
-                            # Minimal wrapping - preserve native types completely
-                            yield DebugStreamEvent(
-                                type="agent_run_update",
-                                update=update,  # Native AgentRunResponseUpdate - no modification
-                                timestamp=self._get_timestamp(),
-                                thread_id=thread_id,
-                                debug_metadata=self._get_debug_metadata(update) if enable_traces else None,
-                            )
-                    except Exception as e:
-                        logger.error(f"Error in agent execution fallback: {e}")
-                        raise
-            else:
-                # Execute without tracing
-                try:
-                    async for update in agent.run_stream(message, thread=thread):
-                        # Yield any pending trace events first
-                        while trace_events:
-                            yield trace_events.pop(0)
-
-                        # Minimal wrapping - preserve native types completely
-                        yield DebugStreamEvent(
-                            type="agent_run_update",
-                            update=update,  # Native AgentRunResponseUpdate - no modification
-                            timestamp=self._get_timestamp(),
-                            thread_id=thread_id,
-                            debug_metadata=self._get_debug_metadata(update) if enable_traces else None,
-                        )
-                except Exception as e:
-                    logger.error(f"Error in agent execution without tracing: {e}")
-                    raise
-
-            # Yield any remaining trace events
-            while trace_events:
-                yield trace_events.pop(0)
-
-            # Signal completion
-            yield DebugStreamEvent(type="completion", timestamp=self._get_timestamp(), thread_id=thread_id)
+            span.set_attribute("execution.status", "success")
 
         except Exception as e:
-            logger.error(f"Error executing agent {getattr(agent, 'name', 'unknown')}: {e}")
-            yield DebugStreamEvent(type="error", error=str(e), timestamp=self._get_timestamp(), thread_id=thread_id)
+            span.set_attribute("execution.status", "error")
+            span.set_attribute("execution.error", str(e))
+            span.record_exception(e)
+            raise
+        finally:
+            span.set_attribute("execution.end_time", datetime.now().isoformat())
+            span.end()
 
-    async def execute_workflow_streaming(
+    async def execute_streaming(
         self,
-        workflow: "Workflow",
-        input_data: Union[str, Dict[str, Any]],
-        tracing_manager: Optional["TracingManager"] = None,
-    ) -> AsyncGenerator[DebugStreamEvent, None]:
-        """Execute workflow and yield native WorkflowEvent wrapped in debug envelope.
-
+        executor: FrameworkExecutor,
+        entity_id: str,
+        request: AgentFrameworkRequest,
+        enable_tracing: bool = True
+    ) -> AsyncGenerator[Union[ResponseStreamEvent, ResponseTraceEvent], None]:
+        """Execute request with streaming and optional tracing.
+        
         Args:
-            workflow: The Agent Framework workflow to execute
-            input_data: The input data for the workflow (string or structured dict)
-            tracing_manager: Optional tracing manager for span streaming
-
+            executor: Framework executor instance
+            entity_id: ID of the entity being executed
+            request: OpenAI request
+            enable_tracing: Whether to enable tracing
+            
         Yields:
-            DebugStreamEvent containing native WorkflowEvent
+            Stream events from the entity execution
         """
-        # Store trace events to yield alongside regular events
-        trace_events = []
+        logger.info(f"🚀 ExecutionEngine.execute_streaming called for entity: {entity_id}")
 
-        # Set up tracing with callback to collect trace events
-        enable_traces = self.telemetry_config.get('enable_workflow_traces', False)
-        if tracing_manager and enable_traces:
+        # Get or create session
+        session_id: Optional[str] = request.extra_body.get("session_id") if request.extra_body else None
+        if session_id and session_id not in self.sessions:
+            session_id = self.create_session(session_id)
+        elif not session_id:
+            session_id = self.create_session()
 
-            def collect_trace_event(trace_event: DebugStreamEvent):
-                trace_events.append(trace_event)
+        session: SessionData = self.sessions[session_id]
 
-            tracing_manager.setup_streaming_tracing(collect_trace_event)
+        # Record request in session
+        request_record: RequestRecord = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(),
+            "entity_id": entity_id,
+            "executor": executor.__class__.__name__,
+            "input": request.input,
+            "model": request.model,
+            "stream": True
+        }
+        session["requests"].append(request_record)
 
-        try:
-            # First, send workflow structure information (minimal - just raw dump)
+        operation_name: str = f"{executor.__class__.__name__}.{entity_id}.execute_streaming"
+
+        # Execute with optional tracing
+        if enable_tracing:
+            async with self.trace_execution(
+                operation_name,
+                executor=executor.__class__.__name__,
+                entity_id=entity_id,
+                session_id=session_id,
+                request_id=request_record["id"],
+                model=request.model,
+                stream=True,
+                input_length=len(str(request.input)) if request.input else 0
+            ) as span:
+                start_time: float = time.time()
+
+                try:
+                    # Get executor and run entity with streaming
+                    async for event in executor.execute_streaming(request):
+                        yield event
+
+                except Exception as e:
+                    # Log execution error
+                    logger.exception(f"Execution error for {request_record['entity_id']}: {e}")
+
+                    # Update session with error
+                    request_record["error"] = str(e)
+                    request_record["status"] = "error"
+
+                    raise
+                finally:
+                    # Record execution time
+                    execution_time: float = time.time() - start_time
+                    request_record["execution_time"] = execution_time
+                    request_record["status"] = request_record.get("status", "completed")
+
+                    if span:
+                        span.set_attribute("execution.duration_seconds", execution_time)
+        else:
+            # Execute without tracing
+            execution_start_time: float = time.time()
             try:
-                yield DebugStreamEvent(
-                    type="workflow_structure", workflow_dump=workflow, timestamp=self._get_timestamp()
-                )
+                async for event in executor.execute_streaming(request):
+                    yield event
             except Exception as e:
-                logger.warning(f"Could not generate workflow structure: {e}")
+                logger.exception(f"Execution error for {request_record['entity_id']}: {e}")
+                request_record["error"] = str(e)
+                request_record["status"] = "error"
+                raise
+            finally:
+                execution_time = time.time() - execution_start_time
+                request_record["execution_time"] = execution_time
+                request_record["status"] = request_record.get("status", "completed")
 
-            # Parse input data based on workflow requirements
-            if isinstance(input_data, dict):
-                parsed_input = self._parse_structured_workflow_input(workflow, input_data)
-            else:
-                # Legacy string input - use existing parsing logic
-                parsed_input = self._parse_workflow_input(workflow, input_data)
-
-            # Create a span for workflow execution if tracing is enabled
-            if tracing_manager and enable_traces:
-                try:
-                    from opentelemetry import trace
-
-                    tracer = trace.get_tracer("devui.execution")
-
-                    with tracer.start_as_current_span(
-                        f"workflow_execution.{getattr(workflow, 'name', 'unknown')}",
-                        attributes={"workflow_name": getattr(workflow, "name", "unknown"), "input_data": str(input_data)[:100] + "..." if len(str(input_data)) > 100 else str(input_data)},
-                    ) as span:
-                        try:
-                            # Execute workflow using framework's native streaming
-                            event_count = 0
-                            async for event in workflow.run_stream(parsed_input):
-                                event_count += 1
-                                # Yield any pending trace events first
-                                while trace_events:
-                                    yield trace_events.pop(0)
-
-                                # Minimal wrapping - preserve native types completely
-                                yield DebugStreamEvent(
-                                    type="workflow_event",
-                                    event=self._serialize_workflow_event(event),  # Convert to serializable format
-                                    timestamp=self._get_timestamp(),
-                                    debug_metadata=self._get_debug_metadata(event) if enable_traces else None,
-                                )
-
-                            # Mark span as successful
-                            span.set_status(trace.Status(trace.StatusCode.OK))
-                            span.set_attribute("devui.event_count", event_count)
-
-                        except Exception as e:
-                            # Mark span as failed
-                            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                            span.record_exception(e)
-                            raise
-
-                except ImportError:
-                    logger.debug("OpenTelemetry not available for workflow span creation")
-                    # Fall back to execution without spans
-                    try:
-                        async for event in workflow.run_stream(parsed_input):
-                            # Yield any pending trace events first
-                            while trace_events:
-                                yield trace_events.pop(0)
-
-                            # Minimal wrapping - preserve native types completely
-                            yield DebugStreamEvent(
-                                type="workflow_event",
-                                event=self._serialize_workflow_event(event),  # Convert to serializable format
-                                timestamp=self._get_timestamp(),
-                                debug_metadata=self._get_debug_metadata(event) if enable_traces else None,
-                            )
-                    except Exception as e:
-                        logger.error(f"Error in workflow execution fallback: {e}")
-                        raise
-            else:
-                # Execute without tracing
-                try:
-                    async for event in workflow.run_stream(parsed_input):
-                        # Yield any pending trace events first
-                        while trace_events:
-                            yield trace_events.pop(0)
-
-                        # Minimal wrapping - preserve native types completely
-                        yield DebugStreamEvent(
-                            type="workflow_event",
-                            event=self._serialize_workflow_event(event),  # Convert to serializable format
-                            timestamp=self._get_timestamp(),
-                            debug_metadata=self._get_debug_metadata(event) if enable_traces else None,
-                        )
-                except Exception as e:
-                    logger.error(f"Error in workflow execution without tracing: {e}")
-                    raise
-
-            # Yield any remaining trace events
-            while trace_events:
-                yield trace_events.pop(0)
-
-            # Signal completion
-            yield DebugStreamEvent(type="completion", timestamp=self._get_timestamp())
-
-        except Exception as e:
-            logger.error(f"Error executing workflow: {e}")
-            yield DebugStreamEvent(type="error", error=str(e), timestamp=self._get_timestamp())
-
-    def _get_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
-        return datetime.now().isoformat()
-
-    def _get_debug_metadata(self, obj: Any) -> Optional[Dict[str, Any]]:
-        """Extract debug metadata from framework objects."""
-        metadata: Dict[str, Any] = {}
-
-        # Add common metadata
-        if hasattr(obj, "message_id"):
-            metadata["message_id"] = obj.message_id
-        if hasattr(obj, "response_id"):
-            metadata["response_id"] = obj.response_id
-        if hasattr(obj, "role"):
-            metadata["role"] = obj.role
-
-        # Add timing if available
-        if hasattr(obj, "timestamp"):
-            metadata["framework_timestamp"] = obj.timestamp
-
-        return metadata
-
-
-    def _parse_structured_workflow_input(self, workflow: "Workflow", input_data: Dict[str, Any]) -> Any:
-        """Parse structured input data for workflow execution.
-
-        This method takes a dictionary of form data from the UI and converts it
-        to the appropriate input type expected by the workflow's start executor.
-
+    async def execute(
+        self,
+        executor: FrameworkExecutor,
+        entity_id: str,
+        request: AgentFrameworkRequest,
+        enable_tracing: bool = True
+    ) -> OpenAIResponse:
+        """Execute request and return complete response (uses streaming underneath).
+        
         Args:
-            workflow: The workflow to get input type from
-            input_data: Structured input data from UI form
-
+            executor: Framework executor instance
+            entity_id: ID of the entity being executed
+            request: OpenAI request
+            enable_tracing: Whether to enable tracing
+            
         Returns:
-            Parsed input object ready for workflow execution
+            Complete response object
         """
-        try:
-            # Get the start executor and its input type
-            start_executor = workflow.get_start_executor()
-            if not start_executor or not hasattr(start_executor, "_handlers"):
-                logger.debug("Cannot determine input type for workflow - using raw dict")
-                return input_data
+        # Use execute_streaming and collect all events
+        return await executor.execute_sync(request)
 
-            message_types = list(start_executor._handlers.keys())
-            if not message_types:
-                logger.debug("No message types found for start executor - using raw dict")
-                return input_data
-
-            # Get the first (primary) input type
-            input_type = message_types[0]
-
-            # If input type is dict, return as-is
-            if input_type == dict:
-                return input_data
-
-            # Handle primitive types (str, int, float, bool)
-            if input_type in (str, int, float, bool):
-                try:
-                    # For primitive types, the input_data should be the value directly
-                    if isinstance(input_data, input_type):
-                        return input_data
-                    # For non-dict input, try to convert/cast directly
-                    if not isinstance(input_data, dict):
-                        return input_type(input_data)
-                    # If input_data is a dict, extract the actual value
-                    # UI sends string primitives as {"input": "value"}
-                    if isinstance(input_data, dict):
-                        if "input" in input_data:
-                            return input_type(input_data["input"])
-                        # If dict has only one key, use that value
-                        if len(input_data) == 1:
-                            value = list(input_data.values())[0]
-                            return input_type(value)
-                    # Fallback - return as-is
-                    logger.warning(f"Received dict for primitive type {input_type}, returning as-is")
-                    return input_data
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to convert input to {input_type}: {e}")
-                    return input_data
-
-            # If it's a Pydantic model, validate and create instance
-            if hasattr(input_type, "model_validate"):
-                try:
-                    return input_type.model_validate(input_data)
-                except Exception as e:
-                    logger.warning(f"Failed to validate input as {input_type}: {e}")
-                    # Try with just the data if validation fails
-                    return input_data
-
-            # If it's a dataclass or other type with annotations
-            elif hasattr(input_type, "__annotations__"):
-                try:
-                    return input_type(**input_data)
-                except Exception as e:
-                    logger.warning(f"Failed to create {input_type} from input data: {e}")
-                    return input_data
-
-        except Exception as e:
-            logger.warning(f"Error parsing structured workflow input: {e}")
-
-        # Fallback: return raw dict
-        logger.debug("Using raw dict input as fallback")
-        return input_data
-
-    def _parse_workflow_input(self, workflow: "Workflow", raw_input: str) -> Any:
-        """Parse raw input string based on workflow's expected input type.
-
+    async def get_session_history(self, session_id: str) -> Optional[SessionSummary]:
+        """Get session execution history.
+        
         Args:
-            workflow: The workflow to get input type from
-            raw_input: Raw string input from user
-
+            session_id: Session ID
+            
         Returns:
-            Parsed input object or the raw string if parsing fails
+            Session history or None if not found
         """
-        try:
-            # Get the start executor and its input type
-            start_executor = workflow.get_start_executor()
-            if not start_executor or not hasattr(start_executor, "_handlers"):
-                logger.debug("Cannot determine input type for workflow - using raw string")
-                return raw_input
+        session = self.get_session(session_id)
+        if not session:
+            return None
 
-            message_types = list(start_executor._handlers.keys())
-            if not message_types:
-                logger.debug("No message types found for start executor - using raw string")
-                return raw_input
+        return {
+            "session_id": session_id,
+            "created_at": session["created_at"].isoformat(),
+            "active": session["active"],
+            "request_count": len(session["requests"]),
+            "requests": [
+                {
+                    "id": req["id"],
+                    "timestamp": req["timestamp"].isoformat(),
+                    "entity_id": req["entity_id"],
+                    "executor": req["executor"],
+                    "model": req["model"],
+                    "input_length": len(str(req["input"])) if req["input"] else 0,
+                    "execution_time": req.get("execution_time"),
+                    "status": req.get("status", "unknown")
+                }
+                for req in session["requests"]
+            ]
+        }
 
-            # Get the first (primary) input type
-            input_type = message_types[0]
+    def get_active_sessions(self) -> List[SessionSummary]:
+        """Get list of active sessions.
+        
+        Returns:
+            List of active session summaries
+        """
+        active_sessions = []
 
-            # If input type is str, return as-is
-            if input_type == str:
-                return raw_input
+        for session_id, session in self.sessions.items():
+            if session["active"]:
+                active_sessions.append({
+                    "session_id": session_id,
+                    "created_at": session["created_at"].isoformat(),
+                    "request_count": len(session["requests"]),
+                    "last_activity": (
+                        session["requests"][-1]["timestamp"].isoformat()
+                        if session["requests"] else session["created_at"].isoformat()
+                    )
+                })
 
-            # If it's a Pydantic model, try to parse JSON
-            if hasattr(input_type, "model_validate_json"):
-                try:
-                    # First try to parse as JSON
-                    if raw_input.strip().startswith("{"):
-                        return input_type.model_validate_json(raw_input)
-                    # If not JSON, try to create from string (for simple cases)
-                    try:
-                        parsed_json = json.loads(raw_input)
-                        return input_type.model_validate(parsed_json)
-                    except:
-                        # Last resort: try to create with raw string in common field names
-                        common_fields = ["message", "text", "input", "data", "content"]
-                        for field in common_fields:
-                            try:
-                                return input_type(**{field: raw_input})
-                            except:
-                                continue
-                        # If all else fails, try default constructor
-                        return input_type()
-                except Exception as e:
-                    logger.debug(f"Failed to parse input as {input_type}: {e}")
+        return active_sessions
 
-            # If it's a dataclass or other type, try JSON parsing
-            elif hasattr(input_type, "__annotations__"):
-                try:
-                    if raw_input.strip().startswith("{"):
-                        parsed = json.loads(raw_input)
-                        return input_type(**parsed)
-                except Exception as e:
-                    logger.debug(f"Failed to parse input as {input_type}: {e}")
+    async def cleanup_old_sessions(self, max_age_hours: int = 24) -> None:
+        """Cleanup old sessions to prevent memory leaks.
+        
+        Args:
+            max_age_hours: Maximum age of sessions to keep in hours
+        """
+        cutoff_time = datetime.now().timestamp() - (max_age_hours * 3600)
 
-        except Exception as e:
-            logger.debug(f"Error determining workflow input type: {e}")
+        sessions_to_remove = []
+        for session_id, session in self.sessions.items():
+            if session["created_at"].timestamp() < cutoff_time:
+                sessions_to_remove.append(session_id)
 
-        # Fallback: return raw string
-        logger.debug("Using raw string input as fallback")
-        return raw_input
+        for session_id in sessions_to_remove:
+            del self.sessions[session_id]
+            logger.debug(f"Cleaned up old session: {session_id}")
 
-    def _serialize_workflow_event(self, event: Any) -> Dict[str, Any]:
-        """Convert workflow event to serializable format."""
-        event_dict = {"type": event.__class__.__name__, "data": None}
-
-        # Add common attributes
-        if hasattr(event, "executor_id"):
-            event_dict["executor_id"] = event.executor_id
-        if hasattr(event, "request_id"):
-            event_dict["request_id"] = event.request_id
-        if hasattr(event, "source_executor_id"):
-            event_dict["source_executor_id"] = event.source_executor_id
-        if hasattr(event, "request_type"):
-            event_dict["request_type"] = (
-                event.request_type.__name__ if hasattr(event.request_type, "__name__") else str(event.request_type)
-            )
-
-        # Serialize data based on type
-        if hasattr(event, "data") and event.data is not None:
-            try:
-                # Try to serialize simple types
-                if isinstance(event.data, (str, int, float, bool, list, dict)):
-                    event_dict["data"] = event.data
-                else:
-                    # Convert complex objects to string representation
-                    event_dict["data"] = str(event.data)
-            except Exception:
-                event_dict["data"] = str(event.data)
-
-        return event_dict
+        if sessions_to_remove:
+            logger.info(f"Cleaned up {len(sessions_to_remove)} old sessions")

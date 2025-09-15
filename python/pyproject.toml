@@ -9,6 +9,7 @@ dependencies = [
     "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-workflow",
+    "agent-framework-devui",
 ]
 
 [dependency-groups]

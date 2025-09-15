@@ -74,8 +74,10 @@ class ProcessingResult:
     processing_time: float
     status: str
 
-class EmailRequest(BaseModel): 
+
+class EmailRequest(BaseModel):
     email: str = Field(description="The email message to be processed.", default="Hi there, are you interested in our new offer today? Click here!")
+
 
 class EmailPreprocessor(Executor):
     """Step 1: An executor that preprocesses and cleans email content."""
