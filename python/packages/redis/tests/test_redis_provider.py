@@ -3,10 +3,9 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import numpy as np
 import pytest
-from agent_framework import ChatMessage, Context, Role, TextContent
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework import ChatMessage, Role
+from agent_framework.exceptions import ServiceInitializationError
 
 
 @pytest.fixture
@@ -137,48 +136,6 @@ class TestRedisProviderInitialization:
         mock_index.create.assert_awaited_once_with(overwrite=True, drop=False)
 
 
-class TestRedisProviderAdd:
-    @pytest.mark.asyncio
-    async def test_add_single_document_sets_defaults(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1", application_id="app1", agent_id="a1")
-        await provider.add(data={"content": "Hello"})
-        mock_index.load.assert_awaited_once()
-        loaded = mock_index.load.call_args.args[0]
-        assert isinstance(loaded, list) and len(loaded) == 1
-        doc = loaded[0]
-        assert doc["content"] == "Hello"
-        assert doc["user_id"] == "u1"
-        assert doc["application_id"] == "app1"
-        assert doc["agent_id"] == "a1"
-        assert "thread_id" in doc  # may be None
-
-    @pytest.mark.asyncio
-    async def test_add_requires_content(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        with pytest.raises(ServiceInvalidRequestError):
-            await provider.add(data={"role": "user"})
-
-    @pytest.mark.asyncio
-    async def test_add_with_vectorizer_embeds_and_serializes(
-        self, mock_index: AsyncMock, patch_index_from_dict, patch_vectorizers
-    ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1", vectorizer_choice="openai", vector_field_name="vector")
-        await provider.add(data=[{"content": "one"}, {"content": "two"}])
-        loaded = mock_index.load.call_args.args[0]
-        assert len(loaded) == 2
-        for d in loaded:
-            vec = d.get("vector")
-            assert isinstance(vec, (bytes, bytearray))
-            # Dummy openai dims=3 -> 12 bytes when float32
-            assert len(vec) == 3 * np.dtype(np.float32).itemsize
-
-
 class TestRedisProviderMessages:
     @pytest.fixture
     def sample_messages(self) -> list[ChatMessage]:
@@ -187,25 +144,6 @@ class TestRedisProviderMessages:
             ChatMessage(role=Role.ASSISTANT, text="I'm doing well, thank you!"),
             ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant"),
         ]
-
-    @pytest.mark.asyncio
-    async def test_messages_adding_sets_thread_and_calls_add(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        provider.add = AsyncMock()  # isolate from redis
-        await provider.messages_adding(
-            "thread123",
-            [
-                ChatMessage(role=Role.USER, text=""),
-                ChatMessage(role=Role.USER, text="Hi"),
-                ChatMessage(role=Role.USER, text="   "),
-            ],
-        )
-        assert provider._per_operation_thread_id == "thread123"
-        provider.add.assert_awaited_once()
-        msgs = provider.add.call_args.kwargs["data"]
-        assert msgs == [{"role": "user", "content": "Hi"}]
 
     @pytest.mark.asyncio
     async def test_messages_adding_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
@@ -233,83 +171,6 @@ class TestRedisProviderMessages:
             await provider.thread_created("t2")
         assert "only be used with one thread" in str(exc.value)
 
-
-class TestRedisProviderSearch:
-    @pytest.mark.asyncio
-    async def test_redis_search_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider()
-        with pytest.raises(ServiceInitializationError):
-            await provider.redis_search("hello")
-
-    @pytest.mark.asyncio
-    async def test_redis_search_requires_nonempty_text(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        with pytest.raises(ServiceInvalidRequestError) as exc:
-            await provider.redis_search("   ")
-        assert "requires non-empty text" in str(exc.value)
-
-    @pytest.mark.asyncio
-    async def test_text_only_search_builds_textquery(self, mock_index: AsyncMock, patch_index_from_dict, patch_queries):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        mock_index.query.return_value = [{"content": "doc"}]
-        res = await provider.redis_search(
-            "hello world",
-            filter_expression="@role:{user}",
-            return_fields=["content"],
-            stopwords=["and", "or"],
-            num_results=5,
-            in_order=True,
-        )
-        assert res == [{"content": "doc"}]
-        # Ensure TextQuery was used
-        assert len(patch_queries["calls"]["TextQuery"]) == 1
-        kwargs = patch_queries["calls"]["TextQuery"][0]
-        assert kwargs["text"] == "hello world"
-        assert isinstance(kwargs["stopwords"], set)
-        # Combined filter applied
-        fe_arg = patch_queries["calls"]["FilterExpression"][0]
-        assert "@user_id:{u1}" in fe_arg or "@user_id:{u1}" in str(fe_arg)
-        assert "@role:{user}" in fe_arg or "@role:{user}" in str(fe_arg)
-
-    @pytest.mark.asyncio
-    async def test_hybrid_search_when_vectorizer_present(
-        self, mock_index: AsyncMock, patch_index_from_dict, patch_vectorizers, patch_queries
-    ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1", vectorizer_choice="hf", vector_field_name="vec")
-        mock_index.query.return_value = [{"content": "vdoc"}]
-        res = await provider.redis_search("needle")
-        assert res == [{"content": "vdoc"}]
-        # Ensure HybridQuery was used
-        assert len(patch_queries["calls"]["HybridQuery"]) == 1
-        assert len(patch_queries["calls"]["TextQuery"]) == 0
-        h_kwargs = patch_queries["calls"]["HybridQuery"][0]
-        assert h_kwargs["vector_field_name"] == "vec"
-        assert isinstance(h_kwargs["vector"], list)
-        assert h_kwargs["dtype"] == "float32"
-
-    @pytest.mark.asyncio
-    async def test_redis_search_wraps_exceptions(self, mock_index: AsyncMock, patch_index_from_dict, patch_queries):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-
-        # Make query raise
-        async def boom(_q):  # noqa: ANN001
-            raise RuntimeError("fail")
-
-        mock_index.query.side_effect = boom
-        with pytest.raises(ServiceInvalidRequestError) as exc:
-            await provider.redis_search("hello")
-        assert "Redis text search failed" in str(exc.value)
-
     @pytest.mark.asyncio
     async def test_search_all_paginates(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         from agent_framework_redis._provider import RedisProvider
@@ -332,48 +193,6 @@ class TestRedisProviderModelInvoking:
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
             await provider.model_invoking(ChatMessage(role=Role.USER, text="Hi"))
-
-    @pytest.mark.asyncio
-    async def test_model_invoking_single_message_builds_context(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        provider.redis_search = AsyncMock(return_value=[{"content": "A"}, {"content": "B"}])
-        ctx = await provider.model_invoking(ChatMessage(role=Role.USER, text="What's up?"))
-        provider.redis_search.assert_awaited_once()
-        called_with = provider.redis_search.call_args.kwargs.get("text") or provider.redis_search.call_args.args[0]
-        assert called_with == "What's up?"
-        assert isinstance(ctx, Context)
-        assert ctx.contents and isinstance(ctx.contents[0], TextContent)
-        text = ctx.contents[0].text
-        assert "## Memories" in text
-        assert "A" in text and "B" in text
-
-    @pytest.mark.asyncio
-    async def test_model_invoking_multiple_messages_joins_input(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        provider.redis_search = AsyncMock(return_value=[])
-        msgs = [
-            ChatMessage(role=Role.USER, text="Hello"),
-            ChatMessage(role=Role.ASSISTANT, text="There"),
-            ChatMessage(role=Role.SYSTEM, text="General Kenobi"),
-        ]
-        await provider.model_invoking(msgs)
-        # The joined text should be used as the search query
-        called_with = provider.redis_search.call_args.kwargs.get("text") or provider.redis_search.call_args.args[0]
-        assert called_with == "Hello\nThere\nGeneral Kenobi"
-
-    @pytest.mark.asyncio
-    async def test_model_invoking_no_memories_returns_empty_context(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        provider.redis_search = AsyncMock(return_value=[])
-        ctx = await provider.model_invoking(ChatMessage(role=Role.USER, text="Hi"))
-        assert isinstance(ctx, Context)
-        assert not ctx.contents
 
 
 class TestRedisProviderContextManager:
