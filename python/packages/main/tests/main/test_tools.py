@@ -17,6 +17,8 @@ from agent_framework._tools import _parse_inputs
 from agent_framework.exceptions import ToolException
 from agent_framework.telemetry import OtelAttr
 
+from .utils import CopyingMock
+
 # region AIFunction and ai_function decorator tests
 
 
@@ -98,7 +100,8 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
     # Mock the tracer and span
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -155,7 +158,8 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
 
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -180,7 +184,7 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
                 OtelAttr.TOOL_CALL_ID: "pydantic_call",
                 OtelAttr.TOOL_TYPE: "function",
                 OtelAttr.TOOL_DESCRIPTION: "A test tool with Pydantic args",
-                OtelAttr.TOOL_ARGUMENTS: '{"x": 5, "y": 10}',
+                OtelAttr.TOOL_ARGUMENTS: '{"x":5,"y":10}',
             }
         )
         assert mock_span.set_attribute.call_count == 2
@@ -193,7 +197,6 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
     @ai_function(
         name="exception_test_tool",
         description="A test tool that raises an exception",
-        additional_properties={"otel_settings": otel_settings},
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
@@ -201,7 +204,8 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
 
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -245,7 +249,8 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
 
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()

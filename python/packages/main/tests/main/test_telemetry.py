@@ -37,6 +37,8 @@ from agent_framework.telemetry import (
     use_telemetry,
 )
 
+from .utils import CopyingMock
+
 # region Test constants
 
 
@@ -223,7 +225,7 @@ def test_start_span_with_tool_call_id():
     """Test starting a span with tool_call_id."""
     mock_tracer = Mock()
     with patch("agent_framework.telemetry.tracer", mock_tracer):
-        mock_span = Mock()
+        mock_span = CopyingMock()
         mock_tracer.start_as_current_span.return_value = mock_span
 
         mock_function = Mock()
