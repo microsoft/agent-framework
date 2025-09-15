@@ -7,24 +7,18 @@ from collections.abc import MutableSequence, Sequence
 from typing import Any, Final, Literal
 
 from agent_framework import ChatMessage, Context, ContextProvider
-from agent_framework.exceptions import ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
 
-import re
 
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import FilterQuery
+from redisvl.query import FilterQuery, TextQuery
 from redisvl.query.filter import FilterExpression
-
-
-def _escape_q(s: str) -> str:
-    # escape RediSearch special chars: - @ { } [ ] ( ) | ~ * ? " : ^ < >
-    return re.sub(r'([\-@\{\}\[\]\(\)\|\~\*\?":\^<>\\])', r"\\\1", s)
-
+from redisvl.utils.token_escaper import TokenEscaper
 
 DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
 
@@ -62,6 +56,7 @@ class RedisProvider(ContextProvider):
     overwrite_redis_index: bool = True
     drop_redis_index: bool = True
     _per_operation_thread_id: str | None = None
+    token_escaper: TokenEscaper | None = None
 
     def __init__(
         self,
@@ -100,6 +95,8 @@ class RedisProvider(ContextProvider):
         )
         redis_index = AsyncSearchIndex.from_dict(schema_dict, redis_url=redis_url, validate_on_load=True)
 
+        token_escaper = TokenEscaper()
+
         super().__init__(
             redis_url=redis_url,  # type: ignore[reportCallIssue]
             index_name=index_name,  # type: ignore[reportCallIssue]
@@ -120,6 +117,7 @@ class RedisProvider(ContextProvider):
             redis_index=redis_index,  # type: ignore[reportCallIssue]
             overwrite_redis_index=overwrite_redis_index,  # type: ignore[reportCallIssue]
             drop_redis_index=drop_redis_index,  # type: ignore[reportCallIssue]
+            token_escaper=token_escaper,  # type: ignore[reportCallIssue]
         )
 
     def _build_schema_dict(
@@ -186,6 +184,9 @@ class RedisProvider(ContextProvider):
         - Requires 'content' field in each doc.
         - If a vector field is configured, enforces presence (defaults to None).
         """
+        # Ensure provider has at least one scope set (symmetry with Mem0Provider)
+        self._validate_filters()
+
         docs = data if isinstance(data, list) else [data]
 
         prepared: list[dict[str, Any]] = []
@@ -214,36 +215,88 @@ class RedisProvider(ContextProvider):
 
     async def text_search(
         self,
-        q: str,
+        text: str,
         *,
-        k: int = 10,
-        mode: Literal["phrase", "any", "prefix"] = "phrase",
+        text_field_name: str = "content",
+        text_scorer: str = "BM25STD",
+        filter_expression: str | None = None,
+        return_fields: list[str] | None = None,
+        num_results: int = 10,
+        return_score: bool = True,
         dialect: int = 2,
-    ) -> list[dict]:
-        """Basic full-text search against the 'content' field.
+        sort_by: str | None = None,
+        in_order: bool = False,
+        params: dict[str, Any] | None = None,
+        stopwords: str | set[str] | None = "english",
+    ) -> list[dict[str, Any]]:
+        """Fulltext search over a text field with optional filters.
 
-        mode='phrase' → exact phrase match
-        mode='any'    → OR across terms
-        mode='prefix' → token* prefix search
+        - Applies provider partition filters (application_id/agent_id/user_id/thread_id) when set.
+        - Accepts an optional additional filter_expression which is ANDed with partition filters.
+        - Minimal, safe defaults; validate inputs and keep output shape simple (list of dicts).
         """
-        if mode == "phrase":
-            expr = f'@content:"{_escape_q(q)}"'
-        elif mode == "any":
-            terms = " | ".join(_escape_q(t) for t in q.split())
-            expr = f"@content:({terms})"
-        elif mode == "prefix":
-            terms = " ".join(_escape_q(t) + "*" for t in q.split())
-            expr = f"@content:({terms})"
-        else:
-            expr = f'@content:"{_escape_q(q)}"'
+        # Enforce presence of at least one provider-level filter (symmetry with Mem0Provider)
+        self._validate_filters()
 
-        query = FilterQuery(
-            FilterExpression(expr),
-            num_results=k,
-            return_fields=[],  # <-- empty + JSON storage => nice unpacked dicts
-            dialect=dialect,
+        q = (text or "").strip()
+        if not q:
+            raise ServiceInvalidRequestError("text_search() requires non-empty text")
+        num_results = max(int(num_results or 10), 1)
+
+        # Build partition scope as a RediSearch filter string (AND by whitespace)
+        scope_parts: list[str] = []
+        if self.application_id:
+            scope_parts.append(f"@application_id:{{{self.application_id}}}")
+        if self.agent_id:
+            scope_parts.append(f"@agent_id:{{{self.agent_id}}}")
+        if self.user_id:
+            scope_parts.append(f"@user_id:{{{self.user_id}}}")
+        eff_thread = self._effective_thread_id
+        if eff_thread:
+            scope_parts.append(f"@thread_id:{{{eff_thread}}}")
+
+        scope_str = " ".join(scope_parts) if scope_parts else None
+
+        # Combine user-provided filter with the scope (AND semantics)
+        combined_filter_str_parts: list[str] = []
+        if scope_str:
+            combined_filter_str_parts.append(scope_str)
+        if filter_expression is not None:
+            combined_filter_str_parts.append(str(filter_expression))
+        combined_filter = (
+            FilterExpression(" ".join(p for p in combined_filter_str_parts if p)) if combined_filter_str_parts else None
         )
-        return await self.redis_index.query(query)
+
+        # Choose return fields
+        return_fields = (
+            return_fields
+            if return_fields is not None
+            else ["content", "role", "application_id", "agent_id", "user_id", "thread_id"]
+        )
+
+        # Normalize stopwords to match TextQuery's expected types
+        normalized_stopwords: str | set[str] | None = stopwords
+        if isinstance(stopwords, list):
+            normalized_stopwords = set(stopwords)
+
+        try:
+            query = TextQuery(
+                text=q,
+                text_field_name=text_field_name,
+                text_scorer=text_scorer,
+                filter_expression=combined_filter,
+                num_results=num_results,
+                return_fields=return_fields,
+                stopwords=normalized_stopwords,
+                dialect=dialect,
+                return_score=return_score,
+                sort_by=sort_by,
+                in_order=in_order,
+                params=params,
+            )
+            return await self.redis_index.query(query)
+        except Exception as exc:  # pragma: no cover - surface as framework error
+            raise ServiceInvalidRequestError(f"Redis text search failed: {exc}") from exc
 
     async def search_all(self, page_size: int = 200) -> list[dict]:
         """Return all docs in the index (paginated under the hood)."""
@@ -262,25 +315,21 @@ class RedisProvider(ContextProvider):
     async def thread_created(self, thread_id: str | None) -> None:
         """Called just after a new thread is created.
 
-        Implementers can use this method to do any operations required at the creation of a new thread.
-        For example, checking long term storage for any data that is relevant
-        to the current session based on the input text.
-
-        Args:
-            thread_id: The ID of the new thread.
+        Mirrors Mem0Provider semantics: validate per-operation thread usage
+        when scoping is enabled and capture the thread id for this operation.
         """
-        pass
+        self._validate_per_operation_thread_id(thread_id)
+        self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
     async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
         """Called just before messages are added to the chat by any participant.
 
-        Inheritors can use this method to update their context based on new messages.
-
-        Args:
-            thread_id: The ID of the thread for the new message.
-            new_messages: New messages to add.
+        Validate provider scope presence and per-operation thread semantics,
+        then capture the per-operation thread id when appropriate.
         """
-        pass
+        self._validate_filters()
+        self._validate_per_operation_thread_id(thread_id)
+        self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called just before the Model/Agent/etc. is invoked.
@@ -291,6 +340,8 @@ class RedisProvider(ContextProvider):
         Args:
             messages: The most recent messages that the agent is being invoked with.
         """
+        # Keep symmetry with Mem0Provider by ensuring scope is present
+        self._validate_filters()
         return Context()
 
     async def __aenter__(self) -> Self:
@@ -300,3 +351,25 @@ class RedisProvider(ContextProvider):
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         # No-op; indexes/keys remain unless `close()` is called explicitly.
         return None
+
+    def _validate_filters(self) -> None:
+        """Ensure at least one provider-level filter is set.
+
+        Symmetry with Mem0Provider: require one of agent_id, user_id, application_id, or thread_id.
+        """
+        if not self.agent_id and not self.user_id and not self.application_id and not self.thread_id:
+            raise ServiceInitializationError(
+                "At least one of the filters: agent_id, user_id, application_id, or thread_id is required."
+            )
+
+    def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
+        """Validate exclusive per-operation thread id usage when scoping is enabled."""
+        if (
+            self.scope_to_per_operation_thread_id
+            and thread_id
+            and self._per_operation_thread_id
+            and thread_id != self._per_operation_thread_id
+        ):
+            raise ValueError(
+                "RedisProvider can only be used with one thread,when scope_to_per_operation_thread_id is True."
+            )
