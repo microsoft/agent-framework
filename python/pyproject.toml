@@ -30,7 +30,8 @@ dev = [
     "tomli",
     "tomli-w",
     # Documentation
-    "py2docfx==0.1.20",
+    "debugpy>=1.8.16",
+    "py2docfx",
     "pip",
 ]
 
@@ -55,6 +56,7 @@ agent-framework-foundry = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-runtime = { workspace = true }
 agent-framework-workflow = { workspace = true }
+py2docfx = { git = "https://github.com/eavanvalkenburg/py2docfx", tag = "0.1.20-a2" }
 
 [tool.ruff]
 line-length = 120

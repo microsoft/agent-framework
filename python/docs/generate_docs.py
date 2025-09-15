@@ -24,7 +24,7 @@ async def generate_af_docs(root_path: Path):
                     "name": "agent-framework",
                     "version": agent_framework_version,
                     "install_type": "pypi",
-                    "extras": ["azure", "foundry", "workflow"],
+                    "extras": ["all"],
                 },
                 "sphinx_extensions": [
                     "sphinxcontrib.autodoc_pydantic",

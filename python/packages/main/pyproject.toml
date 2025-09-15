@@ -49,6 +49,16 @@ workflow = [
 runtime = [
     "agent-framework-runtime"
 ]
+mem0 = [
+    "agent-framework-mem0"
+]
+all = [
+    "agent-framework-azure",
+    "agent-framework-foundry",
+    "agent-framework-workflow",
+    "agent-framework-runtime",
+    "agent-framework-mem0"
+]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
@@ -105,10 +115,6 @@ include = "../../shared_tasks.toml"
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
 test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests"
-
-[tool.uv.build-backend]
-module-name = "agent_framework"
-module-root = ""
 
 [build-system]
 requires = ["flit-core >= 3.9,<4.0"]
