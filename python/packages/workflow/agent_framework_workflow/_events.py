@@ -30,27 +30,9 @@ class WorkflowStartedEvent(WorkflowEvent):
 
 
 class WorkflowCompletedEvent(WorkflowEvent):
-    """Event triggered when a workflow completes.
+    """Event triggered when a workflow completes."""
 
-    Backward compatible with existing usages that only pass `data`.
-    Can optionally flag error completion with details when appropriate.
-    """
-
-    def __init__(
-        self,
-        data: Any | None = None,
-        *,
-        is_error: bool = False,
-        error_details: "WorkflowErrorDetails | None" = None,
-    ) -> None:
-        super().__init__(data)
-        self.is_error = is_error
-        self.error_details = error_details
-
-    def __repr__(self) -> str:  # pragma: no cover - representation only
-        if self.is_error:
-            return f"{self.__class__.__name__}(data={self.data!r}, is_error=True, error_details={self.error_details})"
-        return f"{self.__class__.__name__}(data={self.data!r})"
+    ...
 
 
 class WorkflowWarningEvent(WorkflowEvent):
@@ -78,14 +60,41 @@ class WorkflowErrorEvent(WorkflowEvent):
 
 
 class WorkflowRunState(str, Enum):
-    """Run-level state of a workflow execution."""
+    """Run-level state of a workflow execution.
 
-    STARTED = "STARTED"
-    IN_PROGRESS = "IN_PROGRESS"
-    WAITING_FOR_INPUT = "WAITING_FOR_INPUT"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
+    Semantics:
+      - STARTED: Run has been initiated and the workflow context has been created.
+        This is an initial state before any meaningful work is performed. In this
+        codebase we emit a dedicated `WorkflowStartedEvent` for telemetry, and
+        typically advance the status directly to `IN_PROGRESS`. Consumers may
+        still rely on `STARTED` for state machines that need an explicit pre-work
+        phase.
+
+      - IN_PROGRESS: The workflow is actively executing (e.g., the initial
+        message has been delivered to the start executor or a superstep is
+        running). This status is emitted at the beginning of a run and can be
+        followed by other statuses as the run progresses.
+
+      - WAITING_FOR_INPUT: The workflow is paused awaiting external input
+        (e.g., emitted a `RequestInfoEvent`). This is a non-terminal state; the
+        workflow can resume when responses are supplied.
+
+      - COMPLETED: Normal terminal state indicating successful completion.
+
+      - FAILED: Terminal state indicating an error surfaced. Accompanied by a
+        `WorkflowFailedEvent` with structured error details.
+
+      - CANCELLED: Terminal state indicating the run was cancelled by a caller
+        or orchestrator. Not currently emitted by default runner paths but
+        included for integrators/orchestrators that support cancellation.
+    """
+
+    STARTED = "STARTED"  # Explicit pre-work phase (rarely emitted as status; see note above)
+    IN_PROGRESS = "IN_PROGRESS"  # Active execution is underway
+    WAITING_FOR_INPUT = "WAITING_FOR_INPUT"  # Paused awaiting external responses
+    COMPLETED = "COMPLETED"  # Finished successfully
+    FAILED = "FAILED"  # Finished with an error
+    CANCELLED = "CANCELLED"  # Finished due to cancellation
 
 
 class WorkflowStatusEvent(WorkflowEvent):

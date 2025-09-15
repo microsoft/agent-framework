@@ -113,3 +113,22 @@ async def test_non_streaming_final_state_helpers():
     wf2 = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
     result2: WorkflowRunResult = await wf2.run("start")
     assert result2.get_final_state() == WorkflowRunState.WAITING_FOR_INPUT
+
+
+async def test_run_includes_status_events_completed():
+    c = Completer(id="c2")
+    wf = WorkflowBuilder().set_start_executor(c).build()
+    result: WorkflowRunResult = await wf.run("ok")
+    timeline = result.status_timeline()
+    assert timeline, "Expected status timeline in non-streaming run() results"
+    assert timeline[-1].state == WorkflowRunState.COMPLETED
+
+
+async def test_run_includes_status_events_waiting():
+    req = Requester(id="req2")
+    rie = RequestInfoExecutor(id="rie2")
+    wf = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
+    result: WorkflowRunResult = await wf.run("start")
+    timeline = result.status_timeline()
+    assert timeline, "Expected status timeline in non-streaming run() results"
+    assert timeline[-1].state == WorkflowRunState.WAITING_FOR_INPUT

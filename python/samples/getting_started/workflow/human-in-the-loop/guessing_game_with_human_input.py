@@ -9,6 +9,7 @@ from agent_framework.workflow import (
     AgentExecutor,  # Executor that runs the agent
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
+    Executor,
     RequestInfoEvent,  # Event emitted when human input is requested
     RequestInfoExecutor,  # Special executor that collects human input out of band
     RequestInfoMessage,  # Base class for request payloads sent to RequestInfoExecutor
@@ -16,11 +17,10 @@ from agent_framework.workflow import (
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowCompletedEvent,  # Terminal event used to finish the workflow
     WorkflowContext,  # Per run context and event bus
-    WorkflowRunState,
-    WorkflowStatusEvent,
+    WorkflowRunState,  # Enum of workflow run states
+    WorkflowStatusEvent,  # Event emitted on run state changes
     handler,  # Decorator to expose an Executor method as a step
 )
-from agent_framework_workflow import Executor
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
@@ -241,7 +241,7 @@ async def main() -> None:
                 print(f"HITL> {prompt}")
                 # Instructional print already appears above. The input line below is the user entry point.
                 # If desired, you can add more guidance here, but keep it concise.
-                answer = input("Enter higher/lower/correct/exit: ").lower()
+                answer = input("Enter higher/lower/correct/exit: ").lower()  # noqa: ASYNC250
                 if answer == "exit":
                     print("Exiting...")
                     return

@@ -58,7 +58,6 @@ _IMPORTS = [
     "RequestInfoEvent",
     "StandardMagenticManager",
     "WorkflowStatusEvent",
-    "WorkflowFailedEvent",
     "WorkflowRunState",
     "WorkflowErrorDetails",
     "WorkflowFailedEvent",
