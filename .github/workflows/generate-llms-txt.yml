@@ -94,14 +94,8 @@ jobs:
         fi
         
         # Commit the changes
-        git commit -m "$COMMIT_MSG
-
-        - Generated from all Markdown files in the repository
-        - Organized by priority and category for AI consumption
-        - Generated at $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-        
-        [skip ci]"
-        
+        git commit -m "$COMMIT_MSG"
+      
         # Push the changes
         git push
         
