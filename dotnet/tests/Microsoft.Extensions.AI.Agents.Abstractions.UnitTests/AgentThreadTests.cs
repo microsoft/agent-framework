@@ -104,7 +104,7 @@ public class AgentThreadTests
         };
 
         // Act
-        await thread.OnNewMessagesAsync(messages, CancellationToken.None);
+        await thread.MessagesReceivedAsync(messages, CancellationToken.None);
         Assert.Equal("thread-123", thread.ConversationId);
         Assert.Null(thread.MessageStore);
     }
@@ -122,40 +122,12 @@ public class AgentThreadTests
         };
 
         // Act
-        await thread.OnNewMessagesAsync(messages, CancellationToken.None);
+        await thread.MessagesReceivedAsync(messages, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, store.Count);
         Assert.Equal("Hello", store[0].Text);
         Assert.Equal("Hi there!", store[1].Text);
-    }
-
-    [Fact]
-    public async Task OnNewMesssagesAsyncPassesMessagesToAIContextProviderAsync()
-    {
-        // Arrange
-        var providerMock = new Mock<AIContextProvider>();
-        var store = new InMemoryChatMessageStore();
-        var thread = new AgentThread
-        {
-            MessageStore = store,
-            AIContextProvider = providerMock.Object
-        };
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.User, "Hello"),
-            new(ChatRole.Assistant, "Hi there!")
-        };
-
-        // Act
-        await thread.OnNewMessagesAsync(messages, CancellationToken.None);
-
-        // Assert
-        providerMock.Verify(
-            m => m.MessagesAddingAsync(
-                It.Is<IReadOnlyCollection<ChatMessage>>(msgs => msgs.Count == 2 && msgs.First().Text == "Hello" && msgs.Last().Text == "Hi there!"),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
     }
 
     #endregion OnNewMessagesAsync Tests

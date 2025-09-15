@@ -11,11 +11,11 @@ namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 public class AIContextProviderTests
 {
     [Fact]
-    public async Task MessagesAddingAsync_ReturnsCompletedTaskAsync()
+    public async Task InvokedAsync_ReturnsCompletedTaskAsync()
     {
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>(new List<ChatMessage>());
-        var task = provider.MessagesAddingAsync(messages);
+        var task = provider.InvokedAsync(new() { RequestMessages = messages });
         Assert.Equal(default, task);
     }
 
@@ -38,14 +38,9 @@ public class AIContextProviderTests
 
     private sealed class TestAIContextProvider : AIContextProvider
     {
-        public override ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             return default;
-        }
-
-        public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-        {
-            await base.MessagesAddingAsync(newMessages, cancellationToken);
         }
 
         public override async ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)

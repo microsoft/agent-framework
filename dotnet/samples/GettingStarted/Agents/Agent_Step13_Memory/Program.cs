@@ -93,13 +93,13 @@ namespace SampleApp
     {
         public UserInfo UserInfo { get; set; } = userInfo ?? new();
 
-        public override async ValueTask MessagesAddingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+        public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
-            if ((this.UserInfo.UserName == null || this.UserInfo.UserAge == null) && newMessages.Any(x => x.Role == ChatRole.User))
+            if ((this.UserInfo.UserName == null || this.UserInfo.UserAge == null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
             {
                 var result = await chatClient.GetResponseAsync<UserInfo>(
-                    newMessages,
+                    context.RequestMessages,
                     new ChatOptions()
                     {
                         Instructions = "Extract the user's name and age from the message if present. If not present return nulls."
@@ -111,7 +111,7 @@ namespace SampleApp
             }
         }
 
-        public override ValueTask<AIContext> InvokingAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             StringBuilder instructions = new();
 

@@ -149,13 +149,8 @@ public class AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    protected internal virtual async Task OnNewMessagesAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+    protected internal virtual async Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
-        if (this.AIContextProvider is not null)
-        {
-            await this.AIContextProvider.MessagesAddingAsync(newMessages, cancellationToken).ConfigureAwait(false);
-        }
-
         switch (this)
         {
             case { ConversationId: not null }:

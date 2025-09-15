@@ -97,8 +97,8 @@
     <Project Path="samples/GettingStarted/Workflows/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Checkpoint/">
-    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndRehydrate/CheckpointAndRehydrate.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointWithHumanInTheLoop/CheckpointWithHumanInTheLoop.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/HumanInTheLoop/">
@@ -191,6 +191,10 @@
     <File Path="src/LegacySupport/CallerAttributes/CallerArgumentExpressionAttribute.cs" />
     <File Path="src/LegacySupport/CallerAttributes/README.md" />
   </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/CompilerFeatureRequiredAttribute/">
+    <File Path="src/LegacySupport/CompilerFeatureRequiredAttribute/CompilerFeatureRequiredAttribute.cs" />
+    <File Path="src/LegacySupport/CompilerFeatureRequiredAttribute/README.md" />
+  </Folder>
   <Folder Name="/Solution Items/src/LegacySupport/DiagnosticAttributes/">
     <File Path="src/LegacySupport/DiagnosticAttributes/NullableAttributes.cs" />
     <File Path="src/LegacySupport/DiagnosticAttributes/README.md" />
@@ -206,6 +210,10 @@
   <Folder Name="/Solution Items/src/LegacySupport/IsExternalInit/">
     <File Path="src/LegacySupport/IsExternalInit/IsExternalInit.cs" />
     <File Path="src/LegacySupport/IsExternalInit/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/RequiredMemberAttribute/">
+    <File Path="src/LegacySupport/RequiredMemberAttribute/README.md" />
+    <File Path="src/LegacySupport/RequiredMemberAttribute/RequiredMemberAttribute.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/LegacySupport/TrimAttributes/">
     <File Path="src/LegacySupport/TrimAttributes/DynamicallyAccessedMembersAttribute.cs" />
