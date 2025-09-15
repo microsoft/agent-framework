@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, MutableSequence
+from collections.abc import AsyncIterable
 from typing import Any, ClassVar
 
 from agent_framework import (
@@ -9,7 +9,6 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
-    Contents,
     Role,
     TextContent,
 )
@@ -56,10 +55,6 @@ class CopilotStudioAgent(BaseAgent):
 
     client: CopilotClient
     settings: ConnectionSettings | None
-    environment_id: str | None
-    agent_identifier: str | None
-    client_id: str | None
-    tenant_id: str | None
     token: str | None
     cloud: PowerPlatformCloud | None
     agent_type: AgentType | None
@@ -118,19 +113,19 @@ class CopilotStudioAgent(BaseAgent):
         Raises:
             ServiceInitializationError: If required configuration is missing or invalid.
         """
-        try:
-            copilot_studio_settings = CopilotStudioSettings(
-                environmentid=environment_id,
-                schemaname=agent_identifier,
-                agentappid=client_id,
-                tenantid=tenant_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Copilot Studio settings.", ex) from ex
-
         if not client:
+            try:
+                copilot_studio_settings = CopilotStudioSettings(
+                    environmentid=environment_id,
+                    schemaname=agent_identifier,
+                    agentappid=client_id,
+                    tenantid=tenant_id,
+                    env_file_path=env_file_path,
+                    env_file_encoding=env_file_encoding,
+                )
+            except ValidationError as ex:
+                raise ServiceInitializationError("Failed to create Copilot Studio settings.", ex) from ex
+
             if not settings:
                 if not copilot_studio_settings.environmentid:
                     raise ServiceInitializationError(
@@ -177,10 +172,6 @@ class CopilotStudioAgent(BaseAgent):
         super().__init__(
             client=client,  # type: ignore[reportCallIssue]
             settings=settings,  # type: ignore[reportCallIssue]
-            environment_id=copilot_studio_settings.environmentid,  # type: ignore[reportCallIssue]
-            agent_identifier=copilot_studio_settings.schemaname,  # type: ignore[reportCallIssue]
-            client_id=copilot_studio_settings.agentappid,  # type: ignore[reportCallIssue]
-            tenant_id=copilot_studio_settings.tenantid,  # type: ignore[reportCallIssue]
             token=token,  # type: ignore[reportCallIssue]
             cloud=cloud,  # type: ignore[reportCallIssue]
             agent_type=agent_type,  # type: ignore[reportCallIssue]
@@ -229,10 +220,8 @@ class CopilotStudioAgent(BaseAgent):
         response_messages: list[ChatMessage] = []
         response_id: str | None = None
 
-        async for message in self._process_activities(activities, streaming=False):
-            response_messages.append(message)
-            if not response_id:
-                response_id = message.message_id
+        response_messages = [message async for message in self._process_activities(activities, streaming=False)]
+        response_id = response_messages[0].message_id if response_messages else None
 
         return AgentRunResponse(messages=response_messages, response_id=response_id)
 
@@ -314,22 +303,10 @@ class CopilotStudioAgent(BaseAgent):
             if activity.text and (
                 (activity.type == "message" and not streaming) or (activity.type == "typing" and streaming)
             ):
-                yield self._create_chat_message_from_activity(activity, [TextContent(activity.text)])
-
-    def _create_chat_message_from_activity(self, activity: Any, contents: MutableSequence[Contents]) -> ChatMessage:
-        """Create a ChatMessage from a Copilot Studio activity.
-
-        Args:
-            activity: The activity from the Copilot Studio agent.
-            contents: The content objects to include in the message.
-
-        Returns:
-            A ChatMessage object with the activity data.
-        """
-        return ChatMessage(
-            role=Role.ASSISTANT,
-            contents=contents,
-            author_name=activity.from_property.name if activity.from_property else None,
-            message_id=activity.id,
-            raw_representation=activity,
-        )
+                yield ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[TextContent(activity.text)],
+                    author_name=activity.from_property.name if activity.from_property else None,
+                    message_id=activity.id,
+                    raw_representation=activity,
+                )
