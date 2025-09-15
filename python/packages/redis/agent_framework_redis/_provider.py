@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import sys
 from collections.abc import MutableSequence, Sequence
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
-from agent_framework import ChatMessage, Context, ContextProvider, TextContent
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework import ChatMessage, Context, ContextProvider, TextContent  # type: ignore[no-any-unimported]
+from agent_framework.exceptions import (  # type: ignore[no-any-unimported]
+    ServiceInitializationError,
+    ServiceInvalidRequestError,
+)
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -334,7 +337,8 @@ class RedisProvider(ContextProvider):
                     stopwords=normalized_stopwords,
                     dialect=dialect,
                 )
-                return await self.redis_index.query(query)
+                results = await self.redis_index.query(query)
+                return cast(list[dict[str, Any]], results)
             # Text-only search
             query = TextQuery(
                 text=q,
@@ -351,13 +355,14 @@ class RedisProvider(ContextProvider):
                 in_order=in_order,
                 params=params,
             )
-            return await self.redis_index.query(query)
+            results2 = await self.redis_index.query(query)
+            return cast(list[dict[str, Any]], results2)
         except Exception as exc:  # pragma: no cover - surface as framework error
             raise ServiceInvalidRequestError(f"Redis text search failed: {exc}") from exc
 
-    async def search_all(self, page_size: int = 200) -> list[dict]:
+    async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
         """Return all docs in the index (paginated under the hood)."""
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         async for batch in self.redis_index.paginate(
             FilterQuery(FilterExpression("*"), return_fields=[], num_results=page_size),
             page_size=page_size,
