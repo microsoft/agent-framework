@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -11,7 +12,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class SetVariableExecutor(SetVariable model, DeclarativeWorkflowState state)
+internal sealed class SetVariableExecutor(SetVariable model, WorkflowFormulaState state)
     : DeclarativeActionExecutor<SetVariable>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -24,7 +25,7 @@ internal sealed class SetVariableExecutor(SetVariable model, DeclarativeWorkflow
         }
         else
         {
-            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Value);
+            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(this.Model.Value);
 
             await this.AssignAsync(variablePath, expressionResult.Value.ToFormula(), context).ConfigureAwait(false);
         }

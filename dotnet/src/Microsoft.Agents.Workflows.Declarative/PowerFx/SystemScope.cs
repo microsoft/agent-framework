@@ -16,6 +16,8 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 internal static class SystemScope
 {
+    private static readonly RecordValue s_emptyMessage = new ChatMessage(ChatRole.User, string.Empty).ToRecord();
+
     public static class Names
     {
         public const string Activity = nameof(Activity);
@@ -48,12 +50,12 @@ internal static class SystemScope
         yield return Names.UserLanguage;
     }
 
-    public static void InitializeSystem(this WorkflowScopes scopes)
+    public static void InitializeSystem(this WorkflowFormulaState scopes)
     {
         scopes.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
         scopes.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
 
-        scopes.Set(Names.LastMessage, FormulaType.String.NewBlank(), VariableScopeNames.System);
+        scopes.Set(Names.LastMessage, s_emptyMessage, VariableScopeNames.System);
         Set(Names.LastMessageId);
         Set(Names.LastMessageText);
 
@@ -95,21 +97,27 @@ internal static class SystemScope
         }
     }
 
-    public static FormulaValue GetConversationId(this DeclarativeWorkflowState state) =>
-        state.Get(VariableScopeNames.System, Names.ConversationId);
+    public static FormulaValue GetConversationId(this WorkflowFormulaState state) =>
+        state.Get(Names.ConversationId, VariableScopeNames.System);
 
-    public static async ValueTask SetConversationIdAsync(this DeclarativeWorkflowState state, IWorkflowContext context, string conversationId)
+    public static void SetConversationId(this WorkflowFormulaState state, string conversationId)
     {
-        RecordValue conversation = (RecordValue)state.Get(VariableScopeNames.System, Names.Conversation);
+        RecordValue conversation = (RecordValue)state.Get(Names.Conversation, VariableScopeNames.System);
         conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        await state.SetAsync(VariableScopeNames.System, Names.Conversation, conversation, context).ConfigureAwait(false);
-        await state.SetAsync(VariableScopeNames.System, Names.ConversationId, FormulaValue.New(conversationId), context).ConfigureAwait(false);
+        state.Set(Names.Conversation, conversation, VariableScopeNames.System);
+        state.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
     }
 
-    public static async ValueTask SetLastMessageAsync(this DeclarativeWorkflowState state, IWorkflowContext context, ChatMessage message)
+    public static FormulaValue GetInternalConversationId(this WorkflowFormulaState state) =>
+        state.Get(Names.InternalId, VariableScopeNames.System);
+
+    public static void SetInternalConversationId(this WorkflowFormulaState state, string conversationId) =>
+        state.Set(Names.InternalId, FormulaValue.New(conversationId), VariableScopeNames.System);
+
+    public static void SetLastMessage(this WorkflowFormulaState state, ChatMessage message)
     {
-        await state.SetAsync(VariableScopeNames.System, Names.LastMessage, message.ToRecord(), context).ConfigureAwait(false);
-        await state.SetAsync(VariableScopeNames.System, Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), context).ConfigureAwait(false);
-        await state.SetAsync(VariableScopeNames.System, Names.LastMessageText, FormulaValue.New(message.Text), context).ConfigureAwait(false);
+        state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
+        state.Set(Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), VariableScopeNames.System);
+        state.Set(Names.LastMessageText, FormulaValue.New(message.Text), VariableScopeNames.System);
     }
 }

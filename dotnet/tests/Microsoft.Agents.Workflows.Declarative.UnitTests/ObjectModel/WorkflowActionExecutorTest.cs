@@ -18,9 +18,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 /// </summary>
 public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : WorkflowTest(output)
 {
-    internal WorkflowScopes Scopes { get; } = new();
-
-    internal DeclarativeWorkflowState GetState() => new(RecalcEngineFactory.Create(), this.Scopes);
+    internal WorkflowFormulaState State { get; } = new(RecalcEngineFactory.Create());
 
     protected ActionId CreateActionId() => new($"{this.GetType().Name}_{Guid.NewGuid():N}");
 
@@ -31,7 +29,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
         workflowBuilder.AddEdge(workflowExecutor, executor);
-        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<WorkflowScopes>(), this.Scopes);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<WorkflowFormulaState>(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
         Assert.Contains(events, e => e is DeclarativeActionInvokeEvent);
         Assert.Contains(events, e => e is DeclarativeActionCompleteEvent);
@@ -48,7 +46,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal void VerifyState(string variableName, string scopeName, FormulaValue expectedValue)
     {
-        FormulaValue actualValue = this.Scopes.Get(variableName, scopeName);
+        FormulaValue actualValue = this.State.Get(variableName, scopeName);
         Assert.Equal(expectedValue.Format(), actualValue.Format());
     }
 
@@ -56,7 +54,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal void VerifyUndefined(string variableName, string scopeName)
     {
-        Assert.IsType<BlankValue>(this.Scopes.Get(variableName, scopeName));
+        Assert.IsType<BlankValue>(this.State.Get(variableName, scopeName));
     }
 
     protected TAction AssignParent<TAction>(DialogAction.Builder actionBuilder) where TAction : DialogAction
@@ -76,9 +74,9 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal sealed class TestWorkflowExecutor() :
         ReflectingExecutor<TestWorkflowExecutor>(nameof(TestWorkflowExecutor)),
-        IMessageHandler<WorkflowScopes>
+        IMessageHandler<WorkflowFormulaState>
     {
-        public async ValueTask HandleAsync(WorkflowScopes message, IWorkflowContext context)
+        public async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context)
         {
             await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
         }

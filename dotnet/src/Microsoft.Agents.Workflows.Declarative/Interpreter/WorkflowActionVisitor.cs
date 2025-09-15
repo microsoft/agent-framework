@@ -6,6 +6,7 @@ using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.ObjectModel;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -24,11 +25,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly DeclarativeWorkflowModel _workflowModel;
     private readonly DeclarativeWorkflowOptions _workflowOptions;
-    private readonly DeclarativeWorkflowState _workflowState;
+    private readonly WorkflowFormulaState _workflowState;
 
     public WorkflowActionVisitor(
         Executor rootAction,
-        DeclarativeWorkflowState state,
+        WorkflowFormulaState state,
         DeclarativeWorkflowOptions options)
     {
         this._workflowBuilder = new WorkflowBuilder(rootAction);
