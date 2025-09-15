@@ -61,6 +61,7 @@ _IMPORTS = [
     "WorkflowRunState",
     "WorkflowErrorDetails",
     "WorkflowFailedEvent",
+    "ConcurrentBuilder",
 ]
 
 

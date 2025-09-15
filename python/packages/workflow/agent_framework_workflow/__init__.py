@@ -9,6 +9,7 @@ from ._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
+from ._concurrent import ConcurrentBuilder
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "AgentRunUpdateEvent",
     "Case",
     "CheckpointStorage",
+    "ConcurrentBuilder",
     "Default",
     "EdgeDuplicationError",
     "Executor",

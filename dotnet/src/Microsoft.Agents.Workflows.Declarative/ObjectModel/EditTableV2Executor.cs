@@ -30,7 +30,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, DeclarativeWorkflow
         {
             ValueExpression addItemValue = Throw.IfNull(addItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
             EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(addItemValue);
-            RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormulaValue());
+            RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormula());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
             await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
         }
@@ -43,7 +43,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, DeclarativeWorkflow
         {
             ValueExpression removeItemValue = Throw.IfNull(removeItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
             EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(removeItemValue);
-            if (expressionResult.Value.ToFormulaValue() is TableValue removeItemTable)
+            if (expressionResult.Value.ToFormula() is TableValue removeItemTable)
             {
                 await tableValue.RemoveAsync(removeItemTable?.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
                 await this.AssignAsync(variablePath, FormulaValue.NewBlank(), context).ConfigureAwait(false);

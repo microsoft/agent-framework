@@ -620,8 +620,8 @@ def test_openai_assistants_client_create_function_call_contents_basic(mock_async
     assert contents[0].arguments == {"location": "Seattle"}
 
 
-def test_openai_assistants_client_create_run_options_basic(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with basic chat options."""
+def test_openai_assistants_client_prepare_options_basic(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with basic chat options."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create basic chat options
@@ -635,7 +635,7 @@ def test_openai_assistants_client_create_run_options_basic(mock_async_openai: Ma
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
 
     # Check basic options were set
     assert run_options["max_completion_tokens"] == 100
@@ -645,8 +645,8 @@ def test_openai_assistants_client_create_run_options_basic(mock_async_openai: Ma
     assert tool_results is None
 
 
-def test_openai_assistants_client_create_run_options_with_ai_function_tool(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with AIFunction tool."""
+def test_openai_assistants_client_prepare_options_with_ai_function_tool(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with AIFunction tool."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
@@ -664,7 +664,7 @@ def test_openai_assistants_client_create_run_options_with_ai_function_tool(mock_
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
 
     # Check tools were set correctly
     assert "tools" in run_options
@@ -674,8 +674,8 @@ def test_openai_assistants_client_create_run_options_with_ai_function_tool(mock_
     assert run_options["tool_choice"] == "auto"
 
 
-def test_openai_assistants_client_create_run_options_with_code_interpreter(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with HostedCodeInterpreterTool."""
+def test_openai_assistants_client_prepare_options_with_code_interpreter(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with HostedCodeInterpreterTool."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create a real HostedCodeInterpreterTool
@@ -689,7 +689,7 @@ def test_openai_assistants_client_create_run_options_with_code_interpreter(mock_
     messages = [ChatMessage(role=Role.USER, text="Calculate something")]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
 
     # Check code interpreter tool was set correctly
     assert "tools" in run_options
@@ -698,8 +698,8 @@ def test_openai_assistants_client_create_run_options_with_code_interpreter(mock_
     assert run_options["tool_choice"] == "auto"
 
 
-def test_openai_assistants_client_create_run_options_tool_choice_none(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with tool_choice set to 'none'."""
+def test_openai_assistants_client_prepare_options_tool_choice_none(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with tool_choice set to 'none'."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     chat_options = ChatOptions(
@@ -709,15 +709,15 @@ def test_openai_assistants_client_create_run_options_tool_choice_none(mock_async
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
 
     # Should set tool_choice to none and not include tools
     assert run_options["tool_choice"] == "none"
     assert "tools" not in run_options
 
 
-def test_openai_assistants_client_create_run_options_required_function(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with required function tool choice."""
+def test_openai_assistants_client_prepare_options_required_function(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with required function tool choice."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create a required function tool choice
@@ -730,7 +730,7 @@ def test_openai_assistants_client_create_run_options_required_function(mock_asyn
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
 
     # Check required function tool choice was set correctly
     expected_tool_choice = {
@@ -740,8 +740,8 @@ def test_openai_assistants_client_create_run_options_required_function(mock_asyn
     assert run_options["tool_choice"] == expected_tool_choice
 
 
-def test_openai_assistants_client_create_run_options_with_file_search_tool(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with HostedFileSearchTool."""
+def test_openai_assistants_client_prepare_options_with_file_search_tool(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with HostedFileSearchTool."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
@@ -756,7 +756,7 @@ def test_openai_assistants_client_create_run_options_with_file_search_tool(mock_
     messages = [ChatMessage(role=Role.USER, text="Search for information")]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
 
     # Check file search tool was set correctly
     assert "tools" in run_options
@@ -766,8 +766,8 @@ def test_openai_assistants_client_create_run_options_with_file_search_tool(mock_
     assert run_options["tool_choice"] == "auto"
 
 
-def test_openai_assistants_client_create_run_options_with_mapping_tool(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with MutableMapping tool."""
+def test_openai_assistants_client_prepare_options_with_mapping_tool(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with MutableMapping tool."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create a tool as a MutableMapping (dict)
@@ -781,7 +781,7 @@ def test_openai_assistants_client_create_run_options_with_mapping_tool(mock_asyn
     messages = [ChatMessage(role=Role.USER, text="Use custom tool")]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
 
     # Check mapping tool was set correctly
     assert "tools" in run_options
@@ -790,8 +790,8 @@ def test_openai_assistants_client_create_run_options_with_mapping_tool(mock_asyn
     assert run_options["tool_choice"] == "auto"
 
 
-def test_openai_assistants_client_create_run_options_with_system_message(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with system message converted to instructions."""
+def test_openai_assistants_client_prepare_options_with_system_message(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with system message converted to instructions."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     messages = [
@@ -800,7 +800,7 @@ def test_openai_assistants_client_create_run_options_with_system_message(mock_as
     ]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, None)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, None)  # type: ignore
 
     # Check that additional_messages only contains the user message
     # System message should be converted to instructions (though this is handled internally)
@@ -809,8 +809,8 @@ def test_openai_assistants_client_create_run_options_with_system_message(mock_as
     assert run_options["additional_messages"][0]["role"] == "user"
 
 
-def test_openai_assistants_client_create_run_options_with_image_content(mock_async_openai: MagicMock) -> None:
-    """Test _create_run_options with image content."""
+def test_openai_assistants_client_prepare_options_with_image_content(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with image content."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
@@ -819,7 +819,7 @@ def test_openai_assistants_client_create_run_options_with_image_content(mock_asy
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
     # Call the method
-    run_options, tool_results = chat_client._create_run_options(messages, None)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, None)  # type: ignore
 
     # Check that image content was processed
     assert "additional_messages" in run_options

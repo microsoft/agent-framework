@@ -28,7 +28,7 @@ internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowSt
 
         if (expressionResult.Value is RecordDataValue recordValue)
         {
-            parsedResult = recordValue.ToFormulaValue();
+            parsedResult = recordValue.ToFormula();
         }
         else if (expressionResult.Value is StringDataValue stringValue)
         {

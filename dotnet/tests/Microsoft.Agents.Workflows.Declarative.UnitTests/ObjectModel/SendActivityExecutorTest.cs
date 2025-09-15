@@ -27,7 +27,7 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
 
         // Assert
         this.VerifyModel(model, action);
-        Assert.Contains(events, e => e is AgentRunResponseEvent);
+        Assert.Contains(events, e => e is MessageActivityEvent);
     }
 
     private SendActivity CreateModel(string displayName, string activityMessage, string? summary = null)
