@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -99,15 +100,15 @@ public sealed class ChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         (AgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
-            await this.PrepareThreadAndMessagesAsync(thread, messages, options, cancellationToken).ConfigureAwait(false);
+            await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         var agentName = this.GetLoggingAgentName();
 
@@ -115,14 +116,14 @@ public sealed class ChatClientAgent : AIAgent
 
         ChatResponse chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
 
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, messages.Count);
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, inputMessages.Count);
 
         // We can derive the type of supported thread from whether we have a conversation id,
         // so let's update it and set the conversation id for the service thread case.
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent messages state in the thread.
-        await NotifyThreadOfNewMessagesAsync(safeThread, messages, cancellationToken).ConfigureAwait(false);
+        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages, cancellationToken).ConfigureAwait(false);
 
         // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
@@ -140,12 +141,12 @@ public sealed class ChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var inputMessages = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         (AgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
@@ -334,7 +335,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
     private async Task<(AgentThread AgentThread, ChatOptions? ChatOptions, List<ChatMessage> ThreadMessages)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
-        IReadOnlyCollection<ChatMessage> inputMessages,
+        IEnumerable<ChatMessage> inputMessages,
         AgentRunOptions? runOptions,
         CancellationToken cancellationToken)
     {

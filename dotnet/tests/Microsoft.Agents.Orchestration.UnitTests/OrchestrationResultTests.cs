@@ -80,18 +80,18 @@ public class OrchestrationResultTests
 
     private sealed class MockOrchestratingAgent() : OrchestratingAgent([new MockAgent()])
     {
-        protected override Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IEnumerable<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 
     private sealed class MockAgent : AIAgent
     {
-        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 }

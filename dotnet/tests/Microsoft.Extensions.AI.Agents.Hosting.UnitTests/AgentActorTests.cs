@@ -175,7 +175,7 @@ public class AgentActorTests
         public bool RunStreamingAsyncCalled { get; private set; }
         public AgentThread? ThreadUsedInRunStreamingAsync { get; private set; }
 
-        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             this.ThreadUsedInRunStreamingAsync = thread;
             return Task.FromResult(new AgentRunResponse
@@ -184,7 +184,7 @@ public class AgentActorTests
             });
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             this.RunStreamingAsyncCalled = true;
             this.ThreadUsedInRunStreamingAsync = thread;

@@ -46,7 +46,7 @@ async Task SKAgent()
 async Task AFAgent()
 {
     var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-        .GetChatClient(deploymentName)
+        .GetOpenAIResponseClient(deploymentName)
         .CreateAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);
 
     Console.WriteLine("\n=== AF Agent Response ===\n");

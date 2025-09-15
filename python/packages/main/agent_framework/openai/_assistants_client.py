@@ -162,7 +162,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # Extract necessary state from messages and options
-        run_options, tool_results = self._create_run_options(messages, chat_options, **kwargs)
+        run_options, tool_results = self._prepare_options(messages, chat_options, **kwargs)
 
         # Get the thread ID
         thread_id: str | None = (
@@ -349,7 +349,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         return contents
 
-    def _create_run_options(
+    def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions | None,
