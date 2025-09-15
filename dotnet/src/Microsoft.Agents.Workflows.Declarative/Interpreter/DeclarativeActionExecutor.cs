@@ -28,8 +28,8 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
     private static readonly ImmutableHashSet<string> s_mutableScopes =
         new HashSet<string>
         {
-                VariableScopeNames.Topic,
-                VariableScopeNames.Global,
+            VariableScopeNames.Topic,
+            VariableScopeNames.Global
         }.ToImmutableHashSet();
 
     private string? _parentId;
