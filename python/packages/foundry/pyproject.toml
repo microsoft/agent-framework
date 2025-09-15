@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "agent-framework",
     "azure-ai-projects >= 1.0.0b11",
-    "azure-ai-agents >= 1.1.0b1",
+    "azure-ai-agents >= 1.2.0b4",
     "aiohttp ~= 3.8",
 ]
 
