@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import MutableSequence, Sequence
 from typing import Any, Final, Literal, cast
@@ -95,6 +96,15 @@ class RedisProvider(ContextProvider):
         vectorizer: Any | None = None
         vector_dims = vector_dims
         if vectorizer_choice == "openai":
+            # Will try to retrieve from environment variable if not provided
+            if vectorizer_api_key is None:
+                vectorizer_api_key = os.getenv("OPENAI_API_KEY")
+                if vectorizer_api_key is None:
+                    raise ServiceInvalidRequestError(
+                        "OpenAI API key is required."
+                        "Set 'vectorizer_api_key' parameter"
+                        "Or 'OPENAI_API_KEY' environment variable."
+                    )
             vectorizer = OpenAITextVectorizer(
                 model="text-embedding-ada-002",
                 api_config={"api_key": vectorizer_api_key},
