@@ -1309,6 +1309,9 @@ while (response.ContinuationToken is { } token)
 Console.WriteLine(response.Text);
 ```
 
+**Pro:** No proliferation of long-running operation properties including the `Status` one in the `ChatOptions`, `ChatResponse`, and `ChatResponseUpdate` classes.
+
+
 #### 6.2 Overloads of GetResponseAsync and GetStreamingResponseAsync
 
 This option proposes introducing overloads of the `GetResponseAsync` and `GetStreamingResponseAsync` methods that will accept long-running operation parameters directly:
