@@ -44,7 +44,7 @@ class RedisProvider(ContextProvider):
     # Vector configuration (optional)
     vectorizer_api_key: str | None = None
     vectorizer_choice: Literal["openai", "hf"] | None = None
-    vectorizer: OpenAITextVectorizer | HFTextVectorizer | None = None
+    vectorizer: Any | None = None
     vector_field_name: str | None = None
     vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None
     vector_algorithm: Literal["flat", "hnsw"] | None = None
@@ -63,7 +63,7 @@ class RedisProvider(ContextProvider):
     overwrite_redis_index: bool = True
     drop_redis_index: bool = True
     _per_operation_thread_id: str | None = None
-    token_escaper: TokenEscaper | None = None
+    token_escaper: Any | None = None
 
     def __init__(
         self,
@@ -91,6 +91,9 @@ class RedisProvider(ContextProvider):
         overwrite_redis_index: bool = True,
         drop_redis_index: bool = True,
     ):
+        # Avoid mypy inferring unfollowed-import types for local variables
+        vectorizer: Any | None = None
+        vector_dims = vector_dims
         if vectorizer_choice == "openai":
             vectorizer = OpenAITextVectorizer(
                 model="text-embedding-ada-002",
@@ -121,7 +124,7 @@ class RedisProvider(ContextProvider):
 
         redis_index = AsyncSearchIndex.from_dict(schema_dict, redis_url=redis_url, validate_on_load=True)
 
-        token_escaper = TokenEscaper()
+        token_escaper: Any = TokenEscaper()
 
         super().__init__(
             redis_url=redis_url,  # type: ignore[reportCallIssue]
