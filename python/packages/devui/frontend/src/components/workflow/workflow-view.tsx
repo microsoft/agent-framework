@@ -203,7 +203,10 @@ export function WorkflowView({
             "data" in openAIEvent &&
             openAIEvent.data
           ) {
-            const data = openAIEvent.data as { event_type?: string; data?: unknown };
+            const data = openAIEvent.data as {
+              event_type?: string;
+              data?: unknown;
+            };
             if (data.event_type === "WorkflowCompletedEvent" && data.data) {
               setWorkflowResult(String(data.data));
             }
@@ -520,7 +523,6 @@ export function WorkflowView({
                                   : historyItem.message}
                               </p>
                             )}
-
                           </div>
                         );
                       })()
