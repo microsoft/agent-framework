@@ -94,7 +94,6 @@ class RedisProvider(ContextProvider):
     ):
         # Avoid mypy inferring unfollowed-import types for local variables
         vectorizer: Any | None = None
-        vector_dims = vector_dims
         if vectorizer_choice == "openai":
             # Will try to retrieve from environment variable if not provided
             if vectorizer_api_key is None:
@@ -286,7 +285,7 @@ class RedisProvider(ContextProvider):
         *,
         text_field_name: str = "content",
         text_scorer: str = "BM25STD",
-        filter_expression: str | None = None,
+        filter_expression: FilterExpression | None = None,
         return_fields: list[str] | None = None,
         num_results: int = 10,
         return_score: bool = True,
@@ -319,6 +318,9 @@ class RedisProvider(ContextProvider):
             "user_id": self.user_id,
             "thread_id": self._effective_thread_id,
         })
+
+        if filter_expression is not None:
+            combined_filter = (combined_filter & filter_expression) if combined_filter else filter_expression
 
         # Choose return fields
         return_fields = (
@@ -412,7 +414,7 @@ class RedisProvider(ContextProvider):
         messages: list[dict[str, str]] = [
             {"role": message.role.value, "content": message.text}
             for message in messages_list
-            if message.role.value in {str(Role.USER), str(Role.ASSISTANT), str(Role.SYSTEM)}
+            if message.role.value in {Role.USER.value, Role.ASSISTANT.value, Role.SYSTEM.value}
             and message.text
             and message.text.strip()
         ]
@@ -422,7 +424,7 @@ class RedisProvider(ContextProvider):
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called before invoking the AI model to provide context.
 
-        Currently combin4es all messages by newline and searches as a query text.
+        Currently combines all messages by newline and searches as a query text.
 
         Should this be changed to individual searches?
 
