@@ -25,7 +25,16 @@ from ._edge import (
     SwitchCaseEdgeGroupCase,
     SwitchCaseEdgeGroupDefault,
 )
-from ._events import RequestInfoEvent, WorkflowCompletedEvent, WorkflowEvent
+from ._events import (
+    RequestInfoEvent,
+    WorkflowCompletedEvent,
+    WorkflowErrorDetails,
+    WorkflowEvent,
+    WorkflowFailedEvent,
+    WorkflowRunState,
+    WorkflowStartedEvent,
+    WorkflowStatusEvent,
+)
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import CheckpointState, InProcRunnerContext, RunnerContext
@@ -43,7 +52,16 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
-    """A list of events generated during the workflow execution in non-streaming mode."""
+    """A list of events generated during the workflow execution in non-streaming mode.
+
+    Preserves the historical contract that the list contains data-plane events
+    only (executor invoke/complete, completed, requests), while exposing the
+    control-plane status timeline via accessors.
+    """
+
+    def __init__(self, events: list[WorkflowEvent], status_events: list[WorkflowStatusEvent] | None = None) -> None:
+        super().__init__(events)
+        self._status_events: list[WorkflowStatusEvent] = status_events or []
 
     def get_completed_event(self) -> WorkflowCompletedEvent | None:
         """Get the completed event from the workflow run result.
@@ -68,6 +86,23 @@ class WorkflowRunResult(list[WorkflowEvent]):
             A list of RequestInfoEvent instances found in the workflow run result.
         """
         return [event for event in self if isinstance(event, RequestInfoEvent)]
+
+    def get_final_state(self) -> WorkflowRunState:
+        """Return the final run state based on explicit status events.
+
+        Returns the last WorkflowStatusEvent.state observed. Raises if none were emitted.
+        """
+        if self._status_events:
+            return self._status_events[-1].state  # type: ignore[return-value]
+        raise RuntimeError(
+            "Final state is unknown because no WorkflowStatusEvent was emitted. "
+            "Ensure your workflow entry points are used (which emit status events) "
+            "or handle the absence of status explicitly."
+        )
+
+    def status_timeline(self) -> list[WorkflowStatusEvent]:
+        """Return the list of status events emitted during the run (control-plane)."""
+        return list(self._status_events)
 
 
 # region Workflow
@@ -202,9 +237,15 @@ class Workflow(AFBaseModel):
 
         # Create workflow span that encompasses the entire execution
         with workflow_tracer.create_workflow_run_span(self):
+            saw_completed = False
+            saw_request = False
+            emitted_in_progress_pending = False
             try:
-                # Add workflow started event
+                # Add workflow started event (telemetry + surface state to consumers)
                 workflow_tracer.add_workflow_event("workflow.started")
+                # Emit explicit start/status events to the stream
+                yield WorkflowStartedEvent()
+                yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -216,11 +257,31 @@ class Workflow(AFBaseModel):
 
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
+                    # Track terminal indicators while forwarding events
+                    if isinstance(event, WorkflowCompletedEvent):
+                        saw_completed = True
+                    elif isinstance(event, RequestInfoEvent):
+                        saw_request = True
                     yield event
 
-                # Success
+                    if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending and not saw_completed:
+                        emitted_in_progress_pending = True
+                        yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+
+                # Success path: emit a final status based on observed terminal signals
+                if saw_completed:
+                    yield WorkflowStatusEvent(WorkflowRunState.COMPLETED)
+                elif saw_request:
+                    yield WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                else:
+                    yield WorkflowStatusEvent(WorkflowRunState.IDLE)
+
                 workflow_tracer.add_workflow_event("workflow.completed")
             except Exception as e:
+                # Surface structured failure details before propagating exception
+                details = WorkflowErrorDetails.from_exception(e)
+                yield WorkflowFailedEvent(details)
+                yield WorkflowStatusEvent(WorkflowRunState.FAILED)
                 workflow_tracer.add_workflow_error_event(e)
                 raise
 
@@ -358,11 +419,12 @@ class Workflow(AFBaseModel):
         ):
             yield event
 
-    async def run(self, message: Any) -> WorkflowRunResult:
+    async def run(self, message: Any, *, include_status_events: bool = False) -> WorkflowRunResult:
         """Run the workflow with the given message.
 
         Args:
             message: The message to be processed by the workflow.
+            include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
 
         Returns:
             A WorkflowRunResult instance containing a list of events generated during the workflow execution.
@@ -377,6 +439,7 @@ class Workflow(AFBaseModel):
         coalesced: list[WorkflowEvent] = []  # type: ignore[name-defined]
         pending_updates: list[AgentRunResponseUpdate] = []
         pending_executor: str | None = None
+        status_events: list[WorkflowStatusEvent] = []
 
         def _flush_pending() -> None:
             nonlocal pending_updates, pending_executor
@@ -403,12 +466,22 @@ class Workflow(AFBaseModel):
                 continue
             # Flush before adding any non-update event
             _flush_pending()
+            # Omit WorkflowStartedEvent from non-streaming (telemetry-only)
+            if isinstance(ev, WorkflowStartedEvent):
+                continue
+            # Track status; include inline only if explicitly requested
+            if isinstance(ev, WorkflowStatusEvent):
+                status_events.append(ev)
+                if include_status_events:
+                    coalesced.append(ev)
+                continue
             coalesced.append(ev)
 
         # Flush any trailing updates
         _flush_pending()
 
-        return WorkflowRunResult(coalesced)
+        # coalesced already excludes start events; includes status events only if opted in
+        return WorkflowRunResult(coalesced, status_events)
 
     async def run_from_checkpoint(
         self,
@@ -435,7 +508,9 @@ class Workflow(AFBaseModel):
         events = [
             event async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses)
         ]
-        return WorkflowRunResult(events)
+        status_events = [e for e in events if isinstance(e, WorkflowStatusEvent)]
+        filtered_events = [e for e in events if not isinstance(e, (WorkflowStatusEvent, WorkflowStartedEvent))]
+        return WorkflowRunResult(filtered_events, status_events)
 
     async def send_responses(self, responses: dict[str, Any]) -> WorkflowRunResult:
         """Send responses back to the workflow.
@@ -447,7 +522,9 @@ class Workflow(AFBaseModel):
             A WorkflowRunResult instance containing a list of events generated during the workflow execution.
         """
         events = [event async for event in self.send_responses_streaming(responses)]
-        return WorkflowRunResult(events)
+        status_events = [e for e in events if isinstance(e, WorkflowStatusEvent)]
+        filtered_events = [e for e in events if not isinstance(e, (WorkflowStatusEvent, WorkflowStartedEvent))]
+        return WorkflowRunResult(filtered_events, status_events)
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.

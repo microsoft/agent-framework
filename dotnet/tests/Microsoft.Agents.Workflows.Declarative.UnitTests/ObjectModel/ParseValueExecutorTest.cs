@@ -32,7 +32,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
                 @"{ ""key1"": ""val1"" }");
 
         // Act
-        ParseValueExecutor action = new(model, this.GetState());
+        ParseValueExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert
@@ -51,7 +51,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
                 "True");
 
         // Act
-        ParseValueExecutor action = new(model, this.GetState());
+        ParseValueExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert
@@ -70,7 +70,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
                 "42");
 
         // Act
-        ParseValueExecutor action = new(model, this.GetState());
+        ParseValueExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert
@@ -89,7 +89,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
                 "Hello, World!");
 
         // Act
-        ParseValueExecutor action = new(model, this.GetState());
+        ParseValueExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert

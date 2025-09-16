@@ -7,14 +7,14 @@ kind: AdaptiveDialog
 beginDialog:
 
   kind: OnActivity
-  id: workflow_demo
+  id: workflow_test
   actions:
 
     # Capture input
     - kind: SetVariable
       id: setvar_userinput
       variable: Topic.UserInput
-      value: =System.LastMessageText
+      value: =System.LastMessage.Text
 
     # Capture environment variable
     - kind: SetVariable

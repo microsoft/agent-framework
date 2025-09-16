@@ -1,0 +1,49 @@
+#
+# This workflow demonstrates a conversation and message manipulation.
+#
+# Any Foundry Agent may be used to provide the response.
+# See: ./setup/QuestionAgent.yaml
+#
+kind: AdaptiveDialog
+beginDialog:
+
+  kind: OnActivity
+  id: workflow_test
+  actions:
+
+    - kind: CreateConversation
+      id: conversation_create1
+      conversationId: Topic.FirstConversationId
+
+    - kind: CreateConversation
+      id: conversation_create2
+      conversationId: Topic.SecondConversationId
+
+    - kind: SendActivity
+      id: sendActivity_conversation
+      activity: |-
+        Conversation 1: {Topic.FirstConversationId}
+        Conversation 2: {Topic.SecondConversationId}
+
+    - kind: AddConversationMessage
+      id: add_message
+      message: Topic.MyMessage1
+      role: User
+      conversationId: =Topic.FirstConversationId
+      content:
+        - type: Text
+          value: {System.LastMessage.Text}
+
+    - kind: SendActivity
+      id: sendActivity_message
+      activity: |-
+        Messsage 1: {Topic.MyMessage1}
+
+    - kind: CopyConversationMessages
+      id: copy_messages
+      conversationId: =Topic.SecondConversationId
+      messages: =[Topic.MyMessage1]
+
+    - kind: SendActivity
+      id: sendActivity_copy
+      activity: Done!

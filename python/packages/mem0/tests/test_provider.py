@@ -9,7 +9,7 @@ from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.mem0 import Mem0Provider
 
 
-def test_mem0_provider_import():
+def test_mem0_provider_import() -> None:
     """Test that Mem0Provider can be imported."""
     assert Mem0Provider is not None
 
@@ -17,7 +17,9 @@ def test_mem0_provider_import():
 @pytest.fixture
 def mock_mem0_client() -> AsyncMock:
     """Create a mock Mem0 AsyncMemoryClient."""
-    mock_client = AsyncMock()
+    from mem0 import AsyncMemoryClient
+
+    mock_client = AsyncMock(spec=AsyncMemoryClient)
     mock_client.add = AsyncMock()
     mock_client.search = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -40,7 +42,7 @@ def sample_messages() -> list[ChatMessage]:
 class TestMem0ProviderInitialization:
     """Test initialization and configuration of Mem0Provider."""
 
-    def test_init_with_all_ids(self, mock_mem0_client: AsyncMock):
+    def test_init_with_all_ids(self, mock_mem0_client: AsyncMock) -> None:
         """Test initialization with all IDs provided."""
         provider = Mem0Provider(
             user_id="user123",
@@ -54,7 +56,7 @@ class TestMem0ProviderInitialization:
         assert provider.application_id == "app123"
         assert provider.thread_id == "thread123"
 
-    def test_init_without_filters_succeeds(self, mock_mem0_client: AsyncMock):
+    def test_init_without_filters_succeeds(self, mock_mem0_client: AsyncMock) -> None:
         """Test that initialization succeeds even without filters (validation happens during invocation)."""
         provider = Mem0Provider(mem0_client=mock_mem0_client)
         assert provider.user_id is None
@@ -62,13 +64,13 @@ class TestMem0ProviderInitialization:
         assert provider.application_id is None
         assert provider.thread_id is None
 
-    def test_init_with_custom_context_prompt(self, mock_mem0_client: AsyncMock):
+    def test_init_with_custom_context_prompt(self, mock_mem0_client: AsyncMock) -> None:
         """Test initialization with custom context prompt."""
         custom_prompt = "## Custom Memories\nConsider these memories:"
         provider = Mem0Provider(user_id="user123", context_prompt=custom_prompt, mem0_client=mock_mem0_client)
         assert provider.context_prompt == custom_prompt
 
-    def test_init_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock):
+    def test_init_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test initialization with scope_to_per_operation_thread_id enabled."""
         provider = Mem0Provider(
             user_id="user123",
@@ -77,10 +79,12 @@ class TestMem0ProviderInitialization:
         )
         assert provider.scope_to_per_operation_thread_id is True
 
-    @patch("mem0.AsyncMemoryClient")
-    def test_init_creates_default_client_when_none_provided(self, mock_memory_client_class: AsyncMock):
+    @patch("agent_framework_mem0._provider.AsyncMemoryClient")
+    def test_init_creates_default_client_when_none_provided(self, mock_memory_client_class: AsyncMock) -> None:
         """Test that a default client is created when none is provided."""
-        mock_client = AsyncMock()
+        from mem0 import AsyncMemoryClient
+
+        mock_client = AsyncMock(spec=AsyncMemoryClient)
         mock_memory_client_class.return_value = mock_client
 
         provider = Mem0Provider(user_id="user123", api_key="test_api_key")
@@ -89,7 +93,7 @@ class TestMem0ProviderInitialization:
         assert provider.mem0_client == mock_client
         assert provider._should_close_client is True
 
-    def test_init_with_provided_client_should_not_close(self, mock_mem0_client: AsyncMock):
+    def test_init_with_provided_client_should_not_close(self, mock_mem0_client: AsyncMock) -> None:
         """Test that provided client should not be closed by provider."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         assert provider._should_close_client is False
@@ -98,21 +102,23 @@ class TestMem0ProviderInitialization:
 class TestMem0ProviderAsyncContextManager:
     """Test async context manager behavior."""
 
-    async def test_async_context_manager_entry(self, mock_mem0_client: AsyncMock):
+    async def test_async_context_manager_entry(self, mock_mem0_client: AsyncMock) -> None:
         """Test async context manager entry returns self."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         async with provider as ctx:
             assert ctx is provider
 
-    async def test_async_context_manager_exit_closes_client_when_should_close(self):
+    async def test_async_context_manager_exit_closes_client_when_should_close(self) -> None:
         """Test that async context manager closes client when it should."""
-        mock_client = AsyncMock()
+        from mem0 import AsyncMemoryClient
+
+        mock_client = AsyncMock(spec=AsyncMemoryClient)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock()
         mock_client.async_client = AsyncMock()
         mock_client.async_client.aclose = AsyncMock()
 
-        with patch("mem0.AsyncMemoryClient", return_value=mock_client):
+        with patch("agent_framework_mem0._provider.AsyncMemoryClient", return_value=mock_client):
             provider = Mem0Provider(user_id="user123", api_key="test_key")
             assert provider._should_close_client is True
 
@@ -121,7 +127,7 @@ class TestMem0ProviderAsyncContextManager:
 
             mock_client.__aexit__.assert_called_once()
 
-    async def test_async_context_manager_exit_does_not_close_provided_client(self, mock_mem0_client: AsyncMock):
+    async def test_async_context_manager_exit_does_not_close_provided_client(self, mock_mem0_client: AsyncMock) -> None:
         """Test that async context manager does not close provided client."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         assert provider._should_close_client is False
@@ -135,7 +141,7 @@ class TestMem0ProviderAsyncContextManager:
 class TestMem0ProviderThreadMethods:
     """Test thread lifecycle methods."""
 
-    async def test_thread_created_sets_per_operation_thread_id(self, mock_mem0_client: AsyncMock):
+    async def test_thread_created_sets_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test that thread_created sets per-operation thread ID."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
 
@@ -143,7 +149,7 @@ class TestMem0ProviderThreadMethods:
 
         assert provider._per_operation_thread_id == "thread123"
 
-    async def test_thread_created_with_existing_thread_id(self, mock_mem0_client: AsyncMock):
+    async def test_thread_created_with_existing_thread_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test thread_created when thread ID already exists."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         provider._per_operation_thread_id = "existing_thread"
@@ -153,7 +159,7 @@ class TestMem0ProviderThreadMethods:
         # Should not overwrite existing thread ID
         assert provider._per_operation_thread_id == "existing_thread"
 
-    async def test_thread_created_validation_with_scope_enabled(self, mock_mem0_client: AsyncMock):
+    async def test_thread_created_validation_with_scope_enabled(self, mock_mem0_client: AsyncMock) -> None:
         """Test thread_created validation when scope_to_per_operation_thread_id is enabled."""
         provider = Mem0Provider(
             user_id="user123",
@@ -169,7 +175,7 @@ class TestMem0ProviderThreadMethods:
 
     async def test_messages_adding_sets_per_operation_thread_id(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
-    ):
+    ) -> None:
         """Test that messages_adding sets per-operation thread ID."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
 
@@ -181,7 +187,7 @@ class TestMem0ProviderThreadMethods:
 class TestMem0ProviderMessagesAdding:
     """Test messages_adding method."""
 
-    async def test_messages_adding_fails_without_filters(self, mock_mem0_client: AsyncMock):
+    async def test_messages_adding_fails_without_filters(self, mock_mem0_client: AsyncMock) -> None:
         """Test that messages_adding fails when no filters are provided."""
         provider = Mem0Provider(mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello!")
@@ -191,7 +197,7 @@ class TestMem0ProviderMessagesAdding:
 
         assert "At least one of the filters" in str(exc_info.value)
 
-    async def test_messages_adding_single_message(self, mock_mem0_client: AsyncMock):
+    async def test_messages_adding_single_message(self, mock_mem0_client: AsyncMock) -> None:
         """Test adding a single message."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello!")
@@ -205,7 +211,7 @@ class TestMem0ProviderMessagesAdding:
 
     async def test_messages_adding_multiple_messages(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
-    ):
+    ) -> None:
         """Test adding multiple messages."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
 
@@ -220,7 +226,9 @@ class TestMem0ProviderMessagesAdding:
         ]
         assert call_args.kwargs["messages"] == expected_messages
 
-    async def test_messages_adding_with_agent_id(self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]):
+    async def test_messages_adding_with_agent_id(
+        self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
+    ) -> None:
         """Test adding messages with agent_id."""
         provider = Mem0Provider(agent_id="agent123", mem0_client=mock_mem0_client)
 
@@ -232,7 +240,7 @@ class TestMem0ProviderMessagesAdding:
 
     async def test_messages_adding_with_application_id(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
-    ):
+    ) -> None:
         """Test adding messages with application_id in metadata."""
         provider = Mem0Provider(user_id="user123", application_id="app123", mem0_client=mock_mem0_client)
 
@@ -243,7 +251,7 @@ class TestMem0ProviderMessagesAdding:
 
     async def test_messages_adding_with_scope_to_per_operation_thread_id(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
-    ):
+    ) -> None:
         """Test adding messages with scope_to_per_operation_thread_id enabled."""
         provider = Mem0Provider(
             user_id="user123",
@@ -260,7 +268,7 @@ class TestMem0ProviderMessagesAdding:
 
     async def test_messages_adding_without_scope_uses_base_thread_id(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
-    ):
+    ) -> None:
         """Test adding messages without scope uses base thread_id."""
         provider = Mem0Provider(
             user_id="user123",
@@ -274,7 +282,7 @@ class TestMem0ProviderMessagesAdding:
         call_args = mock_mem0_client.add.call_args
         assert call_args.kwargs["run_id"] == "base_thread"
 
-    async def test_messages_adding_filters_empty_messages(self, mock_mem0_client: AsyncMock):
+    async def test_messages_adding_filters_empty_messages(self, mock_mem0_client: AsyncMock) -> None:
         """Test that empty or invalid messages are filtered out."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         messages = [
@@ -289,7 +297,7 @@ class TestMem0ProviderMessagesAdding:
         # Should only include the valid message
         assert call_args.kwargs["messages"] == [{"role": "user", "content": "Valid message"}]
 
-    async def test_messages_adding_skips_when_no_valid_messages(self, mock_mem0_client: AsyncMock):
+    async def test_messages_adding_skips_when_no_valid_messages(self, mock_mem0_client: AsyncMock) -> None:
         """Test that mem0 client is not called when no valid messages exist."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         messages = [
@@ -305,7 +313,7 @@ class TestMem0ProviderMessagesAdding:
 class TestMem0ProviderModelInvoking:
     """Test model_invoking method."""
 
-    async def test_model_invoking_fails_without_filters(self, mock_mem0_client: AsyncMock):
+    async def test_model_invoking_fails_without_filters(self, mock_mem0_client: AsyncMock) -> None:
         """Test that model_invoking fails when no filters are provided."""
         provider = Mem0Provider(mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="What's the weather?")
@@ -315,7 +323,7 @@ class TestMem0ProviderModelInvoking:
 
         assert "At least one of the filters" in str(exc_info.value)
 
-    async def test_model_invoking_single_message(self, mock_mem0_client: AsyncMock):
+    async def test_model_invoking_single_message(self, mock_mem0_client: AsyncMock) -> None:
         """Test model_invoking with a single message."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="What's the weather?")
@@ -345,7 +353,7 @@ class TestMem0ProviderModelInvoking:
 
     async def test_model_invoking_multiple_messages(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
-    ):
+    ) -> None:
         """Test model_invoking with multiple messages."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
 
@@ -357,7 +365,7 @@ class TestMem0ProviderModelInvoking:
         expected_query = "Hello, how are you?\nI'm doing well, thank you!\nYou are a helpful assistant"
         assert call_args.kwargs["query"] == expected_query
 
-    async def test_model_invoking_with_agent_id(self, mock_mem0_client: AsyncMock):
+    async def test_model_invoking_with_agent_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test model_invoking with agent_id."""
         provider = Mem0Provider(agent_id="agent123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello")
@@ -370,7 +378,7 @@ class TestMem0ProviderModelInvoking:
         assert call_args.kwargs["agent_id"] == "agent123"
         assert call_args.kwargs["user_id"] is None
 
-    async def test_model_invoking_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock):
+    async def test_model_invoking_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test model_invoking with scope_to_per_operation_thread_id enabled."""
         provider = Mem0Provider(
             user_id="user123",
@@ -388,7 +396,7 @@ class TestMem0ProviderModelInvoking:
         call_args = mock_mem0_client.search.call_args
         assert call_args.kwargs["run_id"] == "operation_thread"
 
-    async def test_model_invoking_no_memories_returns_none_instructions(self, mock_mem0_client: AsyncMock):
+    async def test_model_invoking_no_memories_returns_none_instructions(self, mock_mem0_client: AsyncMock) -> None:
         """Test that no memories returns context with None instructions."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello")
@@ -400,7 +408,7 @@ class TestMem0ProviderModelInvoking:
         assert isinstance(context, Context)
         assert not context.contents
 
-    async def test_model_invoking_filters_empty_message_text(self, mock_mem0_client: AsyncMock):
+    async def test_model_invoking_filters_empty_message_text(self, mock_mem0_client: AsyncMock) -> None:
         """Test that empty message text is filtered out from query."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         messages = [
@@ -416,7 +424,7 @@ class TestMem0ProviderModelInvoking:
         call_args = mock_mem0_client.search.call_args
         assert call_args.kwargs["query"] == "Valid message"
 
-    async def test_model_invoking_custom_context_prompt(self, mock_mem0_client: AsyncMock):
+    async def test_model_invoking_custom_context_prompt(self, mock_mem0_client: AsyncMock) -> None:
         """Test model_invoking with custom context prompt."""
         custom_prompt = "## Custom Context\nRemember these details:"
         provider = Mem0Provider(
@@ -439,7 +447,7 @@ class TestMem0ProviderModelInvoking:
 class TestMem0ProviderValidation:
     """Test validation methods."""
 
-    def test_validate_per_operation_thread_id_success(self, mock_mem0_client: AsyncMock):
+    def test_validate_per_operation_thread_id_success(self, mock_mem0_client: AsyncMock) -> None:
         """Test successful validation of per-operation thread ID."""
         provider = Mem0Provider(
             user_id="user123",
@@ -454,7 +462,7 @@ class TestMem0ProviderValidation:
         # Should not raise exception for None
         provider._validate_per_operation_thread_id(None)
 
-    def test_validate_per_operation_thread_id_failure(self, mock_mem0_client: AsyncMock):
+    def test_validate_per_operation_thread_id_failure(self, mock_mem0_client: AsyncMock) -> None:
         """Test validation failure for conflicting thread IDs."""
         provider = Mem0Provider(
             user_id="user123",
@@ -468,7 +476,7 @@ class TestMem0ProviderValidation:
 
         assert "can only be used with one thread at a time" in str(exc_info.value)
 
-    def test_validate_per_operation_thread_id_disabled_scope(self, mock_mem0_client: AsyncMock):
+    def test_validate_per_operation_thread_id_disabled_scope(self, mock_mem0_client: AsyncMock) -> None:
         """Test that validation is skipped when scope is disabled."""
         provider = Mem0Provider(
             user_id="user123",

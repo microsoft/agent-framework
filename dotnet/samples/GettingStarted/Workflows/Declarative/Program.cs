@@ -11,6 +11,7 @@ using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
+using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -39,17 +40,11 @@ internal sealed class Program
     private async Task ExecuteAsync()
     {
         // Read and parse the declarative workflow.
-        Notify($"WORKFLOW: Parsing {Path.GetFullPath(this.WorkflowFile)}");
+        Notify($"\nWORKFLOW: Parsing {Path.GetFullPath(this.WorkflowFile)}");
 
         Stopwatch timer = Stopwatch.StartNew();
 
-        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        DeclarativeWorkflowOptions options =
-            new(new FoundryAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
-            {
-                Configuration = this.Configuration
-            };
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
+        Workflow<string> workflow = this.CreateWorkflow();
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
@@ -57,23 +52,69 @@ internal sealed class Program
 
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
-        await this.MonitorWorkflowRunAsync(run);
 
-        Notify("\nWORKFLOW: Done!");
+        CheckpointManager checkpointManager = new();
+        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
+
+        bool isComplete = false;
+        InputResponse? response = null;
+        do
+        {
+            ExternalRequest? inputRequest = await this.MonitorWorkflowRunAsync(run, response);
+            if (inputRequest is not null)
+            {
+                Notify("\nWORKFLOW: Yield");
+
+                if (this.LastCheckpoint is null)
+                {
+                    throw new InvalidOperationException("Checkpoint information missing after external request.");
+                }
+
+                // Process the external request.
+                response = HandleExternalRequest(inputRequest);
+
+                // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
+                workflow = this.CreateWorkflow();
+
+                // Restore the latest checkpoint.
+                Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
+                Notify("\nWORKFLOW: Restore");
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager);
+            }
+            else
+            {
+                isComplete = true;
+            }
+        }
+        while (!isComplete);
+
+        Notify("\nWORKFLOW: Done!\n");
+    }
+
+    private Workflow<string> CreateWorkflow()
+    {
+        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+        DeclarativeWorkflowOptions options =
+            new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
+            {
+                Configuration = this.Configuration
+            };
+        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
+        return workflow;
     }
 
     private const string DefaultWorkflow = "HelloWorld.yaml";
     private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
 
-    private static readonly Dictionary<string, string> s_nameCache = [];
-    private static readonly HashSet<string> s_fileCache = [];
+    private static Dictionary<string, string> NameCache { get; } = [];
+    private static HashSet<string> FileCache { get; } = [];
 
     private string WorkflowFile { get; }
     private string? WorkflowInput { get; }
     private string FoundryEndpoint { get; }
     private PersistentAgentsClient FoundryClient { get; }
     private IConfiguration Configuration { get; }
+    private CheckpointInfo? LastCheckpoint { get; set; }
 
     private Program(string[] args)
     {
@@ -86,112 +127,147 @@ internal sealed class Program
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
     }
 
-    private async Task MonitorWorkflowRunAsync(StreamingRun run)
+    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
     {
         string? messageId = null;
 
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorInvokedEvent executorInvoked)
+            switch (workflowEvent)
             {
-                Debug.WriteLine($"EXECUTOR ENTER #{executorInvoked.ExecutorId}");
-            }
-            else if (evt is ExecutorCompletedEvent executorCompleted)
-            {
-                Debug.WriteLine($"EXECUTOR EXIT #{executorCompleted.ExecutorId}");
-            }
-            if (evt is DeclarativeActionInvokeEvent actionInvoked)
-            {
-                Debug.WriteLine($"ACTION ENTER #{actionInvoked.ActionId} [{actionInvoked.ActionType}]");
-            }
-            else if (evt is DeclarativeActionCompleteEvent actionComplete)
-            {
-                Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionComplete.ActionType}]");
-            }
-            else if (evt is ExecutorFailureEvent executorFailure)
-            {
-                Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
-            }
-            else if (evt is ConversationUpdateEvent invokeEvent)
-            {
-                Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
-            }
-            else if (evt is AgentRunUpdateEvent streamEvent)
-            {
-                if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
-                {
-                    messageId = streamEvent.Update.MessageId;
+                case ExecutorInvokedEvent executorInvoked:
+                    Debug.WriteLine($"EXECUTOR ENTER #{executorInvoked.ExecutorId}");
+                    break;
 
-                    if (messageId is not null)
-                    {
-                        string? agentId = streamEvent.Update.AuthorName;
-                        if (agentId is not null)
-                        {
-                            if (!s_nameCache.TryGetValue(agentId, out string? realName))
-                            {
-                                PersistentAgent agent = await this.FoundryClient.Administration.GetAgentAsync(agentId);
-                                s_nameCache[agentId] = agent.Name;
-                                realName = agent.Name;
-                            }
-                            agentId = realName;
-                        }
-                        agentId ??= nameof(ChatRole.Assistant);
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.Write($"\n{agentId.ToUpperInvariant()}:");
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.WriteLine($" [{messageId}]");
-                    }
-                }
+                case ExecutorCompletedEvent executorCompleted:
+                    Debug.WriteLine($"EXECUTOR EXIT #{executorCompleted.ExecutorId}");
+                    break;
 
-                ChatResponseUpdate? chatUpdate = streamEvent.Update.RawRepresentation as ChatResponseUpdate;
-                switch (chatUpdate?.RawRepresentation)
-                {
-                    case MessageContentUpdate messageUpdate:
-                        string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
-                        if (fileId is not null && s_fileCache.Add(fileId))
-                        {
-                            BinaryData content = await this.FoundryClient.Files.GetFileContentAsync(fileId);
-                            await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
-                        }
-                        break;
-                }
-                try
-                {
-                    Console.ResetColor();
-                    Console.Write(streamEvent.Data);
-                }
-                finally
-                {
-                    Console.ResetColor();
-                }
-            }
-            else if (evt is AgentRunResponseEvent messageEvent)
-            {
-                try
-                {
-                    Console.WriteLine();
-                    if (messageEvent.Response.AgentId is null)
+                case DeclarativeActionInvokeEvent actionInvoked:
+                    Debug.WriteLine($"ACTION ENTER #{actionInvoked.ActionId} [{actionInvoked.ActionType}]");
+                    break;
+
+                case DeclarativeActionCompleteEvent actionComplete:
+                    Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionComplete.ActionType}]");
+                    break;
+
+                case ExecutorFailureEvent executorFailure:
+                    Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
+                    break;
+
+                case SuperStepCompletedEvent checkpointCompleted:
+                    this.LastCheckpoint = checkpointCompleted.CompletionInfo?.Checkpoint;
+                    Debug.WriteLine($"CHECKPOINT x{checkpointCompleted.StepNumber} [{this.LastCheckpoint?.CheckpointId ?? "(none)"}]");
+                    break;
+
+                case RequestInfoEvent requestInfo:
+                    Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
+                    if (response is not null)
                     {
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.WriteLine("ACTIVITY:");
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine(messageEvent.Response?.Text.Trim());
+                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse<InputResponse>(response);
+                        await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
+                        response = null;
                     }
                     else
                     {
+                        return requestInfo.Request;
+                    }
+                    break;
+
+                case ConversationUpdateEvent invokeEvent:
+                    Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
+                    break;
+
+                case MessageActivityEvent activityEvent:
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine("\nACTIVITY:");
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine(activityEvent.Message.Trim());
+                    break;
+
+                case AgentRunUpdateEvent streamEvent:
+                    if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
+                    {
+                        messageId = streamEvent.Update.MessageId;
+
+                        if (messageId is not null)
+                        {
+                            string? agentId = streamEvent.Update.AuthorName;
+                            if (agentId is not null)
+                            {
+                                if (!NameCache.TryGetValue(agentId, out string? realName))
+                                {
+                                    PersistentAgent agent = await this.FoundryClient.Administration.GetAgentAsync(agentId);
+                                    NameCache[agentId] = agent.Name;
+                                    realName = agent.Name;
+                                }
+                                agentId = realName;
+                            }
+                            agentId ??= nameof(ChatRole.Assistant);
+                            Console.ForegroundColor = ConsoleColor.Cyan;
+                            Console.Write($"\n{agentId.ToUpperInvariant()}:");
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine($" [{messageId}]");
+                        }
+                    }
+
+                    ChatResponseUpdate? chatUpdate = streamEvent.Update.RawRepresentation as ChatResponseUpdate;
+                    switch (chatUpdate?.RawRepresentation)
+                    {
+                        case MessageContentUpdate messageUpdate:
+                            string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
+                            if (fileId is not null && FileCache.Add(fileId))
+                            {
+                                BinaryData content = await this.FoundryClient.Files.GetFileContentAsync(fileId);
+                                await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
+                            }
+                            break;
+                    }
+                    try
+                    {
+                        Console.ResetColor();
+                        Console.Write(streamEvent.Data);
+                    }
+                    finally
+                    {
+                        Console.ResetColor();
+                    }
+                    break;
+
+                case AgentRunResponseEvent messageEvent:
+                    try
+                    {
+                        Console.WriteLine();
                         if (messageEvent.Response.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
                         }
                     }
-                }
-                finally
-                {
-                    Console.ResetColor();
-                }
+                    finally
+                    {
+                        Console.ResetColor();
+                    }
+                    break;
             }
         }
+
+        return default;
+    }
+    private static InputResponse HandleExternalRequest(ExternalRequest request)
+    {
+        InputRequest? message = request.Data as InputRequest;
+        string? userInput = null;
+        do
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.Write($"\n{message?.Prompt ?? "INPUT:"} ");
+            Console.ForegroundColor = ConsoleColor.White;
+            userInput = Console.ReadLine();
+        }
+        while (string.IsNullOrWhiteSpace(userInput));
+
+        return new InputResponse(userInput);
     }
 
     private static string ParseWorkflowFile(string[] args)
