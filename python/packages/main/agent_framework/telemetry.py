@@ -414,7 +414,7 @@ class OtelSettings(AFBaseSettings):
         """Check if the setup has been executed."""
         return self._executed_setup
 
-    def setup_telemetry(self, application_insights_credential: "TokenCredential | None" = None) -> None:
+    def setup_telemetry(self, credential: "TokenCredential | None" = None) -> None:
         """Setup telemetry based on the settings.
 
         If both connection_string and otlp_endpoint both will be used.
