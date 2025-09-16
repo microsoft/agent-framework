@@ -17,6 +17,8 @@ Notes:
 - Participants can mix AgentProtocol and Executor objects
 - Agents are auto-wrapped by WorkflowBuilder as AgentExecutor
 - AgentExecutor produces AgentExecutorResponse; _ResponseToConversation converts this to list[ChatMessage]
+- Non-agent executors must define a handler that consumes `list[ChatMessage]` and sends back
+  the updated `list[ChatMessage]` via their workflow context
 
 Why include the small internal adapter executors?
 - Input normalization ("input-conversation"): ensures the workflow always starts with a

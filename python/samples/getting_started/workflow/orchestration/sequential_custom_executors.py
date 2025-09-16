@@ -16,6 +16,10 @@ conversation context (list[ChatMessage]). An agent produces content; a custom
 executor appends a compact summary to the conversation. The final WorkflowCompletedEvent
 contains the complete conversation.
 
+Custom executor contract:
+- Provide at least one @handler accepting list[ChatMessage] and a WorkflowContext[list[ChatMessage]]
+- Emit the updated conversation via ctx.send_message([...])
+
 Note on internal adapters:
 - You may see adapter nodes in the event stream such as "input-conversation",
   "to-conversation:<participant>", and "complete". These provide consistent typing,
@@ -28,7 +32,7 @@ Prerequisites:
 
 
 class Summarizer(Executor):
-    """A simple summarizer that appends one assistant message summarizing counts."""
+    """Simple summarizer: consumes full conversation and appends an assistant summary."""
 
     @handler
     async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
