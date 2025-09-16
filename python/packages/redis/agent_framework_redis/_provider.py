@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import MutableSequence, Sequence
+from functools import reduce
+from operator import and_
 from typing import Any, Final, Literal, cast
 
 from agent_framework import ChatMessage, Context, ContextProvider, Role, TextContent  # type: ignore[no-any-unimported]
@@ -18,11 +20,12 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+
 import numpy as np
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import FilterQuery, HybridQuery, TextQuery
-from redisvl.query.filter import FilterExpression
+from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import HFTextVectorizer, OpenAITextVectorizer
 
@@ -30,10 +33,7 @@ DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memori
 
 
 class RedisProvider(ContextProvider):
-    """Redis-backed context provider with dynamic, filterable schema.
-
-    To-Do: Dynamic Vector/embedding Config in RedisProvider.
-    """
+    """Redis-backed context provider with dynamic, filterable schema."""
 
     # Connection and indexing
     redis_url: str = "redis://localhost:6379"
@@ -165,10 +165,9 @@ class RedisProvider(ContextProvider):
             token_escaper=token_escaper,  # type: ignore[reportCallIssue]
         )
 
-    def _escape(self, value):
-        if self.token_escaper is not None:
-            return self.token_escaper.escape(str(value))
-        return str(value)
+    def _build_filter_from_dict(self, filters: dict[str, str | None]) -> FilterExpression | None:
+        parts = [Tag(k) == v for k, v in filters.items() if v]
+        return reduce(and_, parts) if parts else None
 
     def _build_schema_dict(
         self,
@@ -312,30 +311,12 @@ class RedisProvider(ContextProvider):
             raise ServiceInvalidRequestError("text_search() requires non-empty text")
         num_results = max(int(num_results or 10), 1)
 
-        # Build partition scope as a RediSearch filter string (AND by whitespace)
-        scope_parts: list[str] = []
-
-        if self.application_id:
-            scope_parts.append(f"@application_id:{{{self._escape(self.application_id)}}}")
-        if self.agent_id:
-            scope_parts.append(f"@agent_id:{{{self._escape(self.agent_id)}}}")
-        if self.user_id:
-            scope_parts.append(f"@user_id:{{{self._escape(self.user_id)}}}")
-        eff_thread = self._effective_thread_id
-        if eff_thread:
-            scope_parts.append(f"@thread_id:{{{self._escape(eff_thread)}}}")
-
-        scope_str = " ".join(scope_parts) if scope_parts else None
-
-        # Combine user-provided filter with the scope (AND semantics)
-        combined_filter_str_parts: list[str] = []
-        if scope_str:
-            combined_filter_str_parts.append(scope_str)
-        if filter_expression is not None:
-            combined_filter_str_parts.append(str(filter_expression))
-        combined_filter = (
-            FilterExpression(" ".join(p for p in combined_filter_str_parts if p)) if combined_filter_str_parts else None
-        )
+        combined_filter = self._build_filter_from_dict({
+            "application_id": self.application_id,
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+            "thread_id": self._effective_thread_id,
+        })
 
         # Choose return fields
         return_fields = (
