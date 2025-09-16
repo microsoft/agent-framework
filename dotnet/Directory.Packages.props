@@ -37,6 +37,8 @@
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="9.0.9" />
     <PackageVersion Include="System.Text.Json" Version="9.0.9" />
+    <PackageVersion Include="System.CodeDom" Version="9.0.8" />
+    <PackageVersion Include="System.Collections.Immutable" Version="9.0.9" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.9" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.9" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
@@ -74,27 +76,28 @@
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.OpenAI" Version="1.65.0-preview" />
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.65.0-preview" />
     <!-- Agent SDKs -->
-    <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.1.151" />
+    <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.2.41" />
     <!-- A2A -->
     <PackageVersion Include="A2A" Version="0.1.0-preview.2" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.1.0-preview.2" />
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.3.0-preview.4" />
     <!-- Inference SDKs -->
-    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.0" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.1" />
     <PackageVersion Include="OllamaSharp" Version="5.3.6" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.74.1" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="2025.8.2-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="2025.8.2-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="2025.8.2-1" />
-    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250625-1002" />
-    <PackageVersion Include="System.CodeDom" Version="9.0.8" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.915-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.915-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.915-1" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250821-1001" />
     <!-- Test -->
-    <PackageVersion Include="FluentAssertions" Version="8.5.0" />
+    <PackageVersion Include="FluentAssertions" Version="8.6.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Abstractions" Version="1.65.0" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Yaml" Version="1.65.0-beta" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.abstractions" Version="2.0.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.3" />

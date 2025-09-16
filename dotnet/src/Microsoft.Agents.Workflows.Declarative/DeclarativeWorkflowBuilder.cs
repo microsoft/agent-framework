@@ -4,7 +4,7 @@ using System;
 using System.IO;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Yaml;
@@ -62,11 +62,14 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
 
-        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? DefaultWorkflowId);
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
-        DeclarativeWorkflowExecutor<TInput> rootExecutor = new(rootId, state, inputTransform);
+        DeclarativeWorkflowExecutor<TInput> rootExecutor =
+            new(rootId,
+                state,
+                message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
 
         WorkflowActionVisitor visitor = new(rootExecutor, state, options);
         WorkflowElementWalker walker = new(visitor);
@@ -111,7 +114,7 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
 
-        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? DefaultWorkflowId);
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
 
         WorkflowTypeInfo typeInfo = workflowElement.WrapWithBot().Describe();
 
@@ -128,4 +131,12 @@ public static class DeclarativeWorkflowBuilder
 
         return template.TransformText();
     }
+
+    private static ChatMessage DefaultTransform(object message) =>
+            message switch
+            {
+                ChatMessage chatMessage => chatMessage,
+                string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
+                _ => new(ChatRole.User, $"{message}")
+            };
 }

@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
@@ -14,7 +14,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
-internal sealed record class WorkflowTypeInfo(ImmutableHashSet<string> EnvironmentVariables, IEnumerable<VariableInformationDiagnostic> UserVariables);
+internal sealed record class WorkflowTypeInfo(FrozenSet<string> EnvironmentVariables, IEnumerable<VariableInformationDiagnostic> UserVariables);
 
 internal static class WorkflowDiagnostics
 {
@@ -26,7 +26,7 @@ internal static class WorkflowDiagnostics
 
         return
             new WorkflowTypeInfo(
-                semanticModel.GetAllEnvironmentVariablesReferencedInTheBot(),
+                semanticModel.GetAllEnvironmentVariablesReferencedInTheBot().ToFrozenSet(),
                 semanticModel.GetVariables(workflowElement.SchemaName.Value).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()));
     }
 
@@ -58,7 +58,7 @@ internal static class WorkflowDiagnostics
                 continue;
             }
 
-            FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormulaValue() ?? variableDiagnostic.Type.NewBlank();
+            FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormula() ?? variableDiagnostic.Type.NewBlank();
 
             if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) ?? false)
             {

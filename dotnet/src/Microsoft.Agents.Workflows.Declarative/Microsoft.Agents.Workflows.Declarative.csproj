@@ -28,6 +28,7 @@
     <PackageReference Include="Microsoft.Bot.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
     <PackageReference Include="System.CodeDom" />
+    <PackageReference Include="System.Collections.Immutable" />
   </ItemGroup>
 
   <ItemGroup>

@@ -3,7 +3,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -27,7 +27,7 @@ internal sealed class SetVariableExecutor(SetVariable model, WorkflowFormulaStat
         {
             EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(this.Model.Value);
 
-            await this.AssignAsync(variablePath, expressionResult.Value.ToFormulaValue(), context).ConfigureAwait(false);
+            await this.AssignAsync(variablePath, expressionResult.Value.ToFormula(), context).ConfigureAwait(false);
         }
 
         return default;

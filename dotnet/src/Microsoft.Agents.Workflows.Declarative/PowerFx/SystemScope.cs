@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Globalization;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
@@ -31,7 +31,7 @@ internal static class SystemScope
         public const string UserLanguage = nameof(UserLanguage);
     }
 
-    public static ImmutableHashSet<string> AllNames { get; } = GetNames().ToImmutableHashSet();
+    public static FrozenSet<string> AllNames { get; } = GetNames().ToFrozenSet();
 
     public static IEnumerable<string> GetNames()
     {
@@ -105,12 +105,6 @@ internal static class SystemScope
         state.Set(Names.Conversation, conversation, VariableScopeNames.System);
         state.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
     }
-
-    public static FormulaValue GetInternalConversationId(this WorkflowFormulaState state) =>
-        state.Get(Names.InternalId, VariableScopeNames.System);
-
-    public static void SetInternalConversationId(this WorkflowFormulaState state, string conversationId) =>
-        state.Set(Names.InternalId, FormulaValue.New(conversationId), VariableScopeNames.System);
 
     public static void SetLastMessage(this WorkflowFormulaState state, ChatMessage message)
     {

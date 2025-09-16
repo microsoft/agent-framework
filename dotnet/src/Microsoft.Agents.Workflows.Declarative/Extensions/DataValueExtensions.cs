@@ -10,11 +10,11 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class DataValueExtensions
 {
-    public static FormulaValue ToFormulaValue(this DataValue? value) =>
+    public static FormulaValue ToFormula(this DataValue? value) =>
         value switch
         {
             null => FormulaValue.NewBlank(),
-            BlankDataValue blankValue => BlankValue.NewBlank(),
+            BlankDataValue => BlankValue.NewBlank(),
             BooleanDataValue boolValue => FormulaValue.New(boolValue.Value),
             NumberDataValue numberValue => FormulaValue.New(numberValue.Value),
             FloatDataValue floatValue => FormulaValue.New(floatValue.Value),
@@ -54,23 +54,6 @@ internal static class DataValueExtensions
             _ => FormulaType.Unknown,
         };
 
-    public static FormulaValue NewBlank(this DataType? type) => FormulaValue.NewBlank(type?.ToFormulaType() ?? FormulaType.Blank);
-
-    public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>
-        FormulaValue.NewRecordFromFields(
-            recordDataValue.Properties.Select(
-                property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
-
-    public static RecordType ToRecordType(this RecordDataType record)
-    {
-        RecordType recordType = RecordType.Empty();
-        foreach (KeyValuePair<string, PropertyInfo> property in record.Properties)
-        {
-            recordType = recordType.Add(property.Key, property.Value.Type.ToFormulaType());
-        }
-        return recordType;
-    }
-
     public static object? ToObject(this DataValue? value) =>
         value switch
         {
@@ -83,23 +66,27 @@ internal static class DataValueExtensions
             DateTimeDataValue dateTimeValue => dateTimeValue.Value.DateTime,
             DateDataValue dateValue => dateValue.Value,
             TimeDataValue timeValue => timeValue.Value,
-            TableDataValue tableValue => tableValue.Values.Select(value => value.ToObject()).ToArray(),
-            RecordDataValue recordValue => recordValue.ToObject(),
+            TableDataValue tableValue => tableValue.Values.Select(value => value.ToDictionary()).ToArray(),
+            RecordDataValue recordValue => recordValue.ToDictionary(),
             OptionDataValue optionValue => optionValue.Value.Value,
-            _ => FormulaValue.NewError(new Microsoft.PowerFx.ExpressionError { Message = $"Unknown literal type: {value.GetType().Name}" }),
+            _ => throw new DeclarativeModelException($"Unsupported {nameof(DataValue)} type: {value.GetType().Name}"),
         };
 
-    public static ExpandoObject ToObject(this RecordDataValue recordDataValue)
+    public static FormulaValue NewBlank(this DataType? type) => FormulaValue.NewBlank(type?.ToFormulaType() ?? FormulaType.Blank);
+
+    public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>
+        FormulaValue.NewRecordFromFields(
+            recordDataValue.Properties.Select(
+                property => new NamedValue(property.Key, property.Value.ToFormula())));
+
+    public static RecordType ToRecordType(this RecordDataType record)
     {
-        ExpandoObject expandoObject = new();
-
-        IDictionary<string, object?> dictionary = expandoObject;
-        foreach (KeyValuePair<string, DataValue> field in recordDataValue.Properties)
+        RecordType recordType = RecordType.Empty();
+        foreach (KeyValuePair<string, PropertyInfo> property in record.Properties)
         {
-            dictionary[field.Key] = field.Value?.ToObject();
+            recordType = recordType.Add(property.Key, property.Value.Type.ToFormulaType());
         }
-
-        return expandoObject;
+        return recordType;
     }
 
     private static RecordType ParseRecordType(this RecordDataValue record)
@@ -110,5 +97,15 @@ internal static class DataValueExtensions
             recordType = recordType.Add(property.Key, property.Value.ToFormulaType());
         }
         return recordType;
+    }
+
+    private static Dictionary<string, object?> ToDictionary(this RecordDataValue record)
+    {
+        Dictionary<string, object?> result = [];
+        foreach (KeyValuePair<string, DataValue> property in record.Properties)
+        {
+            result[property.Key] = property.Value.ToObject();
+        }
+        return result;
     }
 }

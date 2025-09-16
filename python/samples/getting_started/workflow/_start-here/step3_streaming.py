@@ -4,7 +4,17 @@ import asyncio
 
 from agent_framework import ChatAgent, ChatMessage
 from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
+from agent_framework.workflow import (
+    Executor,
+    ExecutorFailedEvent,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    WorkflowFailedEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
+    handler,
+)
 from azure.identity import AzureCliCredential
 
 """
@@ -107,20 +117,41 @@ async def main():
     workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
     # Run the workflow with the user's initial message and stream events as they occur.
-    # Events include executor invoke and completion, as well as the terminal WorkflowCompletedEvent.
+    # In addition to executor events and WorkflowCompletedEvent, this also surfaces run-state and errors.
     async for event in workflow.run_stream(
         ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
     ):
-        print(event)
+        if isinstance(event, WorkflowStatusEvent):
+            if event.state == WorkflowRunState.IN_PROGRESS:
+                print("State: IN_PROGRESS")
+            elif event.state == WorkflowRunState.COMPLETED:
+                print("State: COMPLETED")
+            elif event.state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS:
+                print("State: IN_PROGRESS_PENDING_REQUESTS (requests in flight)")
+            elif event.state == WorkflowRunState.IDLE:
+                print("State: IDLE (no active work)")
+            elif event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+                print("State: IDLE_WITH_PENDING_REQUESTS (prompt user or UI now)")
+            else:
+                print(f"State: {event.state}")
+        elif isinstance(event, ExecutorFailedEvent):
+            print(f"Executor failed: {event.executor_id} {event.details.error_type}: {event.details.message}")
+        elif isinstance(event, WorkflowFailedEvent):
+            details = event.details
+            print(f"Workflow failed: {details.error_type}: {details.message}")
+        else:
+            print(event)
 
     """
     Sample Output:
 
+    State: IN_PROGRESS
     ExecutorInvokeEvent(executor_id=writer)
     ExecutorCompletedEvent(executor_id=writer)
     ExecutorInvokeEvent(executor_id=reviewer)
     WorkflowCompletedEvent(data=Drive the Future. Affordable Adventure, Electrified.)
     ExecutorCompletedEvent(executor_id=reviewer)
+    State: COMPLETED
     """
 
 

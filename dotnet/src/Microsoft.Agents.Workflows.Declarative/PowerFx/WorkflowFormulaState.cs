@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,15 +22,14 @@ internal sealed class WorkflowFormulaState
     // ISSUE #488 - Update default scope for workflows to `Workflow` (instead of `Topic`)
     public const string DefaultScopeName = VariableScopeNames.Topic;
 
-    private static readonly ImmutableHashSet<string> s_mutableScopes =
-        new HashSet<string>
-        {
+    private static readonly FrozenSet<string> s_mutableScopes =
+        [
             VariableScopeNames.Topic,
             VariableScopeNames.Global,
             VariableScopeNames.System,
-        }.ToImmutableHashSet();
+        ];
 
-    private readonly ImmutableDictionary<string, WorkflowScope> _scopes;
+    private readonly Dictionary<string, WorkflowScope> _scopes;
     private int _isInitialized;
 
     public RecalcEngine Engine { get; }
@@ -41,7 +40,7 @@ internal sealed class WorkflowFormulaState
     {
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
-        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName)).ToImmutableDictionary();
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName));
         this.Bind();
     }
 
@@ -90,18 +89,18 @@ internal sealed class WorkflowFormulaState
         this.Bind();
     }
 
-    public bool Initialize() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
+    public bool SetInitialized() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
 
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        if (!this.Initialize())
+        if (!this.SetInitialized())
         {
             return;
         }
 
-        await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
+        await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName))).ConfigureAwait(false);
 
-        async ValueTask ReadScopeAsync(string scopeName)
+        async Task ReadScopeAsync(string scopeName)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName).ConfigureAwait(false);
             foreach (string key in keys)
@@ -111,7 +110,7 @@ internal sealed class WorkflowFormulaState
                 {
                     value = FormulaValue.NewBlank();
                 }
-                this.Set(key, value.ToFormulaValue(), scopeName);
+                this.Set(key, value.ToFormula(), scopeName);
             }
 
             this.Bind(scopeName);

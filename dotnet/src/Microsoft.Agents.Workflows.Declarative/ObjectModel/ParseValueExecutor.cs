@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -29,7 +29,7 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
 
         if (expressionResult.Value is RecordDataValue recordValue)
         {
-            parsedResult = recordValue.ToFormulaValue();
+            parsedResult = recordValue.ToFormula();
         }
         else if (expressionResult.Value is StringDataValue stringValue)
         {

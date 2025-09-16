@@ -7,7 +7,7 @@ using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 
-namespace Microsoft.Agents.Workflows.Declarative.Kit;
+namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 {
@@ -199,6 +199,11 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
+    protected override void Visit(SetMultipleVariables item)
+    {
+        throw new System.NotImplementedException();
+    }
+
     protected override void Visit(SetTextVariable item) // %%% TODO
     {
         this.Trace(item);
@@ -250,6 +255,36 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Executors.Add(new SendActivityTemplate(item).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+    }
+
+    protected override void Visit(InvokeAzureAgent item)
+    {
+        throw new System.NotImplementedException();
+    }
+
+    protected override void Visit(CreateConversation item)
+    {
+        throw new System.NotImplementedException();
+    }
+
+    protected override void Visit(AddConversationMessage item)
+    {
+        throw new System.NotImplementedException();
+    }
+
+    protected override void Visit(CopyConversationMessages item)
+    {
+        throw new System.NotImplementedException();
+    }
+
+    protected override void Visit(RetrieveConversationMessage item)
+    {
+        throw new System.NotImplementedException();
+    }
+
+    protected override void Visit(RetrieveConversationMessages item)
+    {
+        throw new System.NotImplementedException();
     }
 
     #region Not supported

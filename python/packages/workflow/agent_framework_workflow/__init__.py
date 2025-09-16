@@ -9,6 +9,7 @@ from ._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
+from ._concurrent import ConcurrentBuilder
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
 )
@@ -18,11 +19,16 @@ from ._events import (
     AgentRunUpdateEvent,
     ExecutorCompletedEvent,
     ExecutorEvent,
+    ExecutorFailedEvent,
     ExecutorInvokeEvent,
     RequestInfoEvent,
     WorkflowCompletedEvent,
+    WorkflowErrorDetails,
     WorkflowEvent,
+    WorkflowFailedEvent,
+    WorkflowRunState,
     WorkflowStartedEvent,
+    WorkflowStatusEvent,
 )
 from ._executor import (
     AgentExecutor,
@@ -66,6 +72,7 @@ from ._runner_context import (
     Message,
     RunnerContext,
 )
+from ._sequential import SequentialBuilder
 from ._validation import (
     EdgeDuplicationError,
     GraphConnectivityError,
@@ -93,11 +100,13 @@ __all__ = [
     "AgentRunUpdateEvent",
     "Case",
     "CheckpointStorage",
+    "ConcurrentBuilder",
     "Default",
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
     "ExecutorEvent",
+    "ExecutorFailedEvent",
     "ExecutorInvokeEvent",
     "FileCheckpointStorage",
     "FunctionExecutor",
@@ -129,6 +138,7 @@ __all__ = [
     "RequestInfoMessage",
     "RequestResponse",
     "RunnerContext",
+    "SequentialBuilder",
     "StandardMagenticManager",
     "SubWorkflowRequestInfo",
     "SubWorkflowResponse",
@@ -140,10 +150,14 @@ __all__ = [
     "WorkflowCheckpoint",
     "WorkflowCompletedEvent",
     "WorkflowContext",
+    "WorkflowErrorDetails",
     "WorkflowEvent",
     "WorkflowExecutor",
+    "WorkflowFailedEvent",
     "WorkflowRunResult",
+    "WorkflowRunState",
     "WorkflowStartedEvent",
+    "WorkflowStatusEvent",
     "WorkflowValidationError",
     "WorkflowViz",
     "__version__",

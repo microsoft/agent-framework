@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -32,7 +32,7 @@ internal sealed class EditTableExecutor(EditTable model, WorkflowFormulaState st
             case TableChangeType.Add:
                 ValueExpression addItemValue = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
                 EvaluationResult<DataValue> addResult = this.State.Evaluator.GetValue(addItemValue);
-                RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), addResult.Value.ToFormulaValue());
+                RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), addResult.Value.ToFormula());
                 await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
                 await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
                 break;
