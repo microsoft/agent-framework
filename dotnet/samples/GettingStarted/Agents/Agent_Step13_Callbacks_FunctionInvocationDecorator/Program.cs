@@ -34,13 +34,13 @@ var agent = persistentAgentsClient.CreateAIAgent(model)
     {
         Console.WriteLine($"IsStreaming: {functionInvocationContext!.IsStreaming}");
 
-        return next(functionInvocationContext.Arguments, ct);
+        return next(functionInvocationContext);
     })
     .Use((functionInvocationContext, next, ct) =>
     {
         Console.WriteLine($"City Name: {(functionInvocationContext!.Arguments.TryGetValue("location", out var location) ? location : "not provided")}");
 
-        return next(functionInvocationContext.Arguments, ct);
+        return next(functionInvocationContext);
     })
     .Build();
 
