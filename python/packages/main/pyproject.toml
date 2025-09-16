@@ -50,17 +50,18 @@ viz = [
 runtime = [
     "agent-framework-runtime"
 ]
-devui = [
-    "agent-framework-devui"
-]
 mem0 = [
     "agent-framework-mem0"
+]
+devui = [
+    "agent-framework-devui"
 ]
 all = [
     "agent-framework-azure",
     "agent-framework-foundry",
     "agent-framework-runtime",
-    "agent-framework-mem0"
+    "agent-framework-mem0",
+    "agent-framework-devui"
 ]
 
 [tool.uv]

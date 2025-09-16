@@ -48,7 +48,7 @@ environments = [
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
-exclude = [ "packages/agent_framework_project.egg-info", "packages/workflow" ]
+exclude = [ "packages/agent_framework_project.egg-info" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
