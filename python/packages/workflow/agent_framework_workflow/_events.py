@@ -11,16 +11,30 @@ if TYPE_CHECKING:
     from ._executor import RequestInfoMessage
 
 
+class WorkflowEventSource(str, Enum):
+    """Indicates whether a workflow event originated from the framework or user code."""
+
+    SYSTEM = "SYSTEM"
+    USER = "USER"
+
+
 class WorkflowEvent:
     """Base class for workflow events."""
 
-    def __init__(self, data: Any | None = None):
+    def __init__(
+        self,
+        data: Any | None = None,
+        *,
+        origin: WorkflowEventSource = WorkflowEventSource.USER,
+    ):
         """Initialize the workflow event with optional data."""
         self.data = data
+        self.origin = origin
 
     def __repr__(self) -> str:
         """Return a string representation of the workflow event."""
-        return f"{self.__class__.__name__}(data={self.data if self.data is not None else 'None'})"
+        data_repr = self.data if self.data is not None else "None"
+        return f"{self.__class__.__name__}(origin={self.origin}, data={data_repr})"
 
 
 class WorkflowStartedEvent(WorkflowEvent):
@@ -38,9 +52,9 @@ class WorkflowCompletedEvent(WorkflowEvent):
 class WorkflowWarningEvent(WorkflowEvent):
     """Event triggered when a warning occurs in the workflow."""
 
-    def __init__(self, data: str):
+    def __init__(self, data: str, *, origin: WorkflowEventSource = WorkflowEventSource.USER):
         """Initialize the workflow warning event with optional data and warning message."""
-        super().__init__(data)
+        super().__init__(data, origin=origin)
 
     def __repr__(self) -> str:
         """Return a string representation of the workflow warning event."""
@@ -50,9 +64,9 @@ class WorkflowWarningEvent(WorkflowEvent):
 class WorkflowErrorEvent(WorkflowEvent):
     """Event triggered when an error occurs in the workflow."""
 
-    def __init__(self, data: Exception):
+    def __init__(self, data: Exception, *, origin: WorkflowEventSource = WorkflowEventSource.USER):
         """Initialize the workflow error event with optional data and error message."""
-        super().__init__(data)
+        super().__init__(data, origin=origin)
 
     def __repr__(self) -> str:
         """Return a string representation of the workflow error event."""
@@ -110,8 +124,14 @@ class WorkflowRunState(str, Enum):
 class WorkflowStatusEvent(WorkflowEvent):
     """Event indicating a transition in the workflow run state."""
 
-    def __init__(self, state: WorkflowRunState, data: Any | None = None):
-        super().__init__(data)
+    def __init__(
+        self,
+        state: WorkflowRunState,
+        data: Any | None = None,
+        *,
+        origin: WorkflowEventSource = WorkflowEventSource.USER,
+    ):
+        super().__init__(data, origin=origin)
         self.state = state
 
     def __repr__(self) -> str:  # pragma: no cover - representation only
@@ -153,8 +173,14 @@ class WorkflowErrorDetails:
 class WorkflowFailedEvent(WorkflowEvent):
     """Terminal failure event for a workflow run."""
 
-    def __init__(self, details: WorkflowErrorDetails, data: Any | None = None):
-        super().__init__(data)
+    def __init__(
+        self,
+        details: WorkflowErrorDetails,
+        data: Any | None = None,
+        *,
+        origin: WorkflowEventSource = WorkflowEventSource.USER,
+    ):
+        super().__init__(data, origin=origin)
         self.details = details
 
     def __repr__(self) -> str:  # pragma: no cover - representation only
@@ -170,6 +196,8 @@ class RequestInfoEvent(WorkflowEvent):
         source_executor_id: str,
         request_type: type,
         request_data: "RequestInfoMessage",
+        *,
+        origin: WorkflowEventSource = WorkflowEventSource.USER,
     ):
         """Initialize the request info event.
 
@@ -178,8 +206,9 @@ class RequestInfoEvent(WorkflowEvent):
             source_executor_id: ID of the executor that made the request.
             request_type: Type of the request (e.g., a specific data type).
             request_data: The data associated with the request.
+            origin: Source of the event (system or user).
         """
-        super().__init__(request_data)
+        super().__init__(request_data, origin=origin)
         self.request_id = request_id
         self.source_executor_id = source_executor_id
         self.request_type = request_type
@@ -198,9 +227,15 @@ class RequestInfoEvent(WorkflowEvent):
 class ExecutorEvent(WorkflowEvent):
     """Base class for executor events."""
 
-    def __init__(self, executor_id: str, data: Any | None = None):
+    def __init__(
+        self,
+        executor_id: str,
+        data: Any | None = None,
+        *,
+        origin: WorkflowEventSource = WorkflowEventSource.USER,
+    ):
         """Initialize the executor event with an executor ID and optional data."""
-        super().__init__(data)
+        super().__init__(data, origin=origin)
         self.executor_id = executor_id
 
     def __repr__(self) -> str:
@@ -211,6 +246,9 @@ class ExecutorEvent(WorkflowEvent):
 class ExecutorInvokeEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
+    def __init__(self, executor_id: str):
+        super().__init__(executor_id, origin=WorkflowEventSource.SYSTEM)
+
     def __repr__(self) -> str:
         """Return a string representation of the executor handler invoke event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id})"
@@ -218,6 +256,9 @@ class ExecutorInvokeEvent(ExecutorEvent):
 
 class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
+
+    def __init__(self, executor_id: str):
+        super().__init__(executor_id, origin=WorkflowEventSource.SYSTEM)
 
     def __repr__(self) -> str:
         """Return a string representation of the executor handler complete event."""
@@ -227,8 +268,14 @@ class ExecutorCompletedEvent(ExecutorEvent):
 class ExecutorFailedEvent(ExecutorEvent):
     """Event triggered when an executor handler raises an error."""
 
-    def __init__(self, executor_id: str, details: WorkflowErrorDetails):
-        super().__init__(executor_id, details)
+    def __init__(
+        self,
+        executor_id: str,
+        details: WorkflowErrorDetails,
+        *,
+        origin: WorkflowEventSource = WorkflowEventSource.SYSTEM,
+    ):
+        super().__init__(executor_id, details, origin=origin)
         self.details = details
 
     def __repr__(self) -> str:  # pragma: no cover - representation only

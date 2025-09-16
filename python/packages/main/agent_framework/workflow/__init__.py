@@ -19,6 +19,7 @@ _IMPORTS = [
     "RequestInfoEvent",
     "WorkflowCompletedEvent",
     "WorkflowEvent",
+    "WorkflowEventSource",
     "WorkflowStartedEvent",
     "AgentRunEvent",
     "AgentRunUpdateEvent",

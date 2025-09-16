@@ -30,6 +30,7 @@ from ._events import (
     WorkflowCompletedEvent,
     WorkflowErrorDetails,
     WorkflowEvent,
+    WorkflowEventSource,
     WorkflowFailedEvent,
     WorkflowRunState,
     WorkflowStartedEvent,
@@ -244,8 +245,11 @@ class Workflow(AFBaseModel):
                 # Add workflow started event (telemetry + surface state to consumers)
                 workflow_tracer.add_workflow_event("workflow.started")
                 # Emit explicit start/status events to the stream
-                yield WorkflowStartedEvent()
-                yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
+                yield WorkflowStartedEvent(origin=WorkflowEventSource.SYSTEM)
+                yield WorkflowStatusEvent(
+                    WorkflowRunState.IN_PROGRESS,
+                    origin=WorkflowEventSource.SYSTEM,
+                )
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -266,22 +270,37 @@ class Workflow(AFBaseModel):
 
                     if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending and not saw_completed:
                         emitted_in_progress_pending = True
-                        yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                        yield WorkflowStatusEvent(
+                            WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS,
+                            origin=WorkflowEventSource.SYSTEM,
+                        )
 
                 # Success path: emit a final status based on observed terminal signals
                 if saw_completed:
-                    yield WorkflowStatusEvent(WorkflowRunState.COMPLETED)
+                    yield WorkflowStatusEvent(
+                        WorkflowRunState.COMPLETED,
+                        origin=WorkflowEventSource.SYSTEM,
+                    )
                 elif saw_request:
-                    yield WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                    yield WorkflowStatusEvent(
+                        WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+                        origin=WorkflowEventSource.SYSTEM,
+                    )
                 else:
-                    yield WorkflowStatusEvent(WorkflowRunState.IDLE)
+                    yield WorkflowStatusEvent(
+                        WorkflowRunState.IDLE,
+                        origin=WorkflowEventSource.SYSTEM,
+                    )
 
                 workflow_tracer.add_workflow_event("workflow.completed")
             except Exception as e:
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(e)
-                yield WorkflowFailedEvent(details)
-                yield WorkflowStatusEvent(WorkflowRunState.FAILED)
+                yield WorkflowFailedEvent(details, origin=WorkflowEventSource.SYSTEM)
+                yield WorkflowStatusEvent(
+                    WorkflowRunState.FAILED,
+                    origin=WorkflowEventSource.SYSTEM,
+                )
                 workflow_tracer.add_workflow_error_event(e)
                 raise
 
