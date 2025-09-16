@@ -10,8 +10,7 @@ using Microsoft.Extensions.AI.Agents.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-var connectionId = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_BING_CONNECTION_ID") ?? throw new InvalidOperationException("AZURE_FOUNDRY_BING_CONNECTION_ID is not set.");
-var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4.1-mini";
+var agentId = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_AGENT_ID") ?? throw new InvalidOperationException("AZURE_FOUNDRY_AGENT_ID is not set.");
 
 // Create the PersistentAgentsClient with AzureCliCredential for authentication.
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
@@ -26,16 +25,7 @@ var text =
     $"""
     kind: GptComponentMetadata
     type: azure_foundry_agent
-    name: CoderAgent
-    description: Coder Agent
-    instructions: You write code to solve problems.
-    model:
-      id: {model}
-    tools:
-      - type: bing_grounding
-        options:
-          tool_connections:
-            - {connectionId}
+    id: {agentId}
     """;
 
 // Create the agent from the YAML definition.
@@ -47,4 +37,10 @@ var creationOptions = new AgentCreationOptions()
 var agent = await agentFactory.CreateFromYamlAsync(text, creationOptions);
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent!.RunAsync("What is the latest new about the Semantic Kernel?"));
+Console.WriteLine(await agent!.RunAsync("Tell me a joke about a pirate."));
+
+// Invoke the agent with streaming support.
+await foreach (var update in agent!.RunStreamingAsync("Tell me a joke about a pirate."))
+{
+    Console.WriteLine(update);
+}

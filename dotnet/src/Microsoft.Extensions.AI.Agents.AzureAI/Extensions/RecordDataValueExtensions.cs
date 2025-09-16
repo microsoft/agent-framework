@@ -35,16 +35,23 @@ internal static class RecordDataValueExtensions
         return new AzureFunctionToolDefinition(name.Value, description.Value, inputBinding, outputBinding, parameters);
     }
 
-    /*
-    private static BingGroundingToolDefinition CreateBingGroundingToolDefinition(RecordDataValue tool, AIProjectClient projectClient)
+    internal static BingGroundingToolDefinition CreateBingGroundingToolDefinition(this RecordDataValue tool)
     {
-        //Throw.IfNull(tool);
+        Throw.IfNull(tool);
 
-        IEnumerable<string> connectionIds = projectClient.GetConnectionIds(tool);
-        BingGroundingSearchToolParameters bingToolParameters = new([new BingGroundingSearchConfiguration(connectionIds.Single())]);
+        TableDataValue? connections = tool.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.tool_connections"));
+        Throw.IfNull(connections);
 
-        return new BingGroundingToolDefinition(bingToolParameters);
-    }*/
+        var searchConfigurations = connections.Values.Select(connection =>
+        {
+            StringDataValue? connectionId = connection.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("Value"));
+            Throw.IfNull(connectionId?.Value);
+
+            return new BingGroundingSearchConfiguration(connectionId.Value);
+        });
+
+        return new BingGroundingToolDefinition(new([.. searchConfigurations]));
+    }
 
     internal static CodeInterpreterToolDefinition CreateCodeInterpreterToolDefinition(this RecordDataValue tool)
     {

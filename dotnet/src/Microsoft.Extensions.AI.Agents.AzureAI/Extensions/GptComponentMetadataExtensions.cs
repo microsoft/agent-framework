@@ -27,7 +27,7 @@ internal static class GptComponentMetadataExtensions
             {
                 //AzureAISearchType => CreateAzureAISearchToolDefinition(tool),
                 AzureFunctionType => tool.CreateAzureFunctionToolDefinition(),
-                //BingGroundingType => CreateBingGroundingToolDefinition(tool, agentDefinition.GetProjectsClient(kernel)),
+                BingGroundingType => tool.CreateBingGroundingToolDefinition(),
                 CodeInterpreterType => tool.CreateCodeInterpreterToolDefinition(),
                 //FileSearchType => CreateFileSearchToolDefinition(tool),
                 FunctionType => tool.CreateFunctionToolDefinition(),

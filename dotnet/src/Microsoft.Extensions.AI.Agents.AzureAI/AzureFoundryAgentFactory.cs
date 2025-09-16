@@ -33,12 +33,6 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
         PersistentAgentsClient? persistentAgentsClient = null;
         if (this.IsSupported(agentDefinition))
         {
-            var model = agentDefinition.GetModelId();
-            if (string.IsNullOrEmpty(model))
-            {
-                throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
-            }
-
             persistentAgentsClient = agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
             if (persistentAgentsClient is null)
             {
@@ -56,14 +50,28 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
                 persistentAgentsClient = new PersistentAgentsClient(endpoint, credential);
             }
 
-            agent = await persistentAgentsClient.CreateAIAgentAsync(
-                model: model,
-                name: agentDefinition.GetName(),
-                instructions: agentDefinition.GetInstructions(),
-                tools: agentDefinition.GetFoundryToolDefinitions(),
-                toolResources: agentDefinition.GetFoundryToolResources(),
-                metadata: agentDefinition.GetMetadata(),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var id = agentDefinition.GetId();
+            if (!string.IsNullOrEmpty(id))
+            {
+                agent = await persistentAgentsClient.GetAIAgentAsync(id, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var model = agentDefinition.GetModelId();
+                if (string.IsNullOrEmpty(model))
+                {
+                    throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
+                }
+
+                agent = await persistentAgentsClient.CreateAIAgentAsync(
+                    model: model,
+                    name: agentDefinition.GetName(),
+                    instructions: agentDefinition.GetInstructions(),
+                    tools: agentDefinition.GetFoundryToolDefinitions(),
+                    toolResources: agentDefinition.GetFoundryToolResources(),
+                    metadata: agentDefinition.GetMetadata(),
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return agent;

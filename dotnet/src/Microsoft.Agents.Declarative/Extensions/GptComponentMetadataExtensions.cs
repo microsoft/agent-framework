@@ -34,6 +34,18 @@ public static class GptComponentMetadataExtensions
     }
 
     /// <summary>
+    /// Retrieves the 'id' property from a <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
+    public static string? GetId(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        var nameValue = element.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("id"));
+        return nameValue?.Value;
+    }
+
+    /// <summary>
     /// Retrieves the 'name' property from a <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
@@ -41,7 +53,7 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var nameValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("name"));
+        var nameValue = element.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("name"));
         return nameValue?.Value;
     }
 
@@ -53,7 +65,7 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var descriptionValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("description"));
+        var descriptionValue = element.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("description"));
         return descriptionValue?.Value ?? string.Empty;
     }
 
@@ -65,7 +77,7 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var toolsValue = element.ExtensionData?.GetProperty<TableDataValue>(InitializablePropertyPath.Create("tools"));
+        var toolsValue = element.ExtensionData?.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("tools"));
         return toolsValue?.Values ?? ImmutableArray<RecordDataValue>.Empty;
     }
 
@@ -88,7 +100,7 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var modelIdValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("model.id"));
+        var modelIdValue = element.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model.id"));
         return modelIdValue?.Value;
     }
 
@@ -100,7 +112,7 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var endpointValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("model.connection.endpoint"));
+        var endpointValue = element.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model.connection.endpoint"));
         return endpointValue?.Value;
     }
 
@@ -113,7 +125,7 @@ public static class GptComponentMetadataExtensions
     {
         Throw.IfNull(element);
 
-        var deploymentNameValue = element.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("model.connection.options.deployment_name"));
+        var deploymentNameValue = element.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model.connection.options.deployment_name"));
         return deploymentNameValue?.Value;
     }
 
