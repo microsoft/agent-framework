@@ -86,7 +86,7 @@ You can connect to your Application Insights instance using a connection string.
 ```python
 from azure.identity import DefaultAzureCredential
 
-setup_telemetry(application_insights_credential=DefaultAzureCredential())
+setup_telemetry(credential=DefaultAzureCredential())
 ```
 
 It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.
