@@ -19,18 +19,18 @@ require significant processing time, such as:
 - Image and content generation
 - Large document processing and summarization
 
-The current Agent Framework architecture needs to have native support for long-running execution patterns, as it 
-The current Agent Framework architecture lacks native support for long-running execution patterns, which is 
-essential for handling these scenarios effectively. Additionally, as MEAI chat clients may start supporting 
-long-running execution capabilities in the future, the design should consider integration patterns and consistency 
-with the broader Microsoft.Extensions.AI ecosystem to provide a unified experience across both agent and chat client scenarios.
+The current Agent Framework architecture needs to have native support for long-running operations, as it is
+essential for handling these scenarios effectively. Additionally, as MEAI chat clients need to start supporting 
+long-running operations as well to be used together with AF agents, the design should consider integration 
+patterns and consistency with the broader Microsoft.Extensions.AI ecosystem to provide a unified experience 
+across both agent and chat client scenarios.
 
 ## Decision Drivers
 - Chat clients and agents should support long-running execution as well as quick prompts.
 - The design should be simple and intuitive for developers to use.
 - The design should be extensible to allow new long-running execution features to be added in the future.
 - The design should be additive rather than disruptive to allow existing chat clients to iteratively add 
-support for long-running executions without breaking existing functionality.
+support for long-running operations without breaking existing functionality.
 
 ## APIs of Agents Supporting Long-Running Execution
 <details>
@@ -183,9 +183,9 @@ support for long-running executions without breaking existing functionality.
      | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is more than 5 minutes old        |
      | GetResponseAsync(responseId, ct)    | Completed | The capital of France is Paris. | response is more than 12 hours old         |
 
-     The response started in a background mode runs server side until it completes, fails, and probably cancelled. The client can poll for
-     the status of the response using its id. If clients polls before the response is completed, it will get the latest status of the response.
-     If the client polls after the response is completed,  it will get the completed response with the result.
+     The response started in background mode runs server-side until it completes, fails, or is cancelled. The client can poll for
+     the status of the response using its Id. If the client polls before the response is completed, it will get the latest status of the response.
+     If the client polls after the response is completed, it will get the completed response with the result.
   
      | Cancellation Method | Result    | Notes                                  |
      |---------------------|-----------|----------------------------------------|
@@ -193,7 +193,7 @@ support for long-running executions without breaking existing functionality.
      | CancelResponseAsync | Completed | if cancelled after response completed  |
      | CancellationToken   | No effect | it just cancels the client side call   |
 
-  - Streaming API - returns streaming updates callers can iterate over immediately or after a dropping the stream and picking it up later
+  - Streaming API - returns streaming updates callers can iterate over immediately or after dropping the stream and picking it up later
      | Method Call                                  | Status     | Result                                                                         | Notes                               |
      |----------------------------------------------|------------|--------------------------------------------------------------------------------|-------------------------------------|
      | CreateResponseStreamingAsync(msgs, opts, ct) | -          | updates                                                                        |                                     |
@@ -219,8 +219,8 @@ support for long-running executions without breaking existing functionality.
      | CancelResponseAsync | Cannot cancel a completed response | if cancelled after response completed  |
      | CancellationToken   | No effect                          | it just cancels the client side call   |
 
-     <sup>1</sup> The CancelResponseAsync method return `Canceled` status, but subsequent call to GetResponseStreamingAsync returns 
-     a  enumerable that can be iterated over to get the rest of the response until it completes.
+     <sup>1</sup> The CancelResponseAsync method returns `Canceled` status, but a subsequent call to GetResponseStreamingAsync returns 
+     an enumerable that can be iterated over to get the rest of the response until it completes.
 
 </details>
 
@@ -339,7 +339,7 @@ support for long-running executions without breaking existing functionality.
 
 </details>
 
-## Comparison of Long-Running Execution Features
+## Comparison of Long-Running Operation Features
 |        Feature              | OpenAI Responses          | Foundry Agents                      | A2A                  |
 |-----------------------------|---------------------------|-------------------------------------|----------------------|
 | Initiated by                | User (Background = true)  | Long-running execution is always on | Agent                |
@@ -354,26 +354,26 @@ support for long-running executions without breaking existing functionality.
 | Streaming support           | ✅                        | ✅                                 | ✅                   |
 | Execution statuses          | InProgress, Completed, Queued <br/>Cancelled, Failed, Incomplete | InProgress, Completed, Queued<br/>Cancelled, Failed, Cancelling, <br/>RequiresAction, Expired |  Working, Completed, Canceled, <br/>Failed, Rejected, AuthRequired, <br/>InputRequired, Submitted, Unknown |
 
-<sup>1</sup> Sync is a regular message-based request/response communication pattern, Async is a pattern for long-running tasks where the agent returns an Id for a run/task and allows polling for status and final results by the Id.
+<sup>1</sup> Sync is a regular message-based request/response communication pattern; Async is a pattern for long-running operations/tasks where the agent returns an ID for a run/task and allows polling for status and final results by the ID.
 
 **Note:** The names for new classes, interfaces, and their members used in the sections below are tentative and will be discussed in a dedicated section of this document.
 
-## Long-Running Execution Support for Chat Clients
+## Long-Running Operations Support for Chat Clients
 
-This section describes different options for adding long-running execution support to chat clients that implement the `IChatClient` interface.
+This section describes different options for various aspects required to add long-running operations support to chat clients.
 
-### 1. Methods for Working with Long-Running Executions
+### 1. Methods for Working with Long-Running Operations
 
-Based on the analysis of existing APIs that support long-running executions (such as OpenAI Responses, Azure AI Foundry Agents, and A2A), 
-the following operations are used for working with long-running executions:
+Based on the analysis of existing APIs that support long-running operations (such as OpenAI Responses, Azure AI Foundry Agents, and A2A), 
+the following operations are used for working with long-running operations:
 - Common operations:
-  - **Start Long-Running Execution**: Initiates a long-running execution and returns an Id of the execution.
-  - **Get Status of Long-Running Execution**: This method is used to retrieve the status of a long-running execution.
-  - **Get Result of Long-Running Execution**: Retrieves the result of a long-running execution.
+  - **Start Long-Running Execution**: Initiates a long-running operation and returns its Id.
+  - **Get Status of Long-Running Execution**: This method is used to retrieve the status of a long-running operation.
+  - **Get Result of Long-Running Execution**: Retrieves the result of a long-running operation.
 - Uncommon operations:
-  - **Update Long-Running Execution**: This method is used to update a long-running execution, such as adding new messages or modifying existing ones.
-  - **Cancel Long-Running Execution**: This method is used to cancel a long-running execution that is still in progress.
-  - **Delete Long-Running Execution**: This method is used to delete a long-running execution, typically after it has completed or been cancelled.
+  - **Update Long-Running Execution**: This method is used to update a long-running operation, such as adding new messages or modifying existing ones.
+  - **Cancel Long-Running Execution**: This method is used to cancel a long-running operation.
+  - **Delete Long-Running Execution**: This method is used to delete a long-running operation.
 
 To support these operations by `IChatClient` implementations, the following options are available:
 - **1.1 New IAsyncChatClient Interface For All Long-Running Execution Operations**
@@ -383,7 +383,7 @@ To support these operations by `IChatClient` implementations, the following opti
 
 #### 1.1 New IAsyncChatClient Interface For All Long-Running Execution Operations
 
-This option suggests adding a new interface `IAsyncChatClient` that some implementations of `IChatClient` may implement to support long-running executions.
+This option suggests adding a new interface `IAsyncChatClient` that some implementations of `IChatClient` may implement to support long-running operations.
 ```csharp
 public interface IAsyncChatClient
 {
@@ -417,7 +417,7 @@ if(chatClient.GetService<IAsyncChatClient>() is { } asyncChatClient && ShouldRun
     }
     catch (NotSupportedException)
     {
-        Console.WriteLine("This chat client does not support long-running executions.");
+        Console.WriteLine("This chat client does not support long-running operations.");
         throw;
     }
 
@@ -444,20 +444,22 @@ else
 
 **Pros:**
 - Not a breaking change: Existing chat clients are not affected.
-- Callers can determine if a chat client supports long-running executions by calling its `GetService<IAsyncChatClient>()` method.
+- Callers can determine if a chat client supports long-running operations by calling its `GetService<IAsyncChatClient>()` method.
 
 **Cons:**
 - Not extensible: Adding new methods to the `IAsyncChatClient` interface after its release will break existing implementations of the interface.
 - Missing capability check: Callers cannot determine if chat clients support specific uncommon operations before attempting to use them.
-- Insufficient information: Callers may not have enough information to decide whether a prompt should run as a long-running execution.
+- Insufficient information: Callers may not have enough information to decide whether a prompt should run as a long-running operation.
 - The new methods calls bypass existing decorators such as logging, telemetry, etc.
+- An alternative solution for decorating the new methods will have to be put in place because the new methods calls bypass existing decorators 
+such as logging, telemetry, etc.
 
 #### 1.2 New IAsyncChatClient Interface For Uncommon Operations + Use Get{Streaming}ResponseAsync For Common Operations
 
 This option suggests using the existing `GetResponseAsync` and `GetStreamingResponseAsync` methods of the `IChatClient` interface to support 
-common long-running execution operations, such as starting long-running executions, getting their status, their results, and potentially 
+common long-running operations, such as starting long-running operations, getting their status, their results, and potentially 
 updating them, in addition to their existing functionality of serving quick prompts. Methods for the uncommon operations, such as updating, 
-cancelling, and deleting long-running executions, will be added to a new `IAsyncChatClient` interface that will be implemented by chat clients 
+cancelling, and deleting long-running operations, will be added to a new `IAsyncChatClient` interface that will be implemented by chat clients 
 that support them.
 
 This option presumes that Option 3.2 (Have one method for getting long-running execution status and result) is selected.
@@ -508,7 +510,7 @@ public class ResponsesChatClient : IChatClient, IAsyncChatClient
 
     public Task<AsyncRunResult> UpdateAsyncRunAsync(string runId, IList<ChatMessage> chatMessages, CancellationToken ct = default)
     {
-        throw new NotSupportedException("This chat client does not support updating long-running executions.");
+        throw new NotSupportedException("This chat client does not support updating long-running operations.");
     }
 
     public Task<AsyncRunResult> CancelAsyncRunAsync(string runId, CancellationToken cancellationToken = default)
@@ -550,7 +552,7 @@ if (GetAsyncRunContent(response) is AsyncRunContent asyncRunContent)
         }
         catch (NotSupportedException)
         {
-            Console.WriteLine("This chat client does not support cancelling long-running executions.");
+            Console.WriteLine("This chat client does not support cancelling long-running operations.");
         }
         
         try
@@ -559,7 +561,7 @@ if (GetAsyncRunContent(response) is AsyncRunContent asyncRunContent)
         }
         catch (NotSupportedException)
         {
-            Console.WriteLine("This chat client does not support deleting long-running executions.");
+            Console.WriteLine("This chat client does not support deleting long-running operations.");
         }
     }
 }
@@ -570,32 +572,33 @@ else
 }
 ```
 
-This option addresses the issue that the other options above have with callers needing to know whether the prompt should 
-be run as a long-running execution or a quick prompt. It allows callers to simply call the existing `GetResponseAsync` method, 
-and the chat client will decide whether to run the prompt as a long-running execution or a quick prompt. If control over 
-the execution mode is still needed, and the underlying API supports it, it will be possible for callers to set the mode via
-the chat client invocation or configuration. More details about this are provided in one of the sections below about enabling long-running execution mode.
+This option addresses the issue that the option above has with callers needing to know whether the prompt should 
+be run as a long-running operation or a quick prompt. It allows callers to simply call the existing `GetResponseAsync` method, 
+and the chat client will decide whether to run the prompt as a long-running operation or a quick prompt. If control over 
+the execution mode is still needed, and the underlying API supports it, it will be possible for callers to set the mode at 
+the chat client invocation or configuration. More details about this are provided in one of the sections below about enabling long-running operation mode.
   
-Additionally, it addresses another issue with the other options above, where the `GetResponseAsync` method may return a long-running
+Additionally, it addresses another issue, where the `GetResponseAsync` method may return a long-running
 execution response and the `StartAsyncRunAsync` method may return a quick prompt response. Having one method that handles both cases
-allows callers to not worry about this behavior and simply check the type of the response to determine if it is a long-running execution
+allows callers to not worry about this behavior and simply check the type of the response to determine if it is a long-running operation
 or a quick prompt completion.
 
-With the `GetResponseAsync` method becoming responsible for starting, getting status, getting results and updating long-running executions,
+With the `GetResponseAsync` method becoming responsible for starting, getting status, getting results and updating long-running operations,
 there are only a few operations left in the `IAsyncChatClient` interface - cancel and delete. As a result, the `IAsyncChatClient` interface
-name may not be the best fit, as it suggests that it is responsible for all long-running execution operations while it is not. Should 
-the interface be renamed to reflect operations it supports? What should the new name be? Probably not. Option 1.4 considers an alternative
+name may not be the best fit, as it suggests that it is responsible for all long-running operations while it is not. Should 
+the interface be renamed to reflect operations it supports? What should the new name be? Option 1.4 considers an alternative
 that might solve the naming issue. 
 
 **Pros:**
-- Delegation and control: Callers delegate the decision of whether to run a prompt as a long-running execution or quick prompt to the chat client, 
-while still having the option to control the execution mode to determine how to handle the prompt if needed.
+- Delegation and control: Callers delegate the decision of whether to run a prompt as a long-running operation or quick prompt to chat clients,
+while still having the option to control the execution mode to determine how to handle prompts if needed.
 - Not a breaking change: Existing chat clients are not affected. 
   
 **Cons:**  
 - Not extensible: Adding new methods to the `IAsyncChatClient` interface after its release will break existing implementations of the interface. 
-- Calls to the new methods bypass existing decorators such as logging, telemetry, etc.
 - Missing capability check: Callers cannot determine if chat clients support specific uncommon operations before attempting to use them.
+- An alternative solution for decorating the new methods will have to be put in place because the new methods calls bypass existing decorators 
+such as logging, telemetry, etc.
 
 #### 1.3 New IAsyncChatClient Interface For Uncommon Operations + Use Get{Streaming}ResponseAsync For Common Operations + Capability Check
 
@@ -620,13 +623,13 @@ public class ResponsesChatClient : IChatClient, IAsyncChatClient
         ...
     }
 
-    public bool CanUpdateAsyncRun => false; // This chat client does not support updating long-running executions.
-    public bool CanCancelAsyncRun => true;  // This chat client supports cancelling long-running executions.
-    public bool CanDeleteAsyncRun => true;  // This chat client supports deleting long-running executions.
+    public bool CanUpdateAsyncRun => false; // This chat client does not support updating long-running operations.
+    public bool CanCancelAsyncRun => true;  // This chat client supports cancelling long-running operations.
+    public bool CanDeleteAsyncRun => true;  // This chat client supports deleting long-running operations.
 
     public Task<AsyncRunResult> UpdateAsyncRunAsync(string runId, IList<ChatMessage> chatMessages, CancellationToken ct = default)
     {
-        throw new NotSupportedException("This chat client does not support updating long-running executions.");
+        throw new NotSupportedException("This chat client does not support updating long-running operations.");
     }
 
     public Task<AsyncRunResult> CancelAsyncRunAsync(string runId, CancellationToken cancellationToken = default)
@@ -670,7 +673,7 @@ if (GetAsyncRunContent(response) is AsyncRunContent asyncRunContent)
         if(asyncChatClient?.CanDeleteAsyncRun ?? false)
         {
             await asyncChatClient?.DeleteAsyncRunAsync(asyncRunContent.RunId);
-        }       
+        }   
     }
 }
 else
@@ -681,45 +684,52 @@ else
 ```
 
 **Pros:**
-- Delegation and control: Callers delegate the decision of whether to run a prompt as a long-running execution or quick prompt to the chat client, 
-while still having the option to control the execution mode to determine how to handle the prompt if needed.
+- Delegation and control: Callers delegate the decision of whether to run a prompt as a long-running execution or quick prompt to chat clients,
+while still having the option to control the execution mode to determine how to handle prompts if needed.
 - Not a breaking change: Existing chat clients are not affected. 
 - Capability check: Callers can determine if the chat client supports an uncommon operation before attempting to use it.
   
 **Cons:**  
 - Not extensible: Adding new members to the `IAsyncChatClient` interface after its release will break existing implementations of the interface.  
-- Calls to the new methods bypass existing decorators such as logging, telemetry, etc.
+- An alternative solution for decorating the new methods will have to be put in place because the new methods calls bypass existing decorators 
+such as logging, telemetry, etc.
 
 #### 1.4 Individual Interface Per Uncommon Operation + Use Get{Streaming}ResponseAsync For Common Operations
 
-This option suggests using the existing `GetResponseAsync` and `GetStreamingResponseAsync` methods of the `IChatClient` interface to support 
-common long-running execution operations, such as starting long-running executions, getting their status, and their results, in addition to 
-their existing functionality of serving quick prompts.
+This option suggests using the existing `Get{Streaming}ResponseAsync` methods of the `IChatClient` interface to support 
+common long-running operations, such as starting long-running operations, getting their status, and their results, and potentially 
+updating them, in addition to their existing functionality of serving quick prompts.
 
 The uncommon operations that are not supported by all analyzed APIs, such as updating (which can be handled by `Get{Streaming}ResponseAsync`), cancelling, 
-and deleting long-running executions, as well as future ones will be added to their own interfaces that will be implemented by chat clients 
+and deleting long-running operations, as well as future ones, will be added to their own interfaces that will be implemented by chat clients 
 that support them.
 
 This option presumes that Option 3.2 (Have one method for getting long-running execution status and result) is selected.
 
+The interfaces can inherit from `IChatClient` to allow callers to use an instance of `ICancelableChatClient`, `IUpdatableChatClient`, or `IDeletableChatClient` 
+for calling the `Get{Streaming}ResponseAsync` methods as well. However, those methods belong to a leaf chat client that, if obtained via the `GetService<T>()` 
+method, won't be decorated by existing decorators such as function invocation, logging, etc. As a result, an alternative solution (wrap the instance of the leaf 
+chat client in a decorator at the `GetService` method call) will need to be applied not only to the new methods of one of the interfaces but also to the existing
+`Get{Streaming}ResponseAsync` ones.
+
 ```csharp
-public interface ICancelableAsyncRun
+public interface ICancelableChatClient
 {  
     Task<AsyncRunResult> CancelAsyncRunAsync(string runId, CancellationToken cancellationToken = default);
 }
 
-public interface IUpdatableAsyncRun
+public interface IUpdatableChatClient
 {  
     Task<AsyncRunResult> UpdateAsyncRunAsync(string runId, IList<ChatMessage> chatMessages, CancellationToken cancellationToken = default);
 }
 
-public interface IDeletableAsyncRun
+public interface IDeletableChatClient
 {  
     Task<AsyncRunResult> DeleteAsyncRunAsync(string runId, CancellationToken cancellationToken = default);
 }
 
-// Responses chat client that supports standard long-running execution operations + cancellation and deletion
-public class ResponsesChatClient : IChatClient, ICancelableAsyncRun, IDeletableAsyncRun
+// Responses chat client that supports standard long-running operations + cancellation and deletion
+public class ResponsesChatClient : IChatClient, ICancelableChatClient, IDeletableChatClient
 {
     public async Task<ChatResponse> GetResponseAsync(string prompt, ChatOptions? options = null, CancellationToken ct = default)
     {
@@ -738,7 +748,7 @@ public class ResponsesChatClient : IChatClient, ICancelableAsyncRun, IDeletableA
 }
 ```
 
-Example that starts a long-running execution, gets its status, and cancels and deletes it if it's not completed after some time:
+Example that starts a long-running operation, gets its status, and cancels and deletes it if it's not completed after some time:
 ```csharp
 IChatClient chatClient = new ResponsesChatClient();
 
@@ -757,50 +767,49 @@ if (GetAsyncRunContent(response) is AsyncRunContent asyncRunContent)
     // If it's still running, cancel and delete the run
     if (GetAsyncRunContent(response).Status is AsyncRunStatus.InProgress or AsyncRunStatus.Queued)
     {
-        if(chatClient.GetService<ICancelableAsyncRun>() is {} cancelableAsyncRun)
+        if(chatClient.GetService<ICancelableChatClient>() is {} cancelableChatClient)
         {
-            await cancelableAsyncRun.CancelAsyncRunAsync(asyncRunContent.RunId);
+            await cancelableChatClient.CancelAsyncRunAsync(asyncRunContent.RunId);
         }
-        
-        if(chatClient.GetService<IDeletableAsyncRun>() is {} deletableAsyncRun)
+
+        if(chatClient.GetService<IDeletableChatClient>() is {} deletableChatClient)
         {
-            await deletableAsyncRun.DeleteAsyncRunAsync(asyncRunContent.RunId);
+            await deletableChatClient.DeleteAsyncRunAsync(asyncRunContent.RunId);
         }
     }
 }
 ```
 
 **Pros:**
-- Extensible: New interfaces can be added and implemented to support new long-running execution operations without breaking 
+- Extensible: New interfaces can be added and implemented to support new long-running operations without breaking 
 existing chat client implementations.
 - Not a breaking change: Existing chat clients that implement the `IChatClient` interface are not affected.
-- Delegation and control: Callers delegate the decision of whether to run a prompt as a long-running execution or quick prompt
-to the chat client, while still having the option to control the execution mode to determine how to handle the prompt if needed.
+- Delegation and control: Callers delegate the decision of whether to run a prompt as a long-running operation or quick prompt
+to chat clients, while still having the option to control the execution mode to determine how to handle prompts if needed.
   
 **Cons:**  
 - Breaking changes: Changing the signatures of the methods of the operation-specific interfaces or adding new members to them will 
 break existing implementations of those interfaces. However, the blast radius of this change is much smaller and limited to a subset
 of chat clients that implement the operation-specific interfaces. However, this is still a breaking change.
 
-### 2. Enabling Long-Running Execution
+### 2. Enabling Long-Running Operations
 
-Based on the API analysis, some APIs must be explicitly configured to run in long-running execution mode, 
+Based on the API analysis, some APIs must be explicitly configured to run in long-running operation mode, 
 while others don't need additional configuration because they either decide themselves whether a request
-should run as a long-running operation, or they always operate in long-running execution mode or quick prompt mode:
+should run as a long-running operation, or they always operate in long-running operation mode or quick prompt mode:
 |        Feature              | OpenAI Responses          | Foundry Agents                      | A2A                  |
 |-----------------------------|---------------------------|-------------------------------------|----------------------|
 | Long-running execution      | User (Background = true)  | Long-running execution is always on | Agent                |
 
-
-The options below consider how to enable long-running execution mode for chat clients that support both quick prompts and long-running executions.
+The options below consider how to enable long-running operation mode for chat clients that support both quick prompts and long-running operations.
 
 #### 2.1 Execution Mode per `Get{Streaming}ResponseAsync` Invocation
 
 This option proposes adding a new nullable `AllowLongRunningResponses` property to the `ChatOptions` class.
-The property value will be `true` if the caller requests a long-running execution, `false`, `null` or omitted otherwise.
+The property value will be `true` if the caller requests a long-running operation, `false`, `null` or omitted otherwise.
   
 Chat clients that work with APIs requiring explicit configuration per operation will use this property to determine whether to run the prompt as a long-running 
-execution or quick prompt. Chat clients that work with APIs that don't require explicit configuration will ignore this property and operate according 
+operation or quick prompt. Chat clients that work with APIs that don't require explicit configuration will ignore this property and operate according 
 to their own logic/configuration.
 
 ```csharp
@@ -820,17 +829,19 @@ ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOp
 ChatResponse quickResponse = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = false });
 ```
 
-**Pro:** Callers can switch between quick prompts and long-running executions per invocation of the `Get{Streaming}ResponseAsync` methods without changing the client configuration.
+**Pro:** Callers can switch between quick prompts and long-running operation per invocation of the `Get{Streaming}ResponseAsync` methods without 
+changing the client configuration.
 
-**Con:** This may not be valuable for all callers, as they may not have enough information to decide whether the prompt should run as a long-running execution or quick prompt.
+**Con:** This may not be valuable for all callers, as they may not have enough information to decide whether the prompt should run as a long-running operation or quick prompt.
 
 #### 2.2 Execution Mode per Chat Client Instance
 
-This option proposes adding a new `enableLongRunningResponses` parameter to constructors of chat clients that support both quick prompts and long-running executions.
-The parameter value will be `true` if the chat client should operate in long-running execution mode, `false`, `null` or omitted otherwise.
+This option proposes adding a new `enableLongRunningResponses` parameter to constructors of chat clients that support both quick prompts and long-running operations.
+The parameter value will be `true` if the chat client should operate in long-running operation mode, `false` if it should operate in quick prompt mode.
 
-Chat clients that work with APIs requiring explicit configuration will use this parameter to determine whether to run prompts as long-running executions or quick prompts.
-Chat clients that work with APIs that don't require explicit configuration won't have this parameter in their constructors and will operate according to their own logic/configuration.
+Chat clients that work with APIs requiring explicit configuration will use this parameter to determine whether to run prompts as long-running operation or quick prompts.
+Chat clients that work with APIs that don't require explicit configuration won't have this parameter in their constructors and will operate according to their own 
+logic/configuration.
 
 ```csharp
 public class CustomChatClient : IChatClient, IAsyncChatClient
@@ -852,7 +863,7 @@ IChatClient chatClient = new CustomChatClient(enableLongRunningResponses: true);
 ChatResponse response = await chatClient.GetResponseAsync("<prompt>");
 ```
 
-Chat clients can be configured to always operate in long-running execution mode or quick prompt mode based on their role in a specific scenario.
+Chat clients can be configured to always operate in long-running operation mode or quick prompt mode based on their role in a specific scenario.
 For example, a chat client responsible for generating ideas for images can be configured for quick prompt mode, while a chat client responsible for image 
 generation can be configured to always use long-running execution mode.
 
@@ -898,7 +909,7 @@ ChatResponse quickResponse = await chatClient.GetResponseAsync("<prompt>", new C
 
 ### 3. Getting Status and Result of Long-Running Execution
 
-The explored APIs use different approaches for retrieving the status and results of long-running executions. Some are using
+The explored APIs use different approaches for retrieving the status and results of long-running operations. Some are using
 one method to retrieve both status and result, while others use two separate methods for each operation:
 |        Feature    | OpenAI Responses              | Foundry Agents                                     | A2A                   |
 |-------------------|-------------------------------|----------------------------------------------------|-----------------------|
@@ -906,11 +917,11 @@ one method to retrieve both status and result, while others use two separate met
 | API to Get Result | GetResponseAsync(responseId)  | Messages.GetMessagesAsync(thread.Id, threadRun.Id) | GetTaskAsync(task.Id) |
 
 Taking into account the differences, the following options propose a few ways to model the API for getting the status and result of 
-long-running executions for the `AIAgent` interface implementations.
+long-running operations for the `AIAgent` interface implementations.
 
-#### Option 3.1: Two Separate Methods for Status and Result
+#### 3.1 Two Separate Methods for Status and Result
 
-This option suggests having two separate methods for getting the status and result of long-running executions:
+This option suggests having two separate methods for getting the status and result of long-running operations:
 ```csharp
 public interface IAsyncChatClient
 {
@@ -924,9 +935,9 @@ public interface IAsyncChatClient
 **Cons:** Creates inefficiency for chat clients that use APIs that return both status and result in a single call, 
 as callers might make redundant calls to get the result after checking the status that already contains the result.
 
-#### Option 3.2: One Method to Get Status and Result
+#### 3.2: One Method to Get Status and Result
 
-This option suggests having a single method for getting both the status and result of long-running executions:
+This option suggests having a single method for getting both the status and result of long-running operations:
 ```csharp
 public interface IAsyncChatClient
 {
@@ -945,7 +956,7 @@ it will then call the method to get the result of the long-running execution and
 
 ### 4. Place For RunId, Status, and UpdateId of Long-Running Execution
 
-This section considers different options for exposing the `RunId`, `Status`, and `UpdateId` properties of long-running executions.
+This section considers different options for exposing the `RunId`, `Status`, and `UpdateId` properties of long-running operations.
 
 #### 4.1. As AIContent
 
@@ -959,10 +970,10 @@ inherits from `AIContent`, which is a base class for all AI-related content in M
 
 The `AsyncRunStatus` class represents the status of a long-running execution. Initially, it will have 
 a set of predefined statuses that represent the possible statuses used by existing Agent/LLM APIs that support
-long-running executions. It will be extended to support additional statuses as needed while also
+long-running operations. It will be extended to support additional statuses as needed while also
 allowing custom, not-yet-defined statuses to propagate as strings from the underlying API to the callers.
 
-The content class type can be used by both agents and chat clients to represent long-running executions.
+The content class type can be used by both agents and chat clients to represent long-running operations.
 For chat clients to use it, it should be declared in one of the MEAI packages.
 
 ```csharp
@@ -1012,9 +1023,9 @@ TBD
 
 ### 5. Streaming Support
 
-All analyzed APIs that support long-running executions also support streaming. 
+All analyzed APIs that support long-running operations also support streaming. 
 
-Some of them natively support resuming streaming from a specific point in the stream, while for others, are either implementation-dependent or need to be emulated:
+Some of them natively support resuming streaming from a specific point in the stream, while for others, this is either implementation-dependent or needs to be emulated:
 
 | API                     | Can Resume Streaming                 | Model                                                                                                      |
 |-------------------------|--------------------------------------|------------------------------------------------------------------------------------------------------------|
@@ -1060,9 +1071,9 @@ keep returning sequence number 2, corresponding to the last resumable update rec
 are received and processed, and the model returns a non-function call response, the chat client will then return a sequence number, say 10, which corresponds to the 
 first non-function call update. 
 
-##### Status of Steaming Updates
+##### Status of Streaming Updates
 
-Different APIs, provide different status for streamed function call updates
+Different APIs provide different statuses for streamed function call updates
 
 Sequence of updates from OpenAI Responses API to answer the question "What time is it?" using a function call:
 | Id     | SN | Update.Kind              | Response.Status | ChatResponseUpdate.Status | Description                                       |
@@ -1309,8 +1320,7 @@ while (response.ContinuationToken is { } token)
 Console.WriteLine(response.Text);
 ```
 
-**Pro:** No proliferation of long-running operation properties including the `Status` one in the `ChatOptions`, `ChatResponse`, and `ChatResponseUpdate` classes.
-
+**Pro:** No proliferation of long-running operation properties in the `ChatOptions` class, including the `Status` property.
 
 #### 6.2 Overloads of GetResponseAsync and GetStreamingResponseAsync
 
@@ -1358,179 +1368,19 @@ if(response.Status is {} status && chatClient.GetService<ILongRunningChatClient>
 - No proliferation of long-running operation properties in the ChatOptions class, except for the new AllowLongRunningResponses property discussed in section 2.
 
 **Cons:**
-- Interface switching: Callers need to switch to the `ILongRunningChatClient` interface to get the status and result of long-running executions.
+- Interface switching: Callers need to switch to the `ILongRunningChatClient` interface to get the status and result of long-running operations.
 - An alternative solution for decorating the new methods will have to be put in place.
 
-## Proposed Design for Supporting Long-Running Executions by AF Agents
+## Long-Running Operations Support for AF Agents
 
-The design for supporting long-running executions by agents is very similar to that for chat clients because it is based on 
-the same analysis of existing APIs and anticipated consumption patterns.
-
-One difference, apart from names and signatures, is that the parent of all agents in AF is the `AIAgent` abstract class,
-which is not as prone to breaking changes as the `IChatClient` interface is when new members are added to it. Therefore, 
-the methods for working with long-running executions can be added to the `AIAgent` class as first-class citizens 
-without worrying about breaking changes if the design decides to go with this option.
-
-Having considered the pros and cons of all options for supporting long-running executions by chat clients, 
-the draft design for supporting long-running executions by agents is as follows:
-- All new methods for common and uncommon operations will be added to the `AIAgent` abstract class as virtual methods.
-  - The methods will throw a `NotSupportedException` exception if an operation is not overridden by the agent implementation, which may happen
-  if the agent does not support long-running executions at all or does not support the specific operation.
-  - There will be one method for getting the status and result of a long-running execution, instead of two separate ones.
-- The `Run{Streaming}Async` methods will be used to trigger long-running executions in addition to their existing functionality of running quick prompts.
-  - They will return an `AsyncRunContent` item as part of the response if the prompt is run as a long-running execution.
-  - They will return an item of `AIContent` type, like `TextContent`, as they do today if the prompt is run as a quick prompt.
-- The `AIAgent` class will be extended with a mechanism to indicate supported capabilities of the agent, such as update, cancel, and delete long-running executions.
-  - This will allow callers to check if the agent supports a specific operation before calling it.
-- The `enableLongRunningOperations` parameter will be added to the constructors of agents that support both quick prompts and long-running executions.
-  - The parameter value will be `true` if the agent should operate in long-running execution mode, `false` otherwise.
-- The `AgentRunOptions` class will be extended with a new `AllowLongRunningResponses` property to allow enabling long-running execution mode per invocation of the `Run{Streaming}Async` methods.
-  - If the property is set to `true`, and the agent supports long-running executions, then the prompt will be run as a long-running execution.
-  - If the property is set to `false`, or the agent does not support long-running executions, then the prompt will be run as a quick prompt.
-  - The property won't have any effect on agents that can decide themselves whether to run a prompt as a long-running execution or quick prompt.
-  - The property will have precedence over the `enableLongRunningOperations` parameter passed to the agent constructor.
-
-**Note:** The exact implementation details can be explored further if this design is agreed on principle.
-
-New API to support long-running executions by agents:
-
-```csharp
-public abstract class AIAgent
-{
-    // Existing methods
-    public virtual Task<AgentRunResponse> RunAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken ct = default) {...}
-
-    // New methods for long-running executions    
-    public virtual Task<AgentRunResponse> UpdateAsyncRunAsync(string runId, AgentThread? thread = null, IList<ChatMessage> chatMessages, CancellationToken ct = default) {...};
-    public virtual Task<AgentRunResponse> CancelAsyncRunAsync(string runId, AgentThread? thread = null, CancellationToken ct = default) {...};
-    public virtual Task<AgentRunResponse> DeleteAsyncRunAsync(string runId, AgentThread? thread = null, CancellationToken ct = default) {...};
-    
-    // New properties to indicate supported capabilities.
-    public virtual bool CanUpdateAsyncRun => false;
-    public virtual bool CanCancelAsyncRun => false;
-    public virtual bool CanDeleteAsyncRun => false;
-}
-
-// Agent that support update and cancellation
-public class CustomAgent : AIAgent
-{
-    private readonly bool _enableLongRunningOperations;
-
-    public CustomAgent(bool enableLongRunningOperations)
-    {
-        this._enableLongRunningOperations = enableLongRunningOperations;
-    }
-
-    public override Task<AgentRunResponse> RunAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken ct = default)
-    {
-        var enableLongRunningOperations = options?.AllowLongRunningOperations ?? this._enableLongRunningOperations;
-        // Logic to run the prompt as a long-running execution or quick prompt...
-    }
-
-    public override Task<AgentRunResponse> GetAsyncRunResultAsync(string runId, AgentThread? thread = null, CancellationToken ct = default)
-    {
-        // Logic to get the status and result of the long-running execution...
-    }
-    
-    public override Task<AgentRunResponse> UpdateAsyncRunAsync(string runId, AgentThread? thread = null, IList<ChatMessage> chatMessages, CancellationToken ct = default)
-    {
-        // Logic to update the long-running execution...
-    }
-
-    public override Task<AgentRunResponse> CancelAsyncRunAsync(string runId, AgentThread? thread = null, CancellationToken ct = default)
-    {
-        // Logic to cancel the long-running execution...
-    }
-
-    // Override other methods and properties as needed...
-}
-```
-
-Example of handling both long-running executions and quick prompts:
-
-```csharp
-AIAgent agent = new CustomAgent(enableLongRunningOperations: true);
-
-AgentThread thread = agent.GetNewThread();
-
-// Start a long-running execution for the prompt
-AgentRunResponse response = await agent.RunAsync("<prompt>", thread);
-
-// Check if the response contains an AsyncRunContent item indicating a long-running execution
-if (GetAsyncRunContent(response) is AsyncRunContent asyncRunContent)
-{
-    AgentRunResponse? result = null;
-
-    // Poll for the status of the long-running execution
-    while (asyncRunContent.Status is AsyncRunStatus.InProgress or AsyncRunStatus.Queued)
-    {
-        result = await agent.GetAsyncRunResultAsync(asyncRunContent.RunId, thread);
-    }
-    
-    Console.WriteLine(result);
-}
-else
-{
-    // The response is a quick prompt completion
-    Console.WriteLine(response);
-}
-```
-
-Example of cancelling a long-running execution:
-
-```csharp
-AIAgent agent = new CustomAgent(enableLongRunningOperations: true);
-
-AgentThread thread = agent.GetNewThread();
-
-// Start a long-running execution for the prompt
-AgentRunResponse response = await agent.RunAsync("<prompt>", thread);
-
-if (GetAsyncRunContent(response) is AsyncRunContent asyncRunContent)
-{
-    int attempts = 0;
-
-    // Poll for the status of the long-running execution
-    while (asyncRunContent.Status is AsyncRunStatus.InProgress or AsyncRunStatus.Queued)
-    {
-        response = await agent.GetAsyncRunResultAsync(asyncRunContent.RunId, thread);
-
-        if(attempts++ > 10)
-        {
-            // Cancel the long-running execution if it is still in progress after 10 attempts
-            if (agent.CanCancelAsyncRun)
-            {
-                await agent.CancelAsyncRunAsync(asyncRunContent.RunId, thread);
-            }
-         
-            return;
-        }
-    }
-    
-    Console.WriteLine(response);
-}
-```
-
-Example of specifying long-running execution mode per invocation of the `RunAsync` method:
-
-```csharp
-// Run all prompts as long-running executions
-AIAgent agent = new CustomAgent(enableLongRunningOperations: true);
-
-AgentThread thread = agent.GetNewThread();
-
-// Start a long-running execution for the prompt
-AgentRunResponse response = await agent.RunAsync("<prompt>", thread);
-
-// Same as above, but explictly specify long-running execution mode
-response = await agent.RunAsync("<prompt>", thread, new AgentRunOptions { AllowLongRunningOperations = true });
-
-// Run a quick prompt
-response = await agent.RunAsync("<prompt>", thread, new AgentRunOptions { AllowLongRunningOperations = false });
-```
+TBD
 
 ## Decision Outcome
 
 ### Long-Running Execution Support for Chat Clients
+ - Option **"1.4 Individual Interface Per Uncommon Operation ..."** suggesting using an individual interface per uncommon operation
+   (~~update~~, cancel, delete) is selected with an small exception that the update operation will be implemented by existing `GetResponseAsync`
+   and `GetStreamingResponseAsync` methods instead of having a dedicated interface for it.
 
-### Long-Running Execution Support for AF agents
+### Long-Running Operations Support for AF Agents
+TBD
