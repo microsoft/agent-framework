@@ -81,8 +81,6 @@ from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
-__version__: str
-
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
     "AgentExecutor",
@@ -152,7 +150,6 @@ __all__ = [
     "WorkflowStatusEvent",
     "WorkflowValidationError",
     "WorkflowViz",
-    "__version__",
     "executor",
     "handler",
     "intercepts_request",

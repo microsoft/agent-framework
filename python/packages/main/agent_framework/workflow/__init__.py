@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
-import importlib.metadata
 
 from ._agent import WorkflowAgent
 from ._checkpoint import (
@@ -86,12 +85,6 @@ from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
-try:
-    __version__ = importlib.metadata.version(__name__)
-except importlib.metadata.PackageNotFoundError:
-    __version__ = "0.0.0"  # Fallback for development mode
-
-
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
     "AgentExecutor",
@@ -161,7 +154,6 @@ __all__ = [
     "WorkflowStatusEvent",
     "WorkflowValidationError",
     "WorkflowViz",
-    "__version__",
     "executor",
     "handler",
     "intercepts_request",
