@@ -235,8 +235,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
         if (!isScope)
         {
-            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokeEvent>(), e => e.ActionId == executorId);
-            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompleteEvent>(), e => e.ActionId == executorId);
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == executorId);
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == executorId);
         }
     }
 
@@ -265,11 +265,11 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
-            else if (workflowEvent is DeclarativeActionInvokeEvent actionInvokeEvent)
+            else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)
             {
                 this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
             }
-            else if (workflowEvent is DeclarativeActionCompleteEvent actionCompleteEvent)
+            else if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
             {
                 this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
             }
