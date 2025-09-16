@@ -2,9 +2,9 @@
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from random import randint
-from typing import Annotated, Any
+from typing import Annotated
 
 from agent_framework import (
     AgentInvocationContext,
@@ -25,7 +25,7 @@ def get_weather(
 
 async def security_agent_middleware(
     context: AgentInvocationContext,
-    next: Callable[[AgentInvocationContext], Any],
+    next: Callable[[AgentInvocationContext], Awaitable[None]],
 ) -> None:
     """Agent middleware that checks for security violations."""
     # Check for potential security violations in the query
@@ -44,7 +44,7 @@ async def security_agent_middleware(
 
 async def logging_function_middleware(
     context: FunctionInvocationContext,
-    next: Callable[[FunctionInvocationContext], Any],
+    next: Callable[[FunctionInvocationContext], Awaitable[None]],
 ) -> None:
     """Function middleware that logs function calls."""
     function_name = context.function.name
