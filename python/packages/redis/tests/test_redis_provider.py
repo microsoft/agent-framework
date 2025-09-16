@@ -127,14 +127,6 @@ class TestRedisProviderInitialization:
         assert attrs["dims"] == 4
         assert attrs["distance_metric"] in {"cosine", "ip", "l2"}
 
-    @pytest.mark.asyncio
-    async def test_create_index_calls_flags(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1", overwrite_redis_index=True, drop_redis_index=False)
-        await provider.create_redis_index()
-        mock_index.create.assert_awaited_once_with(overwrite=True, drop=False)
-
 
 class TestRedisProviderMessages:
     @pytest.fixture

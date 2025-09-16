@@ -165,6 +165,11 @@ class RedisProvider(ContextProvider):
             token_escaper=token_escaper,  # type: ignore[reportCallIssue]
         )
 
+    def _escape(self, value):
+        if self.token_escaper is not None:
+            return self.token_escaper.escape(str(value))
+        return str(value)
+
     def _build_schema_dict(
         self,
         *,
@@ -309,15 +314,16 @@ class RedisProvider(ContextProvider):
 
         # Build partition scope as a RediSearch filter string (AND by whitespace)
         scope_parts: list[str] = []
+
         if self.application_id:
-            scope_parts.append(f"@application_id:{{{self.application_id}}}")
+            scope_parts.append(f"@application_id:{{{self._escape(self.application_id)}}}")
         if self.agent_id:
-            scope_parts.append(f"@agent_id:{{{self.agent_id}}}")
+            scope_parts.append(f"@agent_id:{{{self._escape(self.agent_id)}}}")
         if self.user_id:
-            scope_parts.append(f"@user_id:{{{self.user_id}}}")
+            scope_parts.append(f"@user_id:{{{self._escape(self.user_id)}}}")
         eff_thread = self._effective_thread_id
         if eff_thread:
-            scope_parts.append(f"@thread_id:{{{eff_thread}}}")
+            scope_parts.append(f"@thread_id:{{{self._escape(eff_thread)}}}")
 
         scope_str = " ".join(scope_parts) if scope_parts else None
 
