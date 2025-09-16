@@ -83,6 +83,8 @@ Once comfortable with these, explore the rest of the samples below.
 | Concurrent Orchestration (Custom Agent Executors) | [orchestration/concurrent_custom_agent_executors.py](./orchestration/concurrent_custom_agent_executors.py) | Child executors own ChatAgents; concurrent fan-out/fan-in via ConcurrentBuilder |
 | Magentic Workflow (Multi-Agent) | [orchestration/magentic.py](./orchestration/magentic.py) | Orchestrate multiple agents with Magentic manager and streaming |
 | Magentic + Human Plan Review | [orchestration/magentic_human_plan_update.py](./orchestration/magentic_human_plan_update.py) | Human reviews/updates the plan before execution |
+| Sequential Orchestration (Agents) | [orchestration/sequential_agents.py](./orchestration/sequential_agents.py) | Chain agents sequentially with shared conversation context |
+| Sequential Orchestration (Custom Executor) | [orchestration/sequential_custom_executors.py](./orchestration/sequential_custom_executors.py) | Mix agents with a summarizer that appends a compact summary |
 
 ### parallelism
 | Sample | File | Concepts |
@@ -109,6 +111,13 @@ Once comfortable with these, explore the rest of the samples below.
 
 Notes
 - Agent-based samples use provider SDKs (Azure/OpenAI, etc.). Ensure credentials are configured, or adapt agents accordingly.
+
+Sequential orchestration uses a few small adapter nodes for plumbing:
+- "input-conversation" normalizes input to `list[ChatMessage]`
+- "to-conversation:<participant>" converts agent responses into the shared conversation
+- "complete" publishes the final `WorkflowCompletedEvent`
+These may appear in event streams (ExecutorInvoke/Completed). They’re analogous to
+concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 
 ### Environment Variables
 

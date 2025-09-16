@@ -44,7 +44,7 @@ async Task SKAgent()
 
 async Task AFAgent()
 {
-    var agent = new OpenAIClient(apiKey).GetChatClient(modelId).CreateAIAgent(
+    var agent = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId).CreateAIAgent(
         instructions: "You are a helpful assistant",
         tools: [AIFunctionFactory.Create(GetWeather)]);
 
