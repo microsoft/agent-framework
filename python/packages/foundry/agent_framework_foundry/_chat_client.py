@@ -430,7 +430,7 @@ class FoundryChatClient(BaseChatClient):
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
         response_id: str | None = None
-        response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream
+        response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream  # type: ignore[no-untyped-call]
         try:
             async for event_type, event_data, _ in response_stream:  # type: ignore
                 match event_data:
@@ -527,21 +527,25 @@ class FoundryChatClient(BaseChatClient):
                         if (
                             event_data.delta.step_details is not None
                             and event_data.delta.step_details.type == "tool_calls"
-                            and event_data.delta.step_details.tool_calls is not None
+                            and event_data.delta.step_details.tool_calls is not None  # type: ignore[attr-defined]
                         ):
-                            for tool_call in event_data.delta.step_details.tool_calls:
+                            for tool_call in event_data.delta.step_details.tool_calls:  # type: ignore[attr-defined]
                                 if tool_call.type == "code_interpreter" and isinstance(
                                     tool_call.code_interpreter,
                                     RunStepDeltaCodeInterpreterDetailItemObject,
                                 ):
-                                    contents: list[Contents] = []
+                                    contents = []
                                     if tool_call.code_interpreter.input is not None:
                                         logger.debug(f"Code Interpreter Input: {tool_call.code_interpreter.input}")
                                     if tool_call.code_interpreter.outputs is not None:
                                         for output in tool_call.code_interpreter.outputs:
-                                            if isinstance(output, RunStepDeltaCodeInterpreterLogOutput):
+                                            if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
                                                 contents.append(TextContent(text=output.logs))
-                                            if isinstance(output, RunStepDeltaCodeInterpreterImageOutput):
+                                            if (
+                                                isinstance(output, RunStepDeltaCodeInterpreterImageOutput)
+                                                and output.image is not None
+                                                and output.image.file_id is not None
+                                            ):
                                                 contents.append(HostedFileContent(file_id=output.image.file_id))
                                     yield ChatResponseUpdate(
                                         role=Role.ASSISTANT,
@@ -570,7 +574,7 @@ class FoundryChatClient(BaseChatClient):
             raise
         finally:
             if isinstance(stream, AsyncAgentRunStream):
-                await stream.__aexit__(None, None, None)
+                await stream.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
 
     def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
         """Create function call contents from a tool action event."""

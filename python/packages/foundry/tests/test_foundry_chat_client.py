@@ -415,13 +415,14 @@ async def test_foundry_chat_client_create_run_options_with_image_content(mock_ai
 
 
 def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_ai_project_client: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output with None input."""
+    """Test _convert_required_action_to_tool_output with None input."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output(None)  # type: ignore
+    run_id, tool_outputs, tool_approvals = chat_client._convert_required_action_to_tool_output(None)  # type: ignore
 
     assert run_id is None
     assert tool_outputs is None
+    assert tool_approvals is None
 
 
 async def test_foundry_chat_client_close_client_when_should_close_true(mock_ai_project_client: MagicMock) -> None:
