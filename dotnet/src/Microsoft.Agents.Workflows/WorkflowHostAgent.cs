@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -46,6 +47,9 @@ internal class WorkflowHostAgent : AIAgent
     }
 
     public override AgentThread GetNewThread() => new WorkflowThread(this.Id, this.Name, this.GenerateNewId());
+
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new WorkflowThread(serializedThread, jsonSerializerOptions);
 
     private async
     IAsyncEnumerable<AgentRunResponseUpdate> InvokeStageAsync(
