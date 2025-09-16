@@ -1,9 +1,3 @@
-#
-# This workflow demonstrates a single agent interaction based on user input.
-#
-# Any Foundry Agent may be used to provide the response.
-# See: ./setup/QuestionAgent.yaml
-#
 kind: AdaptiveDialog
 beginDialog:
 
@@ -29,10 +23,12 @@ beginDialog:
       entity:
         kind: StringPrebuiltEntity
 
+    # Confirm input
     - kind: ConditionGroup
       id: check_completion
       conditions:
 
+        # Didn't match
         - condition: =Topic.OriginalInput <> Topic.ConfirmedInput
           id: check_confirm
           actions:
@@ -46,7 +42,8 @@ beginDialog:
               id: goto_again
               actionId: question_confirm
 
-      elseActions: # // %%% REMOVE / BUG
+      # Confirmed
+      elseActions:
         - kind: SendActivity
           id: sendActivity_confirmed
           activity: |-
@@ -55,3 +52,6 @@ beginDialog:
 
             Confirmed input:
             {Topic.ConfirmedInput}
+
+
+

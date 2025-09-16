@@ -8,8 +8,8 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class EndConversationExecutor(EndConversation model, WorkflowFormulaState state) :
-    DeclarativeActionExecutor<EndConversation>(model, state)
+internal sealed class DefaultActionExecutor(DialogAction model, WorkflowFormulaState state) :
+    DeclarativeActionExecutor(model, state)
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
