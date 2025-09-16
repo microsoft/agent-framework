@@ -3,7 +3,7 @@
 # import asyncio
 
 # from agent_framework.foundry import FoundryChatClient
-# from agent_framework.workflow import AgentRunUpdateEvent, WorkflowBuilder, WorkflowCompletedEvent
+# from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowCompletedEvent
 # from azure.identity.aio import AzureCliCredential
 
 # """
@@ -100,7 +100,7 @@ from typing import Any
 from collections.abc import Awaitable, Callable
 
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.workflow import AgentRunUpdateEvent, WorkflowBuilder, WorkflowCompletedEvent
+from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowCompletedEvent
 from azure.identity.aio import AzureCliCredential
 
 
