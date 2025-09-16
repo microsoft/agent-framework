@@ -214,7 +214,7 @@ class RedisProvider(ContextProvider):
 
     async def _ensure_index(self) -> None:
         """Test needed to verify behavior here."""
-        if self.overwrite_redis_index:
+        if self.drop_redis_index:
             if not self.fresh_initialization:
                 await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
                 self.fresh_initialization = True
