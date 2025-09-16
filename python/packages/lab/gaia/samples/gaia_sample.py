@@ -16,26 +16,6 @@ from azure.identity.aio import AzureCliCredential
 from agent_framework.lab.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
 
 
-async def run_task(task: Task) -> Prediction:
-    """Run a single GAIA task and return the prediction."""
-    # Since no Agent ID is provided, the agent will be automatically created
-    # and deleted after getting a response
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
-    async with (
-        AzureCliCredential() as credential,
-        FoundryChatClient(async_credential=credential).create_agent(
-            name="GaiaAgent",
-            instructions="Solve tasks to your best ability.",
-        ) as agent,
-    ):
-        input_message = f"Task: {task.question}"
-        if task.file_name:
-            input_message += f"\nFile: {task.file_name}"
-        result = await agent.run(input_message)
-        return Prediction(prediction=result.text, messages=result.messages)
-
-
 async def evaluate_task(task: Task, prediction: Prediction) -> Evaluation:
     """Evaluate the prediction for a given task."""
     # Simple evaluation: check if the prediction contains the answer
@@ -56,20 +36,37 @@ async def main() -> None:
         file_path="gaia_benchmark_traces.jsonl",  # Custom file path for traces
     )
 
-    # Create the GAIA benchmark runner with telemetry configuration
-    runner = GAIA(evaluator=evaluate_task, telemetry_config=telemetry_config)
+    # Create a single agent once and reuse it for all tasks
+    async with (
+        AzureCliCredential() as credential,
+        FoundryChatClient(async_credential=credential).create_agent(
+            name="GaiaAgent",
+            instructions="Solve tasks to your best ability.",
+        ) as agent,
+    ):
 
-    # Run the benchmark with the task runner.
-    # By default, this will check for locally cached benchmark data and checkout
-    # the latest version from HuggingFace if not found.
-    results = await runner.run(
-        run_task,
-        level=1,  # Level 1, 2, or 3 or multiple levels like [1, 2]
-        max_n=5,  # Maximum number of tasks to run per level
-        parallel=2,  # Number of parallel tasks to run
-        timeout=60,  # Timeout per task in seconds
-        out="gaia_results_level1.jsonl",  # Output file to save results including detailed traces (optional)
-    )
+        async def run_task(task: Task) -> Prediction:
+            """Run a single GAIA task and return the prediction using the shared agent."""
+            input_message = f"Task: {task.question}"
+            if task.file_name:
+                input_message += f"\nFile: {task.file_name}"
+            result = await agent.run(input_message)
+            return Prediction(prediction=result.text, messages=result.messages)
+
+        # Create the GAIA benchmark runner with telemetry configuration
+        runner = GAIA(evaluator=evaluate_task, telemetry_config=telemetry_config)
+
+        # Run the benchmark with the task runner.
+        # By default, this will check for locally cached benchmark data and checkout
+        # the latest version from HuggingFace if not found.
+        results = await runner.run(
+            run_task,
+            level=1,  # Level 1, 2, or 3 or multiple levels like [1, 2]
+            max_n=5,  # Maximum number of tasks to run per level
+            parallel=2,  # Number of parallel tasks to run
+            timeout=60,  # Timeout per task in seconds
+            out="gaia_results_level1.jsonl",  # Output file to save results including detailed traces (optional)
+        )
 
     # Print the results.
     print("\n=== GAIA Benchmark Results ===")
