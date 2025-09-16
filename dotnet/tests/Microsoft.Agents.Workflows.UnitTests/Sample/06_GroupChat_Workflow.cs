@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -95,6 +96,12 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     public override string Id => id;
     public override string? Name => id;
 
+    public override AgentThread GetNewThread()
+        => throw new NotImplementedException();
+
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         IEnumerable<AgentRunResponseUpdate> update = [
@@ -125,6 +132,12 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
 
     public override string Id => id;
     public override string? Name => id;
+
+    public override AgentThread GetNewThread()
+        => throw new NotImplementedException();
+
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
 
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {

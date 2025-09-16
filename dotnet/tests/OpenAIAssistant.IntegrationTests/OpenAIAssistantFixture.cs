@@ -28,7 +28,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
         List<ChatMessage> messages = [];
-        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(thread.ConversationId, new() { Order = MessageCollectionOrder.Ascending }))
+        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(((ChatClientAgentThread)thread).ServiceThreadId, new() { Order = MessageCollectionOrder.Ascending }))
         {
             messages.Add(new()
             {
@@ -73,9 +73,9 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
     public Task DeleteThreadAsync(AgentThread thread)
     {
-        if (thread?.ConversationId is not null)
+        if (thread is ChatClientAgentThread chatThread && chatThread.ServiceThreadId is not null)
         {
-            return this._assistantClient!.DeleteThreadAsync(thread.ConversationId);
+            return this._assistantClient!.DeleteThreadAsync(chatThread.ServiceThreadId);
         }
 
         return Task.CompletedTask;

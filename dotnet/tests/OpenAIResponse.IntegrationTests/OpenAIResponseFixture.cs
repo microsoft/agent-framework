@@ -31,8 +31,8 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
     {
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(thread.ConversationId).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(thread.ConversationId);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(((ChatClientAgentThread)thread).ServiceThreadId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(((ChatClientAgentThread)thread).ServiceThreadId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response
@@ -50,7 +50,8 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return thread.MessageStore is null ? [] : (await thread.MessageStore.GetMessagesAsync()).ToList();
+        var messageStore = ((ChatClientAgentThread)thread)?.MessageStore;
+        return messageStore is null ? [] : (await messageStore.GetMessagesAsync()).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)

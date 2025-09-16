@@ -17,7 +17,7 @@ public class DelegatingAIAgentTests
     private readonly TestDelegatingAIAgent _delegatingAgent;
     private readonly AgentRunResponse _testResponse;
     private readonly List<AgentRunResponseUpdate> _testStreamingResponses;
-    private readonly AgentThread _testThread;
+    private readonly Mock<AgentThread> _testThreadMock;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAIAgentTests"/> class.
@@ -27,13 +27,13 @@ public class DelegatingAIAgentTests
         this._innerAgentMock = new Mock<AIAgent>();
         this._testResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         this._testStreamingResponses = [new AgentRunResponseUpdate(ChatRole.Assistant, "Test streaming response")];
-        this._testThread = new AgentThread();
+        this._testThreadMock = new Mock<AgentThread>();
 
         // Setup inner agent mock
         this._innerAgentMock.Setup(x => x.Id).Returns("test-agent-id");
         this._innerAgentMock.Setup(x => x.Name).Returns("Test Agent");
         this._innerAgentMock.Setup(x => x.Description).Returns("Test Description");
-        this._innerAgentMock.Setup(x => x.GetNewThread()).Returns(this._testThread);
+        this._innerAgentMock.Setup(x => x.GetNewThread()).Returns(this._testThreadMock.Object);
 
         this._innerAgentMock
             .Setup(x => x.RunAsync(
@@ -139,7 +139,7 @@ public class DelegatingAIAgentTests
         var thread = this._delegatingAgent.GetNewThread();
 
         // Assert
-        Assert.Same(this._testThread, thread);
+        Assert.Same(this._testThreadMock, thread);
         this._innerAgentMock.Verify(x => x.GetNewThread(), Times.Once);
     }
 
@@ -151,7 +151,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new AgentThread();
+        var expectedThreadMock = new Mock<AgentThread>();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         var expectedResult = new TaskCompletionSource<AgentRunResponse>();
@@ -159,13 +159,13 @@ public class DelegatingAIAgentTests
 
         var innerAgentMock = new Mock<AIAgent>();
         innerAgentMock
-            .Setup(x => x.RunAsync(expectedMessages, expectedThread, expectedOptions, expectedCancellationToken))
+            .Setup(x => x.RunAsync(expectedMessages, expectedThreadMock.Object, expectedOptions, expectedCancellationToken))
             .Returns(expectedResult.Task);
 
         var delegatingAgent = new TestDelegatingAIAgent(innerAgentMock.Object);
 
         // Act
-        var resultTask = delegatingAgent.RunAsync(expectedMessages, expectedThread, expectedOptions, expectedCancellationToken);
+        var resultTask = delegatingAgent.RunAsync(expectedMessages, expectedThreadMock.Object, expectedOptions, expectedCancellationToken);
 
         // Assert
         Assert.False(resultTask.IsCompleted);
@@ -182,7 +182,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new AgentThread();
+        var expectedThreadMock = new Mock<AgentThread>();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         AgentRunResponseUpdate[] expectedResults =
@@ -193,13 +193,13 @@ public class DelegatingAIAgentTests
 
         var innerAgentMock = new Mock<AIAgent>();
         innerAgentMock
-            .Setup(x => x.RunStreamingAsync(expectedMessages, expectedThread, expectedOptions, expectedCancellationToken))
+            .Setup(x => x.RunStreamingAsync(expectedMessages, expectedThreadMock.Object, expectedOptions, expectedCancellationToken))
             .Returns(ToAsyncEnumerableAsync(expectedResults));
 
         var delegatingAgent = new TestDelegatingAIAgent(innerAgentMock.Object);
 
         // Act
-        var resultAsyncEnumerable = delegatingAgent.RunStreamingAsync(expectedMessages, expectedThread, expectedOptions, expectedCancellationToken);
+        var resultAsyncEnumerable = delegatingAgent.RunStreamingAsync(expectedMessages, expectedThreadMock.Object, expectedOptions, expectedCancellationToken);
 
         // Assert
         var enumerator = resultAsyncEnumerable.GetAsyncEnumerator();

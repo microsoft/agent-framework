@@ -17,5 +17,4 @@ namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 [JsonSerializable(typeof(Animal))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
-[JsonSerializable(typeof(string[]))]
 internal sealed partial class TestJsonSerializerContext : JsonSerializerContext;

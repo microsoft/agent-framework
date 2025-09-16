@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -304,6 +305,12 @@ public class AgentExtensionsTests
         public List<ChatMessage> ReceivedMessages { get; } = new();
         public CancellationToken LastCancellationToken { get; private set; }
         public int RunAsyncCallCount { get; private set; }
+
+        public override AgentThread GetNewThread()
+            => throw new NotImplementedException();
+
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
 
         public override Task<AgentRunResponse> RunAsync(
             IEnumerable<ChatMessage> messages,
