@@ -113,8 +113,15 @@ class Runner:
                         # Periodically continue to let iteration advance
                         continue
 
-                # Propagate errors from iteration
-                await iteration_task
+                # Propagate errors from iteration, but first surface any pending events
+                try:
+                    await iteration_task
+                except Exception:
+                    # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
+                    if await self._ctx.has_events():
+                        for event in await self._ctx.drain_events():
+                            yield event
+                    raise
                 self._iteration += 1
 
                 # Drain any straggler events emitted at tail end

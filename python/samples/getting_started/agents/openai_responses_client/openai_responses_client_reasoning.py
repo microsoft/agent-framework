@@ -10,12 +10,12 @@ async def reasoning_example() -> None:
     """Example of reasoning response (get results as they are generated)."""
     print("=== Reasoning Example ===")
 
-    agent = OpenAIResponsesClient(ai_model_id="o4-mini").create_agent(
+    agent = OpenAIResponsesClient(ai_model_id="gpt-5").create_agent(
         name="MathHelper",
         instructions="You are a personal math tutor. When asked a math question, "
         "write and run code using the python tool to answer the question.",
         tools=HostedCodeInterpreterTool(),
-        reasoning={"effort": "medium"},
+        reasoning={"effort": "high", "summary": "detailed"},
     )
 
     query = "I need to solve the equation 3x + 11 = 14. Can you help me?"
@@ -27,9 +27,9 @@ async def reasoning_example() -> None:
             for content in chunk.contents:
                 if isinstance(content, TextReasoningContent):
                     print(f"\033[97m{content.text}\033[0m", end="", flush=True)
-                if isinstance(content, TextContent):
+                elif isinstance(content, TextContent):
                     print(content.text, end="", flush=True)
-                if isinstance(content, UsageContent):
+                elif isinstance(content, UsageContent):
                     usage = content
     print("\n")
     if usage:

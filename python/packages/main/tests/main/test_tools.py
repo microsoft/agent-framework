@@ -17,6 +17,8 @@ from agent_framework._tools import _parse_inputs
 from agent_framework.exceptions import ToolException
 from agent_framework.telemetry import OtelAttr
 
+from .utils import CopyingMock
+
 # region AIFunction and ai_function decorator tests
 
 
@@ -83,14 +85,13 @@ async def test_ai_function_decorator_with_async():
     assert (await async_test_tool(1, 2)) == 3
 
 
-@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_ai_function_invoke_telemetry_enabled(otel_settings):
     """Test the ai_function invoke method with telemetry enabled."""
 
     @ai_function(
         name="telemetry_test_tool",
         description="A test tool for telemetry",
-        additional_properties={"otel_settings": otel_settings},
     )
     def telemetry_test_tool(x: int, y: int) -> int:
         """A function that adds two numbers for telemetry testing."""
@@ -99,7 +100,8 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
     # Mock the tracer and span
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -118,7 +120,17 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
         assert result == 3
 
         # Verify telemetry calls
-        mock_start_span.assert_called_once_with(function=telemetry_test_tool, tool_call_id="test_call_id")
+        mock_start_span.assert_called_once_with(
+            attributes={
+                OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+                OtelAttr.TOOL_NAME: "telemetry_test_tool",
+                OtelAttr.TOOL_CALL_ID: "test_call_id",
+                OtelAttr.TOOL_TYPE: "function",
+                OtelAttr.TOOL_DESCRIPTION: "A test tool for telemetry",
+                OtelAttr.TOOL_ARGUMENTS: '{"x": 1, "y": 2}',
+            }
+        )
+        assert mock_span.set_attribute.call_count == 2
 
         # Verify histogram was called with correct attributes
         mock_histogram.record.assert_called_once()
@@ -129,14 +141,13 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
         assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
-@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
     """Test the ai_function invoke method with Pydantic model arguments."""
 
     @ai_function(
         name="pydantic_test_tool",
         description="A test tool with Pydantic args",
-        additional_properties={"otel_settings": otel_settings},
     )
     def pydantic_test_tool(x: int, y: int) -> int:
         """A function that adds two numbers using Pydantic args."""
@@ -147,7 +158,8 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
 
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -166,9 +178,16 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
 
         # Verify telemetry calls
         mock_start_span.assert_called_once_with(
-            function=pydantic_test_tool,
-            tool_call_id="pydantic_call",
+            attributes={
+                OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+                OtelAttr.TOOL_NAME: "pydantic_test_tool",
+                OtelAttr.TOOL_CALL_ID: "pydantic_call",
+                OtelAttr.TOOL_TYPE: "function",
+                OtelAttr.TOOL_DESCRIPTION: "A test tool with Pydantic args",
+                OtelAttr.TOOL_ARGUMENTS: '{"x":5,"y":10}',
+            }
         )
+        assert mock_span.set_attribute.call_count == 2
 
 
 @pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
@@ -178,7 +197,6 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
     @ai_function(
         name="exception_test_tool",
         description="A test tool that raises an exception",
-        additional_properties={"otel_settings": otel_settings},
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
@@ -186,7 +204,8 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
 
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -216,14 +235,13 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
         assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
 
 
-@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_ai_function_invoke_telemetry_async_function(otel_settings):
     """Test the ai_function invoke method with telemetry on async function."""
 
     @ai_function(
         name="async_telemetry_test",
         description="An async test tool for telemetry",
-        additional_properties={"otel_settings": otel_settings},
     )
     async def async_telemetry_test(x: int, y: int) -> int:
         """An async function for telemetry testing."""
@@ -231,7 +249,8 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
 
     with (
         patch("agent_framework.telemetry.tracer"),
-        patch("agent_framework._tools.get_function_span") as mock_start_span,
+        # the span creation uses a form of deepcopy, so need to mock that way
+        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
         mock_span = Mock()
         mock_context_manager = Mock()
@@ -249,7 +268,17 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
         assert result == 12
 
         # Verify telemetry calls
-        mock_start_span.assert_called_once_with(function=async_telemetry_test, tool_call_id="async_call")
+        mock_start_span.assert_called_once_with(
+            attributes={
+                OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+                OtelAttr.TOOL_NAME: "async_telemetry_test",
+                OtelAttr.TOOL_CALL_ID: "async_call",
+                OtelAttr.TOOL_TYPE: "function",
+                OtelAttr.TOOL_DESCRIPTION: "An async test tool for telemetry",
+                OtelAttr.TOOL_ARGUMENTS: '{"x": 3, "y": 4}',
+            }
+        )
+        assert mock_span.set_attribute.call_count == 2
 
         # Verify histogram recording
         mock_histogram.record.assert_called_once()

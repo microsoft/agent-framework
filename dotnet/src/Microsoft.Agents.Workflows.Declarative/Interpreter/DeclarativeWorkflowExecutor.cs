@@ -12,16 +12,19 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 /// </summary>
 internal sealed class DeclarativeWorkflowExecutor<TInput>(
     string workflowId,
-    DeclarativeWorkflowState state,
+    WorkflowFormulaState state,
     Func<TInput, ChatMessage> inputTransform) :
     Executor<TInput>(workflowId)
     where TInput : notnull
 {
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        ChatMessage input = inputTransform.Invoke(message);
-        await state.SetLastMessageAsync(context, input).ConfigureAwait(false);
+        // No state to restore if we're starting from the beginning.
+        state.SetInitialized();
 
-        await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+        ChatMessage input = inputTransform.Invoke(message);
+        state.SetLastMessage(input);
+
+        await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
     }
 }
