@@ -135,6 +135,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 1, "parse_var")]
+    [InlineData("SendActivity.yaml", 2, "activity_input")]
+    [InlineData("SetVariable.yaml", 1, "set_var")]
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
@@ -168,7 +170,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(InvokeSkillAction.Builder))]
     [InlineData(typeof(LogCustomTelemetryEvent.Builder))]
     [InlineData(typeof(OAuthInput.Builder))]
-    [InlineData(typeof(Question.Builder))]
     [InlineData(typeof(RecognizeIntent.Builder))]
     [InlineData(typeof(RepeatDialog.Builder))]
     [InlineData(typeof(ReplaceDialog.Builder))]
@@ -192,17 +193,18 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 BeginDialog =
                     new OnActivity.Builder()
                     {
-                        Id = "workflow",
+                        Id = "anything",
                         Actions = [unsupportedAction]
                     }
             };
         AdaptiveDialog dialog = dialogBuilder.Build();
 
-        WorkflowScopes scopes = new();
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new RootExecutor(), new DeclarativeWorkflowState(RecalcEngineFactory.Create()), options);
-        WorkflowElementWalker walker = new(dialog, visitor);
+        WorkflowActionVisitor visitor = new(new RootExecutor(), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
     }
 
@@ -226,7 +228,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertMessage(string message)
     {
-        Assert.Contains(this.WorkflowEvents.OfType<AgentRunResponseEvent>(), e => string.Equals(e.Response.Messages[0].Text.Trim(), message, StringComparison.Ordinal));
+        Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
     }
 
     private Task RunWorkflow(string workflowPath) => this.RunWorkflow<string>(workflowPath, string.Empty);
@@ -246,7 +248,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         {
             if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
-                DeclarativeExecutorResult? message = invokeEvent.Data as DeclarativeExecutorResult;
+                ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
@@ -258,7 +260,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     private sealed class RootExecutor() :
-        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.RootId("workflow")),
+        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.Steps.Root("anything")),
         IMessageHandler<string>
     {
         public async ValueTask HandleAsync(string message, IWorkflowContext context)

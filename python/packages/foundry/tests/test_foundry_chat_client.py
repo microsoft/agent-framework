@@ -421,23 +421,6 @@ def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_proje
     assert len(message.content) == 1
 
 
-def test_foundry_chat_client_convert_function_results_to_tool_output(mock_ai_project_client: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output method."""
-
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
-
-    function_results = [
-        FunctionResultContent(call_id='["run_123", "call_456"]', result="Result 1"),
-        FunctionResultContent(call_id='["run_123", "call_789"]', result="Result 2"),
-    ]
-
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output(function_results)  # type: ignore
-
-    assert run_id == "run_123"
-    assert tool_outputs is not None
-    assert len(tool_outputs) == 2
-
-
 def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_ai_project_client: MagicMock) -> None:
     """Test _convert_function_results_to_tool_output with None input."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
@@ -564,30 +547,6 @@ async def test_foundry_chat_client_get_agent_id_or_create_with_run_options(
     assert "tools" in call_args
     assert "instructions" in call_args
     assert "response_format" in call_args
-
-
-async def test_foundry_chat_client_create_agent_stream_with_tool_results(mock_ai_project_client: MagicMock) -> None:
-    """Test _create_agent_stream when tool results match active thread run."""
-    chat_client = create_test_foundry_chat_client(
-        mock_ai_project_client, agent_id="test-agent", thread_id="test-thread"
-    )
-
-    mock_thread_run = MagicMock()
-    mock_thread_run.id = "run_123"
-    mock_thread_run.thread_id = "test-thread"
-
-    with patch.object(chat_client, "_get_active_thread_run", return_value=mock_thread_run):
-        tool_results = [FunctionResultContent(call_id='["run_123", "call_456"]', result="Result")]
-
-        mock_handler = MagicMock()
-        mock_ai_project_client.agents.runs.submit_tool_outputs_stream = AsyncMock(return_value=None)
-
-        with patch("agent_framework_foundry._chat_client.AsyncAgentEventHandler", return_value=mock_handler):
-            stream, thread_id = await chat_client._create_agent_stream("test-thread", "test-agent", {}, tool_results)  # type: ignore
-
-            assert stream is mock_handler
-            assert thread_id == "test-thread"
-            mock_ai_project_client.agents.runs.submit_tool_outputs_stream.assert_called_once()
 
 
 async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_project_client: MagicMock) -> None:

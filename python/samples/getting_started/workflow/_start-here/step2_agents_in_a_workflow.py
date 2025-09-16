@@ -59,6 +59,8 @@ async def main():
             print(f"{event.executor_id}: {event.data}")
 
     print(f"{'=' * 60}\n{events.get_completed_event()}")
+    # Summarize the final run state (e.g., COMPLETED)
+    print("Final state:", events.get_final_state())
 
     """
     Sample Output:
