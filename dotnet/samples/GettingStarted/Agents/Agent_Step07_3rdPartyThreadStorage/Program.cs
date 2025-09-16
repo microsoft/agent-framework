@@ -87,7 +87,7 @@ namespace SampleApp
             if (serializedStoreState.ValueKind == JsonValueKind.String)
             {
                 // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
-                this._threadId = JsonSerializer.Deserialize<string>((JsonElement)serializedStoreState!);
+                this._threadId = JsonSerializer.Deserialize<string>(serializedStoreState);
             }
         }
 
