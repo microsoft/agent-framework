@@ -168,7 +168,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(InvokeSkillAction.Builder))]
     [InlineData(typeof(LogCustomTelemetryEvent.Builder))]
     [InlineData(typeof(OAuthInput.Builder))]
-    [InlineData(typeof(Question.Builder))]
     [InlineData(typeof(RecognizeIntent.Builder))]
     [InlineData(typeof(RepeatDialog.Builder))]
     [InlineData(typeof(ReplaceDialog.Builder))]
@@ -192,7 +191,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 BeginDialog =
                     new OnActivity.Builder()
                     {
-                        Id = "workflow",
+                        Id = "anything",
                         Actions = [unsupportedAction]
                     }
             };
@@ -226,7 +225,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertMessage(string message)
     {
-        Assert.Contains(this.WorkflowEvents.OfType<AgentRunResponseEvent>(), e => string.Equals(e.Response.Messages[0].Text.Trim(), message, StringComparison.Ordinal));
+        Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
     }
 
     private Task RunWorkflow(string workflowPath) => this.RunWorkflow<string>(workflowPath, string.Empty);
@@ -246,7 +245,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         {
             if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
-                DeclarativeExecutorResult? message = invokeEvent.Data as DeclarativeExecutorResult;
+                ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
@@ -258,7 +257,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     private sealed class RootExecutor() :
-        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.RootId("workflow")),
+        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.Steps.Root("anything")),
         IMessageHandler<string>
     {
         public async ValueTask HandleAsync(string message, IWorkflowContext context)

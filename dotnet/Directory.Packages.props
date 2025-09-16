@@ -86,14 +86,16 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.74.1" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="2025.8.2-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="2025.8.2-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="2025.8.2-1" />
-    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250625-1002" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.915-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.915-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.915-1" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250821-1001" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.6.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Abstractions" Version="1.65.0" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Yaml" Version="1.65.0-beta" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.abstractions" Version="2.0.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.3" />

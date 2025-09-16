@@ -77,9 +77,9 @@ internal sealed class DeclarativeWorkflowState
         await context.QueueStateUpdateAsync(varName, value.ToObject(), scopeName).ConfigureAwait(false);
     }
 
-    public string? Format(IEnumerable<TemplateLine> template) => this._engine.Format(template);
+    public string Format(IEnumerable<TemplateLine> template) => this._engine.Format(template);
 
-    public string? Format(TemplateLine? line) => this._engine.Format(line);
+    public string Format(TemplateLine? line) => this._engine.Format(line);
 
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -96,7 +96,7 @@ internal sealed class DeclarativeWorkflowState
             foreach (string key in keys)
             {
                 object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
-                this._scopes.Set(key, value.ToFormulaValue(), scopeName);
+                this._scopes.Set(key, value.ToFormula(), scopeName);
             }
         }
     }
