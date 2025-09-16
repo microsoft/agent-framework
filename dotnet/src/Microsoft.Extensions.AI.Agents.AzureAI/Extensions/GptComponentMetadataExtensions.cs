@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Agents.Persistent;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
 
@@ -25,11 +26,11 @@ internal static class GptComponentMetadataExtensions
             var type = tool.GetTypeValue();
             return type switch
             {
-                //AzureAISearchType => CreateAzureAISearchToolDefinition(tool),
+                AzureAISearchType => tool.CreateAzureAISearchToolDefinition(),
                 AzureFunctionType => tool.CreateAzureFunctionToolDefinition(),
                 BingGroundingType => tool.CreateBingGroundingToolDefinition(),
                 CodeInterpreterType => tool.CreateCodeInterpreterToolDefinition(),
-                //FileSearchType => CreateFileSearchToolDefinition(tool),
+                FileSearchType => tool.CreateFileSearchToolDefinition(),
                 FunctionType => tool.CreateFunctionToolDefinition(),
                 OpenApiType => tool.CreateOpenApiToolDefinition(),
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {type}, supported tool types are: {string.Join(",", s_validToolTypes)}"),
@@ -88,29 +89,21 @@ internal static class GptComponentMetadataExtensions
 
     private static CodeInterpreterToolResource? GetCodeInterpreterToolResource(this GptComponentMetadata element)
     {
-        //Throw.IfNull(element);
+        Throw.IfNull(element);
 
         CodeInterpreterToolResource? resource = null;
 
         var codeInterpreter = element.GetFirstToolDefinition(CodeInterpreterType);
         if (codeInterpreter is not null)
         {
-            /*
             var fileIds = codeInterpreter.GetFileIds();
             var dataSources = codeInterpreter.GetDataSources();
             if (fileIds is not null || dataSources is not null)
             {
                 resource = new CodeInterpreterToolResource();
-                if (fileIds is not null)
-                {
-                    resource.FileIds.AddRange(fileIds);
-                }
-                if (dataSources is not null)
-                {
-                    resource.DataSources.AddRange(dataSources);
-                }
+                fileIds?.ForEach(id => resource.FileIds.Add(id));
+                dataSources?.ForEach(ds => resource.DataSources.Add(ds));
             }
-            */
         }
 
         return resource;
@@ -118,19 +111,17 @@ internal static class GptComponentMetadataExtensions
 
     private static FileSearchToolResource? GetFileSearchToolResource(this GptComponentMetadata element)
     {
-        //Throw.IfNull(element);
+        Throw.IfNull(element);
 
         var fileSearch = element.GetFirstToolDefinition(FileSearchType);
         if (fileSearch is not null)
         {
-            /*
             var vectorStoreIds = fileSearch.GetVectorStoreIds();
             var vectorStores = fileSearch.GetVectorStoreConfigurations();
             if (vectorStoreIds is not null || vectorStores is not null)
             {
                 return new FileSearchToolResource(vectorStoreIds, vectorStores);
             }
-            */
         }
 
         return null;
@@ -138,14 +129,13 @@ internal static class GptComponentMetadataExtensions
 
     private static AzureAISearchToolResource? GetAzureAISearchResource(this GptComponentMetadata element)
     {
-        //Throw.IfNull(element);
+        Throw.IfNull(element);
 
         var azureAISearch = element.GetFirstToolDefinition(AzureAISearchType);
         if (azureAISearch is not null)
         {
-            /*
-            string? indexConnectionId = azureAISearch.GetOption<string>("index_connection_id");
-            string? indexName = azureAISearch.GetOption<string>("index_name");
+            string? indexConnectionId = azureAISearch.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.index_connection_id"))?.Value;
+            string? indexName = azureAISearch.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.index_name"))?.Value;
             if (string.IsNullOrEmpty(indexConnectionId) && string.IsNullOrEmpty(indexName))
             {
                 return null;
@@ -159,7 +149,6 @@ internal static class GptComponentMetadataExtensions
             AzureAISearchQueryType? queryType = azureAISearch.GetAzureAISearchQueryType();
 
             return new AzureAISearchToolResource(indexConnectionId, indexName, topK, filter, queryType);
-            */
         }
 
         return null;

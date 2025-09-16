@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System.Text.Json;
 using Azure.AI.Agents.Persistent;
+using Microsoft.Extensions.AI.Agents.AzureAI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -60,13 +61,13 @@ internal static class RecordDataValueExtensions
         return new CodeInterpreterToolDefinition();
     }
 
-    internal static FileSearchToolDefinition CreateFileSearchToolDefinition(RecordDataValue tool)
+    internal static FileSearchToolDefinition CreateFileSearchToolDefinition(this RecordDataValue tool)
     {
         Throw.IfNull(tool);
 
         return new FileSearchToolDefinition()
         {
-            //FileSearch = tool.GetFileSearchToolDefinitionDetails()
+            FileSearch = tool.GetFileSearchToolDefinitionDetails()
         };
     }
 
@@ -111,48 +112,50 @@ internal static class RecordDataValueExtensions
     internal static BinaryData GetParameters(this RecordDataValue agentToolDefinition)
     {
         Throw.IfNull(agentToolDefinition);
-        //var parameters = agentToolDefinition.GetPropertyOrNull<ListDataValue>(InitializablePropertyPath.Create("options.parameters"));
-        //return parameters is not null ? CreateParameterSpec(parameters) : s_noParams;
-        return s_noParams;
+
+        var parameters = agentToolDefinition.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.parameters"));
+        return parameters is not null ? parameters.CreateParameterSpec() : s_noParams;
     }
 
-    /*
-    internal static BinaryData CreateParameterSpec(List<object> parameters)
+#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+    internal static BinaryData CreateParameterSpec(this TableDataValue parameters)
     {
+        Throw.IfNull(parameters);
+
         JsonSchemaFunctionParameters parameterSpec = new();
-        foreach (var parameter in parameters)
+        foreach (var parameter in parameters.Values)
         {
-            var parameterProps = parameter as Dictionary<object, object>;
-            if (parameterProps is not null)
+            bool isRequired = parameter.GetPropertyOrNull<BooleanDataValue>(InitializablePropertyPath.Create("required"))?.Value ?? false;
+            string? name = parameter.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("name"))?.Value;
+            string? type = parameter.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("type"))?.Value;
+            string? description = parameter.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("description"))?.Value;
+
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(type))
             {
-                bool isRequired = parameterProps.TryGetValue("required", out var requiredValue) && requiredValue is string requiredString && requiredString.Equals("true", StringComparison.OrdinalIgnoreCase);
-                string? queueName = parameterProps.TryGetValue("queueName", out var nameValue) && nameValue is string nameString ? nameString : null;
-                string? type = parameterProps.TryGetValue("type", out var typeValue) && typeValue is string typeString ? typeString : null;
-                string? description = parameterProps.TryGetValue("description", out var descriptionValue) && descriptionValue is string descriptionString ? descriptionString : string.Empty;
-
-                if (string.IsNullOrEmpty(queueName) || string.IsNullOrEmpty(type))
-                {
-                    throw new ArgumentException("The option keys 'queueName' and 'type' are required for a parameter.");
-                }
-
-                if (isRequired)
-                {
-                    parameterSpec.Required.Add(queueName!);
-                }
-                parameterSpec.Properties.Add(queueName!, KernelJsonSchema.Parse($"{{ \"type\": \"{type}\", \"description\": \"{description}\" }}"));
+                throw new ArgumentException("The option keys 'queueName' and 'type' are required for a parameter.");
             }
+
+            if (isRequired)
+            {
+                parameterSpec.Required.Add(name!);
+            }
+            parameterSpec.Properties.Add(name!, JsonSerializer.Deserialize<JsonElement>($"{{ \"type\": \"{type}\", \"description\": \"{description}\" }}"));
         }
 
-        return BinaryData.FromObjectAsJson(parameterSpec);
+        byte[] data = JsonSerializer.SerializeToUtf8Bytes(parameterSpec, typeof(JsonSchemaFunctionParameters));
+        return new BinaryData(data);
     }
+#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 
     internal static FileSearchToolDefinitionDetails GetFileSearchToolDefinitionDetails(this RecordDataValue agentToolDefinition)
     {
         var details = new FileSearchToolDefinitionDetails();
-        var maxNumResults = agentToolDefinition.GetOption<int?>("max_num_results");
+        var maxNumResults = agentToolDefinition.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("max_num_results"))?.Value;
         if (maxNumResults is not null && maxNumResults > 0)
         {
-            details.MaxNumResults = maxNumResults;
+            details.MaxNumResults = ((int?)maxNumResults);
         }
 
         FileSearchRankingOptions? rankingOptions = agentToolDefinition.GetFileSearchRankingOptions();
@@ -163,7 +166,6 @@ internal static class RecordDataValueExtensions
 
         return details;
     }
-    */
 
     internal static BinaryData GetSpecification(this RecordDataValue agentToolDefinition)
     {
@@ -213,73 +215,58 @@ internal static class RecordDataValueExtensions
         return new OpenApiAnonymousAuthDetails();
     }
 
-    /*
     internal static List<string>? GetVectorStoreIds(this RecordDataValue agentToolDefinition)
     {
-        return agentToolDefinition.GetOption<List<object>>("vector_store_ids")?.Select(id => $"{id}").ToList();
+        var toolConnections = agentToolDefinition.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.vector_store_ids"));
+        return toolConnections is not null
+            ? [.. toolConnections.Values.Select(connection => connection.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("Value"))?.Value)]
+            : null;
     }
 
     internal static List<string>? GetFileIds(this RecordDataValue agentToolDefinition)
     {
-        return agentToolDefinition.GetOption<List<object>>("file_ids")?.Select(id => id.ToString()!).ToList();
+        var fileIds = agentToolDefinition.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.file_ids"));
+        return fileIds is not null
+            ? [.. fileIds.Values.Select(fileId => fileId.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("Value"))?.Value)]
+            : null;
     }
 
     internal static List<VectorStoreDataSource>? GetDataSources(this RecordDataValue agentToolDefinition)
     {
-        var dataSources = agentToolDefinition.GetOption<List<object>?>("data_sources");
-        return dataSources is not null ? CreateDataSources(dataSources) : null;
+        var dataSources = agentToolDefinition.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.data_sources"));
+        return dataSources is not null
+            ? dataSources.Values.Select(dataSource => dataSource.CreateDataSource()).ToList()
+            : null;
     }
 
-    internal static List<VectorStoreDataSource> CreateDataSources(List<object> values)
+    internal static VectorStoreDataSource CreateDataSource(this RecordDataValue value)
     {
-        List<VectorStoreDataSource> dataSources = [];
-        foreach (var value in values)
-        {
-            if (value is Dictionary<object, object> dataSourceDict)
-            {
-                string? assetIdentifier = dataSourceDict.TryGetValue("asset_identifier", out var identifierValue) && identifierValue is string identifierString ? identifierString : null;
-                string? assetType = dataSourceDict.TryGetValue("asset_type", out var typeValue) && typeValue is string typeString ? typeString : null;
+        Throw.IfNull(value);
 
-                if (string.IsNullOrEmpty(assetIdentifier) || string.IsNullOrEmpty(assetType))
-                {
-                    throw new ArgumentException("The option keys 'asset_identifier' and 'asset_type' are required for a vector store data source.");
-                }
+        string? assetIdentifier = value.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("asset_identifier"))?.Value;
+        Throw.IfNullOrEmpty(assetIdentifier);
 
-                dataSources.Add(new VectorStoreDataSource(assetIdentifier, new VectorStoreDataSourceAssetType(assetType)));
-            }
-        }
+        string? assetType = value.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("asset_type"))?.Value;
+        Throw.IfNullOrEmpty(assetType);
 
-        return dataSources;
+        return new VectorStoreDataSource(assetIdentifier, new VectorStoreDataSourceAssetType(assetType));
     }
-
     internal static IList<VectorStoreConfigurations>? GetVectorStoreConfigurations(this RecordDataValue agentToolDefinition)
     {
-        var dataSources = agentToolDefinition.GetOption<List<object>?>("configurations");
-        return dataSources is not null ? CreateVectorStoreConfigurations(dataSources) : null;
+        var dataSources = agentToolDefinition.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.configurations"));
+        return dataSources is not null ? dataSources.Values.Select(value => value.CreateVectorStoreConfiguration()).ToList() : null;
     }
 
-    internal static List<VectorStoreConfigurations> CreateVectorStoreConfigurations(List<object> values)
+    internal static VectorStoreConfigurations CreateVectorStoreConfiguration(this RecordDataValue value)
     {
-        List<VectorStoreConfigurations> configurations = [];
-        foreach (var value in values)
-        {
-            if (value is Dictionary<object, object> configurationDict)
-            {
-                var storeName = configurationDict.TryGetValue("store_name", out var storeNameValue) && storeNameValue is string storeNameString ? storeNameString : null;
-                var dataSources = configurationDict.TryGetValue("data_sources", out var dataSourceValue) && dataSourceValue is List<object> dataSourceList ? CreateDataSources(dataSourceList) : null;
+        var storeName = value.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("store_name"))?.Value;
+        Throw.IfNullOrEmpty(storeName);
 
-                if (string.IsNullOrEmpty(storeName) || dataSources is null)
-                {
-                    throw new ArgumentException("The option keys 'store_name' and 'data_sources' are required for a vector store configuration.");
-                }
+        var dataSources = value.GetDataSources();
+        Throw.IfNull(dataSources);
 
-                configurations.Add(new VectorStoreConfigurations(storeName, new VectorStoreConfiguration(dataSources)));
-            }
-        }
-
-        return configurations;
+        return new VectorStoreConfigurations(storeName, new VectorStoreConfiguration(dataSources));
     }
-    */
 
     private static AzureFunctionBinding GetAzureFunctionBinding(this RecordDataValue agentToolDefinition, string bindingType)
     {
@@ -300,32 +287,33 @@ internal static class RecordDataValueExtensions
         return new AzureFunctionBinding(new AzureFunctionStorageQueue(storageServiceEndpoint.Value, queueName.Value));
     }
 
-    /*
     internal static int? GetTopK(this RecordDataValue agentToolDefinition)
     {
-        return agentToolDefinition.Options?.TryGetValue("top_k", out var topKValue) ?? false
-            ? int.Parse((string)topKValue!)
-            : null;
+        Throw.IfNull(agentToolDefinition);
+
+        return (int?)agentToolDefinition.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("options.top_k"))?.Value;
     }
 
     internal static string? GetFilter(this RecordDataValue agentToolDefinition)
     {
-        return agentToolDefinition.Options?.TryGetValue("filter", out var filterValue) ?? false
-            ? filterValue as string
-            : null;
+        Throw.IfNull(agentToolDefinition);
+
+        return agentToolDefinition.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.filter"))?.Value;
     }
 
     internal static AzureAISearchQueryType? GetAzureAISearchQueryType(this RecordDataValue agentToolDefinition)
     {
-        return agentToolDefinition.Options?.TryGetValue("query_type", out var queryTypeValue) ?? false
-            ? new AzureAISearchQueryType(queryTypeValue as string)
+        return agentToolDefinition.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.query_type"))?.Value is string queryType
+            ? new AzureAISearchQueryType(queryType)
             : null;
     }
 
-    private static FileSearchRankingOptions? GetFileSearchRankingOptions(this RecordDataValue agentToolDefinition)
+    internal static FileSearchRankingOptions? GetFileSearchRankingOptions(this RecordDataValue agentToolDefinition)
     {
-        string? ranker = agentToolDefinition.GetOption<string>("ranker");
-        float? scoreThreshold = agentToolDefinition.GetOption<float>("score_threshold");
+        Throw.IfNull(agentToolDefinition);
+
+        string? ranker = agentToolDefinition.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("ranker"))?.Value;
+        decimal? scoreThreshold = agentToolDefinition.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("score_threshold"))?.Value;
 
         if (ranker is not null && scoreThreshold is not null)
         {
@@ -337,36 +325,13 @@ internal static class RecordDataValueExtensions
 
     internal static List<string> GetToolConnections(this RecordDataValue agentToolDefinition)
     {
-        Verify.NotNull(agentToolDefinition.Options);
+        Throw.IfNull(agentToolDefinition);
 
-        List<object> toolConnections = agentToolDefinition.GetRequiredOption<List<object>>("tool_connections");
+        var toolConnections = agentToolDefinition.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.tool_connections"));
+        Throw.IfNull(toolConnections);
 
-        return [.. toolConnections.Select(connectionId => $"{connectionId}")];
+        return [.. toolConnections.Values.Select(connection => connection.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("Value"))?.Value)];
     }
-
-    private static T GetRequiredOption<T>(this RecordDataValue agentToolDefinition, string key)
-    {
-        Verify.NotNull(agentToolDefinition);
-        Verify.NotNull(agentToolDefinition.Options);
-        Verify.NotNull(key);
-
-        if (agentToolDefinition.Options?.TryGetValue(key, out var value) ?? false)
-        {
-            if (value == null)
-            {
-                throw new ArgumentNullException($"The option key '{key}' must be a non null value.");
-            }
-
-            if (value is T expectedValue)
-            {
-                return expectedValue;
-            }
-            throw new InvalidCastException($"The option key '{key}' value must be of type '{typeof(T)}' but is '{value.GetType()}'.");
-        }
-
-        throw new ArgumentException($"The option key '{key}' was not found.");
-    }
-    */
 
     private static readonly BinaryData s_noParams = new("{\"type\":\"object\",\"properties\":{}}");
 }
