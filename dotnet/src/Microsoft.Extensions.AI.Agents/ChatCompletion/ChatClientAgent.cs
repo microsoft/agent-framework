@@ -114,7 +114,7 @@ public sealed class ChatClientAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
 
-        // Call the chatclient and notify the AIContextProvider of any failures.
+        // Call the IChatClient and notify the AIContextProvider of any failures.
         ChatResponse chatResponse;
         try
         {
