@@ -381,7 +381,7 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
         storage = FileCheckpointStorage(temp_dir)
 
         # Create a test checkpoint manually in storage
-        from agent_framework.workflow._checkpoint import WorkflowCheckpoint
+        from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
@@ -418,7 +418,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
         storage = FileCheckpointStorage(temp_dir)
 
         # Create a test checkpoint manually in storage
-        from agent_framework.workflow._checkpoint import WorkflowCheckpoint
+        from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
@@ -451,7 +451,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
         storage = FileCheckpointStorage(temp_dir)
 
         # Create a test checkpoint manually in storage
-        from agent_framework.workflow._checkpoint import WorkflowCheckpoint
+        from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
@@ -561,7 +561,7 @@ async def test_workflow_multiple_runs_no_state_collision():
 
 async def test_comprehensive_edge_groups_workflow():
     """Test a workflow that uses SwitchCaseEdgeGroup, FanOutEdgeGroup, and FanInEdgeGroup."""
-    from agent_framework.workflow._edge import Case, Default
+    from agent_framework import Case, Default
 
     # Create 6 executors for different roles with different increment values
     router = IncrementExecutor(id="router", limit=1000, increment=1)  # Increment by 1
@@ -668,7 +668,7 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
     # Verify cycling occurred (should have events from both executors)
     # Check for ExecutorInvokeEvent and ExecutorCompletedEvent types that have executor_id
-    from agent_framework.workflow._events import ExecutorCompletedEvent, ExecutorInvokeEvent
+    from agent_framework import ExecutorCompletedEvent, ExecutorInvokeEvent
 
     executor_events = [e for e in events if isinstance(e, (ExecutorInvokeEvent, ExecutorCompletedEvent))]
     executor_ids = {e.executor_id for e in executor_events}
