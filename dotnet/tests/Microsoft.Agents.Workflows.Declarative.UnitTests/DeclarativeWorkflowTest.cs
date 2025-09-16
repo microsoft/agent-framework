@@ -67,6 +67,15 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
+    public async Task EndConversationAction()
+    {
+        await this.RunWorkflow("EndConveration.yaml");
+        this.AssertExecutionCount(expectedCount: 2);
+        this.AssertExecuted("end_all");
+        this.AssertNotExecuted("sendActivity_1");
+    }
+
+    [Fact]
     public async Task GotoAction()
     {
         await this.RunWorkflow("Goto.yaml");
@@ -224,6 +233,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     {
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
+        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokeEvent>(), e => e.ActionId == executorId);
+        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompleteEvent>(), e => e.ActionId == executorId);
     }
 
     private void AssertMessage(string message)
