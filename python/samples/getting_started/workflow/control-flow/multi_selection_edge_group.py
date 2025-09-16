@@ -8,18 +8,19 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
-from agent_framework import ChatMessage, Role
-from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import (
+from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    ChatMessage,
+    Role,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,
     executor,
 )
+from agent_framework.azure import AzureChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 

@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Represents an exception that occurs when the declarative model is not supported.
 /// </summary>
-public class DeclarativeModelException : DeclarativeWorkflowException
+public sealed class DeclarativeModelException : DeclarativeWorkflowException
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DeclarativeModelException"/> class.

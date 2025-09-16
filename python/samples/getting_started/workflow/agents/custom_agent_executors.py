@@ -2,9 +2,16 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, ChatMessage
+from agent_framework import (
+    ChatAgent,
+    ChatMessage,
+    Executor,
+    WorkflowBuilder,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    handler,
+)
 from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
 from azure.identity import AzureCliCredential
 
 """

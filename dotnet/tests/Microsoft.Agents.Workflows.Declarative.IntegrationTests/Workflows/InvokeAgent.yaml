@@ -1,0 +1,15 @@
+kind: AdaptiveDialog
+beginDialog:
+
+  kind: OnActivity
+  id: workflow_test
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_agent
+      agent:
+        name: =Env.BasicAgent
+      input:
+        messages: =[UserMessage(System.LastMessageText)]
+      output:
+        messages: Topic.Answer

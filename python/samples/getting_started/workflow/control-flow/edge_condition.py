@@ -4,17 +4,18 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import ChatMessage, Role  # Core chat primitives used to build requests
-from agent_framework.azure import AzureChatClient  # Thin client wrapper for Azure OpenAI chat models
-from agent_framework.workflow import (
+from agent_framework import (  # Core chat primitives used to build requests
     AgentExecutor,  # Wraps an LLM agent that can be invoked inside a workflow
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
     AgentExecutorResponse,  # Output from an AgentExecutor
+    ChatMessage,
+    Role,
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
     WorkflowCompletedEvent,  # Event we emit at the end to signal completion
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
 )
+from agent_framework.azure import AzureChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs for safer parsing
 

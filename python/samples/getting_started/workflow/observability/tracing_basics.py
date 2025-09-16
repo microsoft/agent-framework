@@ -4,7 +4,7 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework_workflow import Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 """Basic tracing workflow sample.
 
