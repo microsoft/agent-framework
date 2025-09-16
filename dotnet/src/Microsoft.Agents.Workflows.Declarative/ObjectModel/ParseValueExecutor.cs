@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -14,7 +15,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowState state) :
+internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<ParseValue>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -22,7 +23,7 @@ internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowSt
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
-        EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(valueExpression);
+        EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(valueExpression);
 
         FormulaValue? parsedResult = null;
 

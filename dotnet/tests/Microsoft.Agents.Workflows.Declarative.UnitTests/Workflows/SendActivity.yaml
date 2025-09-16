@@ -1,0 +1,16 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnActivity
+  id: my_workflow
+  type: Message
+  actions:
+  
+    - kind: SetVariable
+      id: set_input
+      variable: Topic.TestValue
+      value: =System.LastMessageText
+
+    - kind: SendActivity
+      id: activity_input
+      activity: |-
+        Input: {Topic.TestValue}

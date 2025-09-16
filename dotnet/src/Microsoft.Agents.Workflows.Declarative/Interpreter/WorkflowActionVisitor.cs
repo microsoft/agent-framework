@@ -6,6 +6,7 @@ using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.ObjectModel;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -24,11 +25,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private readonly WorkflowBuilder _workflowBuilder;
     private readonly DeclarativeWorkflowModel _workflowModel;
     private readonly DeclarativeWorkflowOptions _workflowOptions;
-    private readonly DeclarativeWorkflowState _workflowState;
+    private readonly WorkflowFormulaState _workflowState;
 
     public WorkflowActionVisitor(
         Executor rootAction,
-        DeclarativeWorkflowState state,
+        WorkflowFormulaState state,
         DeclarativeWorkflowOptions options)
     {
         this._workflowBuilder = new WorkflowBuilder(rootAction);
@@ -60,7 +61,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             parentId = Steps.Root(parentId);
         }
 
-        this.ContinueWith(new DelegateActionExecutor(item.Id.Value), parentId, condition: null, CompletionHandler);
+        this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId, condition: null, CompletionHandler);
 
         // Complete the action scope.
         void CompletionHandler()
@@ -83,7 +84,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             string stepId = ConditionGroupExecutor.Steps.Item(conditionGroup.Model, item);
             string parentId = GetParentId(item);
-            this._workflowModel.AddNode(new DelegateActionExecutor(stepId), parentId, CompletionHandler);
+            this._workflowModel.AddNode(new DelegateActionExecutor(stepId, this._workflowState), parentId, CompletionHandler);
 
             base.VisitConditionItem(item);
 
@@ -151,18 +152,18 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         ForeachExecutor action = new(item, this._workflowState);
         string loopId = ForeachExecutor.Steps.Next(action.Id);
         this.ContinueWith(action, condition: null, CompletionHandler); // Foreach
-        this.ContinueWith(new DelegateActionExecutor(loopId, action.TakeNextAsync), action.Id); // Loop Increment
+        this.ContinueWith(new DelegateActionExecutor(loopId, this._workflowState, action.TakeNextAsync), action.Id); // Loop Increment
         string continuationId = this.ContinuationFor(action.Id, action.ParentId); // Action continuation
         this._workflowModel.AddLink(loopId, continuationId, (_) => !action.HasValue);
 
         string startId = ForeachExecutor.Steps.Start(action.Id);
-        this._workflowModel.AddNode(new DelegateActionExecutor(startId), action.Id);
+        this._workflowModel.AddNode(new DelegateActionExecutor(startId, this._workflowState), action.Id);
         this._workflowModel.AddLink(loopId, startId, (_) => action.HasValue);
 
         void CompletionHandler()
         {
             string endActionsId = ForeachExecutor.Steps.End(action.Id); // Loop continuation
-            this.ContinueWith(new DelegateActionExecutor(endActionsId, action.ResetAsync), action.Id);
+            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.ResetAsync), action.Id);
             this._workflowModel.AddLink(endActionsId, loopId);
         }
     }
@@ -175,7 +176,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         if (loopExecutor is not null)
         {
             string parentId = GetParentId(item);
-            this.ContinueWith(new DelegateActionExecutor(item.Id.Value), parentId);
+            this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId);
             this._workflowModel.AddLink(item.Id.Value, Steps.Post(loopExecutor.Id));
             this.RestartAfter(item.Id.Value, parentId);
         }
@@ -189,7 +190,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         if (loopExecutor is not null)
         {
             string parentId = GetParentId(item);
-            this.ContinueWith(new DelegateActionExecutor(item.Id.Value), parentId);
+            this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId);
             this._workflowModel.AddLink(item.Id.Value, ForeachExecutor.Steps.Next(loopExecutor.Id));
             this.RestartAfter(item.Id.Value, parentId);
         }
@@ -200,7 +201,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         string parentId = GetParentId(item);
-        this.ContinueWith(new DelegateActionExecutor(item.Id.Value), parentId);
+        this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId);
         this.RestartAfter(item.Id.Value, parentId);
     }
 
@@ -217,7 +218,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddLink(actionId, postId, message => questionExecutor.IsComplete(message));
 
         string prepareId = QuestionExecutor.Steps.Prepare(actionId);
-        this.ContinueWith(new DelegateActionExecutor(prepareId, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !questionExecutor.IsComplete(message));
+        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !questionExecutor.IsComplete(message));
 
         string inputId = QuestionExecutor.Steps.Input(actionId);
         InputPort inputPort = InputPort.Create<InputRequest, InputResponse>(inputId);
@@ -225,9 +226,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddLinkFromPeer(parentId, inputId);
 
         string captureId = QuestionExecutor.Steps.Capture(actionId);
-        this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, questionExecutor.CaptureResponseAsync, emitResult: false), parentId);
+        this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, questionExecutor.CaptureResponseAsync, emitResult: false), parentId);
 
-        this.ContinueWith(new DelegateActionExecutor(postId, questionExecutor.CompleteAsync), parentId, message => questionExecutor.IsComplete(message));
+        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, questionExecutor.CompleteAsync), parentId, message => questionExecutor.IsComplete(message));
         this._workflowModel.AddLink(captureId, prepareId, message => !questionExecutor.IsComplete(message));
     }
 
@@ -539,12 +540,12 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private string ContinuationFor(string actionId, string parentId, DelegateAction<ExecutorResultMessage>? stepAction = null)
     {
         actionId = Steps.Post(actionId);
-        this._workflowModel.AddNode(new DelegateActionExecutor(actionId, stepAction), parentId);
+        this._workflowModel.AddNode(new DelegateActionExecutor(actionId, this._workflowState, stepAction), parentId);
         return actionId;
     }
 
     private void RestartAfter(string actionId, string parentId) =>
-        this._workflowModel.AddNode(new DelegateActionExecutor($"{actionId}_Continue"), parentId);
+        this._workflowModel.AddNode(new DelegateActionExecutor($"{actionId}_Continue", this._workflowState), parentId);
 
     private static string GetParentId(BotElement item) =>
         item.GetParentId() ??

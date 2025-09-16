@@ -290,6 +290,6 @@ public abstract class AIAgent
         _ = Throw.IfNull(thread);
         _ = Throw.IfNull(messages);
 
-        await thread.OnNewMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
+        await thread.MessagesReceivedAsync(messages, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework_workflow import (
+from agent_framework import (
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,

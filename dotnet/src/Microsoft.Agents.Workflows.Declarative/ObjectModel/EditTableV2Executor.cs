@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -13,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class EditTableV2Executor(EditTableV2 model, DeclarativeWorkflowState state) : DeclarativeActionExecutor<EditTableV2>(model, state)
+internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaState state) : DeclarativeActionExecutor<EditTableV2>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -22,14 +23,14 @@ internal sealed class EditTableV2Executor(EditTableV2 model, DeclarativeWorkflow
         FormulaValue table = this.State.Get(variablePath);
         if (table is not TableValue tableValue)
         {
-            throw this.Exception($"Require '{variablePath.Format()}' to be a table, not: '{table.GetType().Name}'.");
+            throw this.Exception($"Require '{variablePath}' to be a table, not: '{table.GetType().Name}'.");
         }
 
         EditTableOperation? changeType = this.Model.ChangeType;
         if (changeType is AddItemOperation addItemOperation)
         {
             ValueExpression addItemValue = Throw.IfNull(addItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
-            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(addItemValue);
+            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(addItemValue);
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormula());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
             await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
@@ -42,7 +43,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, DeclarativeWorkflow
         else if (changeType is RemoveItemOperation removeItemOperation)
         {
             ValueExpression removeItemValue = Throw.IfNull(removeItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
-            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(removeItemValue);
+            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(removeItemValue);
             if (expressionResult.Value.ToFormula() is TableValue removeItemTable)
             {
                 await tableValue.RemoveAsync(removeItemTable?.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);

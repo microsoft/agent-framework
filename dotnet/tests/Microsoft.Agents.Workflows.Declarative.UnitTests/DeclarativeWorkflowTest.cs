@@ -135,6 +135,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 1, "parse_var")]
+    [InlineData("SendActivity.yaml", 2, "activity_input")]
+    [InlineData("SetVariable.yaml", 1, "set_var")]
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
@@ -197,11 +199,12 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             };
         AdaptiveDialog dialog = dialogBuilder.Build();
 
-        WorkflowScopes scopes = new();
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new RootExecutor(), new DeclarativeWorkflowState(RecalcEngineFactory.Create()), options);
-        WorkflowElementWalker walker = new(dialog, visitor);
+        WorkflowActionVisitor visitor = new(new RootExecutor(), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
     }
 

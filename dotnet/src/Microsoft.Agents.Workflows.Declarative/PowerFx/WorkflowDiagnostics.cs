@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
@@ -12,11 +14,23 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
+internal sealed record class WorkflowTypeInfo(FrozenSet<string> EnvironmentVariables, IEnumerable<VariableInformationDiagnostic> UserVariables);
+
 internal static class WorkflowDiagnostics
 {
     private static readonly WorkflowFeatureConfiguration s_semanticFeatureConfig = new();
 
-    public static void Initialize<TElement>(this WorkflowScopes scopes, TElement workflowElement, IConfiguration? configuration) where TElement : BotElement, IDialogBase
+    public static WorkflowTypeInfo Describe<TElement>(this TElement workflowElement) where TElement : BotElement, IDialogBase
+    {
+        SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
+
+        return
+            new WorkflowTypeInfo(
+                semanticModel.GetAllEnvironmentVariablesReferencedInTheBot().ToFrozenSet(),
+                semanticModel.GetVariables(workflowElement.SchemaName.Value).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()));
+    }
+
+    public static void Initialize<TElement>(this WorkflowFormulaState scopes, TElement workflowElement, IConfiguration? configuration) where TElement : BotElement, IDialogBase
     {
         scopes.InitializeSystem();
 
@@ -25,7 +39,7 @@ internal static class WorkflowDiagnostics
         scopes.InitializeDefaults(semanticModel, workflowElement.SchemaName.Value);
     }
 
-    private static void InitializeEnvironment(this WorkflowScopes scopes, SemanticModel semanticModel, IConfiguration? configuration)
+    private static void InitializeEnvironment(this WorkflowFormulaState scopes, SemanticModel semanticModel, IConfiguration? configuration)
     {
         foreach (string variableName in semanticModel.GetAllEnvironmentVariablesReferencedInTheBot())
         {
@@ -35,7 +49,7 @@ internal static class WorkflowDiagnostics
         }
     }
 
-    private static void InitializeDefaults(this WorkflowScopes scopes, SemanticModel semanticModel, string schemaName)
+    private static void InitializeDefaults(this WorkflowFormulaState scopes, SemanticModel semanticModel, string schemaName)
     {
         foreach (VariableInformationDiagnostic variableDiagnostic in semanticModel.GetVariables(schemaName).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()))
         {
@@ -54,7 +68,7 @@ internal static class WorkflowDiagnostics
                 }
             }
 
-            scopes.Set(variableDiagnostic.Path.VariableName, defaultValue, variableDiagnostic.Path.VariableScopeName ?? WorkflowScopes.DefaultScopeName);
+            scopes.Set(variableDiagnostic.Path.VariableName, defaultValue, variableDiagnostic.Path.VariableScopeName ?? WorkflowFormulaState.DefaultScopeName);
         }
     }
 

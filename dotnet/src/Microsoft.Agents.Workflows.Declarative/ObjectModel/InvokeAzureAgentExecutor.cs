@@ -15,7 +15,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowAgentProvider agentProvider, DeclarativeWorkflowState state) :
+internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeAzureAgent>(model, state)
 {
     private AzureAgentUsage AgentUsage => Throw.IfNull(this.Model.Agent, $"{nameof(this.Model)}.{nameof(this.Model.Agent)}");
@@ -77,7 +77,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             if (assignValue is not null && conversationId is null)
             {
                 conversationId = assignValue;
-                await this.State.SetConversationIdAsync(context, conversationId).ConfigureAwait(false);
+                this.State.SetConversationId(conversationId);
                 await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
             }
         }
@@ -88,7 +88,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         DataValue? userInput = null;
         if (this.AgentInput?.Messages is not null)
         {
-            EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.AgentInput.Messages);
+            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(this.AgentInput.Messages);
             userInput = expressionResult.Value;
         }
 
@@ -102,12 +102,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             return null;
         }
 
-        EvaluationResult<string> conversationIdResult = this.State.ExpressionEngine.GetValue(this.Model.ConversationId);
+        EvaluationResult<string> conversationIdResult = this.State.Evaluator.GetValue(this.Model.ConversationId);
         return conversationIdResult.Value.Length == 0 ? null : conversationIdResult.Value;
     }
 
     private string GetAgentName() =>
-        this.State.ExpressionEngine.GetValue(
+        this.State.Evaluator.GetValue(
             Throw.IfNull(
                 this.AgentUsage.Name,
                 $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}")).Value;
@@ -118,7 +118,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         if (this.AgentInput?.AdditionalInstructions is not null)
         {
-            additionalInstructions = this.State.Format(this.AgentInput.AdditionalInstructions);
+            additionalInstructions = this.State.Engine.Format(this.AgentInput.AdditionalInstructions);
         }
 
         return additionalInstructions;
@@ -131,7 +131,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             return true;
         }
 
-        EvaluationResult<bool> autoSendResult = this.State.ExpressionEngine.GetValue(this.AgentOutput.AutoSend);
+        EvaluationResult<bool> autoSendResult = this.State.Evaluator.GetValue(this.AgentOutput.AutoSend);
 
         return autoSendResult.Value;
     }

@@ -2,7 +2,6 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -22,7 +21,7 @@ public static class DeclarativeWorkflowBuilder
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="workflowFile">The path to the workflow.</param>
-    /// <param name="options">The execution context for the workflow.</param>
+    /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns></returns>
     public static Workflow<TInput> Build<TInput>(
@@ -40,7 +39,7 @@ public static class DeclarativeWorkflowBuilder
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
-    /// <param name="options">The execution context for the workflow.</param>
+    /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
     public static Workflow<TInput> Build<TInput>(
@@ -59,18 +58,18 @@ public static class DeclarativeWorkflowBuilder
 
         string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
 
-        WorkflowScopes scopes = new();
-        scopes.Initialize(WrapWithBot(workflowElement), options.Configuration);
-        DeclarativeWorkflowState state = new(options.CreateRecalcEngine(), scopes);
+        WorkflowFormulaState state = new(options.CreateRecalcEngine());
+        state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
                 state,
                 message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
 
         WorkflowActionVisitor visitor = new(rootExecutor, state, options);
-        WorkflowElementWalker walker = new(rootElement, visitor);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(rootElement);
 
-        return walker.GetWorkflow<TInput>();
+        return visitor.Complete<TInput>();
     }
 
     private static ChatMessage DefaultTransform(object message) =>
@@ -80,23 +79,4 @@ public static class DeclarativeWorkflowBuilder
                 string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
                 _ => new(ChatRole.User, $"{message}")
             };
-
-    // Wrap with bot to ensure schema is set.
-    private static AdaptiveDialog WrapWithBot(AdaptiveDialog dialog)
-    {
-        BotDefinition bot
-            = new BotDefinition.Builder
-            {
-                Components =
-                    {
-                        new DialogComponent.Builder
-                        {
-                            SchemaName = dialog.HasSchemaName ? dialog.SchemaName : "default-schema",
-                            Dialog = new AdaptiveDialog.Builder(dialog),
-                        }
-                    }
-            }.Build();
-
-        return bot.Descendants().OfType<AdaptiveDialog>().First();
-    }
 }

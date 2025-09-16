@@ -8,6 +8,7 @@ using System.Dynamic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
@@ -24,6 +25,7 @@ internal static class FormulaValueExtensions
         value switch
         {
             null => FormulaValue.NewBlank(),
+            UnassignedValue => FormulaValue.NewBlank(),
             FormulaValue formulaValue => formulaValue,
             bool booleanValue => FormulaValue.New(booleanValue),
             int decimalValue => FormulaValue.New(decimalValue),
@@ -142,7 +144,7 @@ internal static class FormulaValueExtensions
         TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToRecord()).ToImmutableArray());
 
     public static RecordDataValue ToRecord(this RecordValue value) =>
-        RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
+        RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()));
 
     private static RecordValue ToRecord(this IDictionary value)
     {

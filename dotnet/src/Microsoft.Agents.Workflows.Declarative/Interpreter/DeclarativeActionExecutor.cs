@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -15,7 +15,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
-internal abstract class DeclarativeActionExecutor<TAction>(TAction model, DeclarativeWorkflowState state) :
+internal abstract class DeclarativeActionExecutor<TAction>(TAction model, WorkflowFormulaState state) :
     DeclarativeActionExecutor(model, state)
     where TAction : DialogAction
 {
@@ -24,16 +24,15 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Declar
 
 internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
 {
-    private static readonly ImmutableHashSet<string> s_mutableScopes =
-        new HashSet<string>
-        {
-                VariableScopeNames.Topic,
-                VariableScopeNames.Global,
-        }.ToImmutableHashSet();
+    private static readonly FrozenSet<string> s_mutableScopes =
+        [
+            VariableScopeNames.Topic,
+            VariableScopeNames.Global
+        ];
 
     private string? _parentId;
 
-    protected DeclarativeActionExecutor(DialogAction model, DeclarativeWorkflowState state)
+    protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
@@ -51,7 +50,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
 
     internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
-    protected DeclarativeWorkflowState State { get; }
+    protected WorkflowFormulaState State { get; }
 
     protected virtual bool IsDiscreteAction => true;
 
@@ -72,7 +71,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
 
         try
         {
-            object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State), cancellationToken: default).ConfigureAwait(false);
 
             if (this.EmitResultEvent)
             {
@@ -119,7 +118,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
             throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");
         }
 
-        await this.State.SetAsync(targetPath, result, context).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);
 
 #if DEBUG
         string? resultValue = result.Format();
@@ -127,7 +126,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
         Debug.WriteLine(
             $"""
             STATE: {this.GetType().Name} [{this.Id}]
-             NAME: {targetPath.Format()}
+             NAME: {targetPath}
             VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
             """);
 #endif

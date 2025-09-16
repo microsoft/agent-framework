@@ -17,8 +17,8 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
     public async Task ResetDefinedValue()
     {
         // Arrange
-        this.Scopes.Set("MyVar1", FormulaValue.New("Value #1"));
-        this.Scopes.Set("MyVar2", FormulaValue.New("Value #2"));
+        this.State.Set("MyVar1", FormulaValue.New("Value #1"));
+        this.State.Set("MyVar2", FormulaValue.New("Value #2"));
 
         ResetVariable model =
             this.CreateModel(
@@ -26,7 +26,7 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
                 FormatVariablePath("MyVar1"));
 
         // Act
-        ResetVariableExecutor action = new(model, this.GetState());
+        ResetVariableExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert
@@ -39,7 +39,7 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
     public async Task ResetUndefinedValue()
     {
         // Arrange
-        this.Scopes.Set("MyVar1", FormulaValue.New("Value #1"));
+        this.State.Set("MyVar1", FormulaValue.New("Value #1"));
 
         ResetVariable model =
             this.CreateModel(
@@ -47,7 +47,7 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
                 FormatVariablePath("NoVar"));
 
         // Act
-        ResetVariableExecutor action = new(model, this.GetState());
+        ResetVariableExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert

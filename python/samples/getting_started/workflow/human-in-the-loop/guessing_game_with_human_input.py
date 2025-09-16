@@ -3,17 +3,17 @@
 import asyncio
 from dataclasses import dataclass
 
-from agent_framework import ChatMessage, Role
-from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import (
+from agent_framework import (
     AgentExecutor,  # Executor that runs the agent
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
-    Executor,
+    ChatMessage,  # Chat message structure
+    Executor,  # Base class for workflow executors
     RequestInfoEvent,  # Event emitted when human input is requested
     RequestInfoExecutor,  # Special executor that collects human input out of band
     RequestInfoMessage,  # Base class for request payloads sent to RequestInfoExecutor
     RequestResponse,  # Correlates a human response with the original request
+    Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowCompletedEvent,  # Terminal event used to finish the workflow
     WorkflowContext,  # Per run context and event bus
@@ -21,6 +21,7 @@ from agent_framework.workflow import (
     WorkflowStatusEvent,  # Event emitted on run state changes
     handler,  # Decorator to expose an Executor method as a step
 )
+from agent_framework.azure import AzureChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
@@ -230,13 +231,11 @@ async def main() -> None:
 
         # Detect run state transitions for a better developer experience.
         pending_status = any(
-            isinstance(e, WorkflowStatusEvent)
-            and e.state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+            isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
             for e in events
         )
         idle_with_requests = any(
-            isinstance(e, WorkflowStatusEvent)
-            and e.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+            isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
             for e in events
         )
         if pending_status:
