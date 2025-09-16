@@ -200,12 +200,19 @@ sequence = [
     { ref = "docs-clean" },
     { ref = "docs-build" }
 ]
+[tool.poe.tasks.docs-full-install]
+sequence = [
+    { ref = "docs-install" },
+    { ref = 'build' },
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
 [tool.poe.tasks.docs-rebuild]
 sequence = [
     { ref = "docs-clean" },
     { ref = "docs-build" }
 ]
-[tool.poe.tasks.docs-clean-debug]
+[tool.poe.tasks.docs-rebuild-debug]
 sequence = [
     { ref = "docs-clean" },
     { ref = "docs-debug" }
