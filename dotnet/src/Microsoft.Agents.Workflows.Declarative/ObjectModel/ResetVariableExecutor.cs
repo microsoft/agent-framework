@@ -3,14 +3,14 @@
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ResetVariableExecutor(ResetVariable model, DeclarativeWorkflowState state) :
+internal sealed class ResetVariableExecutor(ResetVariable model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<ResetVariable>(model, state)
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -21,7 +21,7 @@ internal sealed class ResetVariableExecutor(ResetVariable model, DeclarativeWork
         Debug.WriteLine(
             $"""
             STATE: {this.GetType().Name} [{this.Id}]
-             NAME: {this.Model.Variable!.Format()}
+             NAME: {this.Model.Variable}
             """);
 
         return default;

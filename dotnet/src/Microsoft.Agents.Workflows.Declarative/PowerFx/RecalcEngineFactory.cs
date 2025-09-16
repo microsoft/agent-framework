@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -36,6 +37,7 @@ internal static class RecalcEngineFactory
             }
 
             config.EnableSetFunction();
+            config.AddFunction(new UserMessage());
 
             return config;
         }

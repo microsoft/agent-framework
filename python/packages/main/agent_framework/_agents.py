@@ -300,20 +300,7 @@ class BaseAgent(AFBaseModel):
         ):
             self._initialize_middleware_pipelines(self.middlewares)
 
-        # Normalize messages to ChatMessage list
-        if messages is None:
-            normalized_messages: list[ChatMessage] = []
-        elif isinstance(messages, str):
-            normalized_messages = [ChatMessage(role=Role.USER, text=messages)]
-        elif isinstance(messages, ChatMessage):
-            normalized_messages = [messages]
-        elif isinstance(messages, list):
-            normalized_messages = []
-            for msg in messages:
-                if isinstance(msg, str):
-                    normalized_messages.append(ChatMessage(role=Role.USER, text=msg))
-                elif isinstance(msg, ChatMessage):
-                    normalized_messages.append(msg)
+        normalized_messages = self._normalize_messages(messages)
 
         # Execute with middleware if available
         if self._agent_middleware_pipeline.has_middlewares:
@@ -364,20 +351,7 @@ class BaseAgent(AFBaseModel):
         ):
             self._initialize_middleware_pipelines(self.middlewares)
 
-        # Normalize messages to ChatMessage list
-        if messages is None:
-            normalized_messages: list[ChatMessage] = []
-        elif isinstance(messages, str):
-            normalized_messages = [ChatMessage(role=Role.USER, text=messages)]
-        elif isinstance(messages, ChatMessage):
-            normalized_messages = [messages]
-        elif isinstance(messages, list):
-            normalized_messages = []
-            for msg in messages:
-                if isinstance(msg, str):
-                    normalized_messages.append(ChatMessage(role=Role.USER, text=msg))
-                elif isinstance(msg, ChatMessage):
-                    normalized_messages.append(msg)
+        normalized_messages = self._normalize_messages(messages)
 
         # Execute with middleware if available
         if self._agent_middleware_pipeline.has_middlewares:
@@ -402,6 +376,21 @@ class BaseAgent(AFBaseModel):
 
         # No middleware, execute directly
         return self._run_stream_impl(normalized_messages, thread=thread, **kwargs)
+
+    def _normalize_messages(
+        self,
+        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
+    ) -> list[ChatMessage]:
+        if messages is None:
+            return []
+
+        if isinstance(messages, str):
+            return [ChatMessage(role=Role.USER, text=messages)]
+
+        if isinstance(messages, ChatMessage):
+            return [messages]
+
+        return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
 
 # region ChatAgent
@@ -1001,21 +990,6 @@ class ChatAgent(BaseAgent):
             messages.extend(await thread.message_store.list_messages() or [])
         messages.extend(input_messages or [])
         return thread, messages
-
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, text=messages)]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
     def _get_agent_name(self) -> str:
         return self.name or "UnnamedAgent"

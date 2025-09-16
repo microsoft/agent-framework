@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
@@ -206,7 +206,7 @@ class WorkflowAgent(BaseAgent):
 
     def _normalize_messages(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
     ) -> list[ChatMessage]:
         """Normalize input messages to a list of ChatMessage objects."""
         if messages is None:
@@ -218,7 +218,7 @@ class WorkflowAgent(BaseAgent):
         if isinstance(messages, ChatMessage):
             return [messages]
 
-        normalized = []
+        normalized: list[ChatMessage] = []
         for msg in messages:
             if isinstance(msg, str):
                 normalized.append(ChatMessage(role=Role.USER, contents=[TextContent(text=msg)]))
