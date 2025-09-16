@@ -3,14 +3,13 @@
 using System.ClientModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using OpenAI.Assistants;
 
-namespace OpenAI;
+namespace OpenAI.Assistants;
 
 /// <summary>
 /// Provides extension methods for working with <see cref="ClientResult{Assistant}"/> where T is <see cref="Assistant"/>.
 /// </summary>
-public static class AssistantClientResultExtensions
+public static class AssistantExtensions
 {
     /// <summary>
     /// Converts a <see cref="ClientResult{Assistant}"/> to a <see cref="ChatClientAgent"/>.
@@ -26,7 +25,7 @@ public static class AssistantClientResultExtensions
             throw new ArgumentNullException(nameof(assistantClientResult));
         }
 
-        return AsAIAgent(assistantClientResult.Value, assistantClient, chatOptions);
+        return AssistantExtensions.AsAIAgent(assistantClientResult, assistantClient, chatOptions);
     }
 
     /// <summary>
@@ -48,7 +47,7 @@ public static class AssistantClientResultExtensions
         }
 
 #pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = assistantClient.AsNewIChatClient(assistantMetadata.Id);
+        var chatClient = assistantClient.AsIChatClient(assistantMetadata.Id);
 #pragma warning restore CA2000 // Dispose objects before losing scope
 
         return new ChatClientAgent(chatClient, options: new()
