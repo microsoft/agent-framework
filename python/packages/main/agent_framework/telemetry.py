@@ -464,7 +464,7 @@ def setup_telemetry(
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | None = None,
     application_insights_connection_string: str | None = None,
-    application_insights_credential: "TokenCredential | None" = None,
+    credential: "TokenCredential | None" = None,
     enable_live_metrics: bool | None = None,
 ) -> None:
     """Setup telemetry with optionally provided settings.
