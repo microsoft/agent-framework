@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Complex Fan-In/Fan-Out Data Processing Workflow
+"""Complex Fan-In/Fan-Out Data Processing Workflow.
 
 This workflow demonstrates a sophisticated data processing pipeline with multiple stages:
 1. Data Ingestion - Simulates loading data from multiple sources
@@ -15,10 +15,10 @@ shows complex fan-in/fan-out patterns with conditional processing.
 """
 
 import asyncio
-import random
+import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import Literal
 
 from agent_framework import (
     Executor,
@@ -78,12 +78,12 @@ class ProcessingRequest(BaseModel):
     enable_quality_validation: bool = Field(description="Enable data quality validation checks", default=True)
 
     # Transformation options
-    transformations: List[Literal["normalize", "enrich", "aggregate"]] = Field(
+    transformations: list[Literal["normalize", "enrich", "aggregate"]] = Field(
         description="List of transformations to apply", default=["normalize", "enrich"]
     )
 
     # Optional description
-    description: Optional[str] = Field(description="Optional description of the processing request", default=None)
+    description: str | None = Field(description="Optional description of the processing request", default=None)
 
     # Test failure scenarios
     force_validation_failure: bool = Field(
@@ -139,7 +139,7 @@ class QualityAssessment:
     batch_id: str
     assessor_id: str
     quality_score: float
-    recommendations: List[str]
+    recommendations: list[str]
     processing_time: float
 
 
@@ -149,9 +149,9 @@ class ProcessingSummary:
 
     batch_id: str
     total_processing_time: float
-    validation_reports: List[ValidationReport]
-    transformation_results: List[TransformationResult]
-    quality_assessments: List[QualityAssessment]
+    validation_reports: list[ValidationReport]
+    transformation_results: list[TransformationResult]
+    quality_assessments: list[QualityAssessment]
     final_status: str
 
 
@@ -163,25 +163,25 @@ class DataIngestion(Executor):
     async def ingest_data(self, request: ProcessingRequest, ctx: WorkflowContext[DataBatch]) -> None:
         """Simulate data ingestion with realistic delays based on input configuration."""
         # Simulate network delay based on data source
-        delay_map = {"database": (1, 2), "api": (2, 4), "file_upload": (3, 5), "streaming": (0.5, 1.5)}
-        delay_range = delay_map.get(request.data_source, (2, 4))
-        await asyncio.sleep(random.uniform(*delay_range))
+        delay_map = {"database": 1.5, "api": 3.0, "file_upload": 4.0, "streaming": 1.0}
+        delay = delay_map.get(request.data_source, 3.0)
+        await asyncio.sleep(delay)  # Fixed delay for demo
 
         # Simulate data size based on priority and configuration
         base_size = request.batch_size
         if request.processing_priority == "critical":
-            size_multiplier = random.uniform(1.5, 2.0)
+            size_multiplier = 1.7  # Critical priority gets the largest batches
         elif request.processing_priority == "high":
-            size_multiplier = random.uniform(1.2, 1.5)
+            size_multiplier = 1.3  # High priority gets larger batches
         elif request.processing_priority == "low":
-            size_multiplier = random.uniform(0.5, 0.8)
+            size_multiplier = 0.6  # Low priority gets smaller batches
         else:  # normal
-            size_multiplier = random.uniform(0.8, 1.2)
+            size_multiplier = 1.0  # Normal priority uses base size
 
         actual_size = int(base_size * size_multiplier)
 
         batch = DataBatch(
-            batch_id=f"batch_{random.randint(1000, 9999)}",
+            batch_id=f"batch_{5555}",  # Fixed batch ID for demo
             data_type=DataType(request.data_type),
             size=actual_size,
             content=f"Processing {request.data_type} data from {request.data_source}",
@@ -209,14 +209,11 @@ class SchemaValidator(Executor):
             return
 
         # Simulate schema validation processing
-        processing_time = random.uniform(1, 3)
+        processing_time = 2.0  # Fixed processing time
         await asyncio.sleep(processing_time)
 
         # Simulate validation results - consider force failure flag
-        if request.force_validation_failure:
-            issues = random.randint(3, 5)  # Force more issues
-        else:
-            issues = random.randint(0, 4)
+        issues = 4 if request.force_validation_failure else 2  # Fixed issue counts
 
         result = (
             ValidationResult.VALID
@@ -247,14 +244,15 @@ class DataQualityValidator(Executor):
         if not request or not request.enable_quality_validation:
             return
 
-        processing_time = random.uniform(1.5, 4)
+        processing_time = 2.5  # Fixed processing time
         await asyncio.sleep(processing_time)
 
         # Quality checks are stricter for higher priority data
-        if request.processing_priority in ["critical", "high"]:
-            issues = random.randint(0, 4)  # Fewer issues for high priority
-        else:
-            issues = random.randint(0, 6)
+        issues = (
+            2  # Fixed issue count for high priority
+            if request.processing_priority in ["critical", "high"]
+            else 3  # Fixed issue count for normal priority
+        )
 
         if request.force_validation_failure:
             issues = max(issues, 4)  # Ensure failure
@@ -288,14 +286,11 @@ class SecurityValidator(Executor):
         if not request or not request.enable_security_validation:
             return
 
-        processing_time = random.uniform(2, 5)
+        processing_time = 3.0  # Fixed processing time
         await asyncio.sleep(processing_time)
 
         # Security is more stringent for customer/transaction data
-        if batch.data_type in [DataType.CUSTOMER, DataType.TRANSACTION]:
-            issues = random.randint(0, 2)  # Fewer issues expected for sensitive data
-        else:
-            issues = random.randint(0, 3)
+        issues = 1 if batch.data_type in [DataType.CUSTOMER, DataType.TRANSACTION] else 2
 
         if request.force_validation_failure:
             issues = max(issues, 1)  # Force at least one security issue
@@ -320,7 +315,7 @@ class ValidationAggregator(Executor):
     """Aggregates validation results and decides on next steps."""
 
     @handler
-    async def aggregate_validations(self, reports: List[ValidationReport], ctx: WorkflowContext[DataBatch]) -> None:
+    async def aggregate_validations(self, reports: list[ValidationReport], ctx: WorkflowContext[DataBatch]) -> None:
         """Aggregate all validation reports and make processing decision."""
         if not reports:
             return
@@ -332,7 +327,6 @@ class ValidationAggregator(Executor):
 
         total_issues = sum(report.issues_found for report in reports)
         has_errors = any(report.result == ValidationResult.ERROR for report in reports)
-        warning_count = sum(1 for report in reports if report.result == ValidationResult.WARNING)
 
         # Calculate quality score (0.0 to 1.0)
         max_possible_issues = len(reports) * 5  # Assume max 5 issues per validator
@@ -398,17 +392,14 @@ class DataNormalizer(Executor):
             await ctx.send_message(result)
             return
 
-        processing_time = random.uniform(2, 6)
+        processing_time = 4.0  # Fixed processing time
         await asyncio.sleep(processing_time)
 
         # Simulate data size change during normalization
-        processed_size = int(batch.size * random.uniform(0.8, 1.2))
+        processed_size = int(batch.size * 1.0)  # No size change for demo
 
         # Consider force failure flag
-        if request.force_transformation_failure:
-            success = False
-        else:
-            success = random.choice([True, True, True, False])  # 75% success rate
+        success = not request.force_transformation_failure  # 75% success rate simplified to always success
 
         result = TransformationResult(
             batch_id=batch.batch_id,
@@ -446,16 +437,13 @@ class DataEnrichment(Executor):
             await ctx.send_message(result)
             return
 
-        processing_time = random.uniform(3, 7)
+        processing_time = 5.0  # Fixed processing time
         await asyncio.sleep(processing_time)
 
-        processed_size = int(batch.size * random.uniform(1.1, 1.5))  # Enrichment increases data
+        processed_size = int(batch.size * 1.3)  # Enrichment increases data
 
         # Consider force failure flag
-        if request.force_transformation_failure:
-            success = False
-        else:
-            success = random.choice([True, True, False])  # 67% success rate
+        success = not request.force_transformation_failure  # 67% success rate simplified to always success
 
         result = TransformationResult(
             batch_id=batch.batch_id,
@@ -493,16 +481,13 @@ class DataAggregator(Executor):
             await ctx.send_message(result)
             return
 
-        processing_time = random.uniform(1.5, 4)
+        processing_time = 2.5  # Fixed processing time
         await asyncio.sleep(processing_time)
 
-        processed_size = int(batch.size * random.uniform(0.3, 0.7))  # Aggregation reduces data
+        processed_size = int(batch.size * 0.5)  # Aggregation reduces data
 
         # Consider force failure flag
-        if request.force_transformation_failure:
-            success = False
-        else:
-            success = random.choice([True, True, True, True, False])  # 80% success rate
+        success = not request.force_transformation_failure  # 80% success rate simplified to always success
 
         result = TransformationResult(
             batch_id=batch.batch_id,
@@ -523,7 +508,7 @@ class PerformanceAssessor(Executor):
 
     @handler
     async def assess_performance(
-        self, results: List[TransformationResult], ctx: WorkflowContext[QualityAssessment]
+        self, results: list[TransformationResult], ctx: WorkflowContext[QualityAssessment]
     ) -> None:
         """Assess performance of transformations."""
         if not results:
@@ -531,7 +516,7 @@ class PerformanceAssessor(Executor):
 
         batch_id = results[0].batch_id
 
-        processing_time = random.uniform(1, 3)
+        processing_time = 2.0  # Fixed processing time
         await asyncio.sleep(processing_time)
 
         avg_processing_time = sum(r.processing_time for r in results) / len(results)
@@ -563,7 +548,7 @@ class AccuracyAssessor(Executor):
 
     @handler
     async def assess_accuracy(
-        self, results: List[TransformationResult], ctx: WorkflowContext[QualityAssessment]
+        self, results: list[TransformationResult], ctx: WorkflowContext[QualityAssessment]
     ) -> None:
         """Assess accuracy of transformations."""
         if not results:
@@ -571,11 +556,11 @@ class AccuracyAssessor(Executor):
 
         batch_id = results[0].batch_id
 
-        processing_time = random.uniform(2, 4)
+        processing_time = 3.0  # Fixed processing time
         await asyncio.sleep(processing_time)
 
         # Simulate accuracy analysis
-        accuracy_score = random.uniform(75, 95)
+        accuracy_score = 85.0  # Fixed accuracy score
 
         recommendations = []
         if accuracy_score < 85:
@@ -599,7 +584,7 @@ class FinalProcessor(Executor):
     """Final processing stage that combines all results."""
 
     @handler
-    async def process_final_results(self, assessments: List[QualityAssessment], ctx: WorkflowContext[None]) -> None:
+    async def process_final_results(self, assessments: list[QualityAssessment], ctx: WorkflowContext[None]) -> None:
         """Generate final processing summary and complete workflow."""
         if not assessments:
             await ctx.add_event(WorkflowCompletedEvent("No quality assessments received"))
@@ -671,7 +656,7 @@ def create_complex_workflow():
     final_processor = FinalProcessor(id="final_processor")
 
     # Build the workflow with complex fan-in/fan-out patterns
-    workflow = (
+    return (
         WorkflowBuilder()
         .set_start_executor(data_ingestion)
         # Fan-out to validation stage
@@ -688,8 +673,6 @@ def create_complex_workflow():
         .build()
     )
 
-    return workflow
-
 
 # Export the workflow for DevUI discovery
 workflow = create_complex_workflow()
@@ -697,8 +680,9 @@ workflow = create_complex_workflow()
 
 async def main():
     """Main function to test the workflow."""
-    print("🚀 Starting Complex Fan-In/Fan-Out Data Processing Workflow")
-    print("=" * 70)
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logger = logging.getLogger(__name__)
 
     # Test different scenarios with structured inputs
     test_scenarios = [
@@ -764,37 +748,28 @@ async def main():
     ]
 
     for i, scenario in enumerate(test_scenarios, 1):
-        print(f"\n🧪 Test Scenario {i}: {scenario['name']}")
-        print("-" * 60)
-        print("📋 Configuration:")
-        print(f"   Source: {scenario['request'].data_source}")
-        print(f"   Type: {scenario['request'].data_type}")
-        print(f"   Priority: {scenario['request'].processing_priority}")
-        print(f"   Batch Size: {scenario['request'].batch_size}")
-        print(f"   Quality Threshold: {scenario['request'].quality_threshold}")
-        print(f"   Transformations: {', '.join(scenario['request'].transformations)}")
-        print(f"   Schema Validation: {scenario['request'].enable_schema_validation}")
-        print(f"   Security Validation: {scenario['request'].enable_security_validation}")
-        print(f"   Quality Validation: {scenario['request'].enable_quality_validation}")
-        if scenario["request"].description:
-            print(f"   Description: {scenario['request'].description}")
-        print()
+        logger.info(f"\n🧪 Test Scenario {i}: {scenario['name']}")
+        logger.info(f"Starting scenario {i}: {scenario['name']}")
+        logger.info(
+            f"Configuration - Source: {scenario['request'].data_source}, "
+            f"Type: {scenario['request'].data_type}, "
+            f"Priority: {scenario['request'].processing_priority}"
+        )
 
         start_time = asyncio.get_event_loop().time()
 
         async for event in workflow.run_stream(scenario["request"]):
             elapsed = asyncio.get_event_loop().time() - start_time
-            print(f"[{elapsed:.1f}s] {event}")
+            logger.debug(f"[{elapsed:.1f}s] {event}")
 
             if isinstance(event, WorkflowCompletedEvent):
-                print(f"\n🎉 Scenario completed in {elapsed:.1f} seconds!")
+                logger.info(f"✅ Scenario {i} completed in {elapsed:.1f} seconds!")
+                logger.info(f"Scenario {i} completed successfully in {elapsed:.1f} seconds")
                 break
-
-        print("\n" + "=" * 70)
 
         # Wait between test runs
         if i < len(test_scenarios):
-            print("⏳ Waiting 2 seconds before next scenario...")
+            logger.info("Waiting 2 seconds before next scenario...")
             await asyncio.sleep(2)
 
 

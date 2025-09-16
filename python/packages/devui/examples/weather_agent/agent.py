@@ -2,7 +2,6 @@
 """Sample weather agent for Agent Framework Debug UI."""
 
 import os
-from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
@@ -14,8 +13,8 @@ def get_weather(
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    temperature = randint(10, 30)
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {temperature}°C."
+    temperature = 53
+    return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
 
 
 def get_forecast(
@@ -27,8 +26,8 @@ def get_forecast(
     forecast = []
 
     for day in range(1, days + 1):
-        condition = conditions[randint(0, 3)]
-        temp = randint(10, 30)
+        condition = conditions[0]
+        temp = 53
         forecast.append(f"Day {day}: {condition}, {temp}°C")
 
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
@@ -39,7 +38,7 @@ agent = ChatAgent(
     name="WeatherAgent",
     description="A helpful agent that provides weather information and forecasts",
     instructions="""
-    You are a weather assistant. You can provide current weather information 
+    You are a weather assistant. You can provide current weather information
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,

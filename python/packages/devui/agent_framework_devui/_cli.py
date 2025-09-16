@@ -13,11 +13,7 @@ logger = logging.getLogger(__name__)
 def setup_logging(level: str = "INFO") -> None:
     """Configure logging for the server."""
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    logging.basicConfig(
-        level=getattr(logging, level.upper()),
-        format=log_format,
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
+    logging.basicConfig(level=getattr(logging, level.upper()), format=log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
 
 def create_cli_parser() -> argparse.ArgumentParser:
@@ -32,59 +28,31 @@ Examples:
   devui ./agents                    # Scan specific directory
   devui --port 8000                 # Custom port
   devui --headless                  # API only, no UI
-        """
+        """,
     )
 
     parser.add_argument(
-        "directory",
-        nargs="?",
-        default=".",
-        help="Directory to scan for entities (default: current directory)"
+        "directory", nargs="?", default=".", help="Directory to scan for entities (default: current directory)"
     )
 
-    parser.add_argument(
-        "--port", "-p",
-        type=int,
-        default=8080,
-        help="Port to run server on (default: 8080)"
-    )
+    parser.add_argument("--port", "-p", type=int, default=8080, help="Port to run server on (default: 8080)")
 
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Host to bind server to (default: 127.0.0.1)"
-    )
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind server to (default: 127.0.0.1)")
 
-    parser.add_argument(
-        "--no-open",
-        action="store_true",
-        help="Don't automatically open browser"
-    )
+    parser.add_argument("--no-open", action="store_true", help="Don't automatically open browser")
 
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run without UI (API only)"
-    )
+    parser.add_argument("--headless", action="store_true", help="Run without UI (API only)")
 
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
-        help="Logging level (default: INFO)"
+        help="Logging level (default: INFO)",
     )
 
-    parser.add_argument(
-        "--reload",
-        action="store_true",
-        help="Enable auto-reload for development"
-    )
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
 
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"Agent Framework DevUI {get_version()}"
-    )
+    parser.add_argument("--version", action="version", version=f"Agent Framework DevUI {get_version()}")
 
     return parser
 
@@ -93,6 +61,7 @@ def get_version() -> str:
     """Get the package version."""
     try:
         from . import __version__
+
         return __version__
     except ImportError:
         return "unknown"
@@ -106,11 +75,11 @@ def validate_directory(directory: str) -> str:
     abs_dir = os.path.abspath(directory)
 
     if not os.path.exists(abs_dir):
-        print(f"❌ Error: Directory '{directory}' does not exist", file=sys.stderr)
+        print(f"❌ Error: Directory '{directory}' does not exist", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
     if not os.path.isdir(abs_dir):
-        print(f"❌ Error: '{directory}' is not a directory", file=sys.stderr)
+        print(f"❌ Error: '{directory}' is not a directory", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
     return abs_dir
@@ -118,14 +87,14 @@ def validate_directory(directory: str) -> str:
 
 def print_startup_info(entities_dir: str, host: str, port: int, ui_enabled: bool, reload: bool) -> None:
     """Print startup information."""
-    print("🤖 Agent Framework DevUI")
-    print("=" * 50)
-    print(f"📁 Entities directory: {entities_dir}")
-    print(f"🌐 Server URL: http://{host}:{port}")
-    print(f"🎨 UI enabled: {'Yes' if ui_enabled else 'No'}")
-    print(f"🔄 Auto-reload: {'Yes' if reload else 'No'}")
-    print("=" * 50)
-    print("🔍 Scanning for entities...")
+    print("🤖 Agent Framework DevUI")  # noqa: T201
+    print("=" * 50)  # noqa: T201
+    print(f"📁 Entities directory: {entities_dir}")  # noqa: T201
+    print(f"🌐 Server URL: http://{host}:{port}")  # noqa: T201
+    print(f"🎨 UI enabled: {'Yes' if ui_enabled else 'No'}")  # noqa: T201
+    print(f"🔄 Auto-reload: {'Yes' if reload else 'No'}")  # noqa: T201
+    print("=" * 50)  # noqa: T201
+    print("🔍 Scanning for entities...")  # noqa: T201
 
 
 def main() -> None:
@@ -150,19 +119,15 @@ def main() -> None:
         from . import serve
 
         serve(
-            entities_dir=entities_dir,
-            port=args.port,
-            host=args.host,
-            auto_open=not args.no_open,
-            ui_enabled=ui_enabled
+            entities_dir=entities_dir, port=args.port, host=args.host, auto_open=not args.no_open, ui_enabled=ui_enabled
         )
 
     except KeyboardInterrupt:
-        print("\n👋 Shutting down Agent Framework DevUI...")
+        print("\n👋 Shutting down Agent Framework DevUI...")  # noqa: T201
         sys.exit(0)
     except Exception as e:
         logger.exception("Failed to start server")
-        print(f"❌ Error: {e}", file=sys.stderr)
+        print(f"❌ Error: {e}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
 

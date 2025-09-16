@@ -5,8 +5,9 @@
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -20,55 +21,56 @@ logger = logging.getLogger(__name__)
 # ENTITY DISCOVERY BASE CLASS
 # ============================================================================
 
+
 class EntityDiscovery(ABC):
     """Base class for framework-specific entity discovery."""
 
-    def __init__(self, framework_name: str, entities_dir: Optional[str] = None):
+    def __init__(self, framework_name: str, entities_dir: str | None = None):
         """Initialize entity discovery.
-        
+
         Args:
             framework_name: Name of the framework this discovery handles
             entities_dir: Directory to scan for entities (optional)
         """
         self.framework_name = framework_name
         self.entities_dir = entities_dir
-        self._entities: Dict[str, EntityInfo] = {}
-        self._loaded_objects: Dict[str, Any] = {}
+        self._entities: dict[str, EntityInfo] = {}
+        self._loaded_objects: dict[str, Any] = {}
 
     @abstractmethod
-    async def discover_entities(self) -> List[EntityInfo]:
+    async def discover_entities(self) -> list[EntityInfo]:
         """Framework-specific entity discovery logic.
-        
+
         Returns:
             List of discovered entities
         """
         ...
 
-    def get_entity_info(self, entity_id: str) -> Optional[EntityInfo]:
+    def get_entity_info(self, entity_id: str) -> EntityInfo | None:
         """Get entity metadata.
-        
+
         Args:
             entity_id: Entity identifier
-            
+
         Returns:
             Entity information or None if not found
         """
         return self._entities.get(entity_id)
 
-    def get_entity_object(self, entity_id: str) -> Optional[Any]:
+    def get_entity_object(self, entity_id: str) -> Any | None:
         """Get the actual loaded entity object.
-        
+
         Args:
             entity_id: Entity identifier
-            
+
         Returns:
             Entity object or None if not found
         """
         return self._loaded_objects.get(entity_id)
 
-    def list_entities(self) -> List[EntityInfo]:
+    def list_entities(self) -> list[EntityInfo]:
         """List all discovered entities.
-        
+
         Returns:
             List of all entity information
         """
@@ -76,7 +78,7 @@ class EntityDiscovery(ABC):
 
     def register_entity(self, entity_id: str, entity_info: EntityInfo, entity_object: Any) -> None:
         """Register an entity with both metadata and object.
-        
+
         Args:
             entity_id: Unique entity identifier
             entity_info: Entity metadata
@@ -88,10 +90,10 @@ class EntityDiscovery(ABC):
 
     def _load_env_file(self, env_path: Path) -> bool:
         """Load environment variables from .env file.
-        
+
         Args:
             env_path: Path to .env file
-            
+
         Returns:
             True if file was loaded successfully
         """
@@ -103,11 +105,11 @@ class EntityDiscovery(ABC):
 
     def _generate_entity_id(self, entity: Any, entity_type: str) -> str:
         """Generate entity ID with priority: name -> id -> class_name -> uuid.
-        
+
         Args:
             entity: Entity object
             entity_type: Type of entity (agent, workflow, etc.)
-            
+
         Returns:
             Generated entity ID
         """
@@ -134,16 +136,16 @@ class EntityDiscovery(ABC):
         # Priority 4: fallback to uuid
         return f"{entity_type}_{uuid.uuid4().hex[:8]}"
 
-    async def create_entity_info_from_object(self, entity_object: Any, entity_type: Optional[str] = None) -> EntityInfo:
+    async def create_entity_info_from_object(self, entity_object: Any, entity_type: str | None = None) -> EntityInfo:
         """Create EntityInfo from a raw entity object.
-        
+
         Base implementation with generic introspection. Framework-specific
         subclasses can override for custom logic.
-        
+
         Args:
             entity_object: Raw entity object to introspect
             entity_type: Optional entity type override
-            
+
         Returns:
             EntityInfo extracted from object
         """
@@ -171,8 +173,10 @@ class EntityDiscovery(ABC):
             tools=[],  # Base implementation provides empty tools list
             metadata={
                 "source": "object_introspection",
-                "class_name": entity_object.__class__.__name__ if hasattr(entity_object, "__class__") else str(type(entity_object))
-            }
+                "class_name": entity_object.__class__.__name__
+                if hasattr(entity_object, "__class__")
+                else str(type(entity_object)),
+            },
         )
 
 
@@ -180,22 +184,23 @@ class EntityDiscovery(ABC):
 # MESSAGE MAPPER BASE CLASS
 # ============================================================================
 
+
 class MessageMapper(ABC):
     """Base class for mapping framework messages/responses to OpenAI format."""
 
     def __init__(self) -> None:
         """Initialize message mapper."""
         self.sequence_counter = 0
-        self._conversion_contexts: Dict[int, Dict[str, Any]] = {}
+        self._conversion_contexts: dict[int, dict[str, Any]] = {}
 
     @abstractmethod
     async def convert_event(self, raw_event: Any, request: AgentFrameworkRequest) -> Sequence[Any]:
         """Convert a single framework event to OpenAI events.
-        
+
         Args:
             raw_event: Framework-specific event or message
             request: Original request for context
-            
+
         Returns:
             Sequence of OpenAI response stream events or compatible events
         """
@@ -204,22 +209,22 @@ class MessageMapper(ABC):
     @abstractmethod
     async def aggregate_to_response(self, events: Sequence[Any], request: AgentFrameworkRequest) -> OpenAIResponse:
         """Aggregate streaming events into final OpenAI response.
-        
+
         Args:
             events: Sequence of OpenAI stream events or compatible events
             request: Original request for context
-            
+
         Returns:
             Final aggregated OpenAI response
         """
         ...
 
-    def _get_or_create_context(self, request: AgentFrameworkRequest) -> Dict[str, Any]:
+    def _get_or_create_context(self, request: AgentFrameworkRequest) -> dict[str, Any]:
         """Get or create conversion context for this request.
-        
+
         Args:
             request: Request to get context for
-            
+
         Returns:
             Conversion context dictionary
         """
@@ -229,16 +234,16 @@ class MessageMapper(ABC):
                 "sequence_counter": 0,
                 "item_id": f"msg_{uuid.uuid4().hex[:8]}",
                 "content_index": 0,
-                "output_index": 0
+                "output_index": 0,
             }
         return self._conversion_contexts[request_key]
 
-    def _next_sequence(self, context: Dict[str, Any]) -> int:
+    def _next_sequence(self, context: dict[str, Any]) -> int:
         """Get next sequence number for events.
-        
+
         Args:
             context: Conversion context
-            
+
         Returns:
             Next sequence number
         """
@@ -250,8 +255,10 @@ class MessageMapper(ABC):
 # FRAMEWORK EXECUTOR BASE CLASS
 # ============================================================================
 
+
 class EntityNotFoundError(Exception):
     """Raised when an entity is not found."""
+
     pass
 
 
@@ -260,7 +267,7 @@ class FrameworkExecutor(ABC):
 
     def __init__(self, entity_discovery: EntityDiscovery, message_mapper: MessageMapper):
         """Initialize framework executor.
-        
+
         Args:
             entity_discovery: Entity discovery instance
             message_mapper: Message mapper instance
@@ -272,11 +279,11 @@ class FrameworkExecutor(ABC):
     @abstractmethod
     async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
         """Execute the entity and yield raw framework events.
-        
+
         Args:
             entity_id: ID of entity to execute
             request: Request to execute
-            
+
         Yields:
             Raw framework events/messages
         """
@@ -284,10 +291,10 @@ class FrameworkExecutor(ABC):
 
     async def execute_streaming(self, request: AgentFrameworkRequest) -> AsyncGenerator[ResponseStreamEvent, None]:
         """Execute request and stream results in OpenAI format.
-        
+
         Args:
             request: Request to execute
-            
+
         Yields:
             OpenAI response stream events
         """
@@ -314,10 +321,10 @@ class FrameworkExecutor(ABC):
 
     async def execute_sync(self, request: AgentFrameworkRequest) -> OpenAIResponse:
         """Execute request synchronously and return complete response.
-        
+
         Args:
             request: Request to execute
-            
+
         Returns:
             Final aggregated OpenAI response
         """
@@ -327,9 +334,9 @@ class FrameworkExecutor(ABC):
         # Aggregate into final response
         return await self.message_mapper.aggregate_to_response(events, request)
 
-    async def discover_entities(self) -> List[EntityInfo]:
+    async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
-        
+
         Returns:
             List of discovered entities
         """
@@ -337,13 +344,13 @@ class FrameworkExecutor(ABC):
 
     def get_entity_info(self, entity_id: str) -> EntityInfo:
         """Get entity information.
-        
+
         Args:
             entity_id: Entity identifier
-            
+
         Returns:
             Entity information
-            
+
         Raises:
             EntityNotFoundError: If entity is not found
         """

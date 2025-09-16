@@ -3,9 +3,10 @@
 """Simplified tracing integration for Agent Framework Server."""
 
 import logging
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Generator, List, Optional, Sequence
+from typing import Any
 
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 class SimpleTraceCollector(SpanExporter):
     """Simple trace collector that captures spans for direct yielding."""
 
-    def __init__(self, session_id: Optional[str] = None, entity_id: Optional[str] = None) -> None:
+    def __init__(self, session_id: str | None = None, entity_id: str | None = None) -> None:
         """Initialize trace collector.
 
         Args:
@@ -26,7 +27,7 @@ class SimpleTraceCollector(SpanExporter):
         """
         self.session_id = session_id
         self.entity_id = entity_id
-        self.collected_events: List[ResponseTraceEvent] = []
+        self.collected_events: list[ResponseTraceEvent] = []
 
     def export(self, spans: Sequence[Any]) -> SpanExportResult:
         """Collect spans as trace events.
@@ -56,9 +57,9 @@ class SimpleTraceCollector(SpanExporter):
         """Force flush spans (no-op for simple collection)."""
         return True
 
-    def get_pending_events(self) -> List[ResponseTraceEvent]:
+    def get_pending_events(self) -> list[ResponseTraceEvent]:
         """Get and clear pending trace events.
-        
+
         Returns:
             List of collected trace events, clearing the internal list
         """
@@ -66,7 +67,7 @@ class SimpleTraceCollector(SpanExporter):
         self.collected_events.clear()
         return events
 
-    def _convert_span_to_trace_event(self, span: Any) -> Optional[ResponseTraceEvent]:
+    def _convert_span_to_trace_event(self, span: Any) -> ResponseTraceEvent | None:
         """Convert OpenTelemetry span to ResponseTraceEvent.
 
         Args:
@@ -111,11 +112,7 @@ class SimpleTraceCollector(SpanExporter):
             if hasattr(span, "status") and span.status.status_code.name == "ERROR":
                 trace_data["error"] = span.status.description or "Unknown error"
 
-            return ResponseTraceEvent(
-                type="trace_event",
-                data=trace_data,
-                timestamp=datetime.now().isoformat()
-            )
+            return ResponseTraceEvent(type="trace_event", data=trace_data, timestamp=datetime.now().isoformat())
 
         except Exception as e:
             logger.warning(f"Failed to convert span {getattr(span, 'name', 'unknown')}: {e}")
@@ -123,13 +120,15 @@ class SimpleTraceCollector(SpanExporter):
 
 
 @contextmanager
-def capture_traces(session_id: Optional[str] = None, entity_id: Optional[str] = None) -> Generator[SimpleTraceCollector, None, None]:
+def capture_traces(
+    session_id: str | None = None, entity_id: str | None = None
+) -> Generator[SimpleTraceCollector, None, None]:
     """Context manager to capture traces during execution.
-    
+
     Args:
         session_id: Session identifier for context
         entity_id: Entity identifier for context
-        
+
     Yields:
         SimpleTraceCollector instance to get trace events from
     """

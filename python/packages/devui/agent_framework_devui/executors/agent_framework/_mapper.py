@@ -5,8 +5,9 @@
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Dict, List, Sequence, Union
+from typing import Any, Union
 
 from ...models import (
     AgentFrameworkRequest,
@@ -31,7 +32,13 @@ from .._base import MessageMapper
 logger = logging.getLogger(__name__)
 
 # Type alias for all possible event types
-EventType = Union[ResponseStreamEvent, ResponseWorkflowEventComplete, ResponseFunctionResultComplete, ResponseTraceEventComplete, ResponseUsageEventComplete]
+EventType = Union[
+    ResponseStreamEvent,
+    ResponseWorkflowEventComplete,
+    ResponseFunctionResultComplete,
+    ResponseTraceEventComplete,
+    ResponseUsageEventComplete,
+]
 
 
 class AgentFrameworkMessageMapper(MessageMapper):
@@ -54,16 +61,16 @@ class AgentFrameworkMessageMapper(MessageMapper):
             "HostedFileContent": self._map_hosted_file_content,
             "HostedVectorStoreContent": self._map_hosted_vector_store_content,
             "FunctionApprovalRequestContent": self._map_approval_request_content,
-            "FunctionApprovalResponseContent": self._map_approval_response_content
+            "FunctionApprovalResponseContent": self._map_approval_response_content,
         }
 
     async def convert_event(self, raw_event: Any, request: AgentFrameworkRequest) -> Sequence[Any]:
         """Convert a single Agent Framework event to OpenAI events.
-        
+
         Args:
             raw_event: Agent Framework event (AgentRunResponseUpdate, WorkflowEvent, etc.)
             request: Original request for context
-            
+
         Returns:
             List of OpenAI response stream events
         """
@@ -75,18 +82,20 @@ class AgentFrameworkMessageMapper(MessageMapper):
 
         # Handle ResponseTraceEvent objects from our trace collector
         from ...models import ResponseTraceEvent
+
         if isinstance(raw_event, ResponseTraceEvent):
-            return [ResponseTraceEventComplete(
-                type="response.trace.complete",
-                data=raw_event.data,
-                item_id=context["item_id"],
-                sequence_number=self._next_sequence(context)
-            )]
+            return [
+                ResponseTraceEventComplete(
+                    type="response.trace.complete",
+                    data=raw_event.data,
+                    item_id=context["item_id"],
+                    sequence_number=self._next_sequence(context),
+                )
+            ]
 
         # Import Agent Framework types for proper isinstance checks
         try:
-            from agent_framework import AgentRunResponseUpdate
-            from agent_framework import WorkflowEvent
+            from agent_framework import AgentRunResponseUpdate, WorkflowEvent
 
             # Handle agent updates (AgentRunResponseUpdate)
             if isinstance(raw_event, AgentRunResponseUpdate):
@@ -109,11 +118,11 @@ class AgentFrameworkMessageMapper(MessageMapper):
 
     async def aggregate_to_response(self, events: Sequence[Any], request: AgentFrameworkRequest) -> OpenAIResponse:
         """Aggregate streaming events into final OpenAI response.
-        
+
         Args:
             events: List of OpenAI stream events
             request: Original request for context
-            
+
         Returns:
             Final aggregated OpenAI response
         """
@@ -130,18 +139,14 @@ class AgentFrameworkMessageMapper(MessageMapper):
             full_content = "".join(content_parts)
 
             # Create proper OpenAI Response
-            response_output_text = ResponseOutputText(
-                type="output_text",
-                text=full_content,
-                annotations=[]
-            )
+            response_output_text = ResponseOutputText(type="output_text", text=full_content, annotations=[])
 
             response_output_message = ResponseOutputMessage(
                 type="message",
                 role="assistant",
                 content=[response_output_text],
                 id=f"msg_{uuid.uuid4().hex[:8]}",
-                status="completed"
+                status="completed",
             )
 
             # Create usage object
@@ -153,7 +158,7 @@ class AgentFrameworkMessageMapper(MessageMapper):
                 output_tokens=output_token_count,
                 total_tokens=input_token_count + output_token_count,
                 input_tokens_details=InputTokensDetails(cached_tokens=0),
-                output_tokens_details=OutputTokensDetails(reasoning_tokens=0)
+                output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
             )
 
             return OpenAIResponse(
@@ -165,24 +170,24 @@ class AgentFrameworkMessageMapper(MessageMapper):
                 usage=usage,
                 parallel_tool_calls=False,
                 tool_choice="none",
-                tools=[]
+                tools=[],
             )
 
         except Exception as e:
             logger.exception(f"Error aggregating response: {e}")
             return await self._create_error_response(str(e), request)
 
-    async def _convert_agent_update(self, update: Any, context: Dict[str, Any]) -> Sequence[Any]:
+    async def _convert_agent_update(self, update: Any, context: dict[str, Any]) -> Sequence[Any]:
         """Convert AgentRunResponseUpdate to OpenAI events using comprehensive content mapping.
-        
+
         Args:
             update: Agent run response update
             context: Conversion context
-            
+
         Returns:
             List of OpenAI response stream events
         """
-        events: List[Any] = []
+        events: list[Any] = []
 
         try:
             # Handle different update types
@@ -210,13 +215,13 @@ class AgentFrameworkMessageMapper(MessageMapper):
 
         return events
 
-    async def _convert_workflow_event(self, event: Any, context: Dict[str, Any]) -> Sequence[Any]:
+    async def _convert_workflow_event(self, event: Any, context: dict[str, Any]) -> Sequence[Any]:
         """Convert workflow event to structured OpenAI events.
-        
+
         Args:
             event: Workflow event
             context: Conversion context
-            
+
         Returns:
             List of OpenAI response stream events
         """
@@ -228,12 +233,12 @@ class AgentFrameworkMessageMapper(MessageMapper):
                     "event_type": event.__class__.__name__,
                     "data": getattr(event, "data", None),
                     "executor_id": getattr(event, "executor_id", None),
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 },
                 executor_id=getattr(event, "executor_id", None),
                 item_id=context["item_id"],
                 output_index=context["output_index"],
-                sequence_number=self._next_sequence(context)
+                sequence_number=self._next_sequence(context),
             )
 
             return [workflow_event]
@@ -244,11 +249,11 @@ class AgentFrameworkMessageMapper(MessageMapper):
 
     # Content type mappers - implementing our comprehensive mapping plan
 
-    async def _map_text_content(self, content: Any, context: Dict[str, Any]) -> ResponseTextDeltaEvent:
+    async def _map_text_content(self, content: Any, context: dict[str, Any]) -> ResponseTextDeltaEvent:
         """Map TextContent to ResponseTextDeltaEvent."""
         return self._create_text_delta_event(content.text, context)
 
-    async def _map_reasoning_content(self, content: Any, context: Dict[str, Any]) -> ResponseReasoningTextDeltaEvent:
+    async def _map_reasoning_content(self, content: Any, context: dict[str, Any]) -> ResponseReasoningTextDeltaEvent:
         """Map TextReasoningContent to ResponseReasoningTextDeltaEvent."""
         return ResponseReasoningTextDeltaEvent(
             type="response.reasoning_text.delta",
@@ -256,10 +261,12 @@ class AgentFrameworkMessageMapper(MessageMapper):
             item_id=context["item_id"],
             output_index=context["output_index"],
             content_index=context["content_index"],
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_function_call_content(self, content: Any, context: Dict[str, Any]) -> List[ResponseFunctionCallArgumentsDeltaEvent]:
+    async def _map_function_call_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> list[ResponseFunctionCallArgumentsDeltaEvent]:
         """Map FunctionCallContent to ResponseFunctionCallArgumentsDeltaEvent(s)."""
         events = []
 
@@ -268,17 +275,21 @@ class AgentFrameworkMessageMapper(MessageMapper):
 
         # Chunk the JSON string for streaming
         for chunk in self._chunk_json_string(args_str):
-            events.append(ResponseFunctionCallArgumentsDeltaEvent(
-                type="response.function_call_arguments.delta",
-                delta=chunk,
-                item_id=context["item_id"],
-                output_index=context["output_index"],
-                sequence_number=self._next_sequence(context)
-            ))
+            events.append(
+                ResponseFunctionCallArgumentsDeltaEvent(
+                    type="response.function_call_arguments.delta",
+                    delta=chunk,
+                    item_id=context["item_id"],
+                    output_index=context["output_index"],
+                    sequence_number=self._next_sequence(context),
+                )
+            )
 
         return events
 
-    async def _map_function_result_content(self, content: Any, context: Dict[str, Any]) -> ResponseFunctionResultComplete:
+    async def _map_function_result_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> ResponseFunctionResultComplete:
         """Map FunctionResultContent to structured event."""
         return ResponseFunctionResultComplete(
             type="response.function_result.complete",
@@ -287,25 +298,25 @@ class AgentFrameworkMessageMapper(MessageMapper):
                 "result": getattr(content, "result", None),
                 "status": "completed" if not getattr(content, "exception", None) else "failed",
                 "exception": str(getattr(content, "exception", None)) if getattr(content, "exception", None) else None,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             },
             call_id=getattr(content, "call_id", f"call_{uuid.uuid4().hex[:8]}"),
             item_id=context["item_id"],
             output_index=context["output_index"],
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_error_content(self, content: Any, context: Dict[str, Any]) -> ResponseErrorEvent:
+    async def _map_error_content(self, content: Any, context: dict[str, Any]) -> ResponseErrorEvent:
         """Map ErrorContent to ResponseErrorEvent."""
         return ResponseErrorEvent(
             type="error",
             message=getattr(content, "message", "Unknown error"),
             code=getattr(content, "error_code", None),
             param=None,
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_usage_content(self, content: Any, context: Dict[str, Any]) -> ResponseUsageEventComplete:
+    async def _map_usage_content(self, content: Any, context: dict[str, Any]) -> ResponseUsageEventComplete:
         """Map UsageContent to structured usage event."""
         # Store usage data in context for aggregation
         if "usage_data" not in context:
@@ -319,14 +330,14 @@ class AgentFrameworkMessageMapper(MessageMapper):
                 "total_tokens": getattr(content, "total_tokens", 0),
                 "completion_tokens": getattr(content, "completion_tokens", 0),
                 "prompt_tokens": getattr(content, "prompt_tokens", 0),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],
             output_index=context["output_index"],
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_data_content(self, content: Any, context: Dict[str, Any]) -> ResponseTraceEventComplete:
+    async def _map_data_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
         """Map DataContent to structured trace event."""
         return ResponseTraceEventComplete(
             type="response.trace.complete",
@@ -335,14 +346,14 @@ class AgentFrameworkMessageMapper(MessageMapper):
                 "data": getattr(content, "data", None),
                 "mime_type": getattr(content, "mime_type", "application/octet-stream"),
                 "size_bytes": len(str(getattr(content, "data", ""))) if getattr(content, "data", None) else 0,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],
             output_index=context["output_index"],
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_uri_content(self, content: Any, context: Dict[str, Any]) -> ResponseTraceEventComplete:
+    async def _map_uri_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
         """Map UriContent to structured trace event."""
         return ResponseTraceEventComplete(
             type="response.trace.complete",
@@ -350,42 +361,44 @@ class AgentFrameworkMessageMapper(MessageMapper):
                 "content_type": "uri",
                 "uri": getattr(content, "uri", ""),
                 "mime_type": getattr(content, "mime_type", "text/plain"),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],
             output_index=context["output_index"],
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_hosted_file_content(self, content: Any, context: Dict[str, Any]) -> ResponseTraceEventComplete:
+    async def _map_hosted_file_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
         """Map HostedFileContent to structured trace event."""
         return ResponseTraceEventComplete(
             type="response.trace.complete",
             data={
                 "content_type": "hosted_file",
                 "file_id": getattr(content, "file_id", "unknown"),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],
             output_index=context["output_index"],
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_hosted_vector_store_content(self, content: Any, context: Dict[str, Any]) -> ResponseTraceEventComplete:
+    async def _map_hosted_vector_store_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> ResponseTraceEventComplete:
         """Map HostedVectorStoreContent to structured trace event."""
         return ResponseTraceEventComplete(
             type="response.trace.complete",
             data={
                 "content_type": "hosted_vector_store",
                 "vector_store_id": getattr(content, "vector_store_id", "unknown"),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],
             output_index=context["output_index"],
-            sequence_number=self._next_sequence(context)
+            sequence_number=self._next_sequence(context),
         )
 
-    async def _map_approval_request_content(self, content: Any, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _map_approval_request_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Map FunctionApprovalRequestContent to custom event."""
         return {
             "type": "response.function_approval.requested",
@@ -393,14 +406,16 @@ class AgentFrameworkMessageMapper(MessageMapper):
             "function_call": {
                 "id": getattr(content.function_call, "call_id", "") if hasattr(content, "function_call") else "",
                 "name": getattr(content.function_call, "name", "") if hasattr(content, "function_call") else "",
-                "arguments": getattr(content.function_call, "arguments", {}) if hasattr(content, "function_call") else {}
+                "arguments": getattr(content.function_call, "arguments", {})
+                if hasattr(content, "function_call")
+                else {},
             },
             "item_id": context["item_id"],
             "output_index": context["output_index"],
-            "sequence_number": self._next_sequence(context)
+            "sequence_number": self._next_sequence(context),
         }
 
-    async def _map_approval_response_content(self, content: Any, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _map_approval_response_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Map FunctionApprovalResponseContent to custom event."""
         return {
             "type": "response.function_approval.responded",
@@ -408,12 +423,12 @@ class AgentFrameworkMessageMapper(MessageMapper):
             "approved": getattr(content, "approved", False),
             "item_id": context["item_id"],
             "output_index": context["output_index"],
-            "sequence_number": self._next_sequence(context)
+            "sequence_number": self._next_sequence(context),
         }
 
     # Helper methods
 
-    def _create_text_delta_event(self, text: str, context: Dict[str, Any]) -> ResponseTextDeltaEvent:
+    def _create_text_delta_event(self, text: str, context: dict[str, Any]) -> ResponseTextDeltaEvent:
         """Create a ResponseTextDeltaEvent."""
         return ResponseTextDeltaEvent(
             type="response.output_text.delta",
@@ -422,33 +437,29 @@ class AgentFrameworkMessageMapper(MessageMapper):
             content_index=context["content_index"],
             delta=text,
             sequence_number=self._next_sequence(context),
-            logprobs=[]
+            logprobs=[],
         )
 
-    async def _create_error_event(self, message: str, context: Dict[str, Any]) -> ResponseErrorEvent:
+    async def _create_error_event(self, message: str, context: dict[str, Any]) -> ResponseErrorEvent:
         """Create a ResponseErrorEvent."""
         return ResponseErrorEvent(
-            type="error",
-            message=message,
-            code=None,
-            param=None,
-            sequence_number=self._next_sequence(context)
+            type="error", message=message, code=None, param=None, sequence_number=self._next_sequence(context)
         )
 
-    async def _create_unknown_event(self, event_data: Any, context: Dict[str, Any]) -> ResponseStreamEvent:
+    async def _create_unknown_event(self, event_data: Any, context: dict[str, Any]) -> ResponseStreamEvent:
         """Create event for unknown event types."""
         text = f"Unknown event: {event_data!s}\\n"
         return self._create_text_delta_event(text, context)
 
-    async def _create_unknown_content_event(self, content: Any, context: Dict[str, Any]) -> ResponseStreamEvent:
+    async def _create_unknown_content_event(self, content: Any, context: dict[str, Any]) -> ResponseStreamEvent:
         """Create event for unknown content types."""
         content_type = content.__class__.__name__
         text = f"⚠️ Unknown content type: {content_type}\\n"
         return self._create_text_delta_event(text, context)
 
-    def _chunk_json_string(self, json_str: str, chunk_size: int = 50) -> List[str]:
+    def _chunk_json_string(self, json_str: str, chunk_size: int = 50) -> list[str]:
         """Chunk JSON string for streaming."""
-        return [json_str[i:i + chunk_size] for i in range(0, len(json_str), chunk_size)]
+        return [json_str[i : i + chunk_size] for i in range(0, len(json_str), chunk_size)]
 
     def _workflow_event_to_text(self, event: Any) -> str:
         """Convert workflow event to text representation."""
@@ -474,18 +485,14 @@ class AgentFrameworkMessageMapper(MessageMapper):
         """Create error response."""
         error_text = f"Error: {error_message}"
 
-        response_output_text = ResponseOutputText(
-            type="output_text",
-            text=error_text,
-            annotations=[]
-        )
+        response_output_text = ResponseOutputText(type="output_text", text=error_text, annotations=[])
 
         response_output_message = ResponseOutputMessage(
             type="message",
             role="assistant",
             content=[response_output_text],
             id=f"msg_{uuid.uuid4().hex[:8]}",
-            status="completed"
+            status="completed",
         )
 
         usage = ResponseUsage(
@@ -493,7 +500,7 @@ class AgentFrameworkMessageMapper(MessageMapper):
             output_tokens=len(error_text) // 4,
             total_tokens=len(error_text) // 4,
             input_tokens_details=InputTokensDetails(cached_tokens=0),
-            output_tokens_details=OutputTokensDetails(reasoning_tokens=0)
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
         )
 
         return OpenAIResponse(
@@ -505,5 +512,5 @@ class AgentFrameworkMessageMapper(MessageMapper):
             usage=usage,
             parallel_tool_calls=False,
             tool_choice="none",
-            tools=[]
+            tools=[],
         )

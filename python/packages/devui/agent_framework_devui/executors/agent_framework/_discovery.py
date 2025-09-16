@@ -7,7 +7,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 # Import concrete types for proper typing
 if TYPE_CHECKING:
@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 class AgentFrameworkEntityDiscovery(EntityDiscovery):
     """Discovery for Agent Framework entities - agents and workflows."""
 
-    async def discover_entities(self) -> List[EntityInfo]:
+    async def discover_entities(self) -> list[EntityInfo]:
         """Scan for Agent Framework entities.
-        
+
         Returns:
             List of discovered entities
         """
@@ -40,7 +40,7 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
     async def _scan_entities_directory(self, entities_dir: Path) -> None:
         """Scan the entities directory for Agent Framework entities.
-        
+
         Args:
             entities_dir: Directory to scan for entities
         """
@@ -69,7 +69,7 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
     async def _discover_entities_in_directory(self, dir_path: Path) -> None:
         """Discover entities in a directory using module import.
-        
+
         Args:
             dir_path: Directory containing entity
         """
@@ -100,7 +100,7 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
     async def _discover_entities_in_file(self, file_path: Path) -> None:
         """Discover entities in a single Python file.
-        
+
         Args:
             file_path: Python file to scan
         """
@@ -123,10 +123,10 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
     def _load_env_for_entity(self, entity_path: Path) -> bool:
         """Load .env file for an entity.
-        
+
         Args:
             entity_path: Path to entity directory
-            
+
         Returns:
             True if .env was loaded successfully
         """
@@ -144,12 +144,12 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
         return False
 
-    def _load_module_from_pattern(self, pattern: str) -> Optional[Any]:
+    def _load_module_from_pattern(self, pattern: str) -> Any | None:
         """Load module using import pattern.
-        
+
         Args:
             pattern: Import pattern to try
-            
+
         Returns:
             Loaded module or None if failed
         """
@@ -170,13 +170,13 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
             logger.warning(f"Error importing {pattern}: {e}")
             return None
 
-    def _load_module_from_file(self, file_path: Path, module_name: str) -> Optional[Any]:
+    def _load_module_from_file(self, file_path: Path, module_name: str) -> Any | None:
         """Load module directly from file path.
-        
+
         Args:
             file_path: Path to Python file
             module_name: Name to assign to module
-            
+
         Returns:
             Loaded module or None if failed
         """
@@ -196,14 +196,14 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
             logger.warning(f"Error loading module from {file_path}: {e}")
             return None
 
-    async def _find_entities_in_module(self, module: Any, base_id: str, module_path: str) -> List[str]:
+    async def _find_entities_in_module(self, module: Any, base_id: str, module_path: str) -> list[str]:
         """Find agent and workflow entities in a loaded module.
-        
+
         Args:
             module: Loaded Python module
             base_id: Base identifier for entities
             module_path: Path to module for metadata
-            
+
         Returns:
             List of entity IDs that were found and registered
         """
@@ -228,11 +228,11 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
     def _is_valid_entity(self, obj: Any, expected_type: str) -> bool:
         """Check if object is a valid agent or workflow using duck typing.
-        
+
         Args:
             obj: Object to validate
             expected_type: Expected type ("agent" or "workflow")
-            
+
         Returns:
             True if object is valid for the expected type
         """
@@ -244,10 +244,10 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
     def _is_valid_agent(self, obj: Any) -> bool:
         """Check if object is a valid Agent Framework agent.
-        
+
         Args:
             obj: Object to validate
-            
+
         Returns:
             True if object appears to be a valid agent
         """
@@ -255,6 +255,7 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
             # Try to import AgentProtocol for proper type checking
             try:
                 from agent_framework import AgentProtocol
+
                 if isinstance(obj, AgentProtocol):
                     return True
             except ImportError:
@@ -271,24 +272,19 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
     def _is_valid_workflow(self, obj: Any) -> bool:
         """Check if object is a valid Agent Framework workflow.
-        
+
         Args:
             obj: Object to validate
-            
+
         Returns:
             True if object appears to be a valid workflow
         """
         # Check for workflow - must have run_stream method and executors
-        if hasattr(obj, "run_stream"):
-            # Additional workflow-specific checks
-            if hasattr(obj, "executors") or hasattr(obj, "get_executors_list"):
-                return True
-
-        return False
+        return hasattr(obj, "run_stream") and (hasattr(obj, "executors") or hasattr(obj, "get_executors_list"))
 
     async def _register_entity_from_object(self, entity_id: str, obj: Any, obj_type: str, module_path: str) -> None:
         """Register an entity from a live object.
-        
+
         Args:
             entity_id: Unique entity identifier
             obj: Entity object
@@ -302,7 +298,7 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
             tools = await self._extract_tools_from_object(obj, obj_type)
 
             # Create EntityInfo
-            tools_union: Optional[List[Union[str, Dict[str, Any]]]] = None
+            tools_union: list[str | dict[str, Any]] | None = None
             if tools:
                 tools_union = [tool for tool in tools]
 
@@ -318,8 +314,8 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
                     "entity_type": obj_type,
                     "source": "module_import",
                     "has_run_stream": hasattr(obj, "run_stream"),
-                    "class_name": obj.__class__.__name__ if hasattr(obj, "__class__") else str(type(obj))
-                }
+                    "class_name": obj.__class__.__name__ if hasattr(obj, "__class__") else str(type(obj)),
+                },
             )
 
             # Register the entity
@@ -328,13 +324,13 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
         except Exception as e:
             logger.error(f"Error registering entity {entity_id}: {e}")
 
-    async def _extract_tools_from_object(self, obj: Any, obj_type: str) -> List[str]:
+    async def _extract_tools_from_object(self, obj: Any, obj_type: str) -> list[str]:
         """Extract tool/executor names from a live object.
-        
+
         Args:
             obj: Entity object
             obj_type: Type of entity
-            
+
         Returns:
             List of tool/executor names
         """
@@ -381,15 +377,15 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
         return tools
 
-    async def create_entity_info_from_object(self, entity_object: Any, entity_type: Optional[str] = None) -> EntityInfo:
+    async def create_entity_info_from_object(self, entity_object: Any, entity_type: str | None = None) -> EntityInfo:
         """Create EntityInfo from Agent Framework entity object.
-        
+
         Override of base method with Agent Framework specific logic.
-        
+
         Args:
             entity_object: Agent Framework entity object
             entity_type: Optional entity type override
-            
+
         Returns:
             EntityInfo with Agent Framework specific metadata
         """
@@ -423,7 +419,9 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
             start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
             metadata={
                 "source": "agent_framework_object",
-                "class_name": entity_object.__class__.__name__ if hasattr(entity_object, "__class__") else str(type(entity_object)),
+                "class_name": entity_object.__class__.__name__
+                if hasattr(entity_object, "__class__")
+                else str(type(entity_object)),
                 "has_run_stream": hasattr(entity_object, "run_stream"),
-            }
+            },
         )

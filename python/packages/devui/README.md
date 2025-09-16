@@ -23,6 +23,10 @@ from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_devui import serve
 
+def get_weather(location: str) -> str:
+    """Get weather for a location."""
+    return f"Weather in {location}: 72°F and sunny"
+
 # Create your agent
 agent = ChatAgent(
     name="WeatherAgent",
@@ -57,11 +61,13 @@ For convenience, you can interact with the agents/workflows using the standard O
 # Standard OpenAI format
 curl -X POST http://localhost:8080/v1/responses \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent-framework",
-    "input": "Hello world",
-    "extra_body": {"entity_id": "weather_agent"}
-  }'
+  -d @- << 'EOF'
+{
+  "model": "agent-framework", 
+  "input": "Hello world",
+  "extra_body": {"entity_id": "weather_agent"}
+}
+EOF
 ```
 
 Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/executors/agent_framework/_mapper.py`. See the mapping table below:

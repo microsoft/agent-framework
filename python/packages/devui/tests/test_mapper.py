@@ -1,12 +1,11 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Clean, comprehensive mapper tests - minimal and self-contained."""
+"""Clean focused tests for message mapping functionality."""
 
 import asyncio
 import sys
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 import pytest
 
@@ -28,23 +27,17 @@ def create_test_content(content_type: str, **kwargs: Any) -> Any:
         return FunctionCallContent(
             call_id=kwargs.get("call_id", "test_call_id"),
             name=kwargs.get("name", "test_func"),
-            arguments=kwargs.get("arguments", {"param": "value"})
+            arguments=kwargs.get("arguments", {"param": "value"}),
         )
     if content_type == "error":
-        return ErrorContent(
-            message=kwargs.get("message", "Test error"),
-            error_code=kwargs.get("code", "test_error")
-        )
+        return ErrorContent(message=kwargs.get("message", "Test error"), error_code=kwargs.get("code", "test_error"))
     raise ValueError(f"Unknown content type: {content_type}")
 
 
-def create_test_agent_update(contents: List[Any]) -> Any:
+def create_test_agent_update(contents: list[Any]) -> Any:
     """Create test AgentRunResponseUpdate - NO fake attributes!"""
     return AgentRunResponseUpdate(
-        contents=contents,
-        role=Role.ASSISTANT,
-        message_id="test_msg",
-        response_id="test_resp"
+        contents=contents, role=Role.ASSISTANT, message_id="test_msg", response_id="test_resp"
     )
 
 
@@ -56,10 +49,7 @@ def mapper() -> AgentFrameworkMessageMapper:
 @pytest.fixture
 def test_request() -> AgentFrameworkRequest:
     return AgentFrameworkRequest(
-        model="agent-framework",
-        input="Test input",
-        stream=True,
-        extra_body={"entity_id": "test_agent"}
+        model="agent-framework", input="Test input", stream=True, extra_body={"entity_id": "test_agent"}
     )
 
 
@@ -89,9 +79,7 @@ async def test_critical_isinstance_bug_detection(
 
 
 @pytest.mark.asyncio
-async def test_text_content_mapping(
-    mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest
-) -> None:
+async def test_text_content_mapping(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test TextContent mapping."""
     content = create_test_content("text", text="Hello, clean test!")
     update = create_test_agent_update([content])
@@ -104,15 +92,9 @@ async def test_text_content_mapping(
 
 
 @pytest.mark.asyncio
-async def test_function_call_mapping(
-    mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest
-) -> None:
+async def test_function_call_mapping(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test FunctionCallContent mapping."""
-    content = create_test_content(
-        "function_call",
-        name="test_func",
-        arguments={"location": "TestCity"}
-    )
+    content = create_test_content("function_call", name="test_func", arguments={"location": "TestCity"})
     update = create_test_agent_update([content])
 
     events = await mapper.convert_event(update, test_request)
@@ -126,9 +108,7 @@ async def test_function_call_mapping(
 
 
 @pytest.mark.asyncio
-async def test_error_content_mapping(
-    mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest
-) -> None:
+async def test_error_content_mapping(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test ErrorContent mapping."""
     content = create_test_content("error", message="Test error", code="test_code")
     update = create_test_agent_update([content])
@@ -142,14 +122,12 @@ async def test_error_content_mapping(
 
 
 @pytest.mark.asyncio
-async def test_mixed_content_types(
-    mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest
-) -> None:
+async def test_mixed_content_types(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test multiple content types together."""
     contents = [
         create_test_content("text", text="Starting..."),
         create_test_content("function_call", name="process", arguments={"data": "test"}),
-        create_test_content("text", text="Done!")
+        create_test_content("text", text="Done!"),
     ]
     update = create_test_agent_update(contents)
 
@@ -190,14 +168,9 @@ async def test_unknown_content_fallback(
 if __name__ == "__main__":
     # Simple test runner
     async def run_all_tests() -> None:
-        print("🧪 Running clean mapper tests...")
-
         mapper = AgentFrameworkMessageMapper()
         test_request = AgentFrameworkRequest(
-            model="agent-framework",
-            input="Test",
-            stream=True,
-            extra_body={"entity_id": "test"}
+            model="agent-framework", input="Test", stream=True, extra_body={"entity_id": "test"}
         )
 
         tests = [
@@ -210,16 +183,11 @@ if __name__ == "__main__":
         ]
 
         passed = 0
-        for test_name, test_func in tests:
+        for _test_name, test_func in tests:
             try:
                 await test_func(mapper, test_request)
-                print(f"✅ {test_name}")
                 passed += 1
-            except Exception as e:
-                print(f"❌ {test_name}: {e}")
-
-        print(f"\n🎯 {passed}/{len(tests)} tests passed")
-        if passed == len(tests):
-            print("🎉 All tests passed!")
+            except Exception:
+                pass
 
     asyncio.run(run_all_tests())

@@ -4,7 +4,7 @@
 
 import logging
 import webbrowser
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ._server import DevServer
 from .models import AgentFrameworkRequest, OpenAIError, OpenAIResponse, ResponseStreamEvent
@@ -16,16 +16,16 @@ __version__ = "0.1.0"
 
 
 def serve(
-    entities: Optional[list[Any]] = None,
-    entities_dir: Optional[str] = None,
+    entities: list[Any] | None = None,
+    entities_dir: str | None = None,
     port: int = 8080,
     host: str = "127.0.0.1",
     auto_open: bool = False,
-    cors_origins: Optional[list[str]] = None,
-    ui_enabled: bool = True
+    cors_origins: list[str] | None = None,
+    ui_enabled: bool = True,
 ) -> None:
     """Launch Agent Framework DevUI with simple API.
-    
+
     Args:
         entities: List of entities for in-memory registration (IDs auto-generated)
         entities_dir: Directory to scan for entities
@@ -39,11 +39,7 @@ def serve(
 
     # Create server with direct parameters
     server = DevServer(
-        entities_dir=entities_dir,
-        port=port,
-        host=host,
-        cors_origins=cors_origins,
-        ui_enabled=ui_enabled
+        entities_dir=entities_dir, port=port, host=host, cors_origins=cors_origins, ui_enabled=ui_enabled
     )
 
     # Register in-memory entities if provided
@@ -55,12 +51,15 @@ def serve(
     app = server.get_app()
 
     if auto_open:
+
         def open_browser() -> None:
             import time
+
             time.sleep(1.5)
             webbrowser.open(f"http://{host}:{port}")
 
         import threading
+
         threading.Thread(target=open_browser, daemon=True).start()
 
     logger.info(f"Starting Agent Framework DevUI on {host}:{port}")
@@ -70,6 +69,7 @@ def serve(
 def main() -> None:
     """CLI entry point for devui command."""
     from ._cli import main as cli_main
+
     cli_main()
 
 
@@ -83,5 +83,5 @@ __all__ = [
     "OpenAIResponse",
     "ResponseStreamEvent",
     "main",
-    "serve"
+    "serve",
 ]

@@ -1,12 +1,15 @@
+# Copyright (c) Microsoft. All rights reserved.
 """Agent Framework executor implementation."""
 
 import json
 import logging
 import os
 import uuid
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from agent_framework import AgentThread
+
 from ..._tracing import capture_traces
 from ...models import AgentFrameworkRequest
 from .._base import EntityNotFoundError, FrameworkExecutor
@@ -21,7 +24,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
 
     def __init__(self, entity_discovery: AgentFrameworkEntityDiscovery, message_mapper: AgentFrameworkMessageMapper):
         """Initialize Agent Framework executor.
-        
+
         Args:
             entity_discovery: Entity discovery instance
             message_mapper: Message mapper instance
@@ -29,10 +32,10 @@ class AgentFrameworkExecutor(FrameworkExecutor):
         super().__init__(entity_discovery, message_mapper)
         self._setup_tracing_provider()
         self._setup_agent_framework_tracing()
-        
+
         # Minimal thread storage - no metadata needed
-        self.thread_storage: Dict[str, AgentThread] = {}
-        self.agent_threads: Dict[str, List[str]] = {}  # agent_id -> thread_ids
+        self.thread_storage: dict[str, AgentThread] = {}
+        self.agent_threads: dict[str, list[str]] = {}  # agent_id -> thread_ids
 
     def _setup_tracing_provider(self) -> None:
         """Set up our own TracerProvider so we can add processors."""
@@ -65,11 +68,8 @@ class AgentFrameworkExecutor(FrameworkExecutor):
         if otlp_endpoint:
             try:
                 from agent_framework.telemetry import setup_telemetry
-                setup_telemetry(
-                    enable_otel=True,
-                    enable_sensitive_data=True,
-                    otlp_endpoint=otlp_endpoint
-                )
+
+                setup_telemetry(enable_otel=True, enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
                 logger.info(f"Enabled Agent Framework telemetry with endpoint: {otlp_endpoint}")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework tracing: {e}")
@@ -81,172 +81,172 @@ class AgentFrameworkExecutor(FrameworkExecutor):
         """Create new thread for agent."""
         thread_id = f"thread_{uuid.uuid4().hex[:8]}"
         thread = AgentThread()
-        
+
         self.thread_storage[thread_id] = thread
-        
+
         if agent_id not in self.agent_threads:
             self.agent_threads[agent_id] = []
         self.agent_threads[agent_id].append(thread_id)
-        
+
         return thread_id
-    
-    def get_thread(self, thread_id: str) -> Optional[AgentThread]:
+
+    def get_thread(self, thread_id: str) -> AgentThread | None:
         """Get AgentThread by ID."""
         return self.thread_storage.get(thread_id)
-    
-    def list_threads_for_agent(self, agent_id: str) -> List[str]:
+
+    def list_threads_for_agent(self, agent_id: str) -> list[str]:
         """List thread IDs for agent."""
         return self.agent_threads.get(agent_id, [])
-    
-    def get_agent_for_thread(self, thread_id: str) -> Optional[str]:
+
+    def get_agent_for_thread(self, thread_id: str) -> str | None:
         """Find which agent owns this thread."""
         for agent_id, thread_ids in self.agent_threads.items():
             if thread_id in thread_ids:
                 return agent_id
         return None
-    
+
     def delete_thread(self, thread_id: str) -> bool:
         """Delete thread."""
         if thread_id not in self.thread_storage:
             return False
-            
+
         # Remove from agent mapping
-        for agent_id, thread_ids in self.agent_threads.items():
+        for _agent_id, thread_ids in self.agent_threads.items():
             if thread_id in thread_ids:
                 thread_ids.remove(thread_id)
                 break
-        
+
         del self.thread_storage[thread_id]
         return True
-    
-    async def get_thread_messages(self, thread_id: str) -> List[Dict]:
+
+    async def get_thread_messages(self, thread_id: str) -> list[dict]:
         """Get messages from a thread's message store, filtering for UI display."""
         thread = self.get_thread(thread_id)
         if not thread or not thread.message_store:
             return []
-        
+
         try:
             # Get AgentFramework ChatMessage objects from thread
             af_messages = await thread.message_store.list_messages()
-            
+
             ui_messages = []
             for i, af_msg in enumerate(af_messages):
                 # Extract role value (handle enum)
-                role = af_msg.role.value if hasattr(af_msg.role, 'value') else str(af_msg.role)
-                
+                role = af_msg.role.value if hasattr(af_msg.role, "value") else str(af_msg.role)
+
                 # Skip tool/function messages - only show user and assistant text
                 if role not in ["user", "assistant"]:
                     continue
-                
+
                 # Extract user-facing text content only
                 text_content = self._extract_display_text(af_msg.contents)
-                
+
                 # Skip messages with no displayable text
                 if not text_content:
                     continue
-                
+
                 ui_message = {
                     "id": af_msg.message_id or f"restored-{i}",
                     "role": role,
                     "contents": [{"type": "text", "text": text_content}],
                     "timestamp": __import__("datetime").datetime.now().isoformat(),
                     "author_name": af_msg.author_name,
-                    "message_id": af_msg.message_id
+                    "message_id": af_msg.message_id,
                 }
-                
+
                 ui_messages.append(ui_message)
-            
+
             logger.info(f"Restored {len(ui_messages)} display messages for thread {thread_id}")
             return ui_messages
-            
+
         except Exception as e:
             logger.error(f"Error getting thread messages: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return []
-    
-    def _extract_display_text(self, contents: List) -> str:
+
+    def _extract_display_text(self, contents: list) -> str:
         """Extract user-facing text from message contents, filtering out internal mechanics."""
         text_parts = []
-        
+
         for content in contents:
-            content_type = getattr(content, 'type', None)
-            
+            content_type = getattr(content, "type", None)
+
             # Only include text content for display
             if content_type == "text":
-                text = getattr(content, 'text', '')
-                
+                text = getattr(content, "text", "")
+
                 # Handle double-encoded JSON from user messages
                 if text.startswith('{"role":'):
                     try:
                         import json
+
                         parsed = json.loads(text)
-                        if parsed.get('contents'):
-                            for sub_content in parsed['contents']:
-                                if sub_content.get('type') == 'text':
-                                    text_parts.append(sub_content.get('text', ''))
-                    except:
+                        if parsed.get("contents"):
+                            for sub_content in parsed["contents"]:
+                                if sub_content.get("type") == "text":
+                                    text_parts.append(sub_content.get("text", ""))
+                    except Exception:
                         text_parts.append(text)  # Fallback to raw text
                 else:
                     text_parts.append(text)
-            
+
             # Skip function_call, function_result, and other internal content types
-        
-        return ' '.join(text_parts).strip()
-    
-    async def serialize_thread(self, thread_id: str) -> Optional[Dict]:
+
+        return " ".join(text_parts).strip()
+
+    async def serialize_thread(self, thread_id: str) -> dict | None:
         """Serialize thread state for persistence."""
         thread = self.get_thread(thread_id)
         if not thread:
             return None
-        
+
         try:
             # Use AgentThread's built-in serialization
             serialized_state = await thread.serialize()
-            
+
             # Add our metadata
             agent_id = self.get_agent_for_thread(thread_id)
-            serialized_state["metadata"] = {
-                "agent_id": agent_id,
-                "thread_id": thread_id
-            }
-            
+            serialized_state["metadata"] = {"agent_id": agent_id, "thread_id": thread_id}
+
             return serialized_state
-            
+
         except Exception as e:
             logger.error(f"Error serializing thread {thread_id}: {e}")
             return None
-    
-    async def deserialize_thread(self, thread_id: str, agent_id: str, serialized_state: Dict) -> bool:
+
+    async def deserialize_thread(self, thread_id: str, agent_id: str, serialized_state: dict) -> bool:
         """Deserialize thread state from persistence."""
         try:
             # Create new thread
             thread = AgentThread()
-            
+
             # Use AgentThread's built-in deserialization
             from agent_framework._threads import deserialize_thread_state
+
             await deserialize_thread_state(thread, serialized_state)
-            
+
             # Store the restored thread
             self.thread_storage[thread_id] = thread
-            
+
             if agent_id not in self.agent_threads:
                 self.agent_threads[agent_id] = []
             self.agent_threads[agent_id].append(thread_id)
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error deserializing thread {thread_id}: {e}")
             return False
 
     async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
         """Execute the entity and yield raw Agent Framework events plus trace events.
-        
+
         Args:
             entity_id: ID of entity to execute
             request: Request to execute
-            
+
         Yields:
             Raw Agent Framework events and trace events
         """
@@ -283,14 +283,16 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             # Yield error event
             yield {"type": "error", "message": str(e), "entity_id": entity_id}
 
-    async def _execute_agent(self, agent: Any, request: AgentFrameworkRequest, trace_collector: Any) -> AsyncGenerator[Any, None]:
+    async def _execute_agent(
+        self, agent: Any, request: AgentFrameworkRequest, trace_collector: Any
+    ) -> AsyncGenerator[Any, None]:
         """Execute Agent Framework agent with trace collection and optional thread support.
-        
+
         Args:
             agent: Agent object to execute
             request: Request to execute
             trace_collector: Trace collector to get events from
-            
+
         Yields:
             Agent update events and trace events
         """
@@ -332,14 +334,16 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             logger.error(f"Error in agent execution: {e}")
             yield {"type": "error", "message": f"Agent execution error: {e!s}"}
 
-    async def _execute_workflow(self, workflow: Any, request: AgentFrameworkRequest, trace_collector: Any) -> AsyncGenerator[Any, None]:
+    async def _execute_workflow(
+        self, workflow: Any, request: AgentFrameworkRequest, trace_collector: Any
+    ) -> AsyncGenerator[Any, None]:
         """Execute Agent Framework workflow with trace collection.
-        
+
         Args:
             workflow: Workflow object to execute
             request: Request to execute
             trace_collector: Trace collector to get events from
-            
+
         Yields:
             Workflow events and trace events
         """
@@ -372,10 +376,10 @@ class AgentFrameworkExecutor(FrameworkExecutor):
 
     def _extract_user_message(self, input_data: Any) -> str:
         """Extract user message from various input formats.
-        
+
         Args:
             input_data: Input data in various formats
-            
+
         Returns:
             Extracted user message string
         """
@@ -392,11 +396,11 @@ class AgentFrameworkExecutor(FrameworkExecutor):
 
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
         """Parse input based on workflow's expected input type.
-        
+
         Args:
             workflow: Workflow object
             raw_input: Raw input data
-            
+
         Returns:
             Parsed input appropriate for the workflow
         """
@@ -410,13 +414,13 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             logger.warning(f"Error parsing workflow input: {e}")
             return raw_input
 
-    def _parse_structured_workflow_input(self, workflow: Any, input_data: Dict[str, Any]) -> Any:
+    def _parse_structured_workflow_input(self, workflow: Any, input_data: dict[str, Any]) -> Any:
         """Parse structured input data for workflow execution.
-        
+
         Args:
             workflow: Workflow object
             input_data: Structured input data
-            
+
         Returns:
             Parsed input for workflow
         """
@@ -436,7 +440,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             input_type = message_types[0]
 
             # If input type is dict, return as-is
-            if input_type == dict:
+            if input_type is dict:
                 return input_data
 
             # Handle primitive types
@@ -447,7 +451,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
                     if "input" in input_data:
                         return input_type(input_data["input"])
                     if len(input_data) == 1:
-                        value = list(input_data.values())[0]
+                        value = next(iter(input_data.values()))
                         return input_type(value)
                     return input_data
                 except (ValueError, TypeError) as e:
@@ -477,11 +481,11 @@ class AgentFrameworkExecutor(FrameworkExecutor):
 
     def _parse_raw_workflow_input(self, workflow: Any, raw_input: str) -> Any:
         """Parse raw input string based on workflow's expected input type.
-        
+
         Args:
             workflow: Workflow object
             raw_input: Raw input string
-            
+
         Returns:
             Parsed input for workflow
         """
@@ -501,7 +505,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             input_type = message_types[0]
 
             # If input type is str, return as-is
-            if input_type == str:
+            if input_type is str:
                 return raw_input
 
             # If it's a Pydantic model, try to parse JSON
@@ -516,7 +520,8 @@ class AgentFrameworkExecutor(FrameworkExecutor):
                     for field in common_fields:
                         try:
                             return input_type(**{field: raw_input})
-                        except:
+                        except Exception as e:
+                            logger.debug(f"Failed to parse input using field '{field}': {e}")
                             continue
 
                     # Last resort: try default constructor

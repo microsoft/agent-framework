@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Spam Detection Workflow Sample for DevUI
+"""Spam Detection Workflow Sample for DevUI.
 
 The following sample demonstrates a comprehensive 5-step workflow with multiple executors
 that process, analyze, detect spam, and handle email messages. This workflow illustrates
@@ -16,6 +16,7 @@ Workflow Steps:
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from agent_framework import (
@@ -61,6 +62,7 @@ class SpamDetectorResponse:
     spam_reasons: list[str] | None = None
 
     def __post_init__(self):
+        """Initialize spam_reasons list if None."""
         if self.spam_reasons is None:
             self.spam_reasons = []
 
@@ -79,7 +81,12 @@ class ProcessingResult:
 
 
 class EmailRequest(BaseModel):
-    email: str = Field(description="The email message to be processed.", default="Hi there, are you interested in our new urgent offer today? Click here!")
+    """Request model for email processing."""
+
+    email: str = Field(
+        description="The email message to be processed.",
+        default="Hi there, are you interested in our new urgent offer today? Click here!",
+    )
 
 
 class EmailPreprocessor(Executor):
@@ -258,7 +265,7 @@ class FinalProcessor(Executor):
         await asyncio.sleep(1.5)  # Simulate final processing time
 
         total_time = result.processing_time + 1.5
-        
+
         # Include classification details in completion message
         classification = "SPAM" if result.is_spam else "LEGITIMATE"
         reasons = ", ".join(result.spam_reasons) if result.spam_reasons else "none"
@@ -308,29 +315,31 @@ workflow = (
 
 async def main():
     """Main function to run the workflow (for testing outside DevUI)."""
-    # Test cases with varying complexity
-    test_messages = [ 
-        "URGENT: You have won $1,000,000! Click here now to claim your prize!"
-    ]
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger = logging.getLogger(__name__)
 
-    print("🚀 Testing Enhanced 5-Step Spam Detection Workflow")
-    print("=" * 60)
+    # Test cases with varying complexity
+    test_messages = ["URGENT: You have won $1,000,000! Click here now to claim your prize!"]
+
+    logger.info("🚀 Testing Enhanced 5-Step Spam Detection Workflow")
+    logger.info("=" * 60)
 
     for i, message in enumerate(test_messages, 1):
-        print(f"\n📨 Test Case {i}: '{message}'")
-        print("-" * 60)
+        logger.info(f"\n📨 Test Case {i}: '{message}'")
+        logger.info("-" * 60)
 
         try:
             email_request = EmailRequest(email=message)
             async for event in workflow.run_stream(email_request):
                 if isinstance(event, WorkflowCompletedEvent):
-                    print(f"\n🎯 Final Result: {event.data}")
+                    logger.info(f"\n🎯 Final Result: {event.data}")
                 else:
-                    print(f"📋 Event: {event}")
+                    logger.info(f"📋 Event: {event}")
         except Exception as e:
-            print(f"❌ Error: {e}")
+            logger.error(f"❌ Error: {e}")
 
-        print("\n" + "=" * 60)
+        logger.info("\n" + "=" * 60)
 
         # Add a small delay between test cases for readability
         await asyncio.sleep(0.5)

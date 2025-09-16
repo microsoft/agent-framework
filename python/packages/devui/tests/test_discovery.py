@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft. All rights reserved.
 
 """Focused tests for entity discovery functionality."""
@@ -69,7 +68,7 @@ if __name__ == "__main__":
 class WeatherAgent:
     name = "Weather Agent"
     description = "Gets weather information"
-    
+
     def run_stream(self, input_str):
         return f"Weather in {input_str}"
 """)
@@ -79,18 +78,12 @@ class WeatherAgent:
 class DataWorkflow:
     name = "Data Processing Workflow"
     description = "Processes data"
-    
+
     def run(self, data):
         return f"Processed {data}"
 """)
 
-            print("🔍 Testing entity discovery...")
-
             discovery = AgentFrameworkEntityDiscovery("agent_framework", str(temp_path))
-            entities = await discovery.discover_entities()
-
-            print(f"✅ Discovered {len(entities)} entities")
-            for entity in entities:
-                print(f"  - {entity.id} ({entity.type}): {entity.name}")
+            await discovery.discover_entities()
 
     asyncio.run(run_tests())

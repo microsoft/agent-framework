@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft. All rights reserved.
 
 """Example of using Agent Framework DevUI with in-memory agent registration.
@@ -6,7 +5,7 @@
 This demonstrates the simplest way to serve agents as OpenAI-compatible API endpoints.
 """
 
-from random import randint
+import logging
 from typing import Annotated
 
 from agent_framework import ChatAgent
@@ -20,8 +19,8 @@ def get_weather(
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    temperature = randint(10, 30)
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {temperature}°C."
+    temperature = 53
+    return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
 
 
 def get_time(
@@ -36,11 +35,18 @@ def get_time(
 
 def main():
     """Main function demonstrating in-memory agent registration."""
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger = logging.getLogger(__name__)
+
     # Create agents in code
     weather_agent = ChatAgent(
         name="weather-assistant",
         description="Provides weather information and time",
-        instructions="You are a helpful weather and time assistant. Use the available tools to provide accurate weather information and current time for any location.",
+        instructions=(
+            "You are a helpful weather and time assistant. Use the available tools to "
+            "provide accurate weather information and current time for any location."
+        ),
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-mini"),
         tools=[get_weather, get_time],
     )
@@ -55,8 +61,8 @@ def main():
     # Collect entities for serving
     entities = [weather_agent, simple_agent]
 
-    print("Starting DevUI on http://localhost:8090")
-    print("Entity IDs: agent_weather-assistant, agent_general-assistant")
+    logger.info("Starting DevUI on http://localhost:8090")
+    logger.info("Entity IDs: agent_weather-assistant, agent_general-assistant")
 
     # Launch server with auto-generated entity IDs
     serve(entities=entities, port=8090, auto_open=True)

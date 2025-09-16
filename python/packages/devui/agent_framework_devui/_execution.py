@@ -5,9 +5,10 @@
 import logging
 import time
 import uuid
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, Union
 
 from opentelemetry import trace
 
@@ -15,10 +16,10 @@ from .executors._base import FrameworkExecutor  # Import the correct executor ba
 from .models import AgentFrameworkRequest, OpenAIResponse, ResponseStreamEvent, ResponseTraceEvent
 
 # Type aliases for better readability
-SessionData = Dict[str, Any]
-RequestRecord = Dict[str, Any]
-SessionSummary = Dict[str, Any]
-TracingAttributes = Dict[str, Union[str, int, float, bool]]
+SessionData = dict[str, Any]
+RequestRecord = dict[str, Any]
+SessionSummary = dict[str, Any]
+TracingAttributes = dict[str, Union[str, int, float, bool]]
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +27,16 @@ logger = logging.getLogger(__name__)
 class ExecutionEngine:
     """Execution engine with simplified tracing and session management."""
 
-    def __init__(self, tracing_enabled: bool = False, otlp_endpoint: Optional[str] = None) -> None:
+    def __init__(self, tracing_enabled: bool = False, otlp_endpoint: str | None = None) -> None:
         """Initialize the execution engine.
-        
+
         Args:
             tracing_enabled: Whether to enable tracing
             otlp_endpoint: OTLP endpoint for tracing
         """
         self.tracing_enabled = tracing_enabled
         self.otlp_endpoint = otlp_endpoint
-        self.sessions: Dict[str, SessionData] = {}
+        self.sessions: dict[str, SessionData] = {}
 
         # Setup tracing
         self._setup_tracing()
@@ -48,6 +49,7 @@ class ExecutionEngine:
 
         # Set Agent Framework environment variables
         import os
+
         os.environ["AGENT_FRAMEWORK_ENABLE_OTEL"] = "1"
         if self.otlp_endpoint:
             os.environ["AGENT_FRAMEWORK_OTLP_ENDPOINT"] = self.otlp_endpoint
@@ -55,12 +57,12 @@ class ExecutionEngine:
             os.environ["AGENT_FRAMEWORK_OTLP_ENDPOINT"] = "http://localhost:4317"  # Dummy
         logger.info("Enabled Agent Framework automatic telemetry")
 
-    def create_session(self, session_id: Optional[str] = None) -> str:
+    def create_session(self, session_id: str | None = None) -> str:
         """Create a new execution session.
-        
+
         Args:
             session_id: Optional session ID, if not provided a new one is generated
-            
+
         Returns:
             Session ID
         """
@@ -72,18 +74,18 @@ class ExecutionEngine:
             "created_at": datetime.now(),
             "requests": [],
             "context": {},
-            "active": True
+            "active": True,
         }
 
         logger.debug(f"Created session: {session_id}")
         return session_id
 
-    def get_session(self, session_id: str) -> Optional[SessionData]:
+    def get_session(self, session_id: str) -> SessionData | None:
         """Get session information.
-        
+
         Args:
             session_id: Session ID
-            
+
         Returns:
             Session data or None if not found
         """
@@ -91,7 +93,7 @@ class ExecutionEngine:
 
     def close_session(self, session_id: str) -> None:
         """Close and cleanup a session.
-        
+
         Args:
             session_id: Session ID to close
         """
@@ -101,16 +103,14 @@ class ExecutionEngine:
 
     @asynccontextmanager
     async def trace_execution(
-        self,
-        operation_name: str,
-        **attributes: Union[str, int, float, bool]
-    ) -> AsyncIterator[Optional[trace.Span]]:
+        self, operation_name: str, **attributes: str | int | float | bool
+    ) -> AsyncIterator[trace.Span | None]:
         """Context manager for tracing execution with automatic error handling.
-        
+
         Args:
             operation_name: Name of the operation being traced
             **attributes: Additional attributes to add to the span
-            
+
         Yields:
             Span object if tracing is enabled, None otherwise
         """
@@ -142,27 +142,23 @@ class ExecutionEngine:
             span.end()
 
     async def execute_streaming(
-        self,
-        executor: FrameworkExecutor,
-        entity_id: str,
-        request: AgentFrameworkRequest,
-        enable_tracing: bool = True
-    ) -> AsyncGenerator[Union[ResponseStreamEvent, ResponseTraceEvent], None]:
+        self, executor: FrameworkExecutor, entity_id: str, request: AgentFrameworkRequest, enable_tracing: bool = True
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseTraceEvent, None]:
         """Execute request with streaming and optional tracing.
-        
+
         Args:
             executor: Framework executor instance
             entity_id: ID of the entity being executed
             request: OpenAI request
             enable_tracing: Whether to enable tracing
-            
+
         Yields:
             Stream events from the entity execution
         """
         logger.info(f"🚀 ExecutionEngine.execute_streaming called for entity: {entity_id}")
 
         # Get or create session
-        session_id: Optional[str] = request.extra_body.get("session_id") if request.extra_body else None
+        session_id: str | None = request.extra_body.get("session_id") if request.extra_body else None
         if session_id and session_id not in self.sessions:
             session_id = self.create_session(session_id)
         elif not session_id:
@@ -178,7 +174,7 @@ class ExecutionEngine:
             "executor": executor.__class__.__name__,
             "input": request.input,
             "model": request.model,
-            "stream": True
+            "stream": True,
         }
         session["requests"].append(request_record)
 
@@ -194,7 +190,7 @@ class ExecutionEngine:
                 request_id=request_record["id"],
                 model=request.model,
                 stream=True,
-                input_length=len(str(request.input)) if request.input else 0
+                input_length=len(str(request.input)) if request.input else 0,
             ) as span:
                 start_time: float = time.time()
 
@@ -237,32 +233,28 @@ class ExecutionEngine:
                 request_record["status"] = request_record.get("status", "completed")
 
     async def execute(
-        self,
-        executor: FrameworkExecutor,
-        entity_id: str,
-        request: AgentFrameworkRequest,
-        enable_tracing: bool = True
+        self, executor: FrameworkExecutor, entity_id: str, request: AgentFrameworkRequest, enable_tracing: bool = True
     ) -> OpenAIResponse:
         """Execute request and return complete response (uses streaming underneath).
-        
+
         Args:
             executor: Framework executor instance
             entity_id: ID of the entity being executed
             request: OpenAI request
             enable_tracing: Whether to enable tracing
-            
+
         Returns:
             Complete response object
         """
         # Use execute_streaming and collect all events
         return await executor.execute_sync(request)
 
-    async def get_session_history(self, session_id: str) -> Optional[SessionSummary]:
+    async def get_session_history(self, session_id: str) -> SessionSummary | None:
         """Get session execution history.
-        
+
         Args:
             session_id: Session ID
-            
+
         Returns:
             Session history or None if not found
         """
@@ -284,15 +276,15 @@ class ExecutionEngine:
                     "model": req["model"],
                     "input_length": len(str(req["input"])) if req["input"] else 0,
                     "execution_time": req.get("execution_time"),
-                    "status": req.get("status", "unknown")
+                    "status": req.get("status", "unknown"),
                 }
                 for req in session["requests"]
-            ]
+            ],
         }
 
-    def get_active_sessions(self) -> List[SessionSummary]:
+    def get_active_sessions(self) -> list[SessionSummary]:
         """Get list of active sessions.
-        
+
         Returns:
             List of active session summaries
         """
@@ -306,15 +298,16 @@ class ExecutionEngine:
                     "request_count": len(session["requests"]),
                     "last_activity": (
                         session["requests"][-1]["timestamp"].isoformat()
-                        if session["requests"] else session["created_at"].isoformat()
-                    )
+                        if session["requests"]
+                        else session["created_at"].isoformat()
+                    ),
                 })
 
         return active_sessions
 
     async def cleanup_old_sessions(self, max_age_hours: int = 24) -> None:
         """Cleanup old sessions to prevent memory leaks.
-        
+
         Args:
             max_age_hours: Maximum age of sessions to keep in hours
         """

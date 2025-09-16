@@ -3,8 +3,9 @@
 """FastAPI server implementation."""
 
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,18 +28,18 @@ class DevServer:
 
     def __init__(
         self,
-        entities_dir: Optional[str] = None,
+        entities_dir: str | None = None,
         port: int = 8080,
         host: str = "127.0.0.1",
-        cors_origins: Optional[List[str]] = None,
-        ui_enabled: bool = True
+        cors_origins: list[str] | None = None,
+        ui_enabled: bool = True,
     ) -> None:
         """Initialize the development server.
-        
+
         Args:
             entities_dir: Directory to scan for entities
             port: Port to run server on
-            host: Host to bind server to  
+            host: Host to bind server to
             cors_origins: List of allowed CORS origins
             ui_enabled: Whether to enable the UI
         """
@@ -47,9 +48,9 @@ class DevServer:
         self.host = host
         self.cors_origins = cors_origins or ["*"]
         self.ui_enabled = ui_enabled
-        self.executor: Optional[AgentFrameworkExecutor] = None
-        self._app: Optional[FastAPI] = None
-        self._pending_entities: Optional[List[Any]] = None
+        self.executor: AgentFrameworkExecutor | None = None
+        self._app: FastAPI | None = None
+        self._pending_entities: list[Any] | None = None
 
     async def _ensure_executor(self) -> AgentFrameworkExecutor:
         """Ensure executor is initialized."""
@@ -120,16 +121,12 @@ class DevServer:
         """Register API routes."""
 
         @app.get("/health")
-        async def health_check() -> Dict[str, Any]:
+        async def health_check() -> dict[str, Any]:
             """Health check endpoint."""
             executor = await self._ensure_executor()
             entities = await executor.discover_entities()
 
-            return {
-                "status": "healthy",
-                "entities_count": len(entities),
-                "framework": executor.framework_name
-            }
+            return {"status": "healthy", "entities_count": len(entities), "framework": executor.framework_name}
 
         @app.get("/v1/entities", response_model=DiscoveryResponse)
         async def discover_entities() -> DiscoveryResponse:
@@ -141,7 +138,7 @@ class DevServer:
                 return DiscoveryResponse(entities=entities)
             except Exception as e:
                 logger.error(f"Error listing entities: {e}")
-                raise HTTPException(status_code=500, detail=f"Entity listing failed: {e!s}")
+                raise HTTPException(status_code=500, detail=f"Entity listing failed: {e!s}") from e
 
         @app.get("/v1/entities/{entity_id}/info", response_model=EntityInfo)
         async def get_entity_info(entity_id: str) -> EntityInfo:
@@ -162,8 +159,7 @@ class DevServer:
                         if hasattr(entity_obj, "model_dump"):
                             workflow_dump = entity_obj.model_dump()
                         elif hasattr(entity_obj, "__dict__"):
-                            workflow_dump = {k: v for k, v in entity_obj.__dict__.items()
-                                           if not k.startswith("_")}
+                            workflow_dump = {k: v for k, v in entity_obj.__dict__.items() if not k.startswith("_")}
 
                         # Get input schema information
                         input_schema = {}
@@ -179,9 +175,9 @@ class DevServer:
                                     input_type_name = getattr(input_type, "__name__", str(input_type))
 
                                     # Basic schema generation for common types
-                                    if input_type == str:
+                                    if input_type is str:
                                         input_schema = {"type": "string"}
-                                    elif input_type == dict:
+                                    elif input_type is dict:
                                         input_schema = {"type": "object"}
                                     elif hasattr(input_type, "model_json_schema"):
                                         input_schema = input_type.model_json_schema()
@@ -214,7 +210,7 @@ class DevServer:
                 raise
             except Exception as e:
                 logger.error(f"Error getting entity info for {entity_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to get entity info: {e!s}")
+                raise HTTPException(status_code=500, detail=f"Failed to get entity info: {e!s}") from e
 
         @app.post("/v1/responses")
         async def create_response(request: AgentFrameworkRequest, raw_request: Request) -> Any:
@@ -251,10 +247,9 @@ class DevServer:
                             "Cache-Control": "no-cache",
                             "Connection": "keep-alive",
                             "Access-Control-Allow-Origin": "*",
-                        }
+                        },
                     )
-                result = await executor.execute_sync(request)
-                return result
+                return await executor.execute_sync(request)
 
             except Exception as e:
                 logger.error(f"Error executing request: {e}")
@@ -268,21 +263,21 @@ class DevServer:
                 agent_id = request_data.get("agent_id")
                 if not agent_id:
                     raise HTTPException(status_code=400, detail="agent_id is required")
-                
+
                 executor = await self._ensure_executor()
                 thread_id = executor.create_thread(agent_id)
-                
+
                 return {
                     "id": thread_id,
                     "object": "thread",
                     "created_at": int(__import__("time").time()),
-                    "metadata": {"agent_id": agent_id}
+                    "metadata": {"agent_id": agent_id},
                 }
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Error creating thread: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to create thread: {e!s}")
+                raise HTTPException(status_code=500, detail=f"Failed to create thread: {e!s}") from e
 
         @app.get("/v1/threads")
         async def list_threads(agent_id: str) -> dict:
@@ -290,48 +285,37 @@ class DevServer:
             try:
                 executor = await self._ensure_executor()
                 thread_ids = executor.list_threads_for_agent(agent_id)
-                
+
                 # Convert thread IDs to thread objects
                 threads = []
                 for thread_id in thread_ids:
-                    threads.append({
-                        "id": thread_id,
-                        "object": "thread",
-                        "agent_id": agent_id
-                    })
-                
-                return {
-                    "object": "list",
-                    "data": threads
-                }
+                    threads.append({"id": thread_id, "object": "thread", "agent_id": agent_id})
+
+                return {"object": "list", "data": threads}
             except Exception as e:
                 logger.error(f"Error listing threads: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to list threads: {e!s}")
+                raise HTTPException(status_code=500, detail=f"Failed to list threads: {e!s}") from e
 
         @app.get("/v1/threads/{thread_id}")
         async def get_thread(thread_id: str) -> dict:
             """Get thread information."""
             try:
                 executor = await self._ensure_executor()
-                
+
                 # Check if thread exists
                 thread = executor.get_thread(thread_id)
                 if not thread:
                     raise HTTPException(status_code=404, detail="Thread not found")
-                
+
                 # Get the agent that owns this thread
                 agent_id = executor.get_agent_for_thread(thread_id)
-                
-                return {
-                    "id": thread_id,
-                    "object": "thread",
-                    "agent_id": agent_id
-                }
+
+                return {"id": thread_id, "object": "thread", "agent_id": agent_id}
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Error getting thread {thread_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to get thread: {e!s}")
+                raise HTTPException(status_code=500, detail=f"Failed to get thread: {e!s}") from e
 
         @app.delete("/v1/threads/{thread_id}")
         async def delete_thread(thread_id: str) -> dict:
@@ -339,47 +323,41 @@ class DevServer:
             try:
                 executor = await self._ensure_executor()
                 success = executor.delete_thread(thread_id)
-                
+
                 if not success:
                     raise HTTPException(status_code=404, detail="Thread not found")
-                
-                return {
-                    "id": thread_id,
-                    "object": "thread.deleted",
-                    "deleted": True
-                }
+
+                return {"id": thread_id, "object": "thread.deleted", "deleted": True}
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Error deleting thread {thread_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to delete thread: {e!s}")
+                raise HTTPException(status_code=500, detail=f"Failed to delete thread: {e!s}") from e
 
         @app.get("/v1/threads/{thread_id}/messages")
         async def get_thread_messages(thread_id: str) -> dict:
             """Get messages from a thread."""
             try:
                 executor = await self._ensure_executor()
-                
+
                 # Check if thread exists
                 thread = executor.get_thread(thread_id)
                 if not thread:
                     raise HTTPException(status_code=404, detail="Thread not found")
-                
+
                 # Get messages from thread
                 messages = await executor.get_thread_messages(thread_id)
-                
-                return {
-                    "object": "list",
-                    "data": messages,
-                    "thread_id": thread_id
-                }
+
+                return {"object": "list", "data": messages, "thread_id": thread_id}
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Error getting messages for thread {thread_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to get thread messages: {e!s}")
+                raise HTTPException(status_code=500, detail=f"Failed to get thread messages: {e!s}") from e
 
-    async def _stream_execution(self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest) -> AsyncGenerator[str, None]:
+    async def _stream_execution(
+        self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest
+    ) -> AsyncGenerator[str, None]:
         """Stream execution directly through executor."""
         try:
             # Direct call to executor - simple and clean
@@ -391,11 +369,7 @@ class DevServer:
 
         except Exception as e:
             logger.error(f"Error in streaming execution: {e}")
-            error_event = {
-                "id": "error",
-                "object": "error",
-                "error": {"message": str(e), "type": "execution_error"}
-            }
+            error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
             yield f"data: {error_event}\n\n"
 
     def _mount_ui(self, app: FastAPI) -> None:
@@ -406,9 +380,9 @@ class DevServer:
         if ui_dir.exists() and ui_dir.is_dir() and self.ui_enabled:
             app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
-    def register_entities(self, entities: List[Any]) -> None:
+    def register_entities(self, entities: list[Any]) -> None:
         """Register entities to be discovered when server starts.
-        
+
         Args:
             entities: List of entity objects to register
         """

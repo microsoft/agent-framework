@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Focused tests for server endpoints and integration."""
+"""Focused tests for server functionality."""
 
 import asyncio
 import tempfile
@@ -58,10 +57,7 @@ async def test_server_execution_sync(test_entities_dir):
     agent_id = entities[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework",
-        input="San Francisco",
-        stream=False,
-        extra_body={"entity_id": agent_id}
+        model="agent-framework", input="San Francisco", stream=False, extra_body={"entity_id": agent_id}
     )
 
     response = await executor.execute_sync(request)
@@ -79,14 +75,11 @@ async def test_server_execution_streaming(test_entities_dir):
     agent_id = entities[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework",
-        input="New York",
-        stream=True,
-        extra_body={"entity_id": agent_id}
+        model="agent-framework", input="New York", stream=True, extra_body={"entity_id": agent_id}
     )
 
     event_count = 0
-    async for event in executor.execute_streaming(request):
+    async for _event in executor.execute_streaming(request):
         event_count += 1
         if event_count > 5:  # Limit for testing
             break
@@ -101,7 +94,7 @@ def test_configuration():
     assert server.host == "localhost"
     assert server.entities_dir == "test"
     assert server.cors_origins == ["*"]
-    assert server.ui_enabled == True
+    assert server.ui_enabled
 
 
 if __name__ == "__main__":
@@ -116,28 +109,24 @@ if __name__ == "__main__":
 class WeatherAgent:
     name = "Weather Agent"
     description = "Gets weather information"
-    
+
     def run_stream(self, input_str):
         return f"Weather in {input_str} is sunny"
 """)
-
-            print("🌐 Testing server integration...")
 
             server = DevServer(entities_dir=str(temp_path))
             executor = await server._ensure_executor()
 
             entities = await executor.discover_entities()
-            print(f"✅ Server discovered {len(entities)} entities")
 
             if entities:
                 request = AgentFrameworkRequest(
                     model="agent-framework",
                     input="test location",
                     stream=False,
-                    extra_body={"entity_id": entities[0].id}
+                    extra_body={"entity_id": entities[0].id},
                 )
 
-                response = await executor.execute_sync(request)
-                print("✅ Server executed request successfully")
+                await executor.execute_sync(request)
 
     asyncio.run(run_tests())

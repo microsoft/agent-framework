@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft. All rights reserved.
 
 """Focused tests for execution flow functionality."""
@@ -10,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_framework_devui.executors import EntityNotFoundError
 from agent_framework_devui.executors.agent_framework._discovery import AgentFrameworkEntityDiscovery
 from agent_framework_devui.executors.agent_framework._executor import AgentFrameworkExecutor
 from agent_framework_devui.executors.agent_framework._mapper import AgentFrameworkMessageMapper
@@ -72,10 +72,7 @@ async def test_executor_sync_execution(executor):
     agent_id = agents[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework",
-        input="test data",
-        stream=False,
-        extra_body={"entity_id": agent_id}
+        model="agent-framework", input="test data", stream=False, extra_body={"entity_id": agent_id}
     )
 
     response = await executor.execute_sync(request)
@@ -97,10 +94,7 @@ async def test_executor_streaming_execution(executor):
     agent_id = agents[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework",
-        input="streaming test",
-        stream=True,
-        extra_body={"entity_id": agent_id}
+        model="agent-framework", input="streaming test", stream=True, extra_body={"entity_id": agent_id}
     )
 
     event_count = 0
@@ -121,26 +115,14 @@ async def test_executor_streaming_execution(executor):
 @pytest.mark.asyncio
 async def test_executor_invalid_entity_id(executor):
     """Test execution with invalid entity ID."""
-    request = AgentFrameworkRequest(
-        model="agent-framework",
-        input="test",
-        stream=False,
-        extra_body={"entity_id": "nonexistent_agent"}
-    )
-
-    with pytest.raises(Exception):
+    with pytest.raises(EntityNotFoundError):
         executor.get_entity_info("nonexistent_agent")
 
 
 @pytest.mark.asyncio
 async def test_executor_missing_entity_id(executor):
     """Test execution without entity ID."""
-    request = AgentFrameworkRequest(
-        model="agent-framework",
-        input="test",
-        stream=False,
-        extra_body={}
-    )
+    request = AgentFrameworkRequest(model="agent-framework", input="test", stream=False, extra_body={})
 
     entity_id = request.get_entity_id()
     assert entity_id is None
@@ -156,15 +138,13 @@ if __name__ == "__main__":
             agent_file = temp_path / "streaming_agent.py"
             agent_file.write_text("""
 class StreamingAgent:
-    name = "Streaming Test Agent" 
+    name = "Streaming Test Agent"
     description = "Test agent for streaming"
-    
+
     async def run_stream(self, input_str):
         for i, word in enumerate(f"Processing {input_str}".split()):
             yield f"word_{i}: {word} "
 """)
-
-            print("⚡ Testing execution flow...")
 
             discovery = AgentFrameworkEntityDiscovery("agent_framework", str(temp_path))
             mapper = AgentFrameworkMessageMapper()
@@ -172,28 +152,21 @@ class StreamingAgent:
 
             # Test discovery
             entities = await executor.discover_entities()
-            print(f"✅ Discovered {len(entities)} entities")
 
             if entities:
                 # Test sync execution
                 request = AgentFrameworkRequest(
-                    model="agent-framework",
-                    input="test input",
-                    stream=False,
-                    extra_body={"entity_id": entities[0].id}
+                    model="agent-framework", input="test input", stream=False, extra_body={"entity_id": entities[0].id}
                 )
 
-                response = await executor.execute_sync(request)
-                print(f"✅ Sync execution completed: {len(response.output)} outputs")
+                await executor.execute_sync(request)
 
                 # Test streaming execution
                 request.stream = True
                 event_count = 0
-                async for event in executor.execute_streaming(request):
+                async for _event in executor.execute_streaming(request):
                     event_count += 1
                     if event_count > 5:  # Limit for testing
                         break
-
-                print(f"✅ Streaming execution completed: {event_count} events")
 
     asyncio.run(run_tests())
