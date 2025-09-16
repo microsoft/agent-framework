@@ -43,7 +43,7 @@ AIAgent agent = new AzureOpenAIClient(
              // Create a new chat message store for this agent that stores the messages in a vector store.
              // Each thread must get its own copy of the VectorChatMessageStore, since the store
              // also contains the id that the thread is stored under.
-             return new VectorChatMessageStore(vectorStore, context.SerializedStoreState, context.JsonSerializerOptions);
+             return new VectorChatMessageStore(vectorStore, context.SerializedState, context.JsonSerializerOptions);
          }
      });
 
@@ -129,10 +129,10 @@ namespace SampleApp
             return messages;
         }
 
-        public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public ValueTask<JsonElement> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             // We have to serialize the thread id, so that on deserialization we can retrieve the messages using the same thread id.
-            return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this._threadId));
+            return new ValueTask<JsonElement>(JsonSerializer.SerializeToElement(this._threadId));
         }
 
         /// <summary>

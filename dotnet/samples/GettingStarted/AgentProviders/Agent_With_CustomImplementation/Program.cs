@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -30,6 +31,12 @@ namespace SampleApp
     // Custom agent that parrot's the user input back in upper case.
     internal sealed class UpperCaseParrotAgent : AIAgent
     {
+        public override AgentThread GetNewThread()
+            => new CustomAgentThread();
+
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CustomAgentThread());
+
         public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
@@ -39,8 +46,7 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-            await NotifyThreadOfNewMessagesAsync(thread, responseMessages, cancellationToken);
+            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
 
             return new AgentRunResponse
             {
@@ -59,8 +65,7 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-            await NotifyThreadOfNewMessagesAsync(thread, responseMessages, cancellationToken);
+            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
 
             foreach (var message in responseMessages)
             {
@@ -98,5 +103,25 @@ namespace SampleApp
 
                 return messageClone;
             });
+    }
+
+    /// <summary>
+    /// A thread type for our custom agent that only supports in memory storage of messages.
+    /// </summary>
+    internal sealed class CustomAgentThread : AgentThread
+    {
+        private readonly InMemoryChatMessageStore _messageStore;
+
+        public CustomAgentThread()
+            => this._messageStore = new InMemoryChatMessageStore();
+
+        public CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+            => this._messageStore = new InMemoryChatMessageStore(serializedThreadState, jsonSerializerOptions);
+
+        public override ValueTask<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken);
+
+        protected override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+            => this._messageStore.AddMessagesAsync(newMessages, cancellationToken);
     }
 }

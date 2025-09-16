@@ -72,7 +72,6 @@ show_error_codes = true
 warn_unused_ignores = false
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
-disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework_mem0"]

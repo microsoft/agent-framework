@@ -74,6 +74,6 @@ async Task AFAgent()
     }
 
     // Clean up
-    await assistantClient.DeleteThreadAsync(thread.ConversationId);
+    await assistantClient.DeleteThreadAsync(((ChatClientAgentThread)thread).ServiceThreadId);
     await assistantClient.DeleteAssistantAsync(agent.Id);
 }

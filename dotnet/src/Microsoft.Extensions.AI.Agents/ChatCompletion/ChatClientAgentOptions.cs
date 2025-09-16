@@ -82,6 +82,13 @@ public class ChatClientAgentOptions
     public Func<ChatMessageStoreFactoryContext, IChatMessageStore>? ChatMessageStoreFactory { get; set; }
 
     /// <summary>
+    /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
+    /// which will be used to create a context provider for each new thread, and can then
+    /// provide additional context for each agent run.
+    /// </summary>
+    public Func<AIContextProviderFactoryContext, AIContextProvider>? AIContextProviderFactory { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
     /// without applying any default decorators.
     /// </summary>
@@ -106,8 +113,26 @@ public class ChatClientAgentOptions
             Instructions = this.Instructions,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
-            ChatMessageStoreFactory = this.ChatMessageStoreFactory
+            ChatMessageStoreFactory = this.ChatMessageStoreFactory,
+            AIContextProviderFactory = this.AIContextProviderFactory,
         };
+
+    /// <summary>
+    /// Context object passed to the <see cref="AIContextProviderFactory"/> to create a new instance of <see cref="AIContextProvider"/>.
+    /// </summary>
+    public class AIContextProviderFactoryContext
+    {
+        /// <summary>
+        /// Gets or sets the serialized state of the <see cref="AIContextProvider"/>, if any.
+        /// </summary>
+        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="AIContextProvider"/> is first created.</value>
+        public JsonElement SerializedState { get; set; }
+
+        /// <summary>
+        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
+        /// </summary>
+        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
+    }
 
     /// <summary>
     /// Context object passed to the <see cref="ChatMessageStoreFactory"/> to create a new instance of <see cref="IChatMessageStore"/>.
@@ -118,10 +143,10 @@ public class ChatClientAgentOptions
         /// Gets or sets the serialized state of the chat message store, if any.
         /// </summary>
         /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="IChatMessageStore"/> is first created.</value>
-        public JsonElement SerializedStoreState { get; set; }
+        public JsonElement SerializedState { get; set; }
 
         /// <summary>
-        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedStoreState"/>.
+        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
         /// </summary>
         public JsonSerializerOptions? JsonSerializerOptions { get; set; }
     }

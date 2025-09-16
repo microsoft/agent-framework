@@ -1,0 +1,12 @@
+﻿{
+  "description": "Send an activity message .",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "Why is the sky blue?"
+    }
+  },
+  "validation": {
+    "action_count": 3
+  }
+}

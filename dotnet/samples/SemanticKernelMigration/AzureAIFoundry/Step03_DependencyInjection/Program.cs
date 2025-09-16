@@ -66,7 +66,7 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton((sp) => AzureAIAgent.CreateAgentsClient(azureEndpoint, new AzureCliCredential()));
+    serviceCollection.AddSingleton((sp) => new PersistentAgentsClient(azureEndpoint, new AzureCliCredential()));
     serviceCollection.AddTransient<AIAgent>((sp) =>
     {
         var azureAgentClient = sp.GetRequiredService<PersistentAgentsClient>();
@@ -95,6 +95,6 @@ async Task AFAgent()
 
     // Clean up
     var azureAgentClient = serviceProvider.GetRequiredService<PersistentAgentsClient>();
-    await azureAgentClient.Threads.DeleteThreadAsync(thread.ConversationId);
+    await azureAgentClient.Threads.DeleteThreadAsync(((ChatClientAgentThread)thread).ServiceThreadId);
     await azureAgentClient.Administration.DeleteAgentAsync(agent.Id);
 }

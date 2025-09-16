@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -231,11 +232,10 @@ public class AIAgentTests
 
         var threadMock = new Mock<TestAgentThread> { CallBase = true };
         threadMock.SetupAllProperties();
-        threadMock.Object.ConversationId = "test-thread-id";
 
         await MockAgent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
 
-        threadMock.Protected().Verify("OnNewMessagesAsync", Times.Once(), messages, cancellationToken);
+        threadMock.Protected().Verify("MessagesReceivedAsync", Times.Once(), messages, cancellationToken);
     }
 
     #region GetService Method Tests
@@ -364,6 +364,16 @@ public class AIAgentTests
         public static new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
             return AIAgent.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
+        }
+
+        public override AgentThread GetNewThread()
+        {
+            throw new NotImplementedException();
+        }
+
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
         }
 
         public override Task<AgentRunResponse> RunAsync(

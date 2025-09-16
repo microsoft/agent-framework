@@ -126,7 +126,7 @@ appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.
 
 // Create a parent span for the entire agent session
 using var sessionActivity = activitySource.StartActivity("Agent Session");
-var sessionId = thread.ConversationId ?? Guid.NewGuid().ToString();
+var sessionId = Guid.NewGuid().ToString();
 sessionActivity?.SetTag("agent.name", "OpenTelemetryDemoAgent");
 sessionActivity?.SetTag("session.id", sessionId);
 sessionActivity?.SetTag("session.start_time", DateTimeOffset.UtcNow.ToString("O"));

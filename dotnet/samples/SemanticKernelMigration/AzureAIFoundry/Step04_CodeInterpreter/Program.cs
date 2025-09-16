@@ -4,6 +4,7 @@ using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.AzureAI;
@@ -116,6 +117,6 @@ async Task AFAgent()
     }
 
     // Clean up
-    await azureAgentClient.Threads.DeleteThreadAsync(thread.ConversationId);
+    await azureAgentClient.Threads.DeleteThreadAsync(((ChatClientAgentThread)thread).ServiceThreadId);
     await azureAgentClient.Administration.DeleteAgentAsync(agent.Id);
 }

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -31,10 +32,12 @@ public sealed class ChatClientAgentThread : AgentThread
     /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="chatMessageStoreFactory">An optional factory function to create a custom <see cref="IChatMessageStore"/>.</param>
+    /// <param name="aiContextProviderFactory">An optional factory function to create a custom <see cref="AIContextProvider"/>.</param>
     internal ChatClientAgentThread(
         JsonElement serializedThreadState,
         JsonSerializerOptions? jsonSerializerOptions = null,
-        Func<ChatClientAgentOptions.ChatMessageStoreFactoryContext, IChatMessageStore>? chatMessageStoreFactory = null)
+        Func<ChatClientAgentOptions.ChatMessageStoreFactoryContext, IChatMessageStore>? chatMessageStoreFactory = null,
+        Func<ChatClientAgentOptions.AIContextProviderFactoryContext, AIContextProvider>? aiContextProviderFactory = null)
     {
         var state = JsonSerializer.Deserialize(
             serializedThreadState,
@@ -48,7 +51,8 @@ public sealed class ChatClientAgentThread : AgentThread
             return;
         }
 
-        this._messageStore = chatMessageStoreFactory?.Invoke(new() { SerializedStoreState = state?.StoreState ?? default, JsonSerializerOptions = jsonSerializerOptions });
+        this.AIContextProvider = aiContextProviderFactory?.Invoke(new() { SerializedState = state?.AIContextProviderState ?? default, JsonSerializerOptions = jsonSerializerOptions });
+        this._messageStore = chatMessageStoreFactory?.Invoke(new() { SerializedState = state?.StoreState ?? default, JsonSerializerOptions = jsonSerializerOptions });
 
         if (this._messageStore is null)
         {
@@ -140,21 +144,31 @@ public sealed class ChatClientAgentThread : AgentThread
     }
 
     /// <summary>
+    /// Gets or sets the <see cref="AIContextProvider"/> used by this thread to provide additional context to the AI model before each invocation.
+    /// </summary>
+    public AIContextProvider? AIContextProvider { get; internal set; }
+
+    /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public override async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override async ValueTask<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         var storeState = this._messageStore is null ?
-            null :
+            default :
             await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+
+        var aiContextProviderState = this.AIContextProvider is null ?
+            default :
+            await this.AIContextProvider.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
 
         var state = new ThreadState
         {
             ServiceThreadid = this.ServiceThreadId,
-            StoreState = storeState
+            StoreState = storeState,
+            AIContextProviderState = aiContextProviderState
         };
 
         return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
@@ -170,9 +184,9 @@ public sealed class ChatClientAgentThread : AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    protected override async Task OnNewMessagesAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+    protected override async Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
-        await base.OnNewMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
+        await base.MessagesReceivedAsync(newMessages, cancellationToken).ConfigureAwait(false);
 
         switch (this)
         {
@@ -200,8 +214,13 @@ public sealed class ChatClientAgentThread : AgentThread
 
     internal sealed class ThreadState
     {
+        [JsonPropertyName("serviceThreadId")]
         public string? ServiceThreadid { get; set; }
 
+        [JsonPropertyName("storeState")]
         public JsonElement? StoreState { get; set; }
+
+        [JsonPropertyName("aiContextProviderState")]
+        public JsonElement? AIContextProviderState { get; set; }
     }
 }

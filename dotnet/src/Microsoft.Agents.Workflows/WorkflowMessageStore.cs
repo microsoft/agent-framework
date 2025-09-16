@@ -75,7 +75,7 @@ internal class WorkflowMessageStore : IChatMessageStore
         return default;
     }
 
-    public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public ValueTask<JsonElement> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         StoreState state = new()
         {
@@ -83,7 +83,7 @@ internal class WorkflowMessageStore : IChatMessageStore
             Messages = this._chatMessages,
         };
 
-        return new ValueTask<JsonElement?>
+        return new ValueTask<JsonElement>
             (JsonSerializer.SerializeToElement(state,
             WorkflowsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))));
     }

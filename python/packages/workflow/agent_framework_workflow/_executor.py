@@ -102,7 +102,14 @@ class Executor(AFBaseModel):
             if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
                 # Directly handle SubWorkflowRequestInfo
                 await context.add_event(ExecutorInvokeEvent(self.id))
-                await self._handle_sub_workflow_request(message, context)
+                try:
+                    await self._handle_sub_workflow_request(message, context)
+                except Exception as exc:
+                    # Surface structured executor failure before propagating
+                    from ._events import ExecutorFailedEvent, WorkflowErrorDetails
+
+                    await context.add_event(ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc)))
+                    raise
                 await context.add_event(ExecutorCompletedEvent(self.id))
                 return
 
@@ -115,7 +122,14 @@ class Executor(AFBaseModel):
             if handler is None:
                 raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
             await context.add_event(ExecutorInvokeEvent(self.id))
-            await handler(message, context)
+            try:
+                await handler(message, context)
+            except Exception as exc:
+                # Surface structured executor failure before propagating
+                from ._events import ExecutorFailedEvent, WorkflowErrorDetails
+
+                await context.add_event(ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc)))
+                raise
             await context.add_event(ExecutorCompletedEvent(self.id))
 
     def _discover_handlers(self) -> None:
@@ -855,11 +869,10 @@ class AgentExecutor(Executor):
             )
             await ctx.add_event(AgentRunEvent(self.id, response))
 
-        full_conversation: list[ChatMessage] | None = None
-        if self._cache:
-            # Construct conversation snapshot = inputs (cache) + agent outputs (agent_run_response.messages).
-            # Do not mutate response.messages so AgentRunEvent remains clean.
-            full_conversation = list(self._cache) + list(response.messages)
+        # Always construct a full conversation snapshot from inputs (cache)
+        # plus agent outputs (agent_run_response.messages). Do not mutate
+        # response.messages so AgentRunEvent remains faithful to the raw output.
+        full_conversation: list[ChatMessage] = list(self._cache) + list(response.messages)
 
         agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
         await ctx.send_message(agent_response)
@@ -874,41 +887,7 @@ class AgentExecutor(Executor):
         """
         self._cache.extend(request.messages)
         if request.should_respond:
-            if self._streaming:
-                updates: list[AgentRunResponseUpdate] = []
-                async for update in self._agent.run_stream(
-                    self._cache,
-                    thread=self._agent_thread,
-                ):
-                    if not update:
-                        continue
-                    contents = getattr(update, "contents", None)
-                    text_val = getattr(update, "text", "")
-                    has_text_content = False
-                    if contents:
-                        for c in contents:
-                            if getattr(c, "text", None):
-                                has_text_content = True
-                                break
-                    if not (text_val or has_text_content):
-                        continue
-                    updates.append(update)
-                    await ctx.add_event(AgentRunUpdateEvent(self.id, update))
-                response = AgentRunResponse.from_agent_run_response_updates(updates)
-            else:
-                response = await self._agent.run(
-                    self._cache,
-                    thread=self._agent_thread,
-                )
-                await ctx.add_event(AgentRunEvent(self.id, response))
-
-            full_conversation: list[ChatMessage] | None = None
-            if self._cache:
-                full_conversation = list(self._cache) + list(response.messages)
-
-            agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
-            await ctx.send_message(agent_response)
-            self._cache.clear()
+            await self._run_agent_and_emit(ctx)
 
     @handler
     async def from_response(self, prior: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
