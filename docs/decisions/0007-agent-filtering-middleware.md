@@ -168,7 +168,7 @@ var agent = persistentAgentsClient.CreateAIAgent(model).AsBuilder()
         context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
         Console.WriteLine($"Pii Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
 
-        await next(context).ConfigureAwait(false);
+        await next(context);
 
         if (!context.IsStreaming)
         {
@@ -257,11 +257,11 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
 
         async Task CoreLogicAsync(AgentInvokeCallbackContext ctx)
         {
-            var response = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken).ConfigureAwait(false);
+            var response = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
             ctx.SetRawResponse(response);
         }
 
-        await this._func(context, CoreLogicAsync).ConfigureAwait(false);
+        await this._func(context, CoreLogicAsync);
 
         return context.RunResponse!;
     }
@@ -327,7 +327,7 @@ internal sealed class PiiDetectionMiddleware : CallbackMiddleware<AgentInvokeCal
         // Guardrail: Filter input messages for PII
         context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
         Console.WriteLine($"Pii Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
-        await next(context).ConfigureAwait(false);
+        await next(context);
 
         if (!context.IsStreaming)
         {
@@ -356,7 +356,7 @@ internal sealed class GuardrailCallbackMiddleware : CallbackMiddleware<AgentInvo
         context.Messages = this.FilterMessages(context.Messages);
         Console.WriteLine($"Guardrail Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
 
-        await next(context).ConfigureAwait(false);
+        await next(context);
         if (!context.IsStreaming)
         {
             // Guardrail: Filter output messages for forbidden content
@@ -445,7 +445,7 @@ public sealed class CallbackMiddlewareProcessor
         where TContext : CallbackContext
     {
         var applicableCallbacks = this.GetApplicableCallbacks<TContext>().ToList();
-        await this.InvokeChainAsync(context, applicableCallbacks, 0, coreLogic, cancellationToken).ConfigureAwait(false);
+        await this.InvokeChainAsync(context, applicableCallbacks, 0, coreLogic, cancellationToken);
     }
 
     private IEnumerable<ICallbackMiddleware> GetApplicableCallbacks<TContext>()
@@ -479,8 +479,7 @@ public sealed class CallbackEnabledAgent : DelegatingAIAgent
         async Task CoreLogic(AgentInvokeCallbackContext ctx)
         {
             roamingContext ??= ctx;
-            var result = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken)
-                .ConfigureAwait(false);
+            var result = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
 
             ctx.SetRawResponse(result);
         }
@@ -494,8 +493,7 @@ public sealed class CallbackEnabledAgent : DelegatingAIAgent
                 isStreaming: false,
                 cancellationToken),
             CoreLogic,
-            cancellationToken)
-            .ConfigureAwait(false);
+            cancellationToken);
 
         return roamingContext.RunResponse!;
     }
