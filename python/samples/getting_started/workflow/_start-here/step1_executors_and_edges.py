@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework.workflow import (
+from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,

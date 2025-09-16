@@ -2,8 +2,8 @@
 
 import asyncio
 
+from agent_framework import AgentRunEvent, WorkflowBuilder
 from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import AgentRunEvent, WorkflowBuilder
 from azure.identity import AzureCliCredential
 
 """
