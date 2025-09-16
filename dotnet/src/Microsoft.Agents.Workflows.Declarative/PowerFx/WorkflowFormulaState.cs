@@ -22,12 +22,11 @@ internal sealed class WorkflowFormulaState
     public const string DefaultScopeName = VariableScopeNames.Topic;
 
     private static readonly FrozenSet<string> s_mutableScopes =
-        new HashSet<string>
-        {
+        [
             VariableScopeNames.Topic,
             VariableScopeNames.Global,
             VariableScopeNames.System,
-        }.ToFrozenSet();
+        ];
 
     private readonly FrozenDictionary<string, WorkflowScope> _scopes;
     private int _isInitialized;
