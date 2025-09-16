@@ -85,8 +85,8 @@ class AgentFrameworkMessageMapper(MessageMapper):
 
         # Import Agent Framework types for proper isinstance checks
         try:
-            from agent_framework._types import AgentRunResponseUpdate
-            from agent_framework_workflow._events import WorkflowEvent
+            from agent_framework import AgentRunResponseUpdate
+            from agent_framework import WorkflowEvent
 
             # Handle agent updates (AgentRunResponseUpdate)
             if isinstance(raw_event, AgentRunResponseUpdate):

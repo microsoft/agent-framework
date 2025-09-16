@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Literal, Optional
 
-from agent_framework.workflow import (
+from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,

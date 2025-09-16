@@ -18,7 +18,7 @@ Workflow Steps:
 import asyncio
 from dataclasses import dataclass
 
-from agent_framework.workflow import (
+from agent_framework import (
     Case,
     Default,
     Executor,
