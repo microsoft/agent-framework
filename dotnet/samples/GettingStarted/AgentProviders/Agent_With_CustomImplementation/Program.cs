@@ -39,8 +39,7 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-            await NotifyThreadOfNewMessagesAsync(thread, responseMessages, cancellationToken);
+            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
 
             return new AgentRunResponse
             {
@@ -59,8 +58,7 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-            await NotifyThreadOfNewMessagesAsync(thread, responseMessages, cancellationToken);
+            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
 
             foreach (var message in responseMessages)
             {

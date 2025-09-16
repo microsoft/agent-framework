@@ -81,6 +81,13 @@ public class ChatClientAgentOptions
     public Func<IChatMessageStore>? ChatMessageStoreFactory { get; set; }
 
     /// <summary>
+    /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
+    /// which will be used to create a context provider for each new thread, and can then
+    /// provide additional context for each agent run.
+    /// </summary>
+    public Func<AIContextProvider>? AIContextProviderFactory { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
     /// without applying any default decorators.
     /// </summary>
@@ -105,6 +112,7 @@ public class ChatClientAgentOptions
             Instructions = this.Instructions,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
-            ChatMessageStoreFactory = this.ChatMessageStoreFactory
+            ChatMessageStoreFactory = this.ChatMessageStoreFactory,
+            AIContextProviderFactory = this.AIContextProviderFactory,
         };
 }

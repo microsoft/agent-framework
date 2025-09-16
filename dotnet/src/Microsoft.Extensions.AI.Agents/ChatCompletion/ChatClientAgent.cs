@@ -114,7 +114,17 @@ public sealed class ChatClientAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
 
-        ChatResponse chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
+        // Call the IChatClient and notify the AIContextProvider of any failures.
+        ChatResponse chatResponse;
+        try
+        {
+            chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, inputMessages.Count);
 
@@ -122,19 +132,17 @@ public sealed class ChatClientAgent : AIAgent
         // so let's update it and set the conversation id for the service thread case.
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
-        // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent messages state in the thread.
-        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages, cancellationToken).ConfigureAwait(false);
-
         // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
             chatResponseMessage.AuthorName ??= agentName;
         }
 
-        // Convert the chat response messages to a valid IReadOnlyCollection for notification signatures below.
-        var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? [.. chatResponse.Messages];
+        // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
+        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages.Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
 
-        await NotifyThreadOfNewMessagesAsync(safeThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        // Notify the AIContextProvider of all new messages.
+        await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
 
         return new(chatResponse) { AgentId = this.Id };
     }
@@ -156,15 +164,34 @@ public sealed class ChatClientAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
 
-        // Using the enumerator to ensure we consider the case where no updates are returned for notification.
-        var responseUpdatesEnumerator = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        List<ChatResponseUpdate> responseUpdates = [];
+
+        IAsyncEnumerator<ChatResponseUpdate> responseUpdatesEnumerator;
+
+        try
+        {
+            // Using the enumerator to ensure we consider the case where no updates are returned for notification.
+            responseUpdatesEnumerator = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
 
         this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
 
-        List<ChatResponseUpdate> responseUpdates = [];
-
-        // Ensure we start the streaming request
-        var hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+        bool hasUpdates;
+        try
+        {
+            // Ensure we start the streaming request
+            hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
 
         while (hasUpdates)
         {
@@ -176,20 +203,28 @@ public sealed class ChatClientAgent : AIAgent
                 yield return new(update) { AgentId = this.Id };
             }
 
-            hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+            try
+            {
+                hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
+                throw;
+            }
         }
 
         var chatResponse = responseUpdates.ToChatResponse();
-        var chatResponseMessages = chatResponse.Messages as IReadOnlyCollection<ChatMessage> ?? [.. chatResponse.Messages];
 
         // We can derive the type of supported thread from whether we have a conversation id,
         // so let's update it and set the conversation id for the service thread case.
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages, cancellationToken).ConfigureAwait(false);
+        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages.Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
 
-        await NotifyThreadOfNewMessagesAsync(safeThread, chatResponseMessages, cancellationToken).ConfigureAwait(false);
+        // Notify the AIContextProvider of all new messages.
+        await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -204,11 +239,39 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
     {
-        var thread = new AgentThread { MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke() };
+        var thread = new AgentThread
+        {
+            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(),
+            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke()
+        };
         return thread;
     }
 
     #region Private
+
+    /// <summary>
+    /// Notify the <see cref="AIContextProvider"/> when an agent run succeeded, if there is an <see cref="AIContextProvider"/>.
+    /// </summary>
+    private static async Task NotifyAIContextProviderOfSuccessAsync(AgentThread thread, IEnumerable<ChatMessage> inputMessages, IEnumerable<ChatMessage> responseMessages, CancellationToken cancellationToken)
+    {
+        if (thread.AIContextProvider is not null)
+        {
+            await thread.AIContextProvider.InvokedAsync(new(inputMessages) { ResponseMessages = responseMessages },
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Notify the <see cref="AIContextProvider"/> of any failure during an agent run, if there is an <see cref="AIContextProvider"/>.
+    /// </summary>
+    private static async Task NotifyAIContextProviderOfFailureAsync(AgentThread thread, Exception ex, IEnumerable<ChatMessage> inputMessages, CancellationToken cancellationToken)
+    {
+        if (thread.AIContextProvider is not null)
+        {
+            await thread.AIContextProvider.InvokedAsync(new(inputMessages) { InvokeException = ex },
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     /// Configures and returns chat options by merging the provided run options with the agent's default chat options.
@@ -348,6 +411,34 @@ public sealed class ChatClientAgent : AIAgent
         if (thread.MessageStore is not null)
         {
             threadMessages.AddRange(await thread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
+        }
+
+        // If we have an AIContextProvider, we should get context from it, and update our
+        // messages and options with the additional context.
+        if (thread.AIContextProvider is not null)
+        {
+            var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
+            var aiContext = await thread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
+            if (aiContext.Messages is { Count: > 0 })
+            {
+                threadMessages.AddRange(aiContext.Messages);
+            }
+
+            if (aiContext.Tools is { Count: > 0 })
+            {
+                chatOptions ??= new();
+                chatOptions.Tools ??= [];
+                foreach (AITool tool in aiContext.Tools)
+                {
+                    chatOptions.Tools.Add(tool);
+                }
+            }
+
+            if (aiContext.Instructions is not null)
+            {
+                chatOptions ??= new();
+                chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
+            }
         }
 
         // Add the input messages to the end of thread messages.

@@ -1,0 +1,39 @@
+name: Python - Create Docs
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+env:
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  python-build-docs:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'python-')
+    name: Python Build Docs
+    runs-on: ubuntu-latest
+    environment: "integration"
+    env:
+      UV_PYTHON: "3.11"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version-file: "python/pyproject.toml"
+          enable-cache: true
+          cache-suffix: ${{ runner.os }}-${{ env.UV_PYTHON }}
+          cache-dependency-glob: "**/uv.lock"
+      - name: Install dependencies
+        run: uv sync --all-packages --dev --docs
+      - name: Build the docs
+        run: uv run poe docs-full
+    #  Upload docs to learn gh

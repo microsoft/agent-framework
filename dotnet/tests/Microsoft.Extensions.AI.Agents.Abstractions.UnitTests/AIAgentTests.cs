@@ -235,7 +235,7 @@ public class AIAgentTests
 
         await MockAgent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
 
-        threadMock.Protected().Verify("OnNewMessagesAsync", Times.Once(), messages, cancellationToken);
+        threadMock.Protected().Verify("MessagesReceivedAsync", Times.Once(), messages, cancellationToken);
     }
 
     #region GetService Method Tests

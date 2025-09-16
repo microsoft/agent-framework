@@ -10,15 +10,15 @@ beginDialog:
       actionId: end_all
 
     - kind: SendActivity
-      id: sendActivity_1
+      id: send_activity_1
       activity: NEVER 1!
       
     - kind: SendActivity
-      id: sendActivity_2
+      id: send_activity_2
       activity: NEVER 2!
 
     - kind: SendActivity
-      id: sendActivity_3
+      id: send_activity_3
       activity: NEVER 3!
 
     - kind: EndConversation

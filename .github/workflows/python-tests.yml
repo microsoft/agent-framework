@@ -27,17 +27,15 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v5
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
         with:
-          version-file: "python/pyproject.toml"
-          enable-cache: true
-          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
-          cache-dependency-glob: "**/uv.lock"
-      - name: Install the project
-        run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
-
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          # Configure a constant location for the uv cache
+          UV_CACHE_DIR: /tmp/.uv-cache
       # Main package tests
       - name: Set environment variables - main - win
         if: ${{ matrix.os == 'windows-latest' }}
