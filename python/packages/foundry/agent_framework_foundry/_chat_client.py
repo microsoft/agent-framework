@@ -27,7 +27,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.telemetry import prepend_agent_framework_to_user_agent, use_telemetry
+from agent_framework.telemetry import AGENT_FRAMEWORK_USER_AGENT, use_telemetry
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -94,8 +94,6 @@ class FoundrySettings(AFBaseSettings):
 
 
 TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
-
-HEADERS = prepend_agent_framework_to_user_agent()
 
 
 @use_function_invocation
@@ -174,7 +172,11 @@ class FoundryChatClient(BaseChatClient):
             # Use provided credential
             if not async_credential:
                 raise ServiceInitializationError("Azure credential is required when client is not provided.")
-            client = AIProjectClient(endpoint=foundry_settings.project_endpoint, credential=async_credential)
+            client = AIProjectClient(
+                endpoint=foundry_settings.project_endpoint,
+                credential=async_credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+            )
             should_close_client = True
 
         super().__init__(
@@ -286,11 +288,7 @@ class FoundryChatClient(BaseChatClient):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name = self.agent_name
-            args = {
-                "model": self.ai_model_id,
-                "name": agent_name,
-                "headers": HEADERS,
-            }
+            args = {"model": self.ai_model_id, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
@@ -326,11 +324,7 @@ class FoundryChatClient(BaseChatClient):
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
             await self.client.agents.runs.submit_tool_outputs_stream(  # type: ignore[reportUnknownMemberType]
-                thread_run.thread_id,
-                tool_run_id,
-                tool_outputs=tool_outputs,
-                event_handler=handler,
-                headers=HEADERS,
+                thread_run.thread_id, tool_run_id, tool_outputs=tool_outputs, event_handler=handler
             )
             # Pass the handler to the stream to continue processing
             stream = handler  # type: ignore
@@ -342,10 +336,7 @@ class FoundryChatClient(BaseChatClient):
             # Now create a new run and stream the results.
             run_options.pop("conversation_id", None)
             stream = await self.client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
-                final_thread_id,
-                agent_id=agent_id,
-                headers=HEADERS,
-                **run_options,
+                final_thread_id, agent_id=agent_id, **run_options
             )
 
         return stream, final_thread_id
@@ -355,9 +346,7 @@ class FoundryChatClient(BaseChatClient):
         if thread_id is None:
             return None
 
-        async for run in self.client.agents.runs.list(
-            thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING, headers=HEADERS
-        ):  # type: ignore[reportUnknownMemberType]
+        async for run in self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):  # type: ignore[reportUnknownMemberType]
             if run.status not in [
                 RunStatus.COMPLETED,
                 RunStatus.CANCELLED,
@@ -374,15 +363,13 @@ class FoundryChatClient(BaseChatClient):
         if thread_id is not None:
             if thread_run is not None:
                 # There was an active run; we need to cancel it before starting a new run.
-                await self.client.agents.runs.cancel(thread_id, thread_run.id, headers=HEADERS)
+                await self.client.agents.runs.cancel(thread_id, thread_run.id)
 
             return thread_id
 
         # No thread ID was provided, so create a new thread.
         thread = await self.client.agents.threads.create(
-            tool_resources=run_options.get("tool_resources"),
-            metadata=run_options.get("metadata"),
-            headers=HEADERS,
+            tool_resources=run_options.get("tool_resources"), metadata=run_options.get("metadata")
         )
         thread_id = thread.id
         # workaround for: https://github.com/Azure/azure-sdk-for-python/issues/42805
@@ -391,11 +378,7 @@ class FoundryChatClient(BaseChatClient):
         # `messages=run_options.pop("additional_messages")`
         for msg in run_options.pop("additional_messages", []):
             await self.client.agents.messages.create(
-                thread_id=thread_id,
-                role=msg.role,
-                content=msg.content,
-                metadata=msg.metadata,
-                headers=HEADERS,
+                thread_id=thread_id, role=msg.role, content=msg.content, metadata=msg.metadata
             )
         # and remove until here.
         return thread_id
@@ -519,7 +502,7 @@ class FoundryChatClient(BaseChatClient):
     async def _cleanup_agent_if_needed(self) -> None:
         """Clean up the agent if we created it."""
         if self._should_delete_agent and self.agent_id is not None:
-            await self.client.agents.delete_agent(self.agent_id, headers=HEADERS)
+            await self.client.agents.delete_agent(self.agent_id)
             self.agent_id = None
             self._should_delete_agent = False
 

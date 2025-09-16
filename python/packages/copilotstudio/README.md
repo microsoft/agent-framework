@@ -23,7 +23,7 @@ Before using the Copilot Studio agent, you need:
 The following environment variables are used for configuration:
 
 - `COPILOTSTUDIOAGENT__ENVIRONMENTID` - Your Copilot Studio environment ID
-- `COPILOTSTUDIOAGENT__SCHEMANAME` - Your copilot's agent identifier/schema name  
+- `COPILOTSTUDIOAGENT__SCHEMANAME` - Your copilot's agent identifier/schema name
 - `COPILOTSTUDIOAGENT__AGENTAPPID` - Your App Registration client ID
 - `COPILOTSTUDIOAGENT__TENANTID` - Your Azure AD tenant ID
 
@@ -36,7 +36,7 @@ from agent_framework.copilotstudio import CopilotStudioAgent
 async def main():
     # Create agent using environment variables
     agent = CopilotStudioAgent()
-    
+
     # Run a simple query
     result = await agent.run("What is the capital of France?")
     print(result)
@@ -58,19 +58,20 @@ async def main():
         client_id=os.environ["COPILOTSTUDIOAGENT__AGENTAPPID"],
         tenant_id=os.environ["COPILOTSTUDIOAGENT__TENANTID"]
     )
-    
+
     # Create connection settings
     settings = ConnectionSettings(
         environment_id=os.environ["COPILOTSTUDIOAGENT__ENVIRONMENTID"],
         agent_identifier=os.environ["COPILOTSTUDIOAGENT__SCHEMANAME"],
         cloud=PowerPlatformCloud.PROD,
-        copilot_agent_type=AgentType.PUBLISHED
+        copilot_agent_type=AgentType.PUBLISHED,
+        custom_power_platform_cloud=None
     )
-    
+
     # Create client and agent
     client = CopilotClient(settings=settings, token=token)
     agent = CopilotStudioAgent(client=client)
-    
+
     # Run a query
     result = await agent.run("What is the capital of Italy?")
     print(result)
@@ -94,4 +95,3 @@ For more comprehensive examples, see the [Copilot Studio examples](https://githu
 - Explicit settings and manual token acquisition
 - Different authentication patterns
 - Error handling and troubleshooting
-

@@ -10,7 +10,7 @@ from agent_framework import (
     Role,
 )
 from agent_framework.openai import OpenAIChatClient
-from agent_framework.workflow import (
+from agent_framework import (
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,
