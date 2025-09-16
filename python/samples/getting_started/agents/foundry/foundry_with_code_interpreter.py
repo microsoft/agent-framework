@@ -2,35 +2,30 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.foundry import FoundryChatClient
-from azure.ai.agents.models import (
-    RunStepDelta,
-    RunStepDeltaChunk,
-    RunStepDeltaCodeInterpreterDetailItemObject,
-    RunStepDeltaCodeInterpreterToolCall,
-    RunStepDeltaToolCallObject,
+from agent_framework import (
+    AgentRunResponse,
+    HostedCodeInterpreterTool,
 )
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 
-def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
+def print_code_interpreter_inputs(response: AgentRunResponse) -> None:
     """Helper method to access code interpreter data."""
-    if (
-        isinstance(chunk.raw_representation, ChatResponseUpdate)
-        and isinstance(chunk.raw_representation.raw_representation, RunStepDeltaChunk)
-        and isinstance(chunk.raw_representation.raw_representation.delta, RunStepDelta)
-        and isinstance(chunk.raw_representation.raw_representation.delta.step_details, RunStepDeltaToolCallObject)
-        and chunk.raw_representation.raw_representation.delta.step_details.tool_calls
-    ):
-        for tool_call in chunk.raw_representation.raw_representation.delta.step_details.tool_calls:
-            if (
-                isinstance(tool_call, RunStepDeltaCodeInterpreterToolCall)
-                and isinstance(tool_call.code_interpreter, RunStepDeltaCodeInterpreterDetailItemObject)
-                and tool_call.code_interpreter.input is not None
-            ):
-                return tool_call.code_interpreter.input
-    return None
+    from agent_framework import ChatResponseUpdate
+    from azure.ai.agents.models import (
+        RunStepDeltaCodeInterpreterDetailItemObject,
+    )
+
+    print("\nCode Interpreter Inputs during the run:")
+    if response.raw_representation is None:
+        return
+    for chunk in response.raw_representation:
+        if isinstance(chunk, ChatResponseUpdate) and isinstance(
+            chunk.raw_representation, RunStepDeltaCodeInterpreterDetailItemObject
+        ):
+            print(chunk.raw_representation.input, end="")
+    print("\n")
 
 
 async def main() -> None:
@@ -41,24 +36,19 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=FoundryChatClient(async_credential=credential),
+        FoundryChatClient(async_credential=credential) as chat_client,
+    ):
+        agent = chat_client.create_agent(
+            name="CodingAgent",
             instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
-        query = "Generate the factorial of 100 using python code."
+        )
+        query = "Generate the factorial of 100 using python code, show the code and execute it."
         print(f"User: {query}")
-        print("Agent: ", end="", flush=True)
-        generated_code = ""
-        async for chunk in agent.run_stream(query):
-            if chunk.text:
-                print(chunk.text, end="", flush=True)
-            code_interpreter_chunk = get_code_interpreter_chunk(chunk)
-            if code_interpreter_chunk is not None:
-                generated_code += code_interpreter_chunk
-
-        print(f"\nGenerated code:\n{generated_code}")
+        response = await AgentRunResponse.from_agent_response_generator(agent.run_stream(query))
+        print(f"Agent: {response}")
+        # To review the code interpreter outputs, you can access them from the response raw_representations, just uncomment the next line:
+        # print_code_interpreter_inputs(response)
 
 
 if __name__ == "__main__":

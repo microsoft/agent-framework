@@ -273,7 +273,11 @@ def _process_update(
         if response.additional_properties is None:
             response.additional_properties = {}
         response.additional_properties.update(update.additional_properties)
-
+    if response.raw_representation is None:
+        response.raw_representation = []
+    if not isinstance(response.raw_representation, list):
+        response.raw_representation = [response.raw_representation]
+    response.raw_representation.append(update.raw_representation)
     if isinstance(response, ChatResponse) and isinstance(update, ChatResponseUpdate):
         if update.conversation_id is not None:
             response.conversation_id = update.conversation_id
