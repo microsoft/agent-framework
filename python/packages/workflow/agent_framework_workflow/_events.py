@@ -246,23 +246,31 @@ class ExecutorEvent(WorkflowEvent):
 class ExecutorInvokeEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
-    def __init__(self, executor_id: str):
-        super().__init__(executor_id, origin=WorkflowEventSource.SYSTEM)
+    def __init__(
+        self,
+        executor_id: str,
+        data: Any | None = None,
+    ):
+        super().__init__(executor_id, data, origin=WorkflowEventSource.SYSTEM)
 
     def __repr__(self) -> str:
         """Return a string representation of the executor handler invoke event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id})"
+        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
 
 
 class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
 
-    def __init__(self, executor_id: str):
-        super().__init__(executor_id, origin=WorkflowEventSource.SYSTEM)
+    def __init__(
+        self,
+        executor_id: str,
+        data: Any | None = None,
+    ):
+        super().__init__(executor_id, data, origin=WorkflowEventSource.SYSTEM)
 
     def __repr__(self) -> str:
         """Return a string representation of the executor handler complete event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id})"
+        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
 
 
 class ExecutorFailedEvent(ExecutorEvent):
