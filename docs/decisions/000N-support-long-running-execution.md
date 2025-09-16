@@ -194,25 +194,26 @@ support for long-running operations without breaking existing functionality.
      | CancellationToken   | No effect | it just cancels the client side call   |
 
   - Streaming API - returns streaming updates callers can iterate over immediately or after dropping the stream and picking it up later
-     | Method Call                                  | Status     | Result                                                                         | Notes                               |
-     |----------------------------------------------|------------|--------------------------------------------------------------------------------|-------------------------------------|
-     | CreateResponseStreamingAsync(msgs, opts, ct) | -          | updates                                                                        |                                     |
-     | Iterating over updates                       | Queued     | -                                                                              |                                     |
-     | Iterating over updates                       | Queued     | -                                                                              |                                     |
-     | Iterating over updates                       | InProgress | -                                                                              |                                     |
-     | Iterating over updates                       | InProgress | -                                                                              |                                     |
-     | Iterating over updates                       | InProgress | The                                                                            |                                     |
-     | Iterating over updates                       | InProgress | capital                                                                        |                                     |
-     | Iterating over updates                       | InProgress | ...                                                                            |                                     |
-     | Iterating over updates                       | InProgress | Paris.                                                                         |                                     |
-     | Iterating over updates                       | Completed  | The capital of France is Paris.                                                |                                     |
-     | GetStreamingResponseAsync(responseId, ct)    | -          | updates                                                                        | response is less than 5 minutes old |
-     | Iterating over updates                       | Queued     | -                                                                              |                                     |
-     | ... 									        | ...        | ...                                                                            |                                     |
-     | GetStreamingResponseAsync(responseId, ct)    | -          |  HTTP 400 - Response can no longer be streamed, it is more than 5 minutes old. | response is more than 5 minutes old |
+     | Method Call                                  | Status     | Result                                                                         | Notes                                     |
+     |----------------------------------------------|------------|--------------------------------------------------------------------------------|-------------------------------------------|
+     | CreateResponseStreamingAsync(msgs, opts, ct) | -          | updates                                                                        |                                           |
+     | Iterating over updates                       | Queued     | -                                                                              |                                           |
+     | Iterating over updates                       | Queued     | -                                                                              |                                           |
+     | Iterating over updates                       | InProgress | -                                                                              |                                           |
+     | Iterating over updates                       | InProgress | -                                                                              |                                           |
+     | Iterating over updates                       | InProgress | The                                                                            |                                           |
+     | Iterating over updates                       | InProgress | capital                                                                        |                                           |
+     | Iterating over updates                       | InProgress | ...                                                                            |                                           |
+     | Iterating over updates                       | InProgress | Paris.                                                                         |                                           |
+     | Iterating over updates                       | Completed  | The capital of France is Paris.                                                |                                           |
+     | GetStreamingResponseAsync(responseId, ct)    | -          | updates                                                                        | response is less than 5 minutes old       |
+     | Iterating over updates                       | Queued     | -                                                                              |                                           |
+     | ... 									        | ...        | ...                                                                            |                                           |
+     | GetStreamingResponseAsync(responseId, ct)    | -          |  HTTP 400 - Response can no longer be streamed, it is more than 5 minutes old. | response is more than 5 minutes old       |
+     | GetResponseAsync(responseId, ct)	            | Completed  | The capital of France is Paris.                                                | accessing response that can't be streamed |
   
-     Setting the Store options to true in an attempt to overcome the 5-minute limit does not help.
-  
+     The streamed response that is not available after 5 minutes can be retrieved using the non-streaming API `GetResponseAsync`.
+       
      | Cancellation Method | Result                             | Notes                                  |
      |---------------------|------------------------------------|----------------------------------------|
      | CancelResponseAsync | Canceled<sup>1</sup>               | if cancelled before response completed |
