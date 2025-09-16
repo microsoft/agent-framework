@@ -474,7 +474,7 @@ class BaseChatClient(AFBaseModel, ABC):
         | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middlewares: MiddlewareType | list[MiddlewareType] | None = None,
+        middleware: MiddlewareType | list[MiddlewareType] | None = None,
         **kwargs: Any,
     ) -> "ChatAgent":
         """Create an agent with the given name and instructions.
@@ -486,7 +486,7 @@ class BaseChatClient(AFBaseModel, ABC):
             chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
             context_providers: Context providers to include during agent invocation.
-            middlewares: List of middleware to intercept agent and function invocations.
+            middleware: List of middleware to intercept agent and function invocations.
             **kwargs: Additional keyword arguments to pass to the agent.
                 See ChatAgent for all the available options.
 
@@ -502,7 +502,7 @@ class BaseChatClient(AFBaseModel, ABC):
             tools=tools,
             chat_message_store_factory=chat_message_store_factory,
             context_providers=context_providers,
-            middlewares=middlewares,
+            middleware=middleware,
             **kwargs,
         )
 

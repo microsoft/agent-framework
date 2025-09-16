@@ -2,14 +2,17 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ._agents import AgentProtocol
     from ._tools import AIFunction
-    from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+
+TAgent = TypeVar("TAgent", bound="AgentProtocol")
 
 __all__ = [
     "AgentInvocationContext",
@@ -17,6 +20,7 @@ __all__ = [
     "FunctionInvocationContext",
     "FunctionMiddleware",
     "MiddlewareType",
+    "use_agent_middleware",
 ]
 
 
@@ -33,7 +37,7 @@ class AgentInvocationContext:
     def __init__(
         self,
         agent: "AgentProtocol",
-        messages: list["ChatMessage"],
+        messages: list[ChatMessage],
         is_streaming: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -197,10 +201,10 @@ class AgentMiddlewarePipeline:
     async def execute(
         self,
         agent: "AgentProtocol",
-        messages: list["ChatMessage"],
+        messages: list[ChatMessage],
         context: AgentInvocationContext,
-        final_handler: Callable[[AgentInvocationContext], Awaitable["AgentRunResponse"]],
-    ) -> "AgentRunResponse | None":
+        final_handler: Callable[[AgentInvocationContext], Awaitable[AgentRunResponse]],
+    ) -> AgentRunResponse | None:
         """Execute the agent middleware pipeline for non-streaming.
 
         Args:
@@ -248,10 +252,10 @@ class AgentMiddlewarePipeline:
     async def execute_stream(
         self,
         agent: "AgentProtocol",
-        messages: list["ChatMessage"],
+        messages: list[ChatMessage],
         context: AgentInvocationContext,
-        final_handler: Callable[[AgentInvocationContext], AsyncIterable["AgentRunResponseUpdate"]],
-    ) -> AsyncIterable["AgentRunResponseUpdate"]:
+        final_handler: Callable[[AgentInvocationContext], AsyncIterable[AgentRunResponseUpdate]],
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Execute the agent middleware pipeline for streaming.
 
         Args:
@@ -386,3 +390,196 @@ class FunctionMiddlewarePipeline:
     def has_middlewares(self) -> bool:
         """Check if there are any middlewares registered."""
         return bool(self._middlewares)
+
+
+# Decorator for adding middleware support to agent classes
+def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
+    """Class decorator that adds middleware support to an agent class.
+
+    This decorator adds middleware functionality to any agent class.
+    It wraps the run() and run_stream() methods to provide middleware execution.
+
+    Args:
+        agent_class: The agent class to add middleware support to.
+
+    Returns:
+        The modified agent class with middleware support.
+    """
+    import inspect
+
+    # Store original methods
+    original_run = agent_class.run  # type: ignore[attr-defined]
+    original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
+
+    def _initialize_middleware_pipelines(self: Any, middlewares: MiddlewareType | list[MiddlewareType] | None) -> None:
+        """Initialize agent and function middleware pipelines from the provided middleware list."""
+        if not middlewares:
+            return
+
+        middleware_list: list[MiddlewareType] = middlewares if isinstance(middlewares, list) else [middlewares]  # type: ignore
+
+        # Separate agent and function middleware using isinstance checks
+        agent_middlewares: list[AgentMiddleware | AgentMiddlewareCallable] = []
+        function_middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] = []
+
+        for middleware in middleware_list:
+            if isinstance(middleware, AgentMiddleware):
+                agent_middlewares.append(middleware)
+            elif isinstance(middleware, FunctionMiddleware):
+                function_middlewares.append(middleware)
+            elif callable(middleware):  # type: ignore[arg-type]
+                # Check function signature to determine type
+                try:
+                    sig = inspect.signature(middleware)
+                    params = list(sig.parameters.values())
+                    if len(params) >= 1:
+                        first_param = params[0]
+                        # Check if first parameter is AgentInvocationContext or FunctionInvocationContext
+                        if (
+                            hasattr(first_param.annotation, "__name__")
+                            and first_param.annotation.__name__ == "AgentInvocationContext"
+                        ):
+                            agent_middlewares.append(middleware)  # type: ignore
+                        elif (
+                            hasattr(first_param.annotation, "__name__")
+                            and first_param.annotation.__name__ == "FunctionInvocationContext"
+                        ):
+                            function_middlewares.append(middleware)  # type: ignore
+                        else:
+                            # Default to agent middleware if uncertain
+                            agent_middlewares.append(middleware)  # type: ignore
+                    else:
+                        agent_middlewares.append(middleware)  # type: ignore
+                except Exception:
+                    # If signature inspection fails, assume it's an agent middleware
+                    agent_middlewares.append(middleware)  # type: ignore
+            else:
+                # Fallback
+                agent_middlewares.append(middleware)  # type: ignore
+
+        self._agent_middleware_pipeline = AgentMiddlewarePipeline(agent_middlewares)
+        self._function_middleware_pipeline = FunctionMiddlewarePipeline(function_middlewares)
+
+    async def middleware_enabled_run(
+        self: Any,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: Any = None,
+        **kwargs: Any,
+    ) -> AgentRunResponse:
+        """Middleware-enabled run method."""
+        # Initialize middleware pipelines if not already done
+        if (
+            hasattr(self, "middleware")
+            and self.middleware
+            and not (
+                hasattr(self, "_agent_middleware_pipeline")
+                and hasattr(self, "_function_middleware_pipeline")
+                and (
+                    self._agent_middleware_pipeline.has_middlewares
+                    or self._function_middleware_pipeline.has_middlewares
+                )
+            )
+        ):
+            _initialize_middleware_pipelines(self, self.middleware)
+
+        # Ensure pipelines exist even if empty
+        if not hasattr(self, "_agent_middleware_pipeline"):
+            self._agent_middleware_pipeline = AgentMiddlewarePipeline()
+        if not hasattr(self, "_function_middleware_pipeline"):
+            self._function_middleware_pipeline = FunctionMiddlewarePipeline()
+
+        # Add function middleware pipeline to kwargs if available
+        if self._function_middleware_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
+
+        normalized_messages = self._normalize_messages(messages)
+
+        # Execute with middleware if available
+        if self._agent_middleware_pipeline.has_middlewares:
+            context = AgentInvocationContext(
+                agent=self,  # type: ignore[arg-type]
+                messages=normalized_messages,
+                is_streaming=False,
+            )
+
+            async def _execute_handler(ctx: AgentInvocationContext) -> AgentRunResponse:
+                return await original_run(self, ctx.messages, thread=thread, **kwargs)  # type: ignore
+
+            response = await self._agent_middleware_pipeline.execute(
+                self,  # type: ignore[arg-type]
+                normalized_messages,
+                context,
+                _execute_handler,
+            )
+
+            return response if response else AgentRunResponse()
+
+        # No middleware, execute directly
+        return await original_run(self, normalized_messages, thread=thread, **kwargs)  # type: ignore[return-value]
+
+    def middleware_enabled_run_stream(
+        self: Any,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: Any = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
+        """Middleware-enabled run_stream method."""
+        # Initialize middleware pipelines if not already done
+        if (
+            hasattr(self, "middleware")
+            and self.middleware
+            and not (
+                hasattr(self, "_agent_middleware_pipeline")
+                and hasattr(self, "_function_middleware_pipeline")
+                and (
+                    self._agent_middleware_pipeline.has_middlewares
+                    or self._function_middleware_pipeline.has_middlewares
+                )
+            )
+        ):
+            _initialize_middleware_pipelines(self, self.middleware)
+
+        # Ensure pipelines exist even if empty
+        if not hasattr(self, "_agent_middleware_pipeline"):
+            self._agent_middleware_pipeline = AgentMiddlewarePipeline()
+        if not hasattr(self, "_function_middleware_pipeline"):
+            self._function_middleware_pipeline = FunctionMiddlewarePipeline()
+
+        # Add function middleware pipeline to kwargs if available
+        if self._function_middleware_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
+
+        normalized_messages = self._normalize_messages(messages)
+
+        # Execute with middleware if available
+        if self._agent_middleware_pipeline.has_middlewares:
+            context = AgentInvocationContext(
+                agent=self,  # type: ignore[arg-type]
+                messages=normalized_messages,
+                is_streaming=True,
+            )
+
+            async def _execute_stream_handler(ctx: AgentInvocationContext) -> AsyncIterable[AgentRunResponseUpdate]:
+                async for update in original_run_stream(self, ctx.messages, thread=thread, **kwargs):  # type: ignore[misc]
+                    yield update
+
+            async def _stream_generator() -> AsyncIterable[AgentRunResponseUpdate]:
+                async for update in self._agent_middleware_pipeline.execute_stream(
+                    self,  # type: ignore[arg-type]
+                    normalized_messages,
+                    context,
+                    _execute_stream_handler,
+                ):
+                    yield update
+
+            return _stream_generator()
+
+        # No middleware, execute directly
+        return original_run_stream(self, normalized_messages, thread=thread, **kwargs)  # type: ignore
+
+    agent_class.run = middleware_enabled_run  # type: ignore
+    agent_class.run_stream = middleware_enabled_run_stream  # type: ignore
+
+    return agent_class

@@ -107,7 +107,7 @@ class WorkflowAgent(BaseAgent):
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
 
-        async for update in self._run_stream_impl(input_messages, thread=thread, response_id=response_id):
+        async for update in self._run_stream_impl(input_messages, response_id):
             response_updates.append(update)
 
         # Convert updates to final response.
@@ -141,7 +141,7 @@ class WorkflowAgent(BaseAgent):
         response_updates: list[AgentRunResponseUpdate] = []
         response_id = str(uuid.uuid4())
 
-        async for update in self._run_stream_impl(input_messages, thread=thread, response_id=response_id):
+        async for update in self._run_stream_impl(input_messages, response_id):
             response_updates.append(update)
             yield update
 
@@ -154,25 +154,18 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_stream_impl(
         self,
-        messages: list[ChatMessage],
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
+        input_messages: list[ChatMessage],
+        response_id: str,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Internal implementation of streaming execution.
 
         Args:
-            messages: Normalized input messages to process.
-            thread: The conversation thread (unused in workflow agent).
-            kwargs: Additional keyword arguments, including response_id.
+            input_messages: Normalized input messages to process.
+            response_id: The unique response ID for this workflow execution.
 
         Yields:
             AgentRunResponseUpdate objects representing the workflow execution progress.
         """
-        # Extract response_id from kwargs
-        response_id = kwargs.get("response_id")
-        if not response_id:
-            raise ValueError("response_id must be provided in kwargs")
         # Determine the event stream based on whether we have function responses
         if bool(self.pending_requests):
             # This is a continuation - use send_responses_streaming to send function responses back
@@ -181,7 +174,7 @@ class WorkflowAgent(BaseAgent):
             # Extract function responses from input messages, and ensure that
             # only function responses are present in messages if there is any
             # pending request.
-            function_responses = self._extract_function_responses(messages)
+            function_responses = self._extract_function_responses(input_messages)
 
             # Pop pending requests if fulfilled.
             for request_id in list(self.pending_requests.keys()):
@@ -195,7 +188,7 @@ class WorkflowAgent(BaseAgent):
         else:
             # Execute workflow with streaming (initial run or no function responses)
             # Pass the new input messages directly to the workflow
-            event_stream = self.workflow.run_stream(messages)
+            event_stream = self.workflow.run_stream(input_messages)
 
         # Process events from the stream
         async for event in event_stream:

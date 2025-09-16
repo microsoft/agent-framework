@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import inspect
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
@@ -13,17 +12,7 @@ from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
-from ._middleware import (
-    AgentInvocationContext,
-    AgentMiddleware,
-    AgentMiddlewareCallable,
-    AgentMiddlewarePipeline,
-    FunctionInvocationContext,
-    FunctionMiddleware,
-    FunctionMiddlewareCallable,
-    FunctionMiddlewarePipeline,
-    MiddlewareType,
-)
+from ._middleware import MiddlewareType, use_agent_middleware
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, ToolProtocol
@@ -150,16 +139,14 @@ class BaseAgent(AFBaseModel):
        description: The description of the agent.
        display_name: The display name of the agent, which is either the name or id.
        context_providers: The collection of multiple context providers to include during agent invocation.
-       middlewares: List of middleware to intercept agent and function invocations.
+       middleware: List of middleware to intercept agent and function invocations.
     """
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
     context_providers: AggregateContextProvider | None = None
-    middlewares: MiddlewareType | list[MiddlewareType] | None = None
-    _agent_middleware_pipeline: AgentMiddlewarePipeline = PrivateAttr(default_factory=AgentMiddlewarePipeline)
-    _function_middleware_pipeline: FunctionMiddlewarePipeline = PrivateAttr(default_factory=FunctionMiddlewarePipeline)
+    middleware: MiddlewareType | list[MiddlewareType] | None = None
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -186,199 +173,6 @@ class BaseAgent(AFBaseModel):
         await deserialize_thread_state(thread, serialized_thread, **kwargs)
         return thread
 
-    def _initialize_middleware_pipelines(self, middlewares: MiddlewareType | list[MiddlewareType] | None) -> None:
-        """Initialize agent and function middleware pipelines from the provided middlewares.
-
-        This method classifies middleware by type and creates appropriate pipelines.
-
-        Args:
-            middlewares: List of middleware to classify and initialize into pipelines.
-        """
-        # Separate middlewares by type
-        agent_middlewares: list[AgentMiddleware | AgentMiddlewareCallable] = []
-        function_middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] = []
-
-        if middlewares:
-            middlewares_list = middlewares if isinstance(middlewares, list) else [middlewares]
-            for middleware in middlewares_list:
-                # Classify middleware by type checking
-                if isinstance(middleware, AgentMiddleware):
-                    agent_middlewares.append(middleware)
-                elif isinstance(middleware, FunctionMiddleware):
-                    function_middlewares.append(middleware)
-                elif callable(middleware) and inspect.iscoroutinefunction(middleware):
-                    # It's a function, classify by signature inspection
-                    sig = inspect.signature(middleware)
-                    params = list(sig.parameters.values())
-
-                    # Look at the first parameter's type annotation
-                    if len(params) >= 1:
-                        first_param_annotation = params[0].annotation
-                        if first_param_annotation != inspect.Parameter.empty:
-                            # Check if it's an AgentInvocationContext or FunctionInvocationContext
-                            if first_param_annotation is AgentInvocationContext:
-                                agent_middlewares.append(middleware)  # type: ignore
-                            elif first_param_annotation is FunctionInvocationContext:
-                                function_middlewares.append(middleware)  # type: ignore
-
-        self._agent_middleware_pipeline = AgentMiddlewarePipeline(agent_middlewares)
-        self._function_middleware_pipeline = FunctionMiddlewarePipeline(function_middlewares)
-
-    async def _run_impl(
-        self,
-        messages: list[ChatMessage],
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AgentRunResponse:
-        """Core agent execution logic that subclasses must implement.
-
-        This method contains the actual agent logic and is called by the public run method
-        after middleware initialization and message normalization.
-
-        Args:
-            messages: Normalized list of ChatMessage objects.
-            thread: The conversation thread associated with the messages.
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            An agent response.
-
-        Raises:
-            NotImplementedError: This method must be implemented by subclasses.
-        """
-        raise NotImplementedError("Subclasses must implement _run_impl method")
-
-    def _run_stream_impl(
-        self,
-        messages: list[ChatMessage],
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Core agent streaming execution logic that subclasses must implement.
-
-        This method contains the actual agent streaming logic and is called by the public
-        run_stream method after middleware initialization and message normalization.
-
-        Args:
-            messages: Normalized list of ChatMessage objects.
-            thread: The conversation thread associated with the messages.
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            Agent response updates.
-
-        Raises:
-            NotImplementedError: This method must be implemented by subclasses.
-        """
-        raise NotImplementedError("Subclasses must implement _run_stream_impl method")
-
-    async def run(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AgentRunResponse:
-        """Get a response from the agent with automatic middleware execution.
-
-        This method handles middleware initialization, message normalization, and execution
-        automatically. Custom agents should implement _run_impl instead of overriding this method.
-
-        Args:
-            messages: The message(s) to send to the agent.
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            An agent response item.
-        """
-        # Initialize middleware pipelines if not already done
-        if self.middlewares and not (
-            self._agent_middleware_pipeline.has_middlewares or self._function_middleware_pipeline.has_middlewares
-        ):
-            self._initialize_middleware_pipelines(self.middlewares)
-
-        normalized_messages = self._normalize_messages(messages)
-
-        # Execute with middleware if available
-        if self._agent_middleware_pipeline.has_middlewares:
-            from ._middleware import AgentInvocationContext
-
-            context = AgentInvocationContext(
-                agent=self,  # type: ignore[arg-type]
-                messages=normalized_messages,
-                is_streaming=False,
-            )
-
-            async def _execute_handler(ctx: AgentInvocationContext) -> AgentRunResponse:
-                return await self._run_impl(ctx.messages, thread=thread, **kwargs)
-
-            response = await self._agent_middleware_pipeline.execute(
-                self,  # type: ignore[arg-type]
-                normalized_messages,
-                context,
-                _execute_handler,
-            )
-
-            return response if response else AgentRunResponse()
-
-        # No middleware, execute directly
-        return await self._run_impl(normalized_messages, thread=thread, **kwargs)
-
-    def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Run the agent as a stream with automatic middleware execution.
-
-        This method handles middleware initialization, message normalization, and execution
-        automatically. Custom agents should implement _run_stream_impl instead of overriding this method.
-
-        Args:
-            messages: The message(s) to send to the agent.
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            Agent response items.
-        """
-        # Initialize middleware pipelines if not already done
-        if self.middlewares and not (
-            self._agent_middleware_pipeline.has_middlewares or self._function_middleware_pipeline.has_middlewares
-        ):
-            self._initialize_middleware_pipelines(self.middlewares)
-
-        normalized_messages = self._normalize_messages(messages)
-
-        # Execute with middleware if available
-        if self._agent_middleware_pipeline.has_middlewares:
-            from ._middleware import AgentInvocationContext
-
-            context = AgentInvocationContext(
-                agent=self,  # type: ignore[arg-type]
-                messages=normalized_messages,
-                is_streaming=True,
-            )
-
-            async def _execute_stream_handler(ctx: AgentInvocationContext) -> AsyncIterable[AgentRunResponseUpdate]:
-                async for update in self._run_stream_impl(ctx.messages, thread=thread, **kwargs):
-                    yield update
-
-            return self._agent_middleware_pipeline.execute_stream(
-                self,  # type: ignore[arg-type]
-                normalized_messages,
-                context,
-                _execute_stream_handler,
-            )
-
-        # No middleware, execute directly
-        return self._run_stream_impl(normalized_messages, thread=thread, **kwargs)
-
     def _normalize_messages(
         self,
         messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
@@ -398,6 +192,7 @@ class BaseAgent(AFBaseModel):
 # region ChatAgent
 
 
+@use_agent_middleware
 @use_agent_telemetry
 class ChatAgent(BaseAgent):
     """A Chat Client Agent."""
@@ -440,7 +235,7 @@ class ChatAgent(BaseAgent):
         additional_properties: dict[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middlewares: MiddlewareType | list[MiddlewareType] | None = None,
+        middleware: MiddlewareType | list[MiddlewareType] | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a ChatAgent.
@@ -476,8 +271,7 @@ class ChatAgent(BaseAgent):
             chat_message_store_factory: factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
             context_providers: The collection of multiple context providers to include during agent invocation.
-            middlewares: List of middleware to intercept agent and function invocations.
-                Can include class instances implementing middleware protocols or pure functions.
+            middleware: List of middleware to intercept agent and function invocations.
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
@@ -499,7 +293,7 @@ class ChatAgent(BaseAgent):
             "chat_client": chat_client,
             "chat_message_store_factory": chat_message_store_factory,
             "context_providers": aggregate_context_providers,
-            "middlewares": middlewares,
+            "middleware": middleware,
             "chat_options": ChatOptions(
                 ai_model_id=model,
                 frequency_penalty=frequency_penalty,
@@ -531,9 +325,6 @@ class ChatAgent(BaseAgent):
         super().__init__(**args)
         self._update_agent_name()
         self._local_mcp_tools = local_mcp_tools  # type: ignore[assignment]
-
-        # Initialize middleware pipelines
-        self._initialize_middleware_pipelines(middlewares)
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry.
@@ -569,9 +360,9 @@ class ChatAgent(BaseAgent):
         if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue, attr-defined]
             self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
-    async def _run_impl(
+    async def run(
         self,
-        messages: list[ChatMessage],
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         frequency_penalty: float | None = None,
@@ -598,10 +389,16 @@ class ChatAgent(BaseAgent):
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
-        """Core ChatAgent execution logic called by the base run method after middleware processing.
+        """Run the agent with the given messages and options.
+
+        Remarks:
+            Since you won't always call the agent.run directly, but it get's called
+            through orchestration, it is advised to set your default values for
+            all the chat client parameters in the agent constructor.
+            If both parameters are used, the ones passed to the run methods take precedence.
 
         Args:
-            messages: Normalized list of ChatMessage objects.
+            messages: The messages to process.
             thread: The thread to use for the agent.
             frequency_penalty: the frequency penalty to use.
             logit_bias: the logit bias to use.
@@ -621,60 +418,7 @@ class ChatAgent(BaseAgent):
             additional_properties: additional properties to include in the request.
             kwargs: Additional keyword arguments for the agent.
                 will only be passed to functions that are called.
-
-        Returns:
-            An agent response.
         """
-        return await self._run_internal(
-            messages=messages,
-            thread=thread,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            model=model,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=tools,  # type: ignore[arg-type]
-            top_p=top_p,
-            user=user,
-            additional_properties=additional_properties,
-            **kwargs,
-        )
-
-    async def _run_internal(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | dict[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | dict[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AgentRunResponse:
-        """Internal run method that performs the actual agent execution without middleware."""
         input_messages = self._normalize_messages(messages)
         context = await self.context_providers.model_invoking(input_messages) if self.context_providers else None
         thread, thread_messages = await self._prepare_thread_and_messages(
@@ -694,10 +438,6 @@ class ChatAgent(BaseAgent):
 
         for mcp_server in self._local_mcp_tools:
             final_tools.extend(mcp_server.functions)
-
-        # Add function middleware pipeline to kwargs if available
-        if self._function_middleware_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
 
         response = await self.chat_client.get_response(
             messages=thread_messages,
@@ -749,83 +489,7 @@ class ChatAgent(BaseAgent):
             additional_properties=response.additional_properties,
         )
 
-    def _run_stream_impl(
-        self,
-        messages: list[ChatMessage],
-        *,
-        thread: AgentThread | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Core ChatAgent streaming execution logic called by the base run_stream method after middleware processing.
-
-        Args:
-            messages: Normalized list of ChatMessage objects.
-            thread: The thread to use for the agent.
-            frequency_penalty: the frequency penalty to use.
-            logit_bias: the logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: additional metadata to include in the request.
-            model: The model to use for the agent.
-            presence_penalty: the presence penalty to use.
-            response_format: the format of the response.
-            seed: the random seed to use.
-            stop: the stop sequence(s) for the request.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            additional_properties: additional properties to include in the request.
-            kwargs: any additional keyword arguments.
-                will only be passed to functions that are called.
-
-        Yields:
-            Agent response updates.
-        """
-        return self._run_stream_internal(
-            messages=messages,
-            thread=thread,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            model=model,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=tools,  # type: ignore[arg-type]
-            top_p=top_p,
-            user=user,
-            additional_properties=additional_properties,
-            **kwargs,
-        )
-
-    async def _run_stream_internal(
+    async def run_stream(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -852,7 +516,37 @@ class ChatAgent(BaseAgent):
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Internal run_stream method that performs the actual agent execution without middleware."""
+        """Stream the agent with the given messages and options.
+
+        Remarks:
+            Since you won't always call the agent.run_stream directly, but it get's called
+            through orchestration, it is advised to set your default values for
+            all the chat client parameters in the agent constructor.
+            If both parameters are used, the ones passed to the run methods take precedence.
+
+        Args:
+            messages: The messages to process.
+            thread: The thread to use for the agent.
+            frequency_penalty: the frequency penalty to use.
+            logit_bias: the logit bias to use.
+            max_tokens: The maximum number of tokens to generate.
+            metadata: additional metadata to include in the request.
+            model: The model to use for the agent.
+            presence_penalty: the presence penalty to use.
+            response_format: the format of the response.
+            seed: the random seed to use.
+            stop: the stop sequence(s) for the request.
+            store: whether to store the response.
+            temperature: the sampling temperature to use.
+            tool_choice: the tool choice for the request.
+            tools: the tools to use for the request.
+            top_p: the nucleus sampling probability to use.
+            user: the user to associate with the request.
+            additional_properties: additional properties to include in the request.
+            kwargs: any additional keyword arguments.
+                will only be passed to functions that are called.
+
+        """
         input_messages = self._normalize_messages(messages)
         context = await self.context_providers.model_invoking(input_messages) if self.context_providers else None
         thread, thread_messages = await self._prepare_thread_and_messages(
@@ -873,10 +567,6 @@ class ChatAgent(BaseAgent):
 
         for mcp_server in self._local_mcp_tools:
             final_tools.extend(mcp_server.functions)
-
-        # Add function middleware pipeline to kwargs if available
-        if self._function_middleware_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
 
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,
