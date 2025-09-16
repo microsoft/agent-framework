@@ -40,6 +40,7 @@ _IMPORTS = [
     "WorkflowAgent",
     "WorkflowViz",
     "FileCheckpointStorage",
+    "ExecutorFailedEvent",
     "InMemoryCheckpointStorage",
     "CheckpointStorage",
     "WorkflowCheckpoint",
@@ -56,6 +57,10 @@ _IMPORTS = [
     "PlanReviewRequest",
     "RequestInfoEvent",
     "StandardMagenticManager",
+    "WorkflowStatusEvent",
+    "WorkflowRunState",
+    "WorkflowErrorDetails",
+    "WorkflowFailedEvent",
     "ConcurrentBuilder",
 ]
 
