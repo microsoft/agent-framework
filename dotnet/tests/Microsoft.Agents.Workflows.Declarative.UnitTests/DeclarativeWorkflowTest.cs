@@ -199,7 +199,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             };
         AdaptiveDialog dialog = dialogBuilder.Build();
 
-        WorkflowFormulaState scopes = new(RecalcEngineFactory.Create());
+        WorkflowFormulaState states = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
         WorkflowActionVisitor visitor = new(new RootExecutor(), scopes, options);
