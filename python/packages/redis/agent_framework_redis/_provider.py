@@ -78,7 +78,6 @@ class RedisProvider(ContextProvider):
         vectorizer_api_key: str | None = None,
         vectorizer_choice: Literal["openai", "hf"] | None = None,
         vector_field_name: str | None = None,
-        vector_dims: int | None = None,
         vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None,
         vector_algorithm: Literal["flat", "hnsw"] | None = None,
         vector_distance_metric: Literal["cosine", "ip", "l2"] | None = None,
@@ -120,8 +119,8 @@ class RedisProvider(ContextProvider):
             vector_dims = None
 
         # Opinionated vars - no customization required
-        key_separator = ":"
-        storage_type = "hash"
+        key_separator: Final[str] = ":"  # local constant
+        storage_type: Final[Literal["hash", "json"]] = "hash"
 
         schema_dict = self._build_schema_dict(
             index_name=index_name,
@@ -166,7 +165,7 @@ class RedisProvider(ContextProvider):
             token_escaper=token_escaper,  # type: ignore[reportCallIssue]
         )
 
-    def _build_filter_from_dict(self, filters: dict[str, str | None]) -> FilterExpression | None:
+    def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         parts = [Tag(k) == v for k, v in filters.items() if v]
         return reduce(and_, parts) if parts else None
 
@@ -285,7 +284,7 @@ class RedisProvider(ContextProvider):
         *,
         text_field_name: str = "content",
         text_scorer: str = "BM25STD",
-        filter_expression: FilterExpression | None = None,
+        filter_expression: Any | None = None,
         return_fields: list[str] | None = None,
         num_results: int = 10,
         return_score: bool = True,

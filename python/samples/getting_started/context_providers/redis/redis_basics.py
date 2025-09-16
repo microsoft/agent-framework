@@ -50,7 +50,7 @@ async def main() -> None:
     """
 
     # Configure API keys and model IDs (replace placeholders)
-    OPENAI_API_KEY = "<API KEY>"
+    OPENAI_API_KEY = "<API KEY HERE>"
     OPENAI_MODEL_ID = "gpt-4o-mini"
 
     # Create provider with partition scope and OpenAI embeddings
