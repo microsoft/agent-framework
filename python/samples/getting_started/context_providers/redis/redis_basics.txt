@@ -5,8 +5,49 @@ from agent_framework_redis._provider import RedisProvider
 
 
 async def main() -> None:
-    """Example of memory usage with Redis context provider."""
-    print("=== Redis Context Provider Example ===")
+    """Redis context provider standalone basic usage. 
+    
+    Initialize the provider with OpenAI vectorizer and API key.
+    
+    Useful Debug Commands:
+
+    # Print index info
+    print(await provider.redis_index.info())
+
+    # Print all data stored in the index 
+    print(await provider.search_all())
+    """
+
+    OPENAI_API_KEY = ""
+
+    provider = RedisProvider(
+        redis_url="redis://localhost:6379",
+        index_name="redis_basics",
+        overwrite_redis_index=True,
+        drop_redis_index=True,
+        application_id="matrix_of_kermits",
+        agent_id="agent_kermit",
+        user_id="kermit",
+        vectorizer_choice="openai",
+        vector_field_name="vector",
+        vectorizer_api_key=OPENAI_API_KEY
+    )
+    
+    messages = [
+        ChatMessage(role=Role.USER, text="A: User Message"),
+        ChatMessage(role=Role.ASSISTANT, text="B: Assistant Message"),
+        ChatMessage(role=Role.SYSTEM, text="C: System Message"),
+    ]
+
+    await provider.messages_adding(thread_id="runA", new_messages=messages)
+
+    ctx = await provider.model_invoking([
+        ChatMessage(role=Role.USER, text="B: Assistant Message"),
+        ChatMessage(role=Role.SYSTEM, text="B: Assistant Message"),
+    ])
+
+    print(ctx.contents[0].text)
+
 
     # Each record in Redis should be associated with agent_id or user_id or application_id or thread_id.
     # In this example, we associate Redis records with user_id.
@@ -14,13 +55,13 @@ async def main() -> None:
     # For Azure authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     # For Redis authentication, set Redis API key via "api_key" parameter or Redis_API_KEY environment variable.
-    async with (
-        OpenAIChatClient(
-            env_file_path="/Users/han.choong/Desktop/projects/agent-framework/python/.env",
-            instruction_role="assistant",
-            context_providers=RedisProvider(),
-        ) as agent,
-    ):
+    # async with (
+    #     OpenAIChatClient(
+    #         env_file_path="/Users/han.choong/Desktop/projects/agent-framework/python/.env",
+    #         instruction_role="assistant",
+    #         context_providers=RedisProvider(),
+    #     ) as agent,
+    # ):
         # First ask the agent to retrieve a company report with no previous context.
         # The agent will not be able to invoke the tool, since it doesn't know
         # the company code or the report format, so it should ask for clarification.

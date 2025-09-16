@@ -7,7 +7,7 @@ import sys
 from collections.abc import MutableSequence, Sequence
 from typing import Any, Final, Literal, cast
 
-from agent_framework import ChatMessage, Context, ContextProvider, TextContent  # type: ignore[no-any-unimported]
+from agent_framework import ChatMessage, Context, ContextProvider, Role, TextContent  # type: ignore[no-any-unimported]
 from agent_framework.exceptions import (  # type: ignore[no-any-unimported]
     ServiceInitializationError,
     ServiceInvalidRequestError,
@@ -41,6 +41,7 @@ class RedisProvider(ContextProvider):
     prefix: str = "memory"
     key_separator: str = ":"
     storage_type: Literal["hash", "json"] = "hash"
+    fresh_initialization: bool = False
 
     # Vector configuration (optional)
     vectorizer_api_key: str | None = None
@@ -74,6 +75,7 @@ class RedisProvider(ContextProvider):
         prefix: str = "memory",
         key_separator: str = ":",
         storage_type: Literal["hash", "json"] = "hash",
+        fresh_initialization: bool = False,
         # Vector: all optional; omit to disable KNN
         vectorizer_api_key: str | None = None,
         vectorizer_choice: Literal["openai", "hf"] | None = None,
@@ -141,6 +143,7 @@ class RedisProvider(ContextProvider):
             index_name=index_name,  # type: ignore[reportCallIssue]
             prefix=prefix,  # type: ignore[reportCallIssue]
             key_separator=key_separator,  # type: ignore[reportCallIssue]
+            fresh_initialization=fresh_initialization,  # type: ignore[reportCallIssue]
             storage_type=storage_type,  # type: ignore[reportCallIssue]
             vectorizer_api_key=vectorizer_api_key,  # type: ignore[reportCallIssue]
             vectorizer_choice=vectorizer_choice,  # type: ignore[reportCallIssue]
@@ -209,8 +212,15 @@ class RedisProvider(ContextProvider):
             "fields": fields,
         }
 
-    async def create_redis_index(self) -> None:
-        await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
+    async def _ensure_index(self) -> None:
+        """Test needed to verify behavior here."""
+        if self.overwrite_redis_index:
+            if not self.fresh_initialization:
+                await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
+                self.fresh_initialization = True
+        else:
+            if not await self.redis_index.exists():
+                await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
         return
 
     async def add(
@@ -228,7 +238,7 @@ class RedisProvider(ContextProvider):
         """
         # Ensure provider has at least one scope set (symmetry with Mem0Provider)
         self._validate_filters()
-
+        await self._ensure_index()
         docs = data if isinstance(data, list) else [data]
 
         prepared: list[dict[str, Any]] = []
@@ -289,6 +299,7 @@ class RedisProvider(ContextProvider):
         - Minimal, safe defaults; validate inputs and keep output shape simple (list of dicts).
         """
         # Enforce presence of at least one provider-level filter (symmetry with Mem0Provider)
+        await self._ensure_index()
         self._validate_filters()
 
         q = (text or "").strip()
@@ -412,13 +423,19 @@ class RedisProvider(ContextProvider):
         messages: list[dict[str, str]] = [
             {"role": message.role.value, "content": message.text}
             for message in messages_list
-            if message.role.value in {"user", "assistant", "system"} and message.text and message.text.strip()
+            if message.role.value in {str(Role.USER), str(Role.ASSISTANT), str(Role.SYSTEM)}
+            and message.text
+            and message.text.strip()
         ]
         if messages:
             await self.add(data=messages)
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called before invoking the AI model to provide context.
+
+        Currently combin4es all messages by newline and searches as a query text.
+
+        Should this be changed to individual searches?
 
         Args:
             messages: List of new messages in the thread.
