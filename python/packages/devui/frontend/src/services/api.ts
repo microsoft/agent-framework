@@ -114,24 +114,37 @@ class ApiClient {
           description: entity.description,
           type: "agent",
           source: "directory", // Default source
-          tools: (entity.tools || []).map(tool => typeof tool === "string" ? tool : JSON.stringify(tool)),
+          tools: (entity.tools || []).map((tool) =>
+            typeof tool === "string" ? tool : JSON.stringify(tool)
+          ),
           has_env: false, // Default value
-          module_path: typeof entity.metadata?.module_path === "string" ? entity.metadata.module_path : undefined,
+          module_path:
+            typeof entity.metadata?.module_path === "string"
+              ? entity.metadata.module_path
+              : undefined,
         });
       } else if (entity.type === "workflow") {
         const firstTool = entity.tools?.[0];
         const startExecutorId = typeof firstTool === "string" ? firstTool : "";
-        
+
         workflows.push({
           id: entity.id,
           name: entity.name,
           description: entity.description,
           type: "workflow",
           source: "directory",
-          executors: (entity.tools || []).map(tool => typeof tool === "string" ? tool : JSON.stringify(tool)),
+          executors: (entity.tools || []).map((tool) =>
+            typeof tool === "string" ? tool : JSON.stringify(tool)
+          ),
           has_env: false,
-          module_path: typeof entity.metadata?.module_path === "string" ? entity.metadata.module_path : undefined,
-          input_schema: (entity.input_schema as unknown as import("@/types").JSONSchema) || { type: "string" }, // Default schema
+          module_path:
+            typeof entity.metadata?.module_path === "string"
+              ? entity.metadata.module_path
+              : undefined,
+          input_schema:
+            (entity.input_schema as unknown as import("@/types").JSONSchema) || {
+              type: "string",
+            }, // Default schema
           input_type_name: entity.input_type_name || "Input",
           start_executor_id: startExecutorId,
         });
@@ -172,7 +185,7 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify({ agent_id: agentId }),
     });
-    
+
     return {
       id: response.id,
       agent_id: agentId,
@@ -182,7 +195,9 @@ class ApiClient {
   }
 
   async getThreads(agentId: string): Promise<ThreadInfo[]> {
-    const response = await this.request<ThreadListResponse>(`/v1/threads?agent_id=${agentId}`);
+    const response = await this.request<ThreadListResponse>(
+      `/v1/threads?agent_id=${agentId}`
+    );
     return response.data.map((thread: ThreadApiObject) => ({
       id: thread.id,
       agent_id: thread.agent_id,
@@ -202,18 +217,30 @@ class ApiClient {
     }
   }
 
-  async getThreadMessages(threadId: string): Promise<import("@/types").ChatMessage[]> {
+  async getThreadMessages(
+    threadId: string
+  ): Promise<import("@/types").ChatMessage[]> {
     try {
-      const response = await this.request<{data: unknown[]}>(`/v1/threads/${threadId}/messages`);
-      
+      const response = await this.request<{ data: unknown[] }>(
+        `/v1/threads/${threadId}/messages`
+      );
+
       // Convert API messages to ChatMessage format, handling missing fields
       return response.data.map((msg: unknown, index: number) => {
         const msgObj = msg as Record<string, unknown>;
         const role = msgObj.role as string;
         return {
           id: (msgObj.message_id as string) || `restored-${index}`,
-          role: (role === "user" || role === "assistant" || role === "system" || role === "tool") ? role : "user",
-          contents: (msgObj.contents as import("@/types/agent-framework").Contents[]) || [],
+          role:
+            role === "user" ||
+            role === "assistant" ||
+            role === "system" ||
+            role === "tool"
+              ? role
+              : "user",
+          contents:
+            (msgObj.contents as import("@/types/agent-framework").Contents[]) ||
+            [],
           timestamp: (msgObj.timestamp as string) || new Date().toISOString(),
           author_name: msgObj.author_name as string | undefined,
           message_id: msgObj.message_id as string | undefined,
