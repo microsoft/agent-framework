@@ -115,7 +115,7 @@ namespace SampleApp
         {
             StringBuilder instructions = new();
 
-            // Add the user name and age to the instructions if we have them, otherwise ask for them.
+            // If we don't already know the user's name and age, add instructions to ask for them, otherwise add them to the instructions.
             instructions.AppendLine(
                 this.UserInfo.UserName == null ?
                 "Ask the user for their name and politely decline to answer any questions until they provide it." :
