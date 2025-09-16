@@ -63,21 +63,16 @@ __all__ = [
 USER_AGENT_TELEMETRY_DISABLED_ENV_VAR = "AGENT_FRAMEWORK_USER_AGENT_DISABLED"
 IS_TELEMETRY_ENABLED = os.environ.get(USER_AGENT_TELEMETRY_DISABLED_ENV_VAR, "false").lower() not in ["true", "1"]
 
-_VERSION_FALLBACK = "0.0.0"
-_previous_version = globals().get("_AGENT_FRAMEWORK_VERSION", _VERSION_FALLBACK)
-_resolved_version = version_info if version_info != _VERSION_FALLBACK else _previous_version
-_AGENT_FRAMEWORK_VERSION = _resolved_version
-
 APP_INFO = (
     {
-        "agent-framework-version": f"python/{_AGENT_FRAMEWORK_VERSION}",
+        "agent-framework-version": f"python/{version_info}",  # type: ignore[has-type]
     }
     if IS_TELEMETRY_ENABLED
     else None
 )
 USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
-AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{_AGENT_FRAMEWORK_VERSION}"
+AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"  # type: ignore[has-type]
 
 
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None) -> dict[str, Any]:
