@@ -10,9 +10,9 @@ To run this sample, execute it from the root directory of the agent-framework re
 This avoids namespace package conflicts that occur when running from within the gaia package directory.
 """
 
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
-from agent_framework.foundry import FoundryChatClient
 from agent_framework.lab.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
 
 
