@@ -124,7 +124,7 @@ public sealed class NewPersistentAgentsChatClientTests
     }
 
     [Fact]
-    public async Task GetResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsCallerPollAsync()
+    public async Task GetResponseAsync_WithOneFunction_HavingReturnedInitialResponse_AllowsCallerPollAsync()
     {
         // Part 1: Start the background run.
         using var client = await CreateChatClientAsync();
@@ -153,6 +153,43 @@ public sealed class NewPersistentAgentsChatClientTests
         }
 
         Assert.Contains("5:43", response.Text);
+        Assert.Null(response.ContinuationToken);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_WithTwoFunctions_HavingReturnedInitialResponse_AllowsCallerPollAsync()
+    {
+        // Part 1: Start the background run.
+        using var client = await CreateChatClientAsync();
+
+        NewChatOptions options = new()
+        {
+            AllowLongRunningResponses = true,
+            Tools = [
+                AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
+                AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
+            ]
+        };
+
+        NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What's the weather in Paris right now? Include the time.", options);
+
+        Assert.NotNull(response.ContinuationToken);
+
+        // Part 2: Poll for completion.
+        int attempts = 0;
+
+        while (response.ContinuationToken is { } token && ++attempts < 5)
+        {
+            options.ContinuationToken = token;
+
+            response = (NewChatResponse)await client.GetResponseAsync([], options);
+
+            // Wait for the response to be processed
+            await Task.Delay(2000);
+        }
+
+        Assert.Contains("5:43", response.Text);
+        Assert.Contains("cloud", response.Text);
         Assert.Null(response.ContinuationToken);
     }
 

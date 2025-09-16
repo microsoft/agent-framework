@@ -513,7 +513,7 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             }
 
             // Reconstitute a response from the response updates.
-            var response = updates.ToChatResponse();
+            var response = updates.NewToChatResponse();
             (responseMessages ??= []).AddRange(response.Messages);
 
             // Prepare the history for the next iteration.
@@ -677,6 +677,19 @@ public partial class NewFunctionInvokingChatClient : DelegatingChatClient
             // We only need to clone the options if we're actually mutating it.
             options = options.Clone();
             options.ConversationId = conversationId;
+        }
+        else if (options is NewChatOptions { ContinuationToken: { } })
+        {
+            // Clone options before resetting the continuation token below.
+            options = options.Clone();
+        }
+
+        // Resetting the continuation token that represent a long running operation,
+        // to signal the inner client to continue the operation as non-long-running
+        // for this function-calling iteration.
+        if (options is NewChatOptions { ContinuationToken: { } ct })
+        {
+            ((NewChatOptions)options).ContinuationToken = null;
         }
     }
 

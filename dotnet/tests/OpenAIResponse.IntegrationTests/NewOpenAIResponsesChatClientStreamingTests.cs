@@ -186,7 +186,51 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     }
 
     [Fact]
-    public async Task GetStreamingResponseAsync_WithFunctionCalling_HavingReturnedInitialResponse_AllowsToContinueItAsync()
+    public async Task GetStreamingResponseAsync_WithOneFunction_AndLongRunningResponsesEnabled_AllowsToContinueItAsync()
+    {
+        // Part 1: Start the background run.
+        NewChatOptions options = new()
+        {
+            AllowLongRunningResponses = true,
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
+
+        string responseText = "";
+
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
+        {
+            responseText += update;
+        }
+
+        Assert.Contains("5:43", responseText);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithTwoFunctions_AndLongRunningResponsesEnabled_AllowsToContinueItAsync()
+    {
+        // Part 1: Start the background run.
+        NewChatOptions options = new()
+        {
+            AllowLongRunningResponses = true,
+            Tools = [
+                AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
+                AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
+            ]
+        };
+
+        string responseText = "";
+
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What's the weather in Paris right now? Include the time.", options).Select(u => (NewChatResponseUpdate)u))
+        {
+            responseText += update;
+        }
+
+        Assert.Contains("5:43", responseText);
+        Assert.Contains("cloudy", responseText);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithOneFunction_HavingReturnedInitialResponse_AllowsToContinueItAsync()
     {
         // Part 1: Start the background run.
         NewChatOptions options = new()
@@ -224,6 +268,52 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         }
 
         Assert.Contains("5:43", responseText);
+        Assert.Null(lastContinuationToken);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithTwoFunctions_HavingReturnedInitialResponse_AllowsToContinueItAsync()
+    {
+        // Part 1: Start the background run.
+        NewChatOptions options = new()
+        {
+            AllowLongRunningResponses = true,
+            Tools = [
+                AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
+                AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
+            ]
+        };
+
+        string responseText = "";
+        ContinuationToken? firstContinuationToken = null;
+        ContinuationToken? lastContinuationToken = null;
+
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What's the weather in Paris right now? Include the time.", options).Select(u => (NewChatResponseUpdate)u))
+        {
+            responseText += update;
+
+            // Capture continuation token of the first event so we  can continue getting
+            // the rest of the events starting from the same point in the test below.
+            firstContinuationToken = update.ContinuationToken;
+
+            break;
+        }
+
+        Assert.NotNull(firstContinuationToken);
+        Assert.NotNull(responseText);
+
+        // Part 2: Continue getting the rest of the response from the saved point
+        options.ContinuationToken = firstContinuationToken;
+
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync([], options).Select(u => (NewChatResponseUpdate)u))
+        {
+            responseText += update;
+
+            lastContinuationToken = update.ContinuationToken;
+        }
+
+        Assert.Contains("5:43", responseText);
+        Assert.Contains("cloudy", responseText);
         Assert.Null(lastContinuationToken);
     }
 

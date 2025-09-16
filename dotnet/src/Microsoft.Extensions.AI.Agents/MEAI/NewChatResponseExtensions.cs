@@ -1,8 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
 #pragma warning disable S109 // Magic numbers should not be used
@@ -297,7 +302,7 @@ public static class NewChatResponseExtensions
     private static void ProcessUpdate(ChatResponseUpdate update, ChatResponse response)
     {
         // If there is no message created yet, or if the last update we saw had a different
-        // message ID than the newest update, create a new message.
+        // message ID or role than the newest update, create a new message.
         ChatMessage message;
         var isNewMessage = false;
         if (response.Messages.Count == 0)
@@ -307,6 +312,12 @@ public static class NewChatResponseExtensions
         else if (update.MessageId is { Length: > 0 } updateMessageId
             && response.Messages[response.Messages.Count - 1].MessageId is string lastMessageId
             && updateMessageId != lastMessageId)
+        {
+            isNewMessage = true;
+        }
+        else if (update.Role is { } updateRole
+            && response.Messages[response.Messages.Count - 1].Role is { } lastRole
+            && updateRole != lastRole)
         {
             isNewMessage = true;
         }

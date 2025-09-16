@@ -89,13 +89,8 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
         OpenAIResponse openAIResponse;
 
         // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of this response
-        // rather than in creating a new one. However, for scenarios where functions are involved, we can't just fetch the response
-        // status/result because the method for doing so does not accept messages and therefore can't accept function
-        // call results to send to the model. As such, if a function result content is found in the messages, we always create
-        // a new response instead of fetching the one specified by the id.
-        if (options is NewChatOptions { ContinuationToken: { } token } &&
-            LongRunContinuationToken.FromToken(token) is { } longRunToken &&
-            !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
+        // rather than in creating a new one.
+        if (options is NewChatOptions { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
         {
             // If continuation token with response id is provided, and no functions are involved, get the response by id.
             openAIResponse = (await _responseClient.GetResponseAsync(longRunToken.ResponseId, cancellationToken).ConfigureAwait(false)).Value;
@@ -167,6 +162,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
             status: openAIResponse.Status,
             responseId: openAIResponse.Id,
             incompleteStatusReason: openAIResponse.IncompleteStatusDetails?.Reason,
+            error: openAIResponse.Error,
             throwIfOperationCancelled: throwIfOperationCancelled);
 
         return response;
@@ -178,6 +174,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
         string responseId,
         ResponseIncompleteStatusReason? incompleteStatusReason,
         int? sequenceNumber = null,
+        ResponseError? error = null,
         bool? throwIfOperationCancelled = true)
     {
         if (backgroundModeEnabled is not true || status is null)
@@ -187,7 +184,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         if (status == ResponseStatus.Failed)
         {
-            throw new InvalidOperationException("The operation failed.");
+            throw new InvalidOperationException(error?.Message ?? "The operation failed.");
         }
 
         if (status == ResponseStatus.Cancelled && throwIfOperationCancelled is true)
@@ -272,15 +269,10 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
         IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates;
 
         // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of this response
-        // rather than in creating a new one. However, for scenarios where functions are involved, we can't just fetch the response
-        // status/result because the method for doing so does not accept messages and therefore can't accept function
-        // call results to send to the model. As such, if a function result content is found in the messages, we always create
-        // a new response instead of fetching the one specified by the id.
-        if (options is NewChatOptions { ContinuationToken: { } token } &&
-            LongRunContinuationToken.FromToken(token) is { } longRunToken &&
-            !messages.Any(m => m.Contents.OfType<FunctionResultContent>().Any()))
+        // rather than in creating a new one.
+        if (options is NewChatOptions { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
         {
-            // If response id is provided, and no functions are involved, get the response by id.
+            // If response id is provided, get the response by id.
             streamingUpdates = _responseClient.GetResponseStreamingAsync(longRunToken.ResponseId, longRunToken.SequenceNumber, cancellationToken);
         }
         else
@@ -335,6 +327,14 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
                     conversationId = options.StoredOutputEnabled is false ? null : responseId;
                     modelId = createdUpdate.Response.Model;
                     responseStatus = createdUpdate.Response.Status;
+                    goto default;
+
+                case StreamingResponseQueuedUpdate queuedUpdate:
+                    createdAt = queuedUpdate.Response.CreatedAt;
+                    responseId = queuedUpdate.Response.Id;
+                    conversationId = options.StoredOutputEnabled is false ? null : responseId;
+                    modelId = queuedUpdate.Response.Model;
+                    responseStatus = queuedUpdate.Response.Status;
                     goto default;
 
                 case StreamingResponseInProgressUpdate inProgressUpdate:
