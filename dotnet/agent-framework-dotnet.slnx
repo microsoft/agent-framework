@@ -50,6 +50,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -190,6 +191,10 @@
     <File Path="src/LegacySupport/CallerAttributes/CallerArgumentExpressionAttribute.cs" />
     <File Path="src/LegacySupport/CallerAttributes/README.md" />
   </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/CompilerFeatureRequiredAttribute/">
+    <File Path="src/LegacySupport/CompilerFeatureRequiredAttribute/CompilerFeatureRequiredAttribute.cs" />
+    <File Path="src/LegacySupport/CompilerFeatureRequiredAttribute/README.md" />
+  </Folder>
   <Folder Name="/Solution Items/src/LegacySupport/DiagnosticAttributes/">
     <File Path="src/LegacySupport/DiagnosticAttributes/NullableAttributes.cs" />
     <File Path="src/LegacySupport/DiagnosticAttributes/README.md" />
@@ -205,6 +210,10 @@
   <Folder Name="/Solution Items/src/LegacySupport/IsExternalInit/">
     <File Path="src/LegacySupport/IsExternalInit/IsExternalInit.cs" />
     <File Path="src/LegacySupport/IsExternalInit/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/LegacySupport/RequiredMemberAttribute/">
+    <File Path="src/LegacySupport/RequiredMemberAttribute/README.md" />
+    <File Path="src/LegacySupport/RequiredMemberAttribute/RequiredMemberAttribute.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/LegacySupport/TrimAttributes/">
     <File Path="src/LegacySupport/TrimAttributes/DynamicallyAccessedMembersAttribute.cs" />

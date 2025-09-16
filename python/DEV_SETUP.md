@@ -550,6 +550,12 @@ uv run poe test
 
 ### Documentation
 
+#### `docs-install`
+Install including the documentation tools:
+```bash
+uv run poe docs-install
+```
+
 #### `docs-clean`
 Remove the docs build directory:
 ```bash
@@ -562,22 +568,34 @@ Build the documentation:
 uv run poe docs-build
 ```
 
-#### `docs-serve`
-Serve documentation locally with auto-reload:
+#### `docs-full`
+Build the packages, clean and build the documentation:
 ```bash
-uv run poe docs-serve
+uv run poe docs-full
 ```
 
-#### `docs-check`
-Build documentation and fail on warnings:
+#### `docs-rebuild`
+Clean and build the documentation:
 ```bash
-uv run poe docs-check
+uv run poe docs-rebuild
 ```
 
-#### `docs-check-examples`
-Check documentation examples for code correctness:
+#### `docs-full-install`
+Install the docs dependencies, build the packages, clean and build the documentation:
 ```bash
-uv run poe docs-check-examples
+uv run poe docs-full-install
+```
+
+#### `docs-debug`
+Build the documentation with debug information:
+```bash
+uv run poe docs-debug
+```
+
+#### `docs-rebuild-debug`
+Clean and build the documentation with debug information:
+```bash
+uv run poe docs-rebuild-debug
 ```
 
 ### Code Validation
