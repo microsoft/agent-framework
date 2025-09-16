@@ -2,6 +2,7 @@
 
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,7 +29,7 @@ internal sealed class WorkflowFormulaState
             VariableScopeNames.System,
         ];
 
-    private readonly FrozenDictionary<string, WorkflowScope> _scopes;
+    private readonly IReadOnlyDictionary<string, WorkflowScope> _scopes;
     private int _isInitialized;
 
     public RecalcEngine Engine { get; }
@@ -39,7 +40,7 @@ internal sealed class WorkflowFormulaState
     {
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
-        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName)).ToFrozenDictionary();
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName));
         this.Bind();
     }
 
