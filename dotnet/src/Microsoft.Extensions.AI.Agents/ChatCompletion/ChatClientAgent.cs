@@ -256,8 +256,7 @@ public sealed class ChatClientAgent : AIAgent
     {
         if (thread.AIContextProvider is not null)
         {
-            await thread.AIContextProvider.InvokedAsync(
-                new() { RequestMessages = inputMessages, ResponseMessages = responseMessages },
+            await thread.AIContextProvider.InvokedAsync(new(inputMessages) { ResponseMessages = responseMessages },
                 cancellationToken).ConfigureAwait(false);
         }
     }
@@ -269,8 +268,7 @@ public sealed class ChatClientAgent : AIAgent
     {
         if (thread.AIContextProvider is not null)
         {
-            await thread.AIContextProvider.InvokedAsync(
-                new() { RequestMessages = inputMessages, InvokeException = ex },
+            await thread.AIContextProvider.InvokedAsync(new(inputMessages) { InvokeException = ex },
                 cancellationToken).ConfigureAwait(false);
         }
     }
@@ -419,7 +417,7 @@ public sealed class ChatClientAgent : AIAgent
         // messages and options with the additional context.
         if (thread.AIContextProvider is not null)
         {
-            var invokingContext = new AIContextProvider.InvokingContext { RequestMessages = inputMessages };
+            var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
             var aiContext = await thread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
             if (aiContext.Messages is { Count: > 0 })
             {

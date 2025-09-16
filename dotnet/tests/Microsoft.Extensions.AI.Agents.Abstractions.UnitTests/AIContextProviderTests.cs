@@ -15,7 +15,7 @@ public class AIContextProviderTests
     {
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>(new List<ChatMessage>());
-        var task = provider.InvokedAsync(new() { RequestMessages = messages });
+        var task = provider.InvokedAsync(new(messages));
         Assert.Equal(default, task);
     }
 
