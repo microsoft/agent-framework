@@ -98,6 +98,67 @@ Once comfortable with these, explore the rest of the samples below.
 |---|---|---|
 | Concurrent with Visualization | [visualization/concurrent_with_visualization.py](./visualization/concurrent_with_visualization.py) | Fan-out/fan-in workflow with diagram export |
 
+### Visualization in VS Code
+
+When using the Azure AI Foundry extension in VS Code, you can visualize workflow execution in real-time. This provides an interactive view of your workflow's structure and execution flow.
+
+#### Setup Steps
+
+1. **Install the Azure AI Foundry extension**:
+   - Open VS Code
+   - Go to the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X`)
+   - Search for "Azure AI Foundry"
+   - Click "Install" on the Azure AI Foundry extension by Microsoft
+
+2. **Add trace exporter to your sample code** (if not already included):
+   ```python
+  from opentelemetry.sdk.resources import Resource
+  from opentelemetry.sdk.trace import TracerProvider
+  from opentelemetry.sdk.trace.export import BatchSpanProcessor
+  from opentelemetry.semconv.attributes import service_attributes
+  from opentelemetry.trace import set_tracer_provider
+   
+  try:
+      from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+  except ImportError:
+      OTLPSpanExporter = None
+  
+  otlp_port = int(os.getenv("FOUNDRY_OTLP_PORT", "4317"))
+  otlp_endpoint = f"http://localhost:{otlp_port}"
+   
+  # Configure tracing to capture telemetry spans for visualization.
+  def set_up_tracing():
+      if not OTLPSpanExporter:
+          print("Tracing disabled: OTLP exporter not available")
+          return
+
+      try:
+          exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+          resource = Resource.create(
+              {service_attributes.SERVICE_NAME: "your-workflow-sample-name"}
+          )
+          tracer_provider = TracerProvider(resource=resource)
+          tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+          set_tracer_provider(tracer_provider)
+          print(f"Tracing enabled with endpoint: {otlp_endpoint}")
+      except Exception as e:
+          print(f"Failed to setup tracing: {e}")
+   ```
+
+3. **Set up environment variables**:
+   - **Required**: Set `AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL=true` to enable OpenTelemetry tracing
+   - **Optional**: Set `FOUNDRY_OTLP_PORT` (defaults to 4317 if not specified) to customize the OTLP endpoint port
+
+4. **Open the visualizer in VS Code**:
+   - Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`)
+   - Run the command: **"Azure AI Foundry: Visualize the Multi-agent Workflow"**
+   - This will open the workflow visualization panel
+
+5. **Run your workflow**:
+   - Execute any of the workflow samples
+   - The visualization will update in real-time showing the workflow structure and execution progress
+
+
 ### resources
 - Sample text inputs used by certain workflows:
   - [resources/long_text.txt](./resources/long_text.txt)
