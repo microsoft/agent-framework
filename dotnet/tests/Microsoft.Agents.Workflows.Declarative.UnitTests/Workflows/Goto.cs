@@ -23,10 +23,10 @@ public static class WorkflowProvider
     /// <summary>
     /// The root executor for a declarative workflow.
     /// </summary>
-    internal sealed class RootMyWorkflowExecutor<TInput>(
+    internal sealed class MyWorkflowRootExecutor<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform) :
-        RootExecutor<TInput>("root_my_workflow", options, inputTransform)
+        RootExecutor<TInput>("my_workflow_Root", options, inputTransform)
         where TInput : notnull
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
@@ -106,7 +106,7 @@ public static class WorkflowProvider
         where TInput : notnull
     {
         // Create executor instances
-        RootMyWorkflowExecutor<TInput> root = new(options, inputTransform);
+        MyWorkflowRootExecutor<TInput> root = new(options, inputTransform);
         GotoEndExecutor gotoEnd = new(root.Session);
         SendActivity1Executor sendActivity1 = new(root.Session);
         SendActivity2Executor sendActivity2 = new(root.Session);

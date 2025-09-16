@@ -48,6 +48,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
 
         for (int index = 0; index < workflowLines.Length; ++index)
         {
+            this.Output.WriteLine($"Comparing line #{index + 1}/{workflowLines.Length}.");
             Assert.Equal(expectedLines[index].Trim(), workflowLines[index].Trim());
         }
     }
