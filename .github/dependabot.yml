@@ -11,7 +11,7 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
-    experimental:  
+    experimental:
       nuget-native-updater: false
       enable-cooldown-metrics-collection: false
     ignore:
@@ -27,8 +27,8 @@ updates:
       - ".NET"
       - "dependencies"
 
-  # Maintain dependencies for pip
-  - package-ecosystem: "pip"
+  # Maintain dependencies for python
+  - package-ecosystem: "uv"
     directory: "python/"
     schedule:
       interval: "weekly"

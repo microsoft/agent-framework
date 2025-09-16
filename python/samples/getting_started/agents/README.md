@@ -10,6 +10,12 @@ This folder contains examples demonstrating how to create and use agents with di
 |--------|-------------|
 | **[`foundry/`](foundry/)** | Create agents using Azure AI Foundry |
 
+### Microsoft Copilot Studio Examples
+
+| Folder | Description |
+|--------|-------------|
+| **[`copilotstudio/`](copilotstudio/)** | Create agents using Microsoft Copilot Studio |
+
 ### Azure OpenAI Examples
 
 | Folder | Description |

@@ -24,7 +24,7 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
                 "Text variable value");
 
         // Act
-        SetTextVariableExecutor action = new(model, this.GetState());
+        SetTextVariableExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert
@@ -36,7 +36,7 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
     public async Task UpdateExistingValue()
     {
         // Arrange
-        this.Scopes.Set("TextVar", FormulaValue.New("Old value"));
+        this.State.Set("TextVar", FormulaValue.New("Old value"));
 
         SetTextVariable model =
             this.CreateModel(
@@ -45,7 +45,7 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
                 "New value");
 
         // Act
-        SetTextVariableExecutor action = new(model, this.GetState());
+        SetTextVariableExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert
