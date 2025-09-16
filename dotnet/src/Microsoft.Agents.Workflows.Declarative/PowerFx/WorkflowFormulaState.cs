@@ -98,9 +98,9 @@ internal sealed class WorkflowFormulaState
             return;
         }
 
-        await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName).AsTask())).ConfigureAwait(false);
+        await Task.WhenAll(s_mutableScopes.Select(scopeName => ReadScopeAsync(scopeName))).ConfigureAwait(false);
 
-        async ValueTask ReadScopeAsync(string scopeName)
+        async Task ReadScopeAsync(string scopeName)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName).ConfigureAwait(false);
             foreach (string key in keys)
