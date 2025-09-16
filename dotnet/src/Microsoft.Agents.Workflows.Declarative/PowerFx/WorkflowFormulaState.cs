@@ -29,7 +29,7 @@ internal sealed class WorkflowFormulaState
             VariableScopeNames.System,
         ];
 
-    private readonly IReadOnlyDictionary<string, WorkflowScope> _scopes;
+    private readonly Dictionary<string, WorkflowScope> _scopes;
     private int _isInitialized;
 
     public RecalcEngine Engine { get; }
