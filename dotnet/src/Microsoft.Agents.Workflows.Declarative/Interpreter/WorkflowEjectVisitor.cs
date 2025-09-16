@@ -466,8 +466,6 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     #endregion
 
-    public static string RootId(string? actionId) => $"root_{actionId ?? DeclarativeWorkflowBuilder.DefaultWorkflowId}";
-
     //private static string PostId(string actionId) => $"{actionId}_Post";
 
     //private static string GetParentId(BotElement item) =>
@@ -509,7 +507,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         string? parentId = item.GetParentId();
         if (item.Id.Equals(parentId ?? string.Empty))
         {
-            parentId = RootId(parentId);
+            parentId = WorkflowActionVisitor.Steps.Root(parentId);
         }
         Debug.WriteLine($"> VISIT: {FormatItem(item)} => {FormatParent(item)}");
     }
