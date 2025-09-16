@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,7 +27,7 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Gets or sets the id of the current thread to support cases where the thread is owned by the agent service.
+    /// Gets or sets the ID of the underlying service thread to support cases where the chat history is stored by the agent service.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -110,21 +109,9 @@ public class AgentThread
     }
 
     /// <summary>
-    /// Retrieves any messages stored in the <see cref="IChatMessageStore"/> of the thread, otherwise returns an empty collection.
+    /// Gets or sets the <see cref="AIContextProvider"/> used by this thread to provide additional context to the AI model before each invocation.
     /// </summary>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>The messages from the <see cref="IChatMessageStore"/> in ascending chronological order, with the oldest message first.</returns>
-    public virtual async IAsyncEnumerable<ChatMessage> GetMessagesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        if (this._messageStore is not null)
-        {
-            var messages = await this._messageStore!.GetMessagesAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var message in messages)
-            {
-                yield return message;
-            }
-        }
-    }
+    public AIContextProvider? AIContextProvider { get; set; }
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
@@ -138,10 +125,15 @@ public class AgentThread
             null :
             await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
 
+        var aiContextProviderState = this.AIContextProvider is null ?
+            null :
+            await this.AIContextProvider.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+
         var state = new ThreadState
         {
             ConversationId = this.ConversationId,
-            StoreState = storeState
+            StoreState = storeState,
+            AIContextProviderState = aiContextProviderState
         };
 
         return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
@@ -157,7 +149,7 @@ public class AgentThread
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been updated.</returns>
     /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    protected internal virtual async Task OnNewMessagesAsync(IReadOnlyCollection<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+    protected internal virtual async Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
     {
         switch (this)
         {
@@ -204,6 +196,11 @@ public class AgentThread
             return;
         }
 
+        if (state?.AIContextProviderState.HasValue is true && this.AIContextProvider is not null)
+        {
+            await this.AIContextProvider.DeserializeAsync(state.AIContextProviderState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        }
+
         // If we don't have any IChatMessageStore state return here.
         if (state?.StoreState is null || state?.StoreState.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
         {
@@ -224,5 +221,7 @@ public class AgentThread
         public string? ConversationId { get; set; }
 
         public JsonElement? StoreState { get; set; }
+
+        public JsonElement? AIContextProviderState { get; set; }
     }
 }

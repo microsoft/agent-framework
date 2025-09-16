@@ -20,7 +20,7 @@ internal class RequestInfoExecutor : Executor
     };
 
     private readonly bool _allowWrapped;
-    public RequestInfoExecutor(InputPort port, bool allowWrapped = true) : base(RequestInfoExecutor.DefaultOptions, port.Id)
+    public RequestInfoExecutor(InputPort port, bool allowWrapped = true) : base(port.Id, RequestInfoExecutor.DefaultOptions)
     {
         this.Port = port;
 

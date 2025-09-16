@@ -10,6 +10,8 @@ namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
 
 public class ChatClientAgentTests
 {
+    #region Constructor Tests
+
     /// <summary>
     /// Verify the invocation and response of <see cref="ChatClientAgent"/>.
     /// </summary>
@@ -37,6 +39,10 @@ public class ChatClientAgentTests
         Assert.NotNull(agent.ChatClient);
         Assert.Equal("AgentInvokedChatClient", agent.ChatClient.GetType().Name);
     }
+
+    #endregion
+
+    #region RunAsync Tests
 
     /// <summary>
     /// Verify the invocation and response of <see cref="ChatClientAgent"/> using <see cref="IChatClient"/>.
@@ -389,6 +395,176 @@ public class ChatClientAgentTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread));
     }
+
+    /// <summary>
+    /// Verify that RunAsync sets the ConversationId on the thread when the service returns one.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncSetsConversationIdOnThreadWhenReturnedByChatClientAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        AgentThread thread = new();
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], thread);
+
+        // Assert
+        Assert.Equal("ConvId", thread.ConversationId);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync invokes any provided AIContextProvider and uses the result.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncInvokesAIContextProviderAndUsesResultAsync()
+    {
+        // Arrange
+        ChatMessage[] requestMessages = [new(ChatRole.User, "user message")];
+        ChatMessage[] responseMessages = [new(ChatRole.Assistant, "response")];
+        Mock<IChatClient> mockService = new();
+        List<ChatMessage> capturedMessages = [];
+        string capturedInstructions = string.Empty;
+        List<AITool> capturedTools = [];
+        mockService
+            .Setup(s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+            {
+                capturedMessages.AddRange(msgs);
+                capturedInstructions = opts.Instructions ?? string.Empty;
+                if (opts.Tools != null)
+                {
+                    capturedTools.AddRange(opts.Tools);
+                }
+            })
+            .ReturnsAsync(new ChatResponse(responseMessages));
+
+        var mockProvider = new Mock<AIContextProvider>();
+        mockProvider
+            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AIContext
+            {
+                Messages = [new(ChatRole.System, "context provider message")],
+                Instructions = "context provider instructions",
+                Tools = [AIFunctionFactory.Create(() => { }, "context provider function")]
+            });
+        mockProvider
+            .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask());
+
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+
+        // Act
+        await agent.RunAsync(requestMessages);
+
+        // Assert
+        // Should contain: base instructions, context message, user message, base function, context function
+        Assert.Equal(2, capturedMessages.Count);
+        Assert.Equal("base instructions\ncontext provider instructions", capturedInstructions);
+        Assert.Equal("context provider message", capturedMessages[0].Text);
+        Assert.Equal(ChatRole.System, capturedMessages[0].Role);
+        Assert.Equal("user message", capturedMessages[1].Text);
+        Assert.Equal(ChatRole.User, capturedMessages[1].Role);
+        Assert.Equal(2, capturedTools.Count);
+        Assert.Contains(capturedTools, t => t.Name == "base function");
+        Assert.Contains(capturedTools, t => t.Name == "context provider function");
+        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.InvokedAsync(It.Is<AIContextProvider.InvokedContext>(x => x.RequestMessages == requestMessages && x.ResponseMessages == responseMessages && x.InvokeException == null), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync invokes any provided AIContextProvider when the downstream GetResponse call fails.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncInvokesAIContextProviderWhenGetResponseFailsAsync()
+    {
+        // Arrange
+        ChatMessage[] requestMessages = [new(ChatRole.User, "user message")];
+        ChatMessage[] responseMessages = [new(ChatRole.Assistant, "response")];
+        Mock<IChatClient> mockService = new();
+        mockService
+            .Setup(s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Throws(new InvalidOperationException("downstream failure"));
+
+        var mockProvider = new Mock<AIContextProvider>();
+        mockProvider
+            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AIContext());
+        mockProvider
+            .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask());
+
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync(requestMessages));
+
+        // Assert
+        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.InvokedAsync(It.Is<AIContextProvider.InvokedContext>(x => x.RequestMessages == requestMessages && x.ResponseMessages == null && x.InvokeException is InvalidOperationException), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync invokes any provided AIContextProvider and succeeds even when the AIContext is empty.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncInvokesAIContextProviderAndSucceedsWithEmptyAIContextAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        List<ChatMessage> capturedMessages = [];
+        string capturedInstructions = string.Empty;
+        List<AITool> capturedTools = [];
+        mockService
+            .Setup(s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+            {
+                capturedMessages.AddRange(msgs);
+                capturedInstructions = opts.Instructions ?? string.Empty;
+                if (opts.Tools != null)
+                {
+                    capturedTools.AddRange(opts.Tools);
+                }
+            })
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        var mockProvider = new Mock<AIContextProvider>();
+        mockProvider
+            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AIContext());
+
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "user message")]);
+
+        // Assert
+        // Should contain: base instructions, user message, base function
+        Assert.Single(capturedMessages);
+        Assert.Equal("base instructions", capturedInstructions);
+        Assert.Equal("user message", capturedMessages[0].Text);
+        Assert.Equal(ChatRole.User, capturedMessages[0].Role);
+        Assert.Single(capturedTools);
+        Assert.Contains(capturedTools, t => t.Name == "base function");
+        mockProvider.Verify(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
 
     #region Property Override Tests
 
@@ -1520,6 +1696,61 @@ public class ChatClientAgentTests
                     It.IsAny<ChatOptions>(),
                     It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    #endregion
+
+    #region GetNewThread Tests
+
+    [Fact]
+    public void GetNewThreadUsesChatMessageStoreFactoryIfProvided()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var mockStore = new Mock<IChatMessageStore>();
+        var factoryCalled = false;
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions",
+            ChatMessageStoreFactory = () =>
+            {
+                factoryCalled = true;
+                return mockStore.Object;
+            }
+        });
+
+        // Act
+        var thread = agent.GetNewThread();
+
+        // Assert
+        Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
+        Assert.Same(mockStore.Object, thread.MessageStore);
+    }
+
+    [Fact]
+    public void GetNewThreadUsesAIContextProviderFactoryIfProvided()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var mockContextProvider = new Mock<AIContextProvider>();
+        var factoryCalled = false;
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions",
+            AIContextProviderFactory = () =>
+            {
+                factoryCalled = true;
+                return mockContextProvider.Object;
+            }
+        });
+
+        // Act
+        var thread = agent.GetNewThread();
+
+        // Assert
+        Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
+        Assert.Same(mockContextProvider.Object, thread.AIContextProvider);
     }
 
     #endregion

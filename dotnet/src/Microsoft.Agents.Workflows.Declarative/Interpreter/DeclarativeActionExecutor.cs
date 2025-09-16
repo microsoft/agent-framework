@@ -1,13 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,31 +15,24 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
-internal sealed record class DeclarativeExecutorResult(string ExecutorId, object? Result = null);
-
-internal abstract class DeclarativeActionExecutor<TAction>(TAction model, DeclarativeWorkflowState state) :
-    WorkflowActionExecutor(model, state)
+internal abstract class DeclarativeActionExecutor<TAction>(TAction model, WorkflowFormulaState state) :
+    DeclarativeActionExecutor(model, state)
     where TAction : DialogAction
 {
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class WorkflowActionExecutor :
-    ReflectingExecutor<WorkflowActionExecutor>,
-    IMessageHandler<DeclarativeExecutorResult>
+internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
 {
-    public const string RootActionId = "(root)";
-
-    private static readonly ImmutableHashSet<string> s_mutableScopes =
-        new HashSet<string>
-        {
-                VariableScopeNames.Topic,
-                VariableScopeNames.Global,
-        }.ToImmutableHashSet();
+    private static readonly FrozenSet<string> s_mutableScopes =
+        [
+            VariableScopeNames.Topic,
+            VariableScopeNames.Global
+        ];
 
     private string? _parentId;
 
-    protected WorkflowActionExecutor(DialogAction model, DeclarativeWorkflowState state)
+    protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)
     {
         if (!model.HasRequiredProperties)
@@ -54,14 +46,18 @@ internal abstract class WorkflowActionExecutor :
 
     public DialogAction Model { get; }
 
-    public string ParentId => this._parentId ??= this.Model.GetParentId() ?? RootActionId;
+    public string ParentId => this._parentId ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root();
 
-    internal ILogger Logger { get; set; } = NullLogger<WorkflowActionExecutor>.Instance;
+    internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
-    protected DeclarativeWorkflowState State { get; }
+    protected WorkflowFormulaState State { get; }
+
+    protected virtual bool IsDiscreteAction => true;
+
+    protected virtual bool EmitResultEvent => true;
 
     /// <inheritdoc/>
-    public async ValueTask HandleAsync(DeclarativeExecutorResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ExecutorResultMessage message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {
@@ -69,13 +65,18 @@ internal abstract class WorkflowActionExecutor :
             return;
         }
 
-        await this.State.RestoreAsync(context, default).ConfigureAwait(false);
+        await context.RaiseInvocationEventAsync(this.Model, message.ExecutorId).ConfigureAwait(false);
+
+        Debug.WriteLine($"RESULT #{this.Id} - {message.Result ?? "(null)"}");
 
         try
         {
-            object? result = await this.ExecuteAsync(context, cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State), cancellationToken: default).ConfigureAwait(false);
 
-            await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id, result)).ConfigureAwait(false);
+            if (this.EmitResultEvent)
+            {
+                await context.SendResultMessageAsync(this.Id, result).ConfigureAwait(false);
+            }
         }
         catch (DeclarativeActionException exception)
         {
@@ -87,18 +88,37 @@ internal abstract class WorkflowActionExecutor :
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
             throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
         }
+        finally
+        {
+            if (this.IsDiscreteAction)
+            {
+                await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
+            }
+        }
     }
 
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
-    protected async ValueTask AssignAsync(PropertyPath targetPath, FormulaValue result, IWorkflowContext context)
+    /// <summary>
+    /// Restore the state of the executor from a checkpoint.
+    /// This must be overridden to restore any state that was saved during checkpointing.
+    /// </summary>
+    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
+        this.State.RestoreAsync(context, cancellation);
+
+    protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context)
     {
+        if (targetPath is null)
+        {
+            return;
+        }
+
         if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
         {
             throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");
         }
 
-        await this.State.SetAsync(targetPath, result, context).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);
 
 #if DEBUG
         string? resultValue = result.Format();
@@ -106,7 +126,7 @@ internal abstract class WorkflowActionExecutor :
         Debug.WriteLine(
             $"""
             STATE: {this.GetType().Name} [{this.Id}]
-             NAME: {targetPath.Format()}
+             NAME: {targetPath}
             VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
             """);
 #endif

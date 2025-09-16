@@ -3,7 +3,9 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
@@ -26,29 +28,23 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         public static string Else(ConditionGroup model) => model.ElseActions.Id.Value ?? $"{model.Id}_Else";
     }
 
-    public ConditionGroupExecutor(ConditionGroup model, DeclarativeWorkflowState state)
+    public ConditionGroupExecutor(ConditionGroup model, WorkflowFormulaState state)
         : base(model, state)
     {
     }
 
-    public bool IsMatch(ConditionItem conditionItem, object? result)
-    {
-        if (result is not DeclarativeExecutorResult message)
-        {
-            return false;
-        }
+    protected override bool IsDiscreteAction => false;
 
-        return string.Equals(Steps.Item(this.Model, conditionItem), message.Result as string, StringComparison.Ordinal);
+    public bool IsMatch(ConditionItem conditionItem, object? message)
+    {
+        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        return string.Equals(Steps.Item(this.Model, conditionItem), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
-    public bool IsElse(object? result)
+    public bool IsElse(object? message)
     {
-        if (result is not DeclarativeExecutorResult message)
-        {
-            return false;
-        }
-
-        return string.Equals(Steps.Else(this.Model), message.Result as string, StringComparison.Ordinal);
+        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        return string.Equals(Steps.Else(this.Model), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
@@ -63,7 +59,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
                 continue; // Skip if no condition is defined
             }
 
-            EvaluationResult<bool> expressionResult = this.State.ExpressionEngine.GetValue(conditionItem.Condition);
+            EvaluationResult<bool> expressionResult = this.State.Evaluator.GetValue(conditionItem.Condition);
             if (expressionResult.Value)
             {
                 return Steps.Item(this.Model, conditionItem);
@@ -71,5 +67,10 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         }
 
         return Steps.Else(this.Model);
+    }
+
+    public async ValueTask DoneAsync(IWorkflowContext context, ExecutorResultMessage _, CancellationToken cancellationToken)
+    {
+        await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
     }
 }
