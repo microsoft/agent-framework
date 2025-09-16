@@ -87,3 +87,6 @@ var agent = await agentFactory.CreateFromYamlAsync(text, creationOptions);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync("What is the current weather in Dublin?"));
+
+// cleanup for sample purposes.
+await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);

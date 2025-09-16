@@ -33,6 +33,7 @@ internal static class GptComponentMetadataExtensions
                 FileSearchType => tool.CreateFileSearchToolDefinition(),
                 FunctionType => tool.CreateFunctionToolDefinition(),
                 OpenApiType => tool.CreateOpenApiToolDefinition(),
+                McpType => tool.CreateMcpToolDefinition(),
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {type}, supported tool types are: {string.Join(",", s_validToolTypes)}"),
             };
         }) ?? [];
@@ -75,6 +76,7 @@ internal static class GptComponentMetadataExtensions
     private const string FileSearchType = "file_search";
     private const string FunctionType = "function";
     private const string OpenApiType = "openapi";
+    private const string McpType = "mcp";
 
     private static readonly string[] s_validToolTypes =
     [

@@ -50,3 +50,6 @@ var agent = await agentFactory.CreateFromYamlAsync(text, creationOptions);
 // Invoke the agent and output the text result.
 var response = await agent!.RunAsync("What are the key features of the Semantic Kernel?");
 Console.WriteLine(response.Text);
+
+// cleanup for sample purposes.
+await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);

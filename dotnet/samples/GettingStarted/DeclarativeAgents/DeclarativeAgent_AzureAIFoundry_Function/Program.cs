@@ -72,6 +72,9 @@ var runOptions = new ChatClientAgentRunOptions(chatOptions);
 var response = await agent!.RunAsync("What is the special soup and how much does it cost?", options: runOptions);
 Console.WriteLine(response.Text);
 
+// cleanup for sample purposes.
+await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
+
 namespace Sample
 {
     public sealed class MenuPlugin

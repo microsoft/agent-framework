@@ -60,3 +60,6 @@ foreach (object? updateRawRepresentation in chatResponse?.RawRepresentation as I
     }
 }
 Console.WriteLine($"\nGenerated Code:\n{generatedCode}");
+
+// cleanup for sample purposes.
+await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);

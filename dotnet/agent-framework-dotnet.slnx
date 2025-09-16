@@ -59,6 +59,7 @@
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_FileSearch/DeclarativeAgent_AzureAIFoundry_FileSearch.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_Function/DeclarativeAgent_AzureAIFoundry_Function.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_GetAgent/DeclarativeAgent_AzureAIFoundry_GetAgent.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_MCP/DeclarativeAgent_AzureAIFoundry_MCP.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_OpenAPI/DeclarativeAgent_AzureAIFoundry_OpenAPI.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_OpenAPI_YAML/DeclarativeAgent_AzureAIFoundry_OpenAPI_YAML.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureOpenAI/DeclarativeAgent_AzureOpenAI.csproj" />

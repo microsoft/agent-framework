@@ -100,6 +100,18 @@ internal static class RecordDataValueExtensions
         return new OpenApiToolDefinition(name.Value, description.Value, spec, auth);
     }
 
+    internal static MCPToolDefinition CreateMcpToolDefinition(this RecordDataValue tool)
+    {
+        Throw.IfNull(tool);
+
+        StringDataValue? serverLabel = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.server_label"));
+        Throw.IfNull(serverLabel?.Value);
+        StringDataValue? serverUrl = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.server_url"));
+        Throw.IfNull(serverUrl?.Value);
+
+        return new MCPToolDefinition(serverLabel.Value, serverUrl.Value);
+    }
+
     internal static AzureFunctionBinding GetInputBinding(this RecordDataValue agentToolDefinition)
     {
         return agentToolDefinition.GetAzureFunctionBinding("input_binding");

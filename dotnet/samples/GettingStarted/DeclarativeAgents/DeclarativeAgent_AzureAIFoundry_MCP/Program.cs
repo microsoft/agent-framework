@@ -10,7 +10,6 @@ using Microsoft.Extensions.AI.Agents.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-var connectionId = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_BING_CONNECTION_ID") ?? throw new InvalidOperationException("AZURE_FOUNDRY_BING_CONNECTION_ID is not set.");
 var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4.1-mini";
 
 // Create the PersistentAgentsClient with AzureCliCredential for authentication.
@@ -26,16 +25,18 @@ var text =
     $"""
     kind: GptComponentMetadata
     type: azure_foundry_agent
-    name: CoderAgent
-    description: Coder Agent
-    instructions: You write code to solve problems.
+    name: MicrosoftLearnAgent
+    description: Microsoft Learn Agent
+    instructions: You can answer questions using information from Microsoft Learn.
     model:
       id: {model}
     tools:
-      - type: bing_grounding
+      - type: mcp
         options:
-          tool_connections:
-            - {connectionId}
+          server_label: MicrosoftLearn
+          server_url: https://learn.microsoft.com/api/mcp
+          allowed_tools:
+            - microsoft_docs_search
     """;
 
 // Create the agent from the YAML definition.
@@ -47,7 +48,11 @@ var creationOptions = new AgentCreationOptions()
 var agent = await agentFactory.CreateFromYamlAsync(text, creationOptions);
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent!.RunAsync("What is the latest new about the Semantic Kernel?"));
+var response = await agent!.RunAsync("Tell me about MCP support in Azure AI Foundry?");
+Console.WriteLine(response);
+
+// cleanup for sample purposes.
+await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
 // cleanup for sample purposes.
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);

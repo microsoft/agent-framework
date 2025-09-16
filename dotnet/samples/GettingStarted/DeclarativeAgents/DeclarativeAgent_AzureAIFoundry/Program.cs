@@ -48,3 +48,6 @@ await foreach (var update in agent!.RunStreamingAsync("Tell me a joke about a pi
 {
     Console.WriteLine(update);
 }
+
+// cleanup for sample purposes.
+await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
