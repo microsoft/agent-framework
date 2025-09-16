@@ -18,11 +18,6 @@ namespace Microsoft.Agents.Workflows.Declarative;
 public static class DeclarativeWorkflowBuilder
 {
     /// <summary>
-    /// The default workflow identifier, if none is specified in the workflow definition.
-    /// </summary>
-    public const string DefaultWorkflowId = "workflow";
-
-    /// <summary>
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>

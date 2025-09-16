@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Dynamic;
 using System.Linq;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
