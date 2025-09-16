@@ -345,7 +345,11 @@ class BaseChatClient(AFBaseModel, ABC):
             )
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
-        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
+
+        # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+
+        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **filtered_kwargs)
 
     async def get_streaming_response(
         self,
@@ -425,8 +429,12 @@ class BaseChatClient(AFBaseModel, ABC):
             )
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
+
+        # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+
         async for update in self._inner_get_streaming_response(
-            messages=prepped_messages, chat_options=chat_options, **kwargs
+            messages=prepped_messages, chat_options=chat_options, **filtered_kwargs
         ):
             yield update
 

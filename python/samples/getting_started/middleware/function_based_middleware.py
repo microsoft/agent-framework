@@ -34,7 +34,7 @@ async def security_agent_middleware(
     if last_message and last_message.text:
         query = last_message.text
         if "password" in query.lower() or "secret" in query.lower():
-            print("[SecurityAgentMiddleware] Security Warning: Detected potential sensitive information.")
+            print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
             # Simply don't call next() to prevent execution
             return
 
@@ -57,7 +57,7 @@ async def logging_function_middleware(
     end_time = time.time()
     duration = end_time - start_time
 
-    print(f"[LoggingFunctionMiddleware] Function {function_name} completed in {duration:.3f}s.")
+    print(f"[LoggingFunctionMiddleware] Function {function_name} completed in {duration:.5f}s.")
 
 
 async def main() -> None:
@@ -80,14 +80,16 @@ async def main() -> None:
         query = "What's the weather like in Tokyo?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result}\n")
+        if result.text:
+            print(f"Agent: {result}\n")
 
         # Test with security violation
         print("--- Security Test ---")
         query = "What's the secret weather password?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result}")
+        if result.text:
+            print(f"Agent: {result}\n")
 
 
 if __name__ == "__main__":

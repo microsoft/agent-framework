@@ -315,12 +315,14 @@ class BaseAgent(AFBaseModel):
             async def _execute_handler(ctx: AgentInvocationContext) -> AgentRunResponse:
                 return await self._run_impl(ctx.messages, thread=thread, **kwargs)
 
-            return await self._agent_middleware_pipeline.execute(
+            response = await self._agent_middleware_pipeline.execute(
                 self,  # type: ignore[arg-type]
                 normalized_messages,
                 context,
                 _execute_handler,
             )
+
+            return response if response else AgentRunResponse()
 
         # No middleware, execute directly
         return await self._run_impl(normalized_messages, thread=thread, **kwargs)
@@ -693,6 +695,10 @@ class ChatAgent(BaseAgent):
         for mcp_server in self._local_mcp_tools:
             final_tools.extend(mcp_server.functions)
 
+        # Add function middleware pipeline to kwargs if available
+        if self._function_middleware_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
+
         response = await self.chat_client.get_response(
             messages=thread_messages,
             chat_options=self.chat_options
@@ -867,6 +873,10 @@ class ChatAgent(BaseAgent):
 
         for mcp_server in self._local_mcp_tools:
             final_tools.extend(mcp_server.functions)
+
+        # Add function middleware pipeline to kwargs if available
+        if self._function_middleware_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
 
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,

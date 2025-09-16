@@ -60,7 +60,7 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
         end_time = time.time()
         duration = end_time - start_time
 
-        print(f"[LoggingFunctionMiddleware] Function {function_name} completed in {duration:.3f}s.")
+        print(f"[LoggingFunctionMiddleware] Function {function_name} completed in {duration:.5f}s.")
 
 
 async def main() -> None:
@@ -83,14 +83,16 @@ async def main() -> None:
         query = "What's the weather like in Seattle?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result}\n")
+        if result.text:
+            print(f"Agent: {result.text}")
 
         # Test with security-related query
         print("--- Security Test ---")
         query = "What's the password for the weather service?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result}")
+        if result.text:
+            print(f"Agent: {result.text}")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -28,7 +27,6 @@ class AgentInvocationContext:
         agent: The agent being invoked.
         messages: The messages being sent to the agent.
         is_streaming: Whether this is a streaming invocation.
-        request_id: Unique identifier for the current request.
         metadata: Metadata dictionary for sharing data between agent middleware.
     """
 
@@ -37,7 +35,6 @@ class AgentInvocationContext:
         agent: "AgentProtocol",
         messages: list["ChatMessage"],
         is_streaming: bool = False,
-        request_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Initialize agent invocation context.
@@ -46,13 +43,11 @@ class AgentInvocationContext:
             agent: The agent being invoked.
             messages: The messages being sent to the agent.
             is_streaming: Whether this is a streaming invocation.
-            request_id: Unique identifier for the request. Auto-generated if None.
             metadata: Metadata dictionary.
         """
         self.agent = agent
         self.messages = messages
         self.is_streaming = is_streaming
-        self.request_id = request_id or str(uuid4())
         self.metadata = metadata or {}
 
 
@@ -62,7 +57,6 @@ class FunctionInvocationContext:
     Attributes:
         function: The function being invoked.
         arguments: The validated arguments for the function.
-        request_id: Unique identifier for the current request.
         metadata: Metadata dictionary for sharing data between function middleware.
     """
 
@@ -70,7 +64,6 @@ class FunctionInvocationContext:
         self,
         function: "AIFunction[Any, Any]",
         arguments: "BaseModel",
-        request_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Initialize function invocation context.
@@ -78,12 +71,10 @@ class FunctionInvocationContext:
         Args:
             function: The function being invoked.
             arguments: The validated arguments for the function.
-            request_id: Unique identifier for the request. Auto-generated if None.
             metadata: Metadata dictionary.
         """
         self.function = function
         self.arguments = arguments
-        self.request_id = request_id or str(uuid4())
         self.metadata = metadata or {}
 
 
@@ -153,7 +144,7 @@ FunctionMiddlewareCallable = Callable[
 MiddlewareType = AgentMiddleware | AgentMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable
 
 
-class AgentMiddlewareWrapper:
+class AgentMiddlewareWrapper(AgentMiddleware):
     """Wrapper to convert pure functions into AgentMiddleware protocol objects."""
 
     def __init__(self, func: AgentMiddlewareCallable):
@@ -167,7 +158,7 @@ class AgentMiddlewareWrapper:
         await self.func(context, next)
 
 
-class FunctionMiddlewareWrapper:
+class FunctionMiddlewareWrapper(FunctionMiddleware):
     """Wrapper to convert pure functions into FunctionMiddleware protocol objects."""
 
     def __init__(self, func: FunctionMiddlewareCallable):
@@ -198,16 +189,10 @@ class AgentMiddlewarePipeline:
 
     def _register_middleware(self, middleware: AgentMiddleware | AgentMiddlewareCallable) -> None:
         """Register an agent middleware item."""
-        if callable(middleware):
-            # Check if it's already a protocol implementation
-            if callable(middleware) and not hasattr(middleware, "func"):
-                # It's a class instance implementing the protocol
-                self._middlewares.append(middleware)  # type: ignore
-            else:
-                # It's a pure function, wrap it
-                self._middlewares.append(AgentMiddlewareWrapper(middleware))  # type: ignore
-        else:
-            self._middlewares.append(middleware)  # type: ignore
+        if isinstance(middleware, AgentMiddleware):
+            self._middlewares.append(middleware)
+        elif callable(middleware):
+            self._middlewares.append(AgentMiddlewareWrapper(middleware))
 
     async def execute(
         self,
@@ -215,7 +200,7 @@ class AgentMiddlewarePipeline:
         messages: list["ChatMessage"],
         context: AgentInvocationContext,
         final_handler: Callable[[AgentInvocationContext], Awaitable["AgentRunResponse"]],
-    ) -> "AgentRunResponse":
+    ) -> "AgentRunResponse | None":
         """Execute the agent middleware pipeline for non-streaming.
 
         Args:
@@ -258,10 +243,7 @@ class AgentMiddlewarePipeline:
         await first_handler(context)
 
         # Return the response from result container
-        response = result_container["response"]
-        if response is None:
-            raise RuntimeError("No response set after middleware execution")
-        return response
+        return result_container["response"]
 
     async def execute_stream(
         self,
@@ -344,16 +326,11 @@ class FunctionMiddlewarePipeline:
 
     def _register_middleware(self, middleware: FunctionMiddleware | FunctionMiddlewareCallable) -> None:
         """Register a function middleware item."""
-        if callable(middleware):
-            # Check if it's already a protocol implementation
-            if callable(middleware) and not hasattr(middleware, "func"):
-                # It's a class instance implementing the protocol
-                self._middlewares.append(middleware)  # type: ignore
-            else:
-                # It's a pure function, wrap it
-                self._middlewares.append(FunctionMiddlewareWrapper(middleware))  # type: ignore
-        else:
-            self._middlewares.append(middleware)  # type: ignore
+        # Check if it's a class instance inheriting from FunctionMiddleware
+        if isinstance(middleware, FunctionMiddleware):
+            self._middlewares.append(middleware)
+        elif callable(middleware):
+            self._middlewares.append(FunctionMiddlewareWrapper(middleware))
 
     async def execute(
         self,
@@ -403,10 +380,7 @@ class FunctionMiddlewarePipeline:
         await first_handler(context)
 
         # Return the result from result container
-        result = result_container["result"]
-        if result is None:
-            raise RuntimeError("No result set after middleware execution")
-        return result
+        return result_container["result"]
 
     @property
     def has_middlewares(self) -> bool:
