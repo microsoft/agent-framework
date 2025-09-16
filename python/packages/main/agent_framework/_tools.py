@@ -58,6 +58,7 @@ __all__ = [
     "AIFunction",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
+    "HostedImageGenerationTool",
     "HostedMCPSpecificApproval",
     "HostedMCPTool",
     "HostedWebSearchTool",
@@ -232,6 +233,34 @@ class HostedWebSearchTool(BaseTool):
         args: dict[str, Any] = {
             "name": "web_search",
         }
+        super().__init__(**args, **kwargs)
+
+
+class HostedImageGenerationTool(BaseTool):
+    """Represents an image generation tool that can be specified to an AI service to enable it to generate images."""
+
+    def __init__(
+        self,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        """Initialize a HostedImageGenerationTool.
+
+        Args:
+            description: A description of the tool.
+            additional_properties: Additional properties associated with the tool.
+            **kwargs: Additional keyword arguments to pass to the base class.
+        """
+        args: dict[str, Any] = {
+            "name": "image_generation",
+        }
+        if description is not None:
+            args["description"] = description
+        if additional_properties is not None:
+            args["additional_properties"] = additional_properties
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedImageGenerationTool and cannot be set.")
         super().__init__(**args, **kwargs)
 
 

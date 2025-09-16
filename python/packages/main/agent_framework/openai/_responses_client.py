@@ -30,6 +30,7 @@ from .._tools import (
     AIFunction,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
@@ -269,6 +270,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 else None,
                             )
                         )
+                    case HostedImageGenerationTool():
+                        response_tools.append({"type": "image_generation"})
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:
@@ -633,9 +636,14 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     if item.result:
+                        # Handle the result as either a proper data URI or raw base64 string
+                        uri = item.result
+                        if not uri.startswith("data:"):
+                            # Raw base64 string - convert to proper data URI format
+                            uri = f"data:image/png;base64,{uri}"
                         contents.append(
                             DataContent(
-                                uri=item.result,
+                                uri=uri,
                                 raw_representation=item,
                             )
                         )
