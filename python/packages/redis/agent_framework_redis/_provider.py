@@ -73,8 +73,6 @@ class RedisProvider(ContextProvider):
         redis_url: str = "redis://localhost:6379",
         index_name: str = "af_memory",
         prefix: str = "memory",
-        key_separator: str = ":",
-        storage_type: Literal["hash", "json"] = "hash",
         fresh_initialization: bool = False,
         # Vector: all optional; omit to disable KNN
         vectorizer_api_key: str | None = None,
@@ -122,6 +120,10 @@ class RedisProvider(ContextProvider):
             vectorizer = None
             vector_dims = None
 
+        # Opinionated vars - no customization required
+        key_separator = ":"
+        storage_type = "hash"
+
         schema_dict = self._build_schema_dict(
             index_name=index_name,
             prefix=prefix,
@@ -143,8 +145,8 @@ class RedisProvider(ContextProvider):
             index_name=index_name,  # type: ignore[reportCallIssue]
             prefix=prefix,  # type: ignore[reportCallIssue]
             key_separator=key_separator,  # type: ignore[reportCallIssue]
-            fresh_initialization=fresh_initialization,  # type: ignore[reportCallIssue]
             storage_type=storage_type,  # type: ignore[reportCallIssue]
+            fresh_initialization=fresh_initialization,  # type: ignore[reportCallIssue]
             vectorizer_api_key=vectorizer_api_key,  # type: ignore[reportCallIssue]
             vectorizer_choice=vectorizer_choice,  # type: ignore[reportCallIssue]
             vectorizer=vectorizer,  # type: ignore[reportCallIssue]
