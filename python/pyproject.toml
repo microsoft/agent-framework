@@ -28,23 +28,12 @@ dev = [
     "rich",
     "tomli",
     "tomli-w",
-    "markdownify",
+]
+docs = [
     # Documentation
-    "myst-nb==1.1.2",
-    "pydata-sphinx-theme==0.16.1",
-    "sphinx-copybutton",
-    "sphinx-design",
-    "sphinx",
-    "autodoc_pydantic>=2",
-    "pygments",
-    "sphinxext-rediraffe",
-    "opentelemetry-instrumentation-openai",
-    "markdown-it-py[linkify]",
-    # Documentation tooling
-    "diskcache",
-    "redis",
-    "sphinx-autobuild",
-    "aiofiles>=24.1.0",
+    "debugpy>=1.8.16",
+    "py2docfx>=0.1.20",
+    "pip",
 ]
 
 [tool.uv]
@@ -173,15 +162,14 @@ exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_cod
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = """python check_md_code_blocks.py ./docs/agent-framework/**/*.md README.md"""
+markdown-code-lint = """python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md"""
 samples-code-check = """pyright ./samples"""
+docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
 docs-clean = "rm -rf docs/build"
-docs-build = "sphinx-build docs/agent-framework docs/build"
-docs-serve = "sphinx-autobuild --watch docs/agent-framework docs/build --port 8000 --jobs auto"
-docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
-docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
+docs-build = "uv run python ./docs/generate_docs.py"
+docs-debug = "uv run python -m debugpy --listen 5678 ./docs/generate_docs.py"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
@@ -204,6 +192,29 @@ sequence = [
     { ref = "pre-commit-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+[tool.poe.tasks.docs-full]
+sequence = [
+    { ref = 'build' },
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-full-install]
+sequence = [
+    { ref = "docs-install" },
+    { ref = 'build' },
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-rebuild]
+sequence = [
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-rebuild-debug]
+sequence = [
+    { ref = "docs-clean" },
+    { ref = "docs-debug" }
+]
 
 [tool.setuptools.packages.find]
 where = ["packages"]
