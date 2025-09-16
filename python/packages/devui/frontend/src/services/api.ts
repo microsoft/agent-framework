@@ -15,6 +15,45 @@ import type {
   ExtendedResponseStreamEvent,
 } from "@/types/openai";
 
+// Backend API response types to match Python Pydantic models
+interface EntityInfo {
+  id: string;
+  type: "agent" | "workflow";
+  name: string;
+  description?: string;
+  framework: string;
+  tools?: (string | Record<string, unknown>)[];
+  metadata: Record<string, unknown>;
+  executors?: string[];
+  workflow_dump?: Record<string, unknown>;
+  input_schema?: Record<string, unknown>;
+  input_type_name?: string;
+  start_executor_id?: string;
+}
+
+interface DiscoveryResponse {
+  entities: EntityInfo[];
+}
+
+interface ThreadApiResponse {
+  id: string;
+  object: "thread";
+  created_at: number;
+  metadata: { agent_id: string };
+}
+
+interface ThreadListResponse {
+  object: "list";
+  data: ThreadApiObject[];
+}
+
+interface ThreadApiObject {
+  id: string;
+  object: "thread";
+  agent_id: string;
+  created_at?: string;
+}
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined
     ? import.meta.env.VITE_API_BASE_URL
@@ -61,7 +100,7 @@ class ApiClient {
     agents: AgentInfo[];
     workflows: import("@/types").WorkflowInfo[];
   }> {
-    const response = await this.request<{ entities: any[] }>("/v1/entities");
+    const response = await this.request<DiscoveryResponse>("/v1/entities");
 
     // Separate agents and workflows
     const agents: AgentInfo[] = [];
@@ -75,23 +114,26 @@ class ApiClient {
           description: entity.description,
           type: "agent",
           source: "directory", // Default source
-          tools: entity.tools || [],
+          tools: (entity.tools || []).map(tool => typeof tool === "string" ? tool : JSON.stringify(tool)),
           has_env: false, // Default value
-          module_path: entity.metadata?.module_path,
+          module_path: typeof entity.metadata?.module_path === "string" ? entity.metadata.module_path : undefined,
         });
       } else if (entity.type === "workflow") {
+        const firstTool = entity.tools?.[0];
+        const startExecutorId = typeof firstTool === "string" ? firstTool : "";
+        
         workflows.push({
           id: entity.id,
           name: entity.name,
           description: entity.description,
           type: "workflow",
           source: "directory",
-          executors: entity.tools || [], // Tools are executors for workflows
+          executors: (entity.tools || []).map(tool => typeof tool === "string" ? tool : JSON.stringify(tool)),
           has_env: false,
-          module_path: entity.metadata?.module_path,
-          input_schema: { type: "string" }, // Default schema
-          input_type_name: "Input",
-          start_executor_id: entity.tools?.[0] || "",
+          module_path: typeof entity.metadata?.module_path === "string" ? entity.metadata.module_path : undefined,
+          input_schema: (entity.input_schema as unknown as import("@/types").JSONSchema) || { type: "string" }, // Default schema
+          input_type_name: entity.input_type_name || "Input",
+          start_executor_id: startExecutorId,
         });
       }
     });
@@ -124,20 +166,63 @@ class ApiClient {
     );
   }
 
-  // Thread management (simplified for OpenAI compatibility)
+  // Thread management using real /v1/threads endpoints
   async createThread(agentId: string): Promise<ThreadInfo> {
-    // For now, return a mock thread since OpenAI API doesn't use explicit threads
+    const response = await this.request<ThreadApiResponse>("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId }),
+    });
+    
     return {
-      id: `thread_${Date.now()}`,
+      id: response.id,
       agent_id: agentId,
-      created_at: new Date().toISOString(),
+      created_at: new Date(response.created_at * 1000).toISOString(),
       message_count: 0,
     };
   }
 
-  async getThreads(_agentId: string): Promise<ThreadInfo[]> {
-    // Return empty array since we're not tracking threads in OpenAI format
-    return [];
+  async getThreads(agentId: string): Promise<ThreadInfo[]> {
+    const response = await this.request<ThreadListResponse>(`/v1/threads?agent_id=${agentId}`);
+    return response.data.map((thread: ThreadApiObject) => ({
+      id: thread.id,
+      agent_id: thread.agent_id,
+      created_at: thread.created_at || new Date().toISOString(),
+      message_count: 0, // We don't track this yet
+    }));
+  }
+
+  async deleteThread(threadId: string): Promise<boolean> {
+    try {
+      await this.request(`/v1/threads/${threadId}`, {
+        method: "DELETE",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getThreadMessages(threadId: string): Promise<import("@/types").ChatMessage[]> {
+    try {
+      const response = await this.request<{data: unknown[]}>(`/v1/threads/${threadId}/messages`);
+      
+      // Convert API messages to ChatMessage format, handling missing fields
+      return response.data.map((msg: unknown, index: number) => {
+        const msgObj = msg as Record<string, unknown>;
+        const role = msgObj.role as string;
+        return {
+          id: (msgObj.message_id as string) || `restored-${index}`,
+          role: (role === "user" || role === "assistant" || role === "system" || role === "tool") ? role : "user",
+          contents: (msgObj.contents as import("@/types/agent-framework").Contents[]) || [],
+          timestamp: (msgObj.timestamp as string) || new Date().toISOString(),
+          author_name: msgObj.author_name as string | undefined,
+          message_id: msgObj.message_id as string | undefined,
+        };
+      });
+    } catch (error) {
+      console.error("Failed to get thread messages:", error);
+      return [];
+    }
   }
 
   // OpenAI-compatible streaming methods using /v1/responses endpoint
@@ -158,6 +243,7 @@ class ApiClient {
       stream: true,
       extra_body: {
         entity_id: agentId,
+        thread_id: request.thread_id, // Pass thread_id to backend
       },
     };
 

@@ -3,8 +3,10 @@
 import json
 import logging
 import os
-from typing import Any, AsyncGenerator, Dict
+import uuid
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
+from agent_framework import AgentThread
 from ..._tracing import capture_traces
 from ...models import AgentFrameworkRequest
 from .._base import EntityNotFoundError, FrameworkExecutor
@@ -27,6 +29,10 @@ class AgentFrameworkExecutor(FrameworkExecutor):
         super().__init__(entity_discovery, message_mapper)
         self._setup_tracing_provider()
         self._setup_agent_framework_tracing()
+        
+        # Minimal thread storage - no metadata needed
+        self.thread_storage: Dict[str, AgentThread] = {}
+        self.agent_threads: Dict[str, List[str]] = {}  # agent_id -> thread_ids
 
     def _setup_tracing_provider(self) -> None:
         """Set up our own TracerProvider so we can add processors."""
@@ -69,6 +75,170 @@ class AgentFrameworkExecutor(FrameworkExecutor):
                 logger.warning(f"Failed to enable Agent Framework tracing: {e}")
         else:
             logger.debug("No OTLP endpoint configured, skipping telemetry setup")
+
+    # Thread Management Methods
+    def create_thread(self, agent_id: str) -> str:
+        """Create new thread for agent."""
+        thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+        thread = AgentThread()
+        
+        self.thread_storage[thread_id] = thread
+        
+        if agent_id not in self.agent_threads:
+            self.agent_threads[agent_id] = []
+        self.agent_threads[agent_id].append(thread_id)
+        
+        return thread_id
+    
+    def get_thread(self, thread_id: str) -> Optional[AgentThread]:
+        """Get AgentThread by ID."""
+        return self.thread_storage.get(thread_id)
+    
+    def list_threads_for_agent(self, agent_id: str) -> List[str]:
+        """List thread IDs for agent."""
+        return self.agent_threads.get(agent_id, [])
+    
+    def get_agent_for_thread(self, thread_id: str) -> Optional[str]:
+        """Find which agent owns this thread."""
+        for agent_id, thread_ids in self.agent_threads.items():
+            if thread_id in thread_ids:
+                return agent_id
+        return None
+    
+    def delete_thread(self, thread_id: str) -> bool:
+        """Delete thread."""
+        if thread_id not in self.thread_storage:
+            return False
+            
+        # Remove from agent mapping
+        for agent_id, thread_ids in self.agent_threads.items():
+            if thread_id in thread_ids:
+                thread_ids.remove(thread_id)
+                break
+        
+        del self.thread_storage[thread_id]
+        return True
+    
+    async def get_thread_messages(self, thread_id: str) -> List[Dict]:
+        """Get messages from a thread's message store, filtering for UI display."""
+        thread = self.get_thread(thread_id)
+        if not thread or not thread.message_store:
+            return []
+        
+        try:
+            # Get AgentFramework ChatMessage objects from thread
+            af_messages = await thread.message_store.list_messages()
+            
+            ui_messages = []
+            for i, af_msg in enumerate(af_messages):
+                # Extract role value (handle enum)
+                role = af_msg.role.value if hasattr(af_msg.role, 'value') else str(af_msg.role)
+                
+                # Skip tool/function messages - only show user and assistant text
+                if role not in ["user", "assistant"]:
+                    continue
+                
+                # Extract user-facing text content only
+                text_content = self._extract_display_text(af_msg.contents)
+                
+                # Skip messages with no displayable text
+                if not text_content:
+                    continue
+                
+                ui_message = {
+                    "id": af_msg.message_id or f"restored-{i}",
+                    "role": role,
+                    "contents": [{"type": "text", "text": text_content}],
+                    "timestamp": __import__("datetime").datetime.now().isoformat(),
+                    "author_name": af_msg.author_name,
+                    "message_id": af_msg.message_id
+                }
+                
+                ui_messages.append(ui_message)
+            
+            logger.info(f"Restored {len(ui_messages)} display messages for thread {thread_id}")
+            return ui_messages
+            
+        except Exception as e:
+            logger.error(f"Error getting thread messages: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
+    
+    def _extract_display_text(self, contents: List) -> str:
+        """Extract user-facing text from message contents, filtering out internal mechanics."""
+        text_parts = []
+        
+        for content in contents:
+            content_type = getattr(content, 'type', None)
+            
+            # Only include text content for display
+            if content_type == "text":
+                text = getattr(content, 'text', '')
+                
+                # Handle double-encoded JSON from user messages
+                if text.startswith('{"role":'):
+                    try:
+                        import json
+                        parsed = json.loads(text)
+                        if parsed.get('contents'):
+                            for sub_content in parsed['contents']:
+                                if sub_content.get('type') == 'text':
+                                    text_parts.append(sub_content.get('text', ''))
+                    except:
+                        text_parts.append(text)  # Fallback to raw text
+                else:
+                    text_parts.append(text)
+            
+            # Skip function_call, function_result, and other internal content types
+        
+        return ' '.join(text_parts).strip()
+    
+    async def serialize_thread(self, thread_id: str) -> Optional[Dict]:
+        """Serialize thread state for persistence."""
+        thread = self.get_thread(thread_id)
+        if not thread:
+            return None
+        
+        try:
+            # Use AgentThread's built-in serialization
+            serialized_state = await thread.serialize()
+            
+            # Add our metadata
+            agent_id = self.get_agent_for_thread(thread_id)
+            serialized_state["metadata"] = {
+                "agent_id": agent_id,
+                "thread_id": thread_id
+            }
+            
+            return serialized_state
+            
+        except Exception as e:
+            logger.error(f"Error serializing thread {thread_id}: {e}")
+            return None
+    
+    async def deserialize_thread(self, thread_id: str, agent_id: str, serialized_state: Dict) -> bool:
+        """Deserialize thread state from persistence."""
+        try:
+            # Create new thread
+            thread = AgentThread()
+            
+            # Use AgentThread's built-in deserialization
+            from agent_framework._threads import deserialize_thread_state
+            await deserialize_thread_state(thread, serialized_state)
+            
+            # Store the restored thread
+            self.thread_storage[thread_id] = thread
+            
+            if agent_id not in self.agent_threads:
+                self.agent_threads[agent_id] = []
+            self.agent_threads[agent_id].append(thread_id)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deserializing thread {thread_id}: {e}")
+            return False
 
     async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
         """Execute the entity and yield raw Agent Framework events plus trace events.
@@ -114,7 +284,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             yield {"type": "error", "message": str(e), "entity_id": entity_id}
 
     async def _execute_agent(self, agent: Any, request: AgentFrameworkRequest, trace_collector: Any) -> AsyncGenerator[Any, None]:
-        """Execute Agent Framework agent with trace collection.
+        """Execute Agent Framework agent with trace collection and optional thread support.
         
         Args:
             agent: Agent object to execute
@@ -128,16 +298,35 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             # Extract user message from input
             user_message = self._extract_user_message(request.input)
 
+            # Get thread if provided in extra_body
+            thread = None
+            if request.extra_body and "thread_id" in request.extra_body:
+                thread_id = request.extra_body["thread_id"]
+                thread = self.get_thread(thread_id)
+                if thread:
+                    logger.debug(f"Using existing thread: {thread_id}")
+                else:
+                    logger.warning(f"Thread {thread_id} not found, proceeding without thread")
+
             logger.debug(f"Executing agent with input: {user_message[:100]}...")
 
-            # Use Agent Framework's native streaming
-            async for update in agent.run_stream(user_message):
-                # Yield any pending trace events first
-                for trace_event in trace_collector.get_pending_events():
-                    yield trace_event
+            # Use Agent Framework's native streaming with optional thread
+            if thread:
+                async for update in agent.run_stream(user_message, thread=thread):
+                    # Yield any pending trace events first
+                    for trace_event in trace_collector.get_pending_events():
+                        yield trace_event
 
-                # Then yield the execution update
-                yield update
+                    # Then yield the execution update
+                    yield update
+            else:
+                async for update in agent.run_stream(user_message):
+                    # Yield any pending trace events first
+                    for trace_event in trace_collector.get_pending_events():
+                        yield trace_event
+
+                    # Then yield the execution update
+                    yield update
 
         except Exception as e:
             logger.error(f"Error in agent execution: {e}")

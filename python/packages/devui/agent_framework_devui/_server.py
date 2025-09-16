@@ -261,6 +261,124 @@ class DevServer:
                 error = OpenAIError.create(f"Execution failed: {e!s}")
                 return JSONResponse(status_code=500, content=error.model_dump())
 
+        @app.post("/v1/threads")
+        async def create_thread(request_data: dict) -> dict:
+            """Create a new thread for an agent."""
+            try:
+                agent_id = request_data.get("agent_id")
+                if not agent_id:
+                    raise HTTPException(status_code=400, detail="agent_id is required")
+                
+                executor = await self._ensure_executor()
+                thread_id = executor.create_thread(agent_id)
+                
+                return {
+                    "id": thread_id,
+                    "object": "thread",
+                    "created_at": int(__import__("time").time()),
+                    "metadata": {"agent_id": agent_id}
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error creating thread: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to create thread: {e!s}")
+
+        @app.get("/v1/threads")
+        async def list_threads(agent_id: str) -> dict:
+            """List threads for an agent."""
+            try:
+                executor = await self._ensure_executor()
+                thread_ids = executor.list_threads_for_agent(agent_id)
+                
+                # Convert thread IDs to thread objects
+                threads = []
+                for thread_id in thread_ids:
+                    threads.append({
+                        "id": thread_id,
+                        "object": "thread",
+                        "agent_id": agent_id
+                    })
+                
+                return {
+                    "object": "list",
+                    "data": threads
+                }
+            except Exception as e:
+                logger.error(f"Error listing threads: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to list threads: {e!s}")
+
+        @app.get("/v1/threads/{thread_id}")
+        async def get_thread(thread_id: str) -> dict:
+            """Get thread information."""
+            try:
+                executor = await self._ensure_executor()
+                
+                # Check if thread exists
+                thread = executor.get_thread(thread_id)
+                if not thread:
+                    raise HTTPException(status_code=404, detail="Thread not found")
+                
+                # Get the agent that owns this thread
+                agent_id = executor.get_agent_for_thread(thread_id)
+                
+                return {
+                    "id": thread_id,
+                    "object": "thread",
+                    "agent_id": agent_id
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error getting thread {thread_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to get thread: {e!s}")
+
+        @app.delete("/v1/threads/{thread_id}")
+        async def delete_thread(thread_id: str) -> dict:
+            """Delete a thread."""
+            try:
+                executor = await self._ensure_executor()
+                success = executor.delete_thread(thread_id)
+                
+                if not success:
+                    raise HTTPException(status_code=404, detail="Thread not found")
+                
+                return {
+                    "id": thread_id,
+                    "object": "thread.deleted",
+                    "deleted": True
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error deleting thread {thread_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to delete thread: {e!s}")
+
+        @app.get("/v1/threads/{thread_id}/messages")
+        async def get_thread_messages(thread_id: str) -> dict:
+            """Get messages from a thread."""
+            try:
+                executor = await self._ensure_executor()
+                
+                # Check if thread exists
+                thread = executor.get_thread(thread_id)
+                if not thread:
+                    raise HTTPException(status_code=404, detail="Thread not found")
+                
+                # Get messages from thread
+                messages = await executor.get_thread_messages(thread_id)
+                
+                return {
+                    "object": "list",
+                    "data": messages,
+                    "thread_id": thread_id
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error getting messages for thread {thread_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to get thread messages: {e!s}")
+
     async def _stream_execution(self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest) -> AsyncGenerator[str, None]:
         """Stream execution directly through executor."""
         try:

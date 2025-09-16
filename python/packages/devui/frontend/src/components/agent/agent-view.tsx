@@ -14,6 +14,13 @@ import {
 } from "@/components/ui/attachment-gallery";
 import { MessageRenderer } from "@/components/message_renderer";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Send, User, Bot, Plus, AlertCircle } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -122,9 +129,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const [currentThread, setCurrentThread] = useState<ThreadInfo | undefined>(
     undefined
   );
+  const [availableThreads, setAvailableThreads] = useState<ThreadInfo[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [loadingThreads, setLoadingThreads] = useState(false);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -135,14 +144,32 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatState.messages, chatState.isStreaming]);
 
-  // Clear chat when agent changes
+  // Load threads when agent changes
   useEffect(() => {
+    const loadThreads = async () => {
+      if (!selectedAgent) return;
+
+      setLoadingThreads(true);
+      try {
+        const threads = await apiClient.getThreads(selectedAgent.id);
+        setAvailableThreads(threads);
+      } catch (error) {
+        console.error("Failed to load threads:", error);
+        setAvailableThreads([]);
+      } finally {
+        setLoadingThreads(false);
+      }
+    };
+
+    // Clear chat when agent changes
     setChatState({
       messages: [],
       isStreaming: false,
     });
     setCurrentThread(undefined);
     accumulatedText.current = "";
+
+    loadThreads();
   }, [selectedAgent.id]);
 
   // Handle file uploads
@@ -190,14 +217,56 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   };
 
   // Handle new thread creation
-  const handleNewThread = useCallback(() => {
-    setCurrentThread(undefined);
-    setChatState({
-      messages: [],
-      isStreaming: false,
-    });
-    accumulatedText.current = "";
-  }, []);
+  const handleNewThread = useCallback(async () => {
+    if (!selectedAgent) return;
+
+    try {
+      const newThread = await apiClient.createThread(selectedAgent.id);
+      setCurrentThread(newThread);
+      setAvailableThreads((prev) => [newThread, ...prev]);
+      setChatState({
+        messages: [],
+        isStreaming: false,
+      });
+      accumulatedText.current = "";
+    } catch (error) {
+      console.error("Failed to create thread:", error);
+    }
+  }, [selectedAgent]);
+
+  // Handle thread selection
+  const handleThreadSelect = useCallback(
+    async (threadId: string) => {
+      const thread = availableThreads.find((t) => t.id === threadId);
+      if (!thread) return;
+
+      setCurrentThread(thread);
+
+      try {
+        // Load thread messages from backend
+        const threadMessages = await apiClient.getThreadMessages(threadId);
+
+        setChatState({
+          messages: threadMessages,
+          isStreaming: false,
+        });
+
+        console.log(
+          `Restored ${threadMessages.length} messages for thread ${threadId}`
+        );
+      } catch (error) {
+        console.error("Failed to load thread messages:", error);
+        // Fallback to clearing messages
+        setChatState({
+          messages: [],
+          isStreaming: false,
+        });
+      }
+
+      accumulatedText.current = "";
+    },
+    [availableThreads]
+  );
 
   // Handle message sending
   const handleSendMessage = useCallback(
@@ -249,10 +318,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       }));
 
       try {
+        // If no thread selected, create one automatically
+        let threadToUse = currentThread;
+        if (!threadToUse) {
+          try {
+            threadToUse = await apiClient.createThread(selectedAgent.id);
+            setCurrentThread(threadToUse);
+            setAvailableThreads((prev) => [threadToUse!, ...prev]);
+          } catch (error) {
+            console.error("Failed to create thread:", error);
+          }
+        }
+
         const request = {
           messages,
-          thread_id:
-            chatState.messages.length > 0 ? currentThread?.id : undefined,
+          thread_id: threadToUse?.id,
           options: { capture_traces: true },
         };
 
@@ -434,25 +514,64 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* Header */}
       <div className="border-b pb-6 p-4 flex-shrink-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-sm">
             <div className="flex items-center gap-2">
               <Bot className="h-4 w-4" />
               Chat with {selectedAgent.name || selectedAgent.id}
             </div>
           </h2>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleNewThread}
-            disabled={!selectedAgent}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            New Thread
-          </Button>
+
+          {/* Thread Controls */}
+          <div className="flex items-center gap-2">
+            <Select
+              value={currentThread?.id || ""}
+              onValueChange={handleThreadSelect}
+              disabled={loadingThreads || isSubmitting}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue
+                  placeholder={
+                    loadingThreads
+                      ? "Loading..."
+                      : availableThreads.length === 0
+                      ? "No threads"
+                      : currentThread
+                      ? `Thread ${currentThread.id.slice(-8)}`
+                      : "Select thread"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {availableThreads.map((thread) => (
+                  <SelectItem key={thread.id} value={thread.id}>
+                    <div className="flex items-center justify-between w-full">
+                      <span>Thread {thread.id.slice(-8)}</span>
+                      {thread.created_at && (
+                        <span className="text-xs text-muted-foreground ml-3">
+                          {new Date(thread.created_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleNewThread}
+              disabled={!selectedAgent || isSubmitting}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              New Thread
+            </Button>
+          </div>
         </div>
+
         {selectedAgent.description && (
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-sm text-muted-foreground">
             {selectedAgent.description}
           </p>
         )}
