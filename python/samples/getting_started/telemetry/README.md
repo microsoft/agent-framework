@@ -81,7 +81,15 @@ This sample shows how to setup telemetry when using the Agent Framework's workfl
 
 ### Authentication
 
-You can connect to your Application Insights instance using a connection string. You can also authenticate using Entra ID by passing a [TokenCredential](https://learn.microsoft.com/en-us/python/api/azure-core/azure.core.credentials.tokencredential?view=azure-python) to the `setup_telemetry()` function used in the samples above. It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.
+You can connect to your Application Insights instance using a connection string. You can also authenticate using Entra ID by passing a [TokenCredential](https://learn.microsoft.com/en-us/python/api/azure-core/azure.core.credentials.tokencredential?view=azure-python) to the `setup_telemetry()` function used in the samples above.
+
+```python
+from azure.identity import DefaultAzureCredential
+
+setup_telemetry(application_insights_credential=DefaultAzureCredential())
+```
+
+It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.
 
 ### Logs and traces
 
