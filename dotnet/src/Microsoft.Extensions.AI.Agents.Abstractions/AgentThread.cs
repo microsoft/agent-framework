@@ -39,6 +39,11 @@ public class AgentThread
         Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = null,
         Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = null)
     {
+        if (serializedThreadState.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
+        }
+
         var state = JsonSerializer.Deserialize(
             serializedThreadState,
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;

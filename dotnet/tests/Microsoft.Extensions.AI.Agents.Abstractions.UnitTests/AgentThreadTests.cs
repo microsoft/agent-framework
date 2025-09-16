@@ -201,7 +201,7 @@ public class AgentThreadTests
         var invalidJson = JsonSerializer.Deserialize("[42]", TestJsonSerializerContext.Default.JsonElement);
 
         // Act & Assert
-        Assert.Throws<JsonException>(() => new AgentThread(invalidJson));
+        Assert.Throws<ArgumentException>(() => new AgentThread(invalidJson));
     }
 
     #endregion Deserialize Tests
