@@ -222,6 +222,12 @@ support for long-running operations without breaking existing functionality.
      <sup>1</sup> The CancelResponseAsync method returns `Canceled` status, but a subsequent call to GetResponseStreamingAsync returns 
      an enumerable that can be iterated over to get the rest of the response until it completes.
 
+  - Store = false
+    
+    When the Store option is set to false and background mode is enabled, the method call `CreateResponseStreamingAsync` returns a response with an Id and status `Queued`.
+    A subsequent call to `GetStreamingResponseAsync` with the response id returns an HTTP 400 error: "An error occurred while processing your request.
+    You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID wfr_0... in your message."
+  
 </details>
 
 <details>
