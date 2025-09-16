@@ -109,12 +109,12 @@ internal class StateManager
             // What's the right thing to do when we have a state object, but it is the wrong type?
             if (result.IsDelete)
             {
-                return new ValueTask<T?>((T?)default);
+                return new((T?)default);
             }
 
             if (result.Value is T)
             {
-                return new ValueTask<T?>((T?)result.Value);
+                return new((T?)result.Value);
             }
 
             throw new InvalidOperationException($"State for key '{key}' in scope '{scopeId}' is not of type '{typeof(T).Name}'.");
@@ -124,17 +124,28 @@ internal class StateManager
         return scope.ReadStateAsync<T>(key);
     }
 
-    public ValueTask WriteStateAsync<T>(string executorId, string? scopeName, string key, T? value)
+    public ValueTask WriteStateAsync<T>(string executorId, string? scopeName, string key, T value)
         => this.WriteStateAsync<T>(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key, value);
 
-    public ValueTask WriteStateAsync<T>(ScopeId scopeId, string key, T? value)
+    public ValueTask WriteStateAsync<T>(ScopeId scopeId, string key, T value)
     {
         Throw.IfNullOrEmpty(key);
 
         UpdateKey stateKey = new(scopeId, key);
-        StateUpdate update = value == null ? StateUpdate.Delete(key) : StateUpdate.Update(key, value);
+        StateUpdate update = StateUpdate.Update(key, value);
         this._queuedUpdates[stateKey] = update;
 
+        return default;
+    }
+
+    public ValueTask ClearStateAsync(string executorId, string? scopeName, string key)
+        => this.ClearStateAsync(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key);
+
+    public ValueTask ClearStateAsync(ScopeId scopeId, string key)
+    {
+        Throw.IfNullOrEmpty(key);
+        UpdateKey stateKey = new(scopeId, key);
+        this._queuedUpdates[stateKey] = StateUpdate.Delete(key);
         return default;
     }
 

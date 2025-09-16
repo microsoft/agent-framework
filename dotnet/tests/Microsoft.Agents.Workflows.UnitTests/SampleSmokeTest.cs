@@ -142,7 +142,7 @@ public class SampleSmokeTest
         options.MakeReadOnly();
 
         CheckpointManager memoryJsonManager = CheckpointManager.CreateJson(new InMemoryJsonStore(), options);
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, rehydrateToRestore: true);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, rehydrateToRestore: true, checkpointManager: memoryJsonManager);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 

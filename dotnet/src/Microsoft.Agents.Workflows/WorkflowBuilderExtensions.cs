@@ -41,6 +41,8 @@ public static class WorkflowBuilderExtensions
                 switch_.AddCase(predicate, executors);
             });
 
+        // The reason we can check for "not null" here is that CreateConditionFunc<T> will do the correct unwrapping
+        // logic for PortableValues.
         bool IsAllowedType(object? message) => message is not null;
     }
 
@@ -69,6 +71,8 @@ public static class WorkflowBuilderExtensions
                 switch_.AddCase(predicate, executors);
             });
 
+        // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
+        // logic for PortableValues.
         bool IsAllowedType(object? message) => message is null;
     }
 

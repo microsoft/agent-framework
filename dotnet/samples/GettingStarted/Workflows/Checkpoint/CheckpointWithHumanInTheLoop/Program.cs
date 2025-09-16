@@ -102,7 +102,7 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        var signal = request.Data.As<SignalWithNumber>();
+        var signal = request.DataAs<SignalWithNumber>();
         if (signal is not null)
         {
             switch (signal.Signal)

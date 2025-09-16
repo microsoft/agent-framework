@@ -3,11 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using FluentAssertions;
@@ -96,7 +94,7 @@ public class JsonSerializationTests
     [Fact]
     public void Test_InputPortInfo_JsonRoundtrip()
     {
-        RunJsonRoundtrip(TestPortInfo, predicate: TestPortInfo.CreateValidator());
+        RunJsonRoundtrip(TestPortInfo, predicate: TestPort.CreatePortInfoValidator());
     }
 
     private static DirectEdgeInfo TestDirectEdgeInfo_NoCondition => new(new("SourceExecutor", "TargetExecutor", TakeEdgeId(), condition: null));

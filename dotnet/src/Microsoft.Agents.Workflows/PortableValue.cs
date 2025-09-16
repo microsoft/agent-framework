@@ -2,9 +2,11 @@
 
 using System;
 using System.Text.Json.Serialization;
+
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Workflows.Checkpointing;
+namespace Microsoft.Agents.Workflows;
 
 /// <summary>
 /// Represents a value that can be exported / imported to a workflow, e.g. through an external request/response, or
@@ -89,7 +91,12 @@ public sealed class PortableValue
     /// </summary>
     /// <remarks>If the underlying value implements delayed deserialization, this method will attempt to
     /// deserialize it to the specified type. If the value is already of the requested type, it is returned directly.
-    /// Otherwise, the default value for TValue is returned.</remarks>
+    /// Otherwise, the default value for TValue is returned.
+    ///
+    /// For nullable value types, make sure to make <typeparamref name="TValue"/> be nullable, e.g. <c>int?</c>,
+    /// otherwise the default non-null value of the type is returned when the value is missing. Use <see cref="AsValue{TValue}"/>
+    /// to get the correct behavior when unable to pass in the explicit-nullable type.
+    /// </remarks>
     /// <typeparam name="TValue">The type to which the value should be cast or deserialized.</typeparam>
     /// <returns>The value cast or deserialized to type TValue if possible; otherwise, the default value for type TValue.</returns>
     public TValue? As<TValue>()
@@ -123,18 +130,13 @@ public sealed class PortableValue
     {
         if (this.Value is IDelayedDeserialization delayedDeserialization)
         {
-            if (this._deserializedValueCache == null)
-            {
-                this._deserializedValueCache = delayedDeserialization.Deserialize<TValue>();
-            }
+            this._deserializedValueCache ??= delayedDeserialization.Deserialize<TValue>();
         }
 
         if (this.Value is TValue typedValue)
         {
             return typedValue;
         }
-
-        this._deserializedValueCache = null;
 
         return default;
     }
@@ -157,10 +159,7 @@ public sealed class PortableValue
 
         if (this.Value is IDelayedDeserialization delayedDeserialization)
         {
-            if (this._deserializedValueCache == null)
-            {
-                this._deserializedValueCache = delayedDeserialization.Deserialize(targetType);
-            }
+            this._deserializedValueCache ??= delayedDeserialization.Deserialize(targetType);
         }
 
         return this.Value is not null && targetType.IsAssignableFrom(this.Value.GetType())

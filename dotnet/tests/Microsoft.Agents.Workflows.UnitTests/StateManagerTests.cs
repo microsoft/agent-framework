@@ -406,7 +406,7 @@ public class StateManagerTests
 
         // Act: Update the key from one executor and delete it from another
         await manager.WriteStateAsync(scopeSelfView, Key1, "newValue");
-        await manager.WriteStateAsync<string>(scopeOtherView, Key1, null);
+        await manager.ClearStateAsync(scopeOtherView, Key1);
         Func<Task> act = async () => await manager.PublishUpdatesAsync(tracer: null);
 
         if (isSharedScope)

@@ -6,7 +6,6 @@ using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
-// Keep in sync with CreateDefaultOptions above.
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     NumberHandling = JsonNumberHandling.AllowReadingFromString)]

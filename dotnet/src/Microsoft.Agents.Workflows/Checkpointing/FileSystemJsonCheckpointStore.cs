@@ -19,7 +19,7 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 /// persistence is required. Instances of this class are not thread-safe and should not be shared across multiple
 /// threads without external synchronization. The class implements IDisposable; callers should ensure Dispose is called
 /// to release file handles and system resources when the store is no longer needed.</remarks>
-public sealed class FileSystemJsonStore : JsonCheckpointStore, IDisposable
+public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDisposable
 {
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213:Disposable fields should be disposed",
         Justification = "It is disposed, the analyzer is just not picking it up properly")]
@@ -29,12 +29,12 @@ public sealed class FileSystemJsonStore : JsonCheckpointStore, IDisposable
     internal HashSet<CheckpointInfo> CheckpointIndex { get; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FileSystemJsonStore"/> class that uses the specified directory
+    /// Initializes a new instance of the <see cref="FileSystemJsonCheckpointStore"/> class that uses the specified directory
     /// </summary>
     /// <param name="directory"></param>
     /// <exception cref="ArgumentNullException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
-    public FileSystemJsonStore(DirectoryInfo directory)
+    public FileSystemJsonCheckpointStore(DirectoryInfo directory)
     {
         this.Directory = directory ?? throw new ArgumentNullException(nameof(directory));
 
@@ -57,16 +57,12 @@ public sealed class FileSystemJsonStore : JsonCheckpointStore, IDisposable
             // read the lines of indexfile and parse them as CheckpointInfos
             this.CheckpointIndex = new HashSet<CheckpointInfo>();
             using StreamReader reader = new(this._indexFile, encoding: Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: -1, leaveOpen: true);
-            while (!reader.EndOfStream)
+            while (reader.ReadLine() is string line)
             {
-                string? line = reader.ReadLine();
-                if (line != null)
+                CheckpointInfo? info = JsonSerializer.Deserialize<CheckpointInfo>(line, this.KeyTypeInfo);
+                if (info != null)
                 {
-                    CheckpointInfo? info = JsonSerializer.Deserialize<CheckpointInfo>(line, this.KeyTypeInfo);
-                    if (info != null)
-                    {
-                        this.CheckpointIndex.Add(info);
-                    }
+                    this.CheckpointIndex.Add(info);
                 }
             }
         }
@@ -89,7 +85,7 @@ public sealed class FileSystemJsonStore : JsonCheckpointStore, IDisposable
     {
         if (this._indexFile == null)
         {
-            throw new ObjectDisposedException($"{nameof(FileSystemJsonStore)}({this.Directory.FullName})");
+            throw new ObjectDisposedException($"{nameof(FileSystemJsonCheckpointStore)}({this.Directory.FullName})");
         }
     }
 
@@ -119,7 +115,7 @@ public sealed class FileSystemJsonStore : JsonCheckpointStore, IDisposable
         try
         {
             using Stream checkpointStream = File.Open(fileName, FileMode.Create, FileAccess.Write, FileShare.None);
-            using Utf8JsonWriter jsonWriter = new(checkpointStream);
+            using Utf8JsonWriter jsonWriter = new(checkpointStream, new JsonWriterOptions() { Indented = false });
             value.WriteTo(jsonWriter);
 
             JsonSerializer.Serialize(this._indexFile!, key, this.KeyTypeInfo);
@@ -156,9 +152,9 @@ public sealed class FileSystemJsonStore : JsonCheckpointStore, IDisposable
         }
 
         using FileStream checkpointFileStream = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
-        JsonDocument document = await JsonDocument.ParseAsync(checkpointFileStream).ConfigureAwait(false);
+        using JsonDocument document = await JsonDocument.ParseAsync(checkpointFileStream).ConfigureAwait(false);
 
-        return document.RootElement;
+        return document.RootElement.Clone();
     }
 
     /// <inheritdoc/>
