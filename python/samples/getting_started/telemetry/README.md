@@ -79,6 +79,18 @@ This sample shows how to setup telemetry when using the Agent Framework's workfl
 
 ## Application Insights/Azure Monitor
 
+### Authentication
+
+You can connect to your Application Insights instance using a connection string. You can also authenticate using Entra ID by passing a [TokenCredential](https://learn.microsoft.com/en-us/python/api/azure-core/azure.core.credentials.tokencredential?view=azure-python) to the `setup_telemetry()` function used in the samples above.
+
+```python
+from azure.identity import DefaultAzureCredential
+
+setup_telemetry(credential=DefaultAzureCredential())
+```
+
+It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.
+
 ### Logs and traces
 
 Go to your Application Insights instance, click on _Transaction search_ on the left menu. Use the operation id output by the program to search for the logs and traces associated with the operation. Click on any of the search result to view the end-to-end transaction details. Read more [here](https://learn.microsoft.com/en-us/azure/azure-monitor/app/transaction-search-and-diagnostics?tabs=transaction-search).

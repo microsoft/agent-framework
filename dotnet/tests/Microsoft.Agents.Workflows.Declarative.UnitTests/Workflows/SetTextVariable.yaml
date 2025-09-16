@@ -7,4 +7,4 @@ beginDialog:
     - kind: SetTextVariable
       id: set_text
       variable: Topic.TestVar
-      value: "Test content"
+      value: Test content

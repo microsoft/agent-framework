@@ -96,7 +96,7 @@ internal class WorkflowHostAgent : AIAgent
         }
     }
 
-    private async ValueTask<WorkflowThread> UpdateThreadAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellation = default)
+    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellation = default)
     {
         if (thread is null)
         {
@@ -114,7 +114,7 @@ internal class WorkflowHostAgent : AIAgent
 
     public override async
     Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -134,7 +134,7 @@ internal class WorkflowHostAgent : AIAgent
 
     public override async
     IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)

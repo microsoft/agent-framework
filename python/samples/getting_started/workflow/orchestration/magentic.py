@@ -3,9 +3,9 @@
 import asyncio
 import logging
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool
-from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
-from agent_framework_workflow import (
+from agent_framework import (
+    ChatAgent,
+    HostedCodeInterpreterTool,
     MagenticAgentDeltaEvent,
     MagenticAgentMessageEvent,
     MagenticBuilder,
@@ -15,6 +15,7 @@ from agent_framework_workflow import (
     MagenticOrchestratorMessageEvent,
     WorkflowCompletedEvent,
 )
+from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)

@@ -17,7 +17,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
     public async Task ClearWorkflowScope()
     {
         // Arrange
-        this.Scopes.Set("NoVar", FormulaValue.New("Old value"));
+        this.State.Set("NoVar", FormulaValue.New("Old value"));
 
         ClearAllVariables model =
             this.CreateModel(
@@ -25,7 +25,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
                 VariablesToClear.ConversationScopedVariables);
 
         // Act
-        ClearAllVariablesExecutor action = new(model, this.GetState());
+        ClearAllVariablesExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert
@@ -43,7 +43,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
                 VariablesToClear.UserScopedVariables);
 
         // Act
-        ClearAllVariablesExecutor action = new(model, this.GetState());
+        ClearAllVariablesExecutor action = new(model, this.State);
         await this.Execute(action);
 
         // Assert

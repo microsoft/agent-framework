@@ -1,9 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging;
@@ -24,8 +20,62 @@ namespace OpenAI;
 /// </remarks>
 public static class OpenAIAssistantClientExtensions
 {
-    /// <summary>Key into AdditionalProperties used to store a strict option.</summary>
-    private const string StrictKey = "strictJsonSchema";
+    /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
+    /// </summary>
+    /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <param name="agentId">The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    public static ChatClientAgent GetAIAgent(
+        this AssistantClient assistantClient,
+        string agentId,
+        ChatOptions? chatOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (assistantClient is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClient));
+        }
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
+        }
+
+        var assistant = assistantClient.GetAssistant(agentId, cancellationToken);
+        return assistant.AsAIAgent(assistantClient, chatOptions);
+    }
+
+    /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
+    /// </summary>
+    /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    public static async Task<ChatClientAgent> GetAIAgentAsync(
+        this AssistantClient assistantClient,
+        string agentId,
+        ChatOptions? chatOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (assistantClient is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClient));
+        }
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
+        }
+
+        var assistanceResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
+
+        return assistanceResponse.AsAIAgent(assistantClient, chatOptions);
+    }
 
     /// <summary>
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
@@ -209,140 +259,6 @@ public static class OpenAIAssistantClientExtensions
             }
         };
 
-#pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = client.AsNewIChatClient(assistantId);
-#pragma warning restore CA2000 // Dispose objects before losing scope
-        return new ChatClientAgent(chatClient, agentOptions, loggerFactory);
-    }
-
-    /// <summary>Converts an Extensions function to an OpenAI assistants function tool.</summary>
-    private static FunctionToolDefinition ToOpenAIAssistantsFunctionToolDefinition(AIFunction aiFunction, ChatOptions? options = null)
-    {
-        bool? strict =
-            HasStrict(aiFunction.AdditionalProperties) ??
-            HasStrict(options?.AdditionalProperties);
-
-        return new FunctionToolDefinition(aiFunction.Name)
-        {
-            Description = aiFunction.Description,
-            Parameters = ToOpenAIFunctionParameters(aiFunction, strict),
-            StrictParameterSchemaEnabled = strict,
-        };
-    }
-
-    /// <summary>Extracts from an <see cref="AIFunction"/> the parameters and strictness setting for use with OpenAI's APIs.</summary>
-    private static BinaryData ToOpenAIFunctionParameters(AIFunction aiFunction, bool? strict)
-    {
-        // Perform any desirable transformations on the function's JSON schema, if it'll be used in a strict setting.
-        JsonElement jsonSchema = strict is true ?
-            StrictSchemaTransformCache.GetOrCreateTransformedSchema(aiFunction) :
-            aiFunction.JsonSchema;
-
-        // Roundtrip the schema through the ToolJson model type to remove extra properties
-        // and force missing ones into existence, then return the serialized UTF8 bytes as BinaryData.
-        var tool = jsonSchema.Deserialize(OpenAIJsonContext.Default.ToolJson)!;
-        var functionParameters = BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(tool, OpenAIJsonContext.Default.ToolJson));
-
-        return functionParameters;
-    }
-
-    /// <summary>Gets whether the properties specify that strict schema handling is desired.</summary>
-    private static bool? HasStrict(IReadOnlyDictionary<string, object?>? additionalProperties) =>
-        additionalProperties?.TryGetValue(StrictKey, out object? strictObj) is true &&
-        strictObj is bool strictValue ?
-        strictValue : null;
-
-    private static AIJsonSchemaTransformCache StrictSchemaTransformCache { get; } = new(new()
-    {
-        DisallowAdditionalProperties = true,
-        ConvertBooleanSchemas = true,
-        MoveDefaultKeywordToDescription = true,
-        RequireAllProperties = true,
-        TransformSchemaNode = (ctx, node) =>
-        {
-            // Move content from common but unsupported properties to description. In particular, we focus on properties that
-            // the AIJsonUtilities schema generator might produce and/or that are explicitly mentioned in the OpenAI documentation.
-
-            if (node is JsonObject schemaObj)
-            {
-                StringBuilder? additionalDescription = null;
-
-                ReadOnlySpan<string> unsupportedProperties =
-                [
-                    // Produced by AIJsonUtilities but not in allow list at https://platform.openai.com/docs/guides/structured-outputs#supported-properties:
-                    "contentEncoding", "contentMediaType", "not",
-
-                    // Explicitly mentioned at https://platform.openai.com/docs/guides/structured-outputs?api-mode=responses#key-ordering as being unsupported with some models:
-                    "minLength", "maxLength", "pattern", "format",
-                    "minimum", "maximum", "multipleOf",
-                    "patternProperties",
-                    "minItems", "maxItems",
-
-                    // Explicitly mentioned at https://learn.microsoft.com/azure/ai-services/openai/how-to/structured-outputs?pivots=programming-language-csharp&tabs=python-secure%2Cdotnet-entra-id#unsupported-type-specific-keywords
-                    // as being unsupported with Azure OpenAI:
-                    "unevaluatedProperties", "propertyNames", "minProperties", "maxProperties",
-                    "unevaluatedItems", "contains", "minContains", "maxContains", "uniqueItems",
-                ];
-
-                foreach (string propName in unsupportedProperties)
-                {
-                    if (schemaObj[propName] is { } propNode)
-                    {
-                        _ = schemaObj.Remove(propName);
-                        AppendLine(ref additionalDescription, propName, propNode);
-                    }
-                }
-
-                if (additionalDescription is not null)
-                {
-                    schemaObj["description"] = schemaObj["description"] is { } descriptionNode && descriptionNode.GetValueKind() == JsonValueKind.String ?
-                        $"{descriptionNode.GetValue<string>()}{Environment.NewLine}{additionalDescription}" :
-                        additionalDescription.ToString();
-                }
-
-                return node;
-
-                static void AppendLine(ref StringBuilder? sb, string propName, JsonNode propNode)
-                {
-                    sb ??= new();
-
-                    if (sb.Length > 0)
-                    {
-                        _ = sb.AppendLine();
-                    }
-
-                    _ = sb.Append(propName).Append(": ").Append(propNode);
-                }
-            }
-
-            return node;
-        },
-    });
-
-    /// <summary>Used to create the JSON payload for an OpenAI tool description.</summary>
-    internal sealed class ToolJson
-    {
-        [JsonPropertyName("type")]
-        public string Type { get; set; } = "object";
-
-        [JsonPropertyName("required")]
-        public HashSet<string> Required { get; set; } = [];
-
-        [JsonPropertyName("properties")]
-        public Dictionary<string, JsonElement> Properties { get; set; } = [];
-
-        [JsonPropertyName("additionalProperties")]
-        public bool AdditionalProperties { get; set; }
+        return new ChatClientAgent(client.AsIChatClient(assistantId), agentOptions, loggerFactory);
     }
 }
-
-/// <summary>Source-generated JSON type information for use by all OpenAI implementations.</summary>
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
-    UseStringEnumConverter = true,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    WriteIndented = true)]
-[JsonSerializable(typeof(OpenAIAssistantClientExtensions.ToolJson))]
-[JsonSerializable(typeof(IDictionary<string, object?>))]
-[JsonSerializable(typeof(string[]))]
-[JsonSerializable(typeof(JsonElement))]
-internal sealed partial class OpenAIJsonContext : JsonSerializerContext;

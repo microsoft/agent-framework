@@ -22,11 +22,11 @@ AIAgent agent = new OpenAIClient(apiKey)
 UserChatMessage chatMessage = new("Tell me a joke about a pirate.");
 
 // Invoke the agent and output the text result.
-ChatCompletion chatCompletion = await agent.RunAsync(chatMessage);
+ChatCompletion chatCompletion = await agent.RunAsync([chatMessage]);
 Console.WriteLine(chatCompletion.Content.Last().Text);
 
 // Invoke the agent with streaming support.
-AsyncCollectionResult<StreamingChatCompletionUpdate> completionUpdates = agent.RunStreamingAsync(chatMessage);
+AsyncCollectionResult<StreamingChatCompletionUpdate> completionUpdates = agent.RunStreamingAsync([chatMessage]);
 await foreach (StreamingChatCompletionUpdate completionUpdate in completionUpdates)
 {
     if (completionUpdate.ContentUpdate.Count > 0)
