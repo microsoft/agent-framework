@@ -14,6 +14,9 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     HostedCodeInterpreterTool,
+    HostedFileSearchTool,
+    HostedMCPTool,
+    HostedVectorStoreContent,
     TextContent,
     ai_function,
 )
@@ -43,6 +46,29 @@ async def get_weather(location: Annotated[str, "The location as a city name"]) -
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather
     return f"The weather in {location} is sunny and 72°F."
+
+
+async def create_vector_store(client: AzureResponsesClient) -> tuple[str, HostedVectorStoreContent]:
+    """Create a vector store with sample documents for testing."""
+    file = await client.client.files.create(
+        file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="assistants"
+    )
+    vector_store = await client.client.vector_stores.create(
+        name="knowledge_base",
+        expires_after={"anchor": "last_active_at", "days": 1},
+    )
+    result = await client.client.vector_stores.files.create_and_poll(vector_store_id=vector_store.id, file_id=file.id)
+    if result.last_error is not None:
+        raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
+
+    return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
+
+
+async def delete_vector_store(client: AzureResponsesClient, file_id: str, vector_store_id: str) -> None:
+    """Delete the vector store after tests."""
+
+    await client.client.vector_stores.delete(vector_store_id=vector_store_id)
+    await client.client.files.delete(file_id=file_id)
 
 
 def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -459,3 +485,140 @@ async def test_azure_responses_client_agent_level_tool_persistence():
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_responses_client_agent_chat_options_run_level() -> None:
+    """Integration test for comprehensive ChatOptions parameter coverage with Azure Response Agent."""
+    async with ChatAgent(
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response.",
+            max_tokens=100,
+            temperature=0.7,
+            top_p=0.9,
+            seed=123,
+            user="comprehensive-test-user",
+            tools=[get_weather],
+            tool_choice="auto",
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_responses_client_agent_chat_options_agent_level() -> None:
+    """Integration test for comprehensive ChatOptions parameter coverage with Azure Response Agent."""
+    async with ChatAgent(
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant.",
+        max_tokens=100,
+        temperature=0.7,
+        top_p=0.9,
+        seed=123,
+        user="comprehensive-test-user",
+        tools=[get_weather],
+        tool_choice="auto",
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response.",
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@skip_if_azure_integration_tests_disabled
+async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
+    """Integration test for HostedMCPTool with Azure Response Agent using Microsoft Learn MCP."""
+    # Use the same MCP server as the Foundry example
+    mcp_tool = HostedMCPTool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        description="A Microsoft Learn MCP server for documentation questions",
+        approval_mode="never_require",
+    )
+
+    async with ChatAgent(
+        chat_client=AzureResponsesClient(credential=AzureCliCredential()),
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=[mcp_tool],
+    ) as agent:
+        # Use the same query as the Foundry example
+        response = await agent.run(
+            "How to create an Azure storage account using az cli?",
+            max_tokens=200,
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # Should contain Azure-related content since it's asking about Azure CLI
+        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
+
+
+@skip_if_azure_integration_tests_disabled
+@pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
+async def test_azure_responses_client_file_search() -> None:
+    """Test Azure responses client with file search tool."""
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
+
+    assert isinstance(azure_responses_client, ChatClientProtocol)
+
+    file_id, vector_store = await create_vector_store(azure_responses_client)
+    # Test that the client will use the web search tool
+    response = await azure_responses_client.get_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="What is the weather today? Do a file search to find the answer.",
+            )
+        ],
+        tools=[HostedFileSearchTool(inputs=vector_store)],
+        tool_choice="auto",
+    )
+
+    await delete_vector_store(azure_responses_client, file_id, vector_store.vector_store_id)
+    assert "sunny" in response.text.lower()
+    assert "75" in response.text
+
+
+@skip_if_azure_integration_tests_disabled
+@pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
+async def test_azure_responses_client_file_search_streaming() -> None:
+    """Test Azure responses client with file search tool and streaming."""
+    azure_responses_client = AzureResponsesClient(credential=AzureCliCredential())
+
+    assert isinstance(azure_responses_client, ChatClientProtocol)
+
+    file_id, vector_store = await create_vector_store(azure_responses_client)
+    # Test that the client will use the web search tool
+    response = azure_responses_client.get_streaming_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="What is the weather today? Do a file search to find the answer.",
+            )
+        ],
+        tools=[HostedFileSearchTool(inputs=vector_store)],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+
+    await delete_vector_store(azure_responses_client, file_id, vector_store.vector_store_id)
+
+    assert "sunny" in full_message.lower()
+    assert "75" in full_message

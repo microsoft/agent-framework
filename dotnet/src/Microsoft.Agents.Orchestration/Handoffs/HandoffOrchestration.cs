@@ -44,7 +44,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
     public Func<ValueTask<ChatMessage>>? InteractiveCallback { get; set; }
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         List<ChatMessage> allMessages = [.. messages];
         int originalMessageCount = allMessages.Count;
@@ -52,7 +52,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
     }
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IEnumerable<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.HandoffState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
 
