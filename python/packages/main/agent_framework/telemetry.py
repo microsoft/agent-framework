@@ -23,7 +23,6 @@ from .exceptions import AgentInitializationError, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
     from azure.core.credentials import TokenCredential
-
     from opentelemetry.metrics import Histogram
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
@@ -415,10 +414,7 @@ class OtelSettings(AFBaseSettings):
         """Check if the setup has been executed."""
         return self._executed_setup
 
-    def setup_telemetry(
-            self,
-            application_insights_credential: "TokenCredential | None" = None
-        ) -> None:
+    def setup_telemetry(self, application_insights_credential: "TokenCredential | None" = None) -> None:
         """Setup telemetry based on the settings.
 
         If both connection_string and otlp_endpoint both will be used.
@@ -483,7 +479,7 @@ def setup_telemetry(
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
         application_insights_connection_string: The Azure Monitor connection string. Default is None.
-        application_insights_credential: The credential to use for Azure Monitor Entra ID authentication. 
+        application_insights_credential: The credential to use for Azure Monitor Entra ID authentication.
             Default is None.
         enable_live_metrics: Enable Azure Monitor live metrics. Default is False.
 
