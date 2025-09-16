@@ -9,7 +9,18 @@ from ._checkpoint import (
 )
 from ._concurrent import ConcurrentBuilder
 from ._const import DEFAULT_MAX_ITERATIONS
-from ._edge import Case, Default
+from ._edge import (
+    Case,
+    Default,
+    Edge,
+    FanInEdgeGroup,
+    FanOutEdgeGroup,
+    SingleEdgeGroup,
+    SwitchCaseEdgeGroup,
+    SwitchCaseEdgeGroupCase,
+    SwitchCaseEdgeGroupDefault,
+)
+from ._edge_runner import create_edge_runner
 from ._events import (
     AgentRunEvent,
     AgentRunUpdateEvent,
@@ -63,15 +74,19 @@ from ._magentic import (
     MagenticStartMessage,
     StandardMagenticManager,
 )
+from ._runner import Runner
 from ._runner_context import (
     InProcRunnerContext,
     Message,
     RunnerContext,
 )
 from ._sequential import SequentialBuilder
+from ._shared_state import SharedState
+from ._telemetry import EdgeGroupDeliveryStatus, WorkflowTracer, workflow_tracer
 from ._validation import (
     EdgeDuplicationError,
     GraphConnectivityError,
+    HandlerOutputAnnotationError,
     TypeCompatibilityError,
     ValidationTypeEnum,
     WorkflowValidationError,
@@ -92,15 +107,20 @@ __all__ = [
     "CheckpointStorage",
     "ConcurrentBuilder",
     "Default",
+    "Edge",
     "EdgeDuplicationError",
+    "EdgeGroupDeliveryStatus",
     "Executor",
     "ExecutorCompletedEvent",
     "ExecutorEvent",
     "ExecutorFailedEvent",
     "ExecutorInvokeEvent",
+    "FanInEdgeGroup",
+    "FanOutEdgeGroup",
     "FileCheckpointStorage",
     "FunctionExecutor",
     "GraphConnectivityError",
+    "HandlerOutputAnnotationError",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticAgentDeltaEvent",
@@ -127,11 +147,17 @@ __all__ = [
     "RequestInfoExecutor",
     "RequestInfoMessage",
     "RequestResponse",
+    "Runner",
     "RunnerContext",
     "SequentialBuilder",
+    "SharedState",
+    "SingleEdgeGroup",
     "StandardMagenticManager",
     "SubWorkflowRequestInfo",
     "SubWorkflowResponse",
+    "SwitchCaseEdgeGroup",
+    "SwitchCaseEdgeGroupCase",
+    "SwitchCaseEdgeGroupDefault",
     "TypeCompatibilityError",
     "ValidationTypeEnum",
     "Workflow",
@@ -148,10 +174,13 @@ __all__ = [
     "WorkflowRunState",
     "WorkflowStartedEvent",
     "WorkflowStatusEvent",
+    "WorkflowTracer",
     "WorkflowValidationError",
     "WorkflowViz",
+    "create_edge_runner",
     "executor",
     "handler",
     "intercepts_request",
     "validate_workflow_graph",
+    "workflow_tracer",
 ]

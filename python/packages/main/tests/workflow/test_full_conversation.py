@@ -20,7 +20,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.workflow._executor import AgentExecutorResponse, Executor
+from agent_framework._workflow._executor import AgentExecutorResponse, Executor
 
 
 class _SimpleAgent(BaseAgent):

@@ -9,8 +9,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from agent_framework import Executor, WorkflowContext, handler
-from agent_framework.workflow._edge import (
+from agent_framework import (
+    Executor,
+    InProcRunnerContext,
+    Message,
+    SharedState,
+    WorkflowContext,
+    handler,
+)
+from agent_framework._workflow._edge import (
     Edge,
     FanInEdgeGroup,
     FanOutEdgeGroup,
@@ -19,10 +26,8 @@ from agent_framework.workflow._edge import (
     SwitchCaseEdgeGroupCase,
     SwitchCaseEdgeGroupDefault,
 )
-from agent_framework.workflow._edge_runner import create_edge_runner
-from agent_framework.workflow._runner_context import InProcRunnerContext, Message
-from agent_framework.workflow._shared_state import SharedState
-from agent_framework.workflow._telemetry import EdgeGroupDeliveryStatus, workflow_tracer
+from agent_framework._workflow._edge_runner import create_edge_runner
+from agent_framework._workflow._telemetry import EdgeGroupDeliveryStatus, workflow_tracer
 
 
 @pytest.fixture
@@ -34,7 +39,7 @@ def tracing_enabled():
     os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = "true"
 
     # Force reload the settings to pick up the environment variable
-    from agent_framework.workflow._telemetry import WorkflowDiagnosticSettings
+    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
 
     workflow_tracer.settings = WorkflowDiagnosticSettings()
 
@@ -635,7 +640,7 @@ async def test_source_edge_group_with_selection_func_send_message() -> None:
     data = MockMessage(data="test")
     message = Message(data=data, source_id=source.id)
 
-    with patch("agent_framework.workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+    with patch("agent_framework._workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, shared_state, ctx)
 
         assert success is True
@@ -688,7 +693,7 @@ async def test_source_edge_group_with_selection_func_send_message_with_target() 
     data = MockMessage(data="test")
     message = Message(data=data, source_id=source.id, target_id=target1.id)
 
-    with patch("agent_framework.workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+    with patch("agent_framework._workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, shared_state, ctx)
 
         assert success is True
@@ -921,7 +926,7 @@ async def test_target_edge_group_send_message_buffer() -> None:
 
     data = MockMessage(data="test")
 
-    with patch("agent_framework.workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+    with patch("agent_framework._workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(
             Message(data=data, source_id=source1.id),
             shared_state,
@@ -1203,7 +1208,7 @@ async def test_switch_case_edge_group_send_message() -> None:
     data = MockMessage(data=-1)
     message = Message(data=data, source_id=source.id)
 
-    with patch("agent_framework.workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+    with patch("agent_framework._workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, shared_state, ctx)
 
         assert success is True
@@ -1212,7 +1217,7 @@ async def test_switch_case_edge_group_send_message() -> None:
     # Default condition should
     data = MockMessage(data=1)
     message = Message(data=data, source_id=source.id)
-    with patch("agent_framework.workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+    with patch("agent_framework._workflow._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, shared_state, ctx)
 
         assert success is True

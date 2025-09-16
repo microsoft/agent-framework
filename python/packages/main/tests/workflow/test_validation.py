@@ -17,8 +17,8 @@ from agent_framework import (
     handler,
     validate_workflow_graph,
 )
-from agent_framework.workflow._edge import SingleEdgeGroup
-from agent_framework.workflow._validation import HandlerOutputAnnotationError
+from agent_framework._workflow._edge import SingleEdgeGroup
+from agent_framework._workflow._validation import HandlerOutputAnnotationError
 
 
 class StringExecutor(Executor):

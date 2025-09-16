@@ -6,7 +6,9 @@ from typing import Any
 import pytest
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
-from agent_framework.workflow._edge import (
+from agent_framework._workflow._edge import (
+    Case,
+    Default,
     Edge,
     FanInEdgeGroup,
     FanOutEdgeGroup,
@@ -15,7 +17,7 @@ from agent_framework.workflow._edge import (
     SwitchCaseEdgeGroupCase,
     SwitchCaseEdgeGroupDefault,
 )
-from agent_framework.workflow._executor import (
+from agent_framework._workflow._executor import (
     WorkflowExecutor,
 )
 
@@ -629,8 +631,6 @@ class TestSerializationWorkflowClasses:
 
 def test_comprehensive_edge_groups_workflow_serialization() -> None:
     """Test serialization of a workflow that uses all edge group types: SwitchCase, FanOut, and FanIn."""
-    from agent_framework.workflow._edge import Case, Default
-
     # Create executors for a comprehensive workflow
     router = SampleExecutor(id="router")
     processor_a = SampleExecutor(id="proc_a")

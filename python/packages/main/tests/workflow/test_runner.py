@@ -6,10 +6,10 @@ from dataclasses import dataclass
 import pytest
 
 from agent_framework import Executor, WorkflowCompletedEvent, WorkflowContext, WorkflowEvent, handler
-from agent_framework.workflow._edge import SingleEdgeGroup
-from agent_framework.workflow._runner import Runner
-from agent_framework.workflow._runner_context import InProcRunnerContext, RunnerContext
-from agent_framework.workflow._shared_state import SharedState
+from agent_framework._workflow._edge import SingleEdgeGroup
+from agent_framework._workflow._runner import Runner
+from agent_framework._workflow._runner_context import InProcRunnerContext, RunnerContext
+from agent_framework._workflow._shared_state import SharedState
 
 
 @dataclass

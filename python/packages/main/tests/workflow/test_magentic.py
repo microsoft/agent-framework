@@ -30,7 +30,7 @@ from agent_framework import (
 )
 from agent_framework._agents import BaseAgent
 from agent_framework._clients import ChatClientProtocol as AFChatClient
-from agent_framework.workflow._magentic import (
+from agent_framework._workflow._magentic import (
     MagenticContext,
     MagenticStartMessage,
 )
@@ -413,7 +413,7 @@ async def _collect_agent_responses_setup(participant_obj: object):
     captured: list[ChatMessage] = []
 
     async def sink(event) -> None:  # type: ignore[no-untyped-def]
-        from agent_framework.workflow._magentic import MagenticAgentMessageEvent
+        from agent_framework._workflow._magentic import MagenticAgentMessageEvent
 
         if isinstance(event, MagenticAgentMessageEvent) and event.message is not None:
             captured.append(event.message)

@@ -11,12 +11,12 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import WorkflowBuilder
-from agent_framework.workflow._executor import Executor, handler
-from agent_framework.workflow._runner_context import InProcRunnerContext, Message
-from agent_framework.workflow._shared_state import SharedState
-from agent_framework.workflow._telemetry import WorkflowTracer, workflow_tracer
-from agent_framework.workflow._workflow import Workflow
-from agent_framework.workflow._workflow_context import WorkflowContext
+from agent_framework._workflow._executor import Executor, handler
+from agent_framework._workflow._runner_context import InProcRunnerContext, Message
+from agent_framework._workflow._shared_state import SharedState
+from agent_framework._workflow._telemetry import WorkflowTracer, workflow_tracer
+from agent_framework._workflow._workflow import Workflow
+from agent_framework._workflow._workflow_context import WorkflowContext
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def tracing_enabled() -> Generator[None, None, None]:
     os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = "true"
 
     # Force reload the settings to pick up the environment variable
-    from agent_framework.workflow._telemetry import WorkflowDiagnosticSettings
+    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
 
     workflow_tracer.settings = WorkflowDiagnosticSettings()
 
@@ -153,7 +153,7 @@ async def test_workflow_tracer_configuration() -> None:
     os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = "true"
 
     # Force reload the settings to pick up the environment variable
-    from agent_framework.workflow._telemetry import WorkflowDiagnosticSettings
+    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
 
     tracer.settings = WorkflowDiagnosticSettings()
 

@@ -9,6 +9,7 @@ from agent_framework import (
     RequestInfoEvent,
     RequestInfoExecutor,
     RequestInfoMessage,
+    SharedState,
     Workflow,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -19,8 +20,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework.workflow._shared_state import SharedState
-from agent_framework.workflow._workflow_context import WorkflowContext as WFContext
+from agent_framework import WorkflowContext as WFContext
 
 
 class FailingExecutor(Executor):
