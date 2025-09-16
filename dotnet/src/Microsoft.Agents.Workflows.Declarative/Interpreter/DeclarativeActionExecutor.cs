@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Frozen;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,11 +25,10 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
 {
     private static readonly FrozenSet<string> s_mutableScopes =
-        new HashSet<string>
-        {
+        [
             VariableScopeNames.Topic,
             VariableScopeNames.Global
-        }.ToFrozenSet();
+        ];
 
     private string? _parentId;
 
