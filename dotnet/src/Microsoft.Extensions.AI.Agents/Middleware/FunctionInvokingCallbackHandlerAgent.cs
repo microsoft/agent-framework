@@ -16,11 +16,11 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 internal sealed class FunctionInvokingCallbackHandlerAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> _func;
+    private readonly Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> _callbackFunc;
 
-    internal FunctionInvokingCallbackHandlerAgent(AIAgent innerAgent, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> func) : base(innerAgent)
+    internal FunctionInvokingCallbackHandlerAgent(AIAgent innerAgent, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> callbackFunc) : base(innerAgent)
     {
-        this._func = func;
+        this._callbackFunc = callbackFunc;
     }
 
     public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -36,7 +36,7 @@ internal sealed class FunctionInvokingCallbackHandlerAgent : DelegatingAIAgent
         {
             // Clone the options to avoid modifying the original
             var chatOptions = aco.ChatOptions.Clone();
-            chatOptions.Tools = [.. chatOptions.Tools!.Select(tool => tool is AIFunction aiFunction ? new MiddlewareFunction(this, aiFunction, this._func) : tool)];
+            chatOptions.Tools = [.. chatOptions.Tools!.Select(tool => tool is AIFunction aiFunction ? new MiddlewareFunction(this, aiFunction, this._callbackFunc) : tool)];
 
             return new ChatClientAgentRunOptions(chatOptions);
         }

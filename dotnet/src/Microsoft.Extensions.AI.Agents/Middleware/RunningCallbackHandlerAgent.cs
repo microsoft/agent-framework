@@ -17,11 +17,11 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> _func;
+    private readonly Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> _callbackFunc;
 
-    internal RunningCallbackHandlerAgent(AIAgent innerAgent, Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> func) : base(innerAgent)
+    internal RunningCallbackHandlerAgent(AIAgent innerAgent, Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> callbackFunc) : base(innerAgent)
     {
-        this._func = Throw.IfNull(func);
+        this._callbackFunc = Throw.IfNull(callbackFunc);
     }
 
     /// <inheritdoc/>
@@ -36,7 +36,7 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
             ctx.SetRawResponse(response);
         }
 
-        await this._func(context, CoreLogicAsync).ConfigureAwait(false);
+        await this._callbackFunc(context, CoreLogicAsync).ConfigureAwait(false);
 
         return context.RunResponse!;
     }
@@ -54,7 +54,7 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
             return Task.CompletedTask;
         }
 
-        await this._func(context, CoreLogic).ConfigureAwait(false);
+        await this._callbackFunc(context, CoreLogic).ConfigureAwait(false);
 
         await foreach (var update in context.RunStreamingResponse!.ConfigureAwait(false))
         {
