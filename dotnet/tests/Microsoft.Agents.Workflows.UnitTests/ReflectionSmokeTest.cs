@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Agents.Workflows.Reflection;
@@ -52,6 +53,22 @@ public class TypedHandler<TInput> : BaseTestExecutor<TypedHandler<TInput>>, IMes
     } = (message, context) => default;
 }
 
+public class EnumerableHandler<T> : BaseTestExecutor<EnumerableHandler<T>>
+{
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.AddHandler((IEnumerable<T> message, IWorkflowContext context) =>
+        {
+            this.OnInvokedHandler();
+            return this.Handler(message, context);
+        });
+
+    public Func<IEnumerable<T>, IWorkflowContext, ValueTask> Handler
+    {
+        get;
+        set;
+    } = (message, context) => default;
+}
+
 public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>, IMessageHandler<TInput, TResult>
 {
     public ValueTask<TResult> HandleAsync(TInput message, IWorkflowContext context)
@@ -68,16 +85,17 @@ public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor<TypedHan
 
 public class RoutingReflectionTests
 {
-    private async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput, TE>(BaseTestExecutor<TE> executor, TInput? input = default) where TInput : new() where TE : ReflectingExecutor<TE>
+    private async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput, TE>(BaseTestExecutor<TE> executor, TInput input)
+        where TE : ReflectingExecutor<TE>
+        where TInput : notnull
     {
         MessageRouter router = executor.Router;
 
         Assert.NotNull(router);
-        input ??= new();
-        Assert.True(router.CanHandle(input.GetType()));
+        Assert.True(router.CanHandle(typeof(TInput)));
         Assert.True(router.CanHandle(input));
 
-        CallResult? result = await router.RouteMessageAsync(input, Mock.Of<IWorkflowContext>());
+        CallResult? result = await router.RouteMessageAsync(input, typeof(TInput), Mock.Of<IWorkflowContext>());
 
         Assert.True(executor.InvokedHandler);
 
@@ -89,7 +107,7 @@ public class RoutingReflectionTests
     {
         DefaultHandler executor = new();
 
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, DefaultHandler>(executor);
+        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, DefaultHandler>(executor, new());
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
@@ -101,7 +119,7 @@ public class RoutingReflectionTests
     {
         TypedHandler<int> executor = new();
 
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, TypedHandler<int>>(executor, 3);
+        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<int, TypedHandler<int>>(executor, 3);
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
@@ -120,12 +138,35 @@ public class RoutingReflectionTests
         };
 
         const string Expected = "3";
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, TypedHandlerWithOutput<int, string>>(executor, int.Parse(Expected));
+        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<int, TypedHandlerWithOutput<int, string>>(executor, int.Parse(Expected));
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
         Assert.False(result.IsVoid);
 
         Assert.Equal(Expected, result.Result);
+    }
+
+    [Fact]
+    public async Task Test_ReflectAndExecute_EnumerableHandlerAsync()
+    {
+        List<IEnumerable<int>> inputs =
+        [
+            [],
+            [42],
+            new List<int>() { 42 },
+            new HashSet<int> { 42 },
+        ];
+
+        foreach (IEnumerable<int> input in inputs)
+        {
+            EnumerableHandler<int> executor = new();
+
+            CallResult? result = await this.RunTestReflectAndRouteMessageAsync<IEnumerable<int>, EnumerableHandler<int>>(executor, input);
+
+            Assert.NotNull(result);
+            Assert.True(result.IsSuccess);
+            Assert.True(result.IsVoid);
+        }
     }
 }
