@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import sys
-from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
@@ -176,8 +177,10 @@ class BaseAgent(AFBaseModel):
         description: str | None = None,
         arg_name: str = "input",
         arg_description: str | None = None,
-        stream_callback: Callable[[AgentRunResponseUpdate], None] | None = None,
-    ) -> AIFunction[Any, str]:
+        stream_callback: Callable[[AgentRunResponseUpdate], None]
+        | Callable[[AgentRunResponseUpdate], Awaitable[None]]
+        | None = None,
+    ) -> AIFunction[BaseModel, str]:
         """Create an AIFunction tool that wraps this agent.
 
         Args:
@@ -205,6 +208,9 @@ class BaseAgent(AFBaseModel):
         field_info = Field(..., description=argument_description)
         input_model = create_model(f"{self.display_name}_Input", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
 
+        # Check if callback is async once, outside the wrapper
+        is_async_callback = stream_callback is not None and inspect.iscoroutinefunction(stream_callback)
+
         async def agent_wrapper(**kwargs: Any) -> str:
             """Wrapper function that calls the agent."""
             # Extract the input from kwargs using the specified arg_name
@@ -215,10 +221,13 @@ class BaseAgent(AFBaseModel):
                 response_updates: list[AgentRunResponseUpdate] = []
                 async for update in self.run_stream(input_text):
                     response_updates.append(update)
-                    stream_callback(update)
+                    if is_async_callback:
+                        await stream_callback(update)  # type: ignore[misc]
+                    else:
+                        stream_callback(update)
 
                 # Create final text from accumulated updates
-                return "".join(update.text for update in response_updates)
+                return AgentRunResponse.from_agent_run_response_updates(response_updates).text
             # Use non-streaming mode
             response = await self.run(input_text)
             return response.text

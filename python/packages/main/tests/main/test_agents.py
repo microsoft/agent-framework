@@ -503,3 +503,26 @@ async def test_chat_agent_as_tool_with_custom_arg_name(chat_client: ChatClientPr
     # Test that the custom argument name works
     result = await tool.invoke(arguments=tool.input_model(prompt="Test prompt"))
     assert result == "test response"
+
+
+async def test_chat_agent_as_tool_with_async_stream_callback(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool with async stream callback functionality."""
+    agent = ChatAgent(chat_client=chat_client, name="AsyncStreamingAgent")
+
+    # Collect streaming updates using an async callback
+    collected_updates: list[AgentRunResponseUpdate] = []
+
+    async def async_stream_callback(update: AgentRunResponseUpdate) -> None:
+        collected_updates.append(update)
+
+    tool = agent.as_tool(stream_callback=async_stream_callback)
+
+    # Execute the tool
+    result = await tool.invoke(arguments=tool.input_model(input="Hello"))
+
+    # Should have collected streaming updates
+    assert len(collected_updates) > 0
+    assert isinstance(result, str)
+    # Result should be concatenation of all streaming updates
+    expected_text = "".join(update.text for update in collected_updates)
+    assert result == expected_text
