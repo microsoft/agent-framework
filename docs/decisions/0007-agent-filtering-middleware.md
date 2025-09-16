@@ -303,10 +303,6 @@ This demonstrates that the current POC supports both agent-level and function-le
 - Support for both streaming and non-streaming scenarios
 - Rich context object providing access to messages, thread, options, and response handling
 
-#### Cons
-- Additional wrapper class adds complexity
-- Requires explicit wrapping of agents
-
 ### Option 3: Dedicated Processor Component for Middleware
 
 This approach involves creating a dedicated `CallbackMiddlewareProcessor` that manages collections of `ICallbackMiddleware` instances. The current POC implementation demonstrates this pattern with the `CallbackEnabledAgent` and processor architecture.
