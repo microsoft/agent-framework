@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework.workflow import (
+from agent_framework import (
     Executor,
     RequestInfoExecutor,
     WorkflowBuilder,
@@ -15,7 +15,7 @@ from agent_framework.workflow import (
 
 # Import the new sub-workflow types directly from the implementation package
 try:
-    from agent_framework_workflow import (
+    from agent_framework import (
         RequestInfoMessage,
         RequestResponse,
         WorkflowExecutor,
@@ -26,7 +26,7 @@ except ImportError:
     import sys
 
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages", "workflow"))
-    from agent_framework_workflow import (
+    from agent_framework import (
         RequestInfoMessage,
         RequestResponse,
         WorkflowExecutor,

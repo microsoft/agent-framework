@@ -102,28 +102,6 @@ jobs:
           name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
           path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
 
-      # Workflow package tests
-      - name: Set environment variables - workflow - win
-        if: ${{ matrix.os == 'windows-latest' }}
-        run: |
-          echo "PACKAGE_NAME=workflow" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Set environment variables - workflow
-        if: ${{ matrix.os != 'windows-latest' }}
-        run: |
-          echo "PACKAGE_NAME=workflow" >> $GITHUB_ENV
-      - name: Test with pytest - workflow
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test  -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
-        working-directory: ./python
-      - name: Move coverage file - workflow
-        run: |
-          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
-        working-directory: ./python
-      - name: Upload coverage artifact - workflow
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
-          path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
-
       # Surface failing tests
       - name: Surface failing tests
         if: always()
