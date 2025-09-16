@@ -176,7 +176,7 @@ The two extremes are:
         - larger packages with more dependencies
         - larger installation sizes
         - more difficult to version, since some parts may be GA, while other are in preview.
-2. One subpackage per connector, so a i.e. `google_chat` package, a i.e. `qoogle_bigquery` package, etc.
+2. One subpackage per connector, so a i.e. `google_chat` package, a i.e. `google_bigquery` package, etc.
     * Pros:
         - smaller packages with fewer dependencies
         - smaller installation sizes
@@ -212,7 +212,7 @@ So with these two extremes in mind, we can also define some middle ground option
         - more packages to manage, register, publish and maintain
         - more extras, means more difficult for users to find and install the right package.
         - makes developer package management more complex, because that meta-extra will include both GA and non-GA packages, so during dev they could use that, but then during prod they have to figure out which one they actually need and make a change in their dependencies, leading to mismatches between dev and prod.
-5. Make all imports happen from `agent_framework.connectors` (or from two or three groups `agent_framework.chat_clients`, `agent_framework.context_providers`, or something similar) while the underlying code comes from different packages.
+6. Make all imports happen from `agent_framework.connectors` (or from two or three groups `agent_framework.chat_clients`, `agent_framework.context_providers`, or something similar) while the underlying code comes from different packages.
     * Pros:
         - best developer experience, since all imports are from the same place and it is easy to find what you need, and we can raise a meaningfull error with which extra to install.
         - easier for users to find and install the right package.
@@ -224,7 +224,7 @@ Decision:
 TBD
 
 ### Microsoft vs Azure packages
-Another consideration is for Microsoft, since we have a lot of Azure services, but also other Microsoft services, such as Microsoft Copilot Studio, and potentially other services in the future, and maybe Foundry also will be marketed separate from Azure at some point. We could also have both a `microsoft` and an `azure` package, where the `microsoft` package contains all Microsoft services, excluding Azure, while the `azure` package only contains Azure services.
+Another consideration is for Microsoft, since we have a lot of Azure services, but also other Microsoft services, such as Microsoft Copilot Studio, and potentially other services in the future, and maybe Foundry also will be marketed separate from Azure at some point. We could also have both a `microsoft` and an `azure` package, where the `microsoft` package contains all Microsoft services, excluding Azure, while the `azure` package only contains Azure services. Only applicable for the variants where we group by vendor, including with meta packages.
 
 Decision:
 TBD
