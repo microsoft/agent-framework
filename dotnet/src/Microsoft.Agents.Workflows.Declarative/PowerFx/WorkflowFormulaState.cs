@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,15 +21,15 @@ internal sealed class WorkflowFormulaState
     // ISSUE #488 - Update default scope for workflows to `Workflow` (instead of `Topic`)
     public const string DefaultScopeName = VariableScopeNames.Topic;
 
-    private static readonly ImmutableHashSet<string> s_mutableScopes =
+    private static readonly FrozenSet<string> s_mutableScopes =
         new HashSet<string>
         {
             VariableScopeNames.Topic,
             VariableScopeNames.Global,
             VariableScopeNames.System,
-        }.ToImmutableHashSet();
+        }.ToFrozenSet();
 
-    private readonly ImmutableDictionary<string, WorkflowScope> _scopes;
+    private readonly FrozenDictionary<string, WorkflowScope> _scopes;
     private int _isInitialized;
 
     public RecalcEngine Engine { get; }
@@ -40,7 +40,7 @@ internal sealed class WorkflowFormulaState
     {
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
-        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName)).ToImmutableDictionary();
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope(scopeName)).ToFrozenDictionary();
         this.Bind();
     }
 

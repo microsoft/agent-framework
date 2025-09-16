@@ -2,8 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Linq;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -89,7 +89,8 @@ internal sealed class DeclarativeWorkflowModel
 
     public void ConnectNodes(WorkflowBuilder workflowBuilder)
     {
-        foreach (ModelNode node in this.Nodes.Values.ToImmutableArray())
+        // Push `Values` into array to avoid modification during iteration.
+        foreach (ModelNode node in this.Nodes.Values.ToArray())
         {
             if (node.CompletionHandler is not null)
             {
