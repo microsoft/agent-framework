@@ -76,7 +76,7 @@ internal class MessageRouter
 
             // The result, either the found handler or null, is cached in _dynamicTypedHandlers to avoid repeated
             // searches for the same type. As long as the number of types in the system is fixed,
-            // GetDynamicTypedHandler becomes ammortized O(1). Concurrent usage is safe; if two threads
+            // GetDynamicTypedHandler becomes amortized O(1). Concurrent usage is safe; if two threads
             // invoke GetDynamicTypedHandler, the worst that happens is they duplicate each other's idempotent work.
             this._dynamicTypedHandlers[candidateType] = handler;
         }
