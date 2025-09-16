@@ -200,9 +200,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string parentId = GetParentId(item);
-        this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId);
-        this.RestartAfter(item.Id.Value, parentId);
+        EndConversationExecutor endExecutor = new(item, this._workflowState);
+        this.ContinueWith(endExecutor);
+        this.RestartAfter(item.Id.Value, endExecutor.ParentId);
     }
 
     protected override void Visit(Question item)

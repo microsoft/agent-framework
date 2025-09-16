@@ -251,6 +251,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
+            else if (workflowEvent is DeclarativeActionInvokeEvent actionInvokeEvent)
+            {
+                this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
+            }
+            else if (workflowEvent is DeclarativeActionCompleteEvent actionCompleteEvent)
+            {
+                this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
+            }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {
                 this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
