@@ -155,8 +155,16 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             Workflow events and trace events
         """
         try:
+            # Get input data - prefer structured data from extra_body
+            if request.extra_body and "input_data" in request.extra_body:
+                input_data = request.extra_body["input_data"]
+                logger.debug(f"Using structured input_data from extra_body: {type(input_data)}")
+            else:
+                input_data = request.input
+                logger.debug(f"Using input field as fallback: {type(input_data)}")
+
             # Parse input based on workflow's expected input type
-            parsed_input = await self._parse_workflow_input(workflow, request.input)
+            parsed_input = await self._parse_workflow_input(workflow, input_data)
 
             logger.debug(f"Executing workflow with parsed input type: {type(parsed_input)}")
 

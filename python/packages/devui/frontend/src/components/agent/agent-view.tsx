@@ -43,15 +43,15 @@ interface MessageBubbleProps {
 function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isError = message.error;
-  const Icon = isUser ? User : (isError ? AlertCircle : Bot);
+  const Icon = isUser ? User : isError ? AlertCircle : Bot;
 
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
       <div
         className={`flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-md border ${
-          isUser 
-            ? "bg-primary text-primary-foreground" 
-            : isError 
+          isUser
+            ? "bg-primary text-primary-foreground"
+            : isError
             ? "bg-orange-100 dark:bg-orange-900 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800"
             : "bg-muted"
         }`}
@@ -66,8 +66,8 @@ function MessageBubble({ message }: MessageBubbleProps) {
       >
         <div
           className={`rounded px-3 py-2 text-sm break-all ${
-            isUser 
-              ? "bg-primary text-primary-foreground" 
+            isUser
+              ? "bg-primary text-primary-foreground"
               : isError
               ? "bg-orange-50 dark:bg-orange-950/50 text-orange-800 dark:text-orange-200 border border-orange-200 dark:border-orange-800"
               : "bg-muted"
@@ -76,7 +76,9 @@ function MessageBubble({ message }: MessageBubbleProps) {
           {isError && (
             <div className="flex items-start gap-2 mb-2">
               <AlertCircle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
-              <span className="font-medium text-sm">Unable to process request</span>
+              <span className="font-medium text-sm">
+                Unable to process request
+              </span>
             </div>
           )}
           <div className={isError ? "text-xs leading-relaxed break-all" : ""}>
@@ -269,8 +271,8 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
           // Handle error events from the stream
           if (openAIEvent.type === "error") {
-            const errorEvent = openAIEvent as ExtendedResponseStreamEvent & { 
-              message?: string; 
+            const errorEvent = openAIEvent as ExtendedResponseStreamEvent & {
+              message?: string;
             };
             const errorMessage = errorEvent.message || "An error occurred";
 
@@ -282,10 +284,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 msg.id === assistantMessage.id
                   ? {
                       ...msg,
-                      contents: [{
-                        type: "text",
-                        text: errorMessage
-                      }],
+                      contents: [
+                        {
+                          type: "text",
+                          text: errorMessage,
+                        },
+                      ],
                       streaming: false,
                       error: true, // Add error flag for styling
                     }
@@ -296,7 +300,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           }
 
           // Handle text delta events for chat
-          if (openAIEvent.type === "response.output_text.delta" && "delta" in openAIEvent && openAIEvent.delta) {
+          if (
+            openAIEvent.type === "response.output_text.delta" &&
+            "delta" in openAIEvent &&
+            openAIEvent.delta
+          ) {
             accumulatedText.current += openAIEvent.delta;
 
             // Update assistant message with accumulated content
@@ -306,10 +314,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 msg.id === assistantMessage.id
                   ? {
                       ...msg,
-                      contents: [{
-                        type: "text",
-                        text: accumulatedText.current
-                      }],
+                      contents: [
+                        {
+                          type: "text",
+                          text: accumulatedText.current,
+                        },
+                      ],
                     }
                   : msg
               ),
@@ -325,9 +335,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           ...prev,
           isStreaming: false,
           messages: prev.messages.map((msg) =>
-            msg.id === assistantMessage.id
-              ? { ...msg, streaming: false }
-              : msg
+            msg.id === assistantMessage.id ? { ...msg, streaming: false } : msg
           ),
         }));
       } catch (error) {
@@ -339,10 +347,16 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             msg.id === assistantMessage.id
               ? {
                   ...msg,
-                  contents: [{
-                    type: "text",
-                    text: `Error: ${error instanceof Error ? error.message : "Failed to get response"}`
-                  }],
+                  contents: [
+                    {
+                      type: "text",
+                      text: `Error: ${
+                        error instanceof Error
+                          ? error.message
+                          : "Failed to get response"
+                      }`,
+                    },
+                  ],
                   streaming: false,
                 }
               : msg

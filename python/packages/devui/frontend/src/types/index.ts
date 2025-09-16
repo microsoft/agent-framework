@@ -74,12 +74,14 @@ export interface SessionInfo {
 }
 
 export interface RunAgentRequest {
-  messages: string | Array<{
-    role: "user" | "assistant" | "system" | "tool";
-    contents: import("./agent-framework").Contents[];
-    author_name?: string;
-    message_id?: string;
-  }>;
+  messages:
+    | string
+    | Array<{
+        role: "user" | "assistant" | "system" | "tool";
+        contents: import("./agent-framework").Contents[];
+        author_name?: string;
+        message_id?: string;
+      }>;
   thread_id?: string;
   options?: Record<string, unknown>;
 }

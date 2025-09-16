@@ -82,7 +82,7 @@ function processEventsForDisplay(
   >();
   const callIdToName = new Map<string, string>(); // Track call_id -> function name mappings
   let accumulatedText = "";
-  let lastFunctionCallId: string | null = null; // Track the most recent function call
+  const lastFunctionCallId: string | null = null; // Track the most recent function call
 
   for (const event of events) {
     // Always show completion, error, workflow events, and function results
@@ -109,14 +109,15 @@ function processEventsForDisplay(
           event.type === "response.trace.complete") &&
         "data" in event
       ) {
-        const traceData = event.data as any;
+        const traceData = event.data as TraceEventData;
         if (
           traceData.attributes &&
-          traceData.attributes["gen_ai.output.messages"]
+          traceData.attributes["gen_ai.output.messages"] &&
+          typeof traceData.attributes["gen_ai.output.messages"] === "string"
         ) {
           try {
             const messages = JSON.parse(
-              traceData.attributes["gen_ai.output.messages"]
+              traceData.attributes["gen_ai.output.messages"] as string
             );
             for (const msg of messages) {
               if (msg.parts) {
@@ -128,7 +129,7 @@ function processEventsForDisplay(
                 }
               }
             }
-          } catch (e) {
+          } catch {
             // Ignore parsing errors
           }
         }

@@ -16,6 +16,7 @@ Navigate to the Python directory and install dependencies:
 ```bash
 cd python
 uv sync --dev
+source .venv/bin/activate
 ```
 
 ## 3. Configure Environment Variables

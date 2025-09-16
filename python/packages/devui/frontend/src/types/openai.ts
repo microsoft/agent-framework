@@ -229,6 +229,8 @@ export interface AgentFrameworkRequest {
   // Agent Framework routing
   extra_body?: {
     entity_id: string;
+    input_data?: Record<string, unknown>; // Structured data for workflows
+    [key: string]: unknown; // Allow additional properties
   };
   entity_id?: string; // Alternative top-level field
 }

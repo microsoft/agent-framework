@@ -10,7 +10,10 @@ import type {
   RunWorkflowRequest,
   ThreadInfo,
 } from "@/types";
-import type { AgentFrameworkRequest, ExtendedResponseStreamEvent } from "@/types/openai";
+import type {
+  AgentFrameworkRequest,
+  ExtendedResponseStreamEvent,
+} from "@/types/openai";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined
@@ -53,14 +56,18 @@ class ApiClient {
   }
 
   // Entity discovery using new unified endpoint
-  async getEntities(): Promise<{entities: (AgentInfo | import("@/types").WorkflowInfo)[], agents: AgentInfo[], workflows: import("@/types").WorkflowInfo[]}> {
-    const response = await this.request<{entities: any[]}>("/v1/entities");
-    
+  async getEntities(): Promise<{
+    entities: (AgentInfo | import("@/types").WorkflowInfo)[];
+    agents: AgentInfo[];
+    workflows: import("@/types").WorkflowInfo[];
+  }> {
+    const response = await this.request<{ entities: any[] }>("/v1/entities");
+
     // Separate agents and workflows
     const agents: AgentInfo[] = [];
     const workflows: import("@/types").WorkflowInfo[] = [];
-    
-    response.entities.forEach(entity => {
+
+    response.entities.forEach((entity) => {
       if (entity.type === "agent") {
         agents.push({
           id: entity.id,
@@ -88,7 +95,7 @@ class ApiClient {
         });
       }
     });
-    
+
     return { entities: [...agents, ...workflows], agents, workflows };
   }
 
@@ -134,7 +141,7 @@ class ApiClient {
   }
 
   // OpenAI-compatible streaming methods using /v1/responses endpoint
-  
+
   // Stream agent execution using OpenAI format - direct event pass-through
   async *streamAgentExecutionOpenAI(
     agentId: string,
@@ -143,13 +150,15 @@ class ApiClient {
     // Convert to OpenAI format
     const openAIRequest: AgentFrameworkRequest = {
       model: "agent-framework", // Placeholder model name
-      input: Array.isArray(request.messages) ? 
-        request.messages.map(m => typeof m === 'string' ? m : JSON.stringify(m)).join('\n') :
-        request.messages,
+      input: Array.isArray(request.messages)
+        ? request.messages
+            .map((m) => (typeof m === "string" ? m : JSON.stringify(m)))
+            .join("\n")
+        : request.messages,
       stream: true,
       extra_body: {
-        entity_id: agentId
-      }
+        entity_id: agentId,
+      },
     };
 
     const response = await fetch(`${this.baseUrl}/v1/responses`, {
@@ -190,15 +199,16 @@ class ApiClient {
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             const dataStr = line.slice(6);
-            
+
             // Handle [DONE] signal
             if (dataStr === "[DONE]") {
               return;
             }
-            
+
             try {
-              const openAIEvent: ExtendedResponseStreamEvent = JSON.parse(dataStr);
-              yield openAIEvent;  // Direct pass-through - no conversion!
+              const openAIEvent: ExtendedResponseStreamEvent =
+                JSON.parse(dataStr);
+              yield openAIEvent; // Direct pass-through - no conversion!
             } catch (e) {
               console.error("Failed to parse OpenAI SSE event:", e);
             }
@@ -218,11 +228,12 @@ class ApiClient {
     // Convert to OpenAI format
     const openAIRequest: AgentFrameworkRequest = {
       model: "agent-framework", // Placeholder model name
-      input: request.input_data,
+      input: "", // Empty string for workflows - actual data is in extra_body.input_data
       stream: true,
       extra_body: {
-        entity_id: workflowId
-      }
+        entity_id: workflowId,
+        input_data: request.input_data, // Preserve structured data
+      },
     };
 
     const response = await fetch(`${this.baseUrl}/v1/responses`, {
@@ -263,15 +274,16 @@ class ApiClient {
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             const dataStr = line.slice(6);
-            
+
             // Handle [DONE] signal
             if (dataStr === "[DONE]") {
               return;
             }
-            
+
             try {
-              const openAIEvent: ExtendedResponseStreamEvent = JSON.parse(dataStr);
-              yield openAIEvent;  // Direct pass-through - no conversion!
+              const openAIEvent: ExtendedResponseStreamEvent =
+                JSON.parse(dataStr);
+              yield openAIEvent; // Direct pass-through - no conversion!
             } catch (e) {
               console.error("Failed to parse OpenAI SSE event:", e);
             }

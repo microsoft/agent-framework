@@ -162,14 +162,6 @@ class DataIngestion(Executor):
     @handler
     async def ingest_data(self, request: ProcessingRequest, ctx: WorkflowContext[DataBatch]) -> None:
         """Simulate data ingestion with realistic delays based on input configuration."""
-        print("🔄 [DataIngestion] Starting data ingestion")
-        print(f"   📋 Data Source: {request.data_source}")
-        print(f"   📊 Data Type: {request.data_type}")
-        print(f"   ⚡ Priority: {request.processing_priority}")
-        print(f"   📦 Batch Size: {request.batch_size}")
-        print(f"   🎯 Quality Threshold: {request.quality_threshold}")
-        print(f"   🔧 Transformations: {', '.join(request.transformations)}")
-
         # Simulate network delay based on data source
         delay_map = {"database": (1, 2), "api": (2, 4), "file_upload": (3, 5), "streaming": (0.5, 1.5)}
         delay_range = delay_map.get(request.data_source, (2, 4))
@@ -197,10 +189,6 @@ class DataIngestion(Executor):
             timestamp=asyncio.get_event_loop().time(),
         )
 
-        print(
-            f"✅ [DataIngestion] Ingested {batch.size} records of {batch.data_type.value} data (batch: {batch.batch_id})"
-        )
-
         # Store both batch data and original request in shared state
         await ctx.set_shared_state(f"batch_{batch.batch_id}", batch)
         await ctx.set_shared_state(f"request_{batch.batch_id}", request)
@@ -218,10 +206,7 @@ class SchemaValidator(Executor):
         # Check if schema validation is enabled
         request = await ctx.get_shared_state(f"request_{batch.batch_id}")
         if not request or not request.enable_schema_validation:
-            print(f"⏭️  [SchemaValidator] Schema validation disabled for batch {batch.batch_id}")
             return
-
-        print(f"🔍 [SchemaValidator] Validating schema for batch {batch.batch_id}")
 
         # Simulate schema validation processing
         processing_time = random.uniform(1, 3)
@@ -248,7 +233,6 @@ class SchemaValidator(Executor):
             details=f"Schema validation found {issues} issues in {batch.data_type.value} data from {batch.source}",
         )
 
-        print(f"📊 [SchemaValidator] Schema validation complete: {result.value} ({issues} issues)")
         await ctx.send_message(report)
 
 
@@ -261,10 +245,7 @@ class DataQualityValidator(Executor):
         # Check if quality validation is enabled
         request = await ctx.get_shared_state(f"request_{batch.batch_id}")
         if not request or not request.enable_quality_validation:
-            print(f"⏭️  [DataQualityValidator] Quality validation disabled for batch {batch.batch_id}")
             return
-
-        print(f"🔍 [DataQualityValidator] Checking data quality for batch {batch.batch_id}")
 
         processing_time = random.uniform(1.5, 4)
         await asyncio.sleep(processing_time)
@@ -293,7 +274,6 @@ class DataQualityValidator(Executor):
             details=f"Quality check found {issues} data quality issues (priority: {request.processing_priority})",
         )
 
-        print(f"📊 [DataQualityValidator] Quality validation complete: {result.value} ({issues} issues)")
         await ctx.send_message(report)
 
 
@@ -306,10 +286,7 @@ class SecurityValidator(Executor):
         # Check if security validation is enabled
         request = await ctx.get_shared_state(f"request_{batch.batch_id}")
         if not request or not request.enable_security_validation:
-            print(f"⏭️  [SecurityValidator] Security validation disabled for batch {batch.batch_id}")
             return
-
-        print(f"🔍 [SecurityValidator] Running security checks for batch {batch.batch_id}")
 
         processing_time = random.uniform(2, 5)
         await asyncio.sleep(processing_time)
@@ -335,7 +312,6 @@ class SecurityValidator(Executor):
             details=f"Security scan found {issues} security issues in {batch.data_type.value} data",
         )
 
-        print(f"📊 [SecurityValidator] Security validation complete: {result.value} ({issues} issues)")
         await ctx.send_message(report)
 
 
@@ -352,8 +328,6 @@ class ValidationAggregator(Executor):
         batch_id = reports[0].batch_id
         request = await ctx.get_shared_state(f"request_{batch_id}")
 
-        print(f"📋 [ValidationAggregator] Aggregating validation results for batch {batch_id}")
-
         await asyncio.sleep(1)  # Aggregation processing time
 
         total_issues = sum(report.issues_found for report in reports)
@@ -363,13 +337,6 @@ class ValidationAggregator(Executor):
         # Calculate quality score (0.0 to 1.0)
         max_possible_issues = len(reports) * 5  # Assume max 5 issues per validator
         quality_score = max(0.0, 1.0 - (total_issues / max_possible_issues))
-
-        print("📊 [ValidationAggregator] Validation Summary:")
-        print(f"   🔢 Total issues: {total_issues}")
-        print(f"   ❌ Has errors: {has_errors}")
-        print(f"   ⚠️  Warnings: {warning_count}")
-        print(f"   📈 Quality score: {quality_score:.2f}")
-        print(f"   🎯 Required threshold: {request.quality_threshold:.2f}")
 
         # Decision logic: fail if errors OR quality below threshold
         should_fail = has_errors or (quality_score < request.quality_threshold)
@@ -384,7 +351,6 @@ class ValidationAggregator(Executor):
                 )
 
             reason = " and ".join(failure_reason)
-            print(f"❌ [ValidationAggregator] Batch {batch_id} failed validation - {reason}")
             await ctx.add_event(
                 WorkflowCompletedEvent(
                     f"Batch {batch_id} failed validation: {reason}. "
@@ -396,7 +362,6 @@ class ValidationAggregator(Executor):
         # Retrieve original batch from shared state
         batch_data = await ctx.get_shared_state(f"batch_{batch_id}")
         if batch_data:
-            print(f"✅ [ValidationAggregator] Batch {batch_id} passed validation - proceeding to transformation")
             await ctx.send_message(batch_data)
         else:
             # Fallback: create a simplified batch
@@ -420,7 +385,6 @@ class DataNormalizer(Executor):
 
         # Check if normalization is enabled
         if not request or "normalize" not in request.transformations:
-            print(f"⏭️  [DataNormalizer] Normalization not requested for batch {batch.batch_id}")
             # Send a "skipped" result
             result = TransformationResult(
                 batch_id=batch.batch_id,
@@ -433,8 +397,6 @@ class DataNormalizer(Executor):
             )
             await ctx.send_message(result)
             return
-
-        print(f"🔧 [DataNormalizer] Normalizing data for batch {batch.batch_id}")
 
         processing_time = random.uniform(2, 6)
         await asyncio.sleep(processing_time)
@@ -458,10 +420,6 @@ class DataNormalizer(Executor):
             success=success,
         )
 
-        status = "✅" if success else "❌"
-        print(
-            f"{status} [DataNormalizer] Normalization {'completed' if success else 'failed'}: {batch.size} → {processed_size} records"
-        )
         await ctx.send_message(result)
 
 
@@ -475,7 +433,6 @@ class DataEnrichment(Executor):
 
         # Check if enrichment is enabled
         if not request or "enrich" not in request.transformations:
-            print(f"⏭️  [DataEnrichment] Enrichment not requested for batch {batch.batch_id}")
             # Send a "skipped" result
             result = TransformationResult(
                 batch_id=batch.batch_id,
@@ -488,8 +445,6 @@ class DataEnrichment(Executor):
             )
             await ctx.send_message(result)
             return
-
-        print(f"🔧 [DataEnrichment] Enriching data for batch {batch.batch_id}")
 
         processing_time = random.uniform(3, 7)
         await asyncio.sleep(processing_time)
@@ -512,10 +467,6 @@ class DataEnrichment(Executor):
             success=success,
         )
 
-        status = "✅" if success else "❌"
-        print(
-            f"{status} [DataEnrichment] Enrichment {'completed' if success else 'failed'}: {batch.size} → {processed_size} records"
-        )
         await ctx.send_message(result)
 
 
@@ -529,7 +480,6 @@ class DataAggregator(Executor):
 
         # Check if aggregation is enabled
         if not request or "aggregate" not in request.transformations:
-            print(f"⏭️  [DataAggregator] Aggregation not requested for batch {batch.batch_id}")
             # Send a "skipped" result
             result = TransformationResult(
                 batch_id=batch.batch_id,
@@ -542,8 +492,6 @@ class DataAggregator(Executor):
             )
             await ctx.send_message(result)
             return
-
-        print(f"🔧 [DataAggregator] Aggregating data for batch {batch.batch_id}")
 
         processing_time = random.uniform(1.5, 4)
         await asyncio.sleep(processing_time)
@@ -566,10 +514,6 @@ class DataAggregator(Executor):
             success=success,
         )
 
-        status = "✅" if success else "❌"
-        print(
-            f"{status} [DataAggregator] Aggregation {'completed' if success else 'failed'}: {batch.size} → {processed_size} records"
-        )
         await ctx.send_message(result)
 
 
@@ -586,7 +530,6 @@ class PerformanceAssessor(Executor):
             return
 
         batch_id = results[0].batch_id
-        print(f"⚡ [PerformanceAssessor] Assessing performance for batch {batch_id}")
 
         processing_time = random.uniform(1, 3)
         await asyncio.sleep(processing_time)
@@ -612,9 +555,6 @@ class PerformanceAssessor(Executor):
             processing_time=processing_time,
         )
 
-        print(
-            f"📈 [PerformanceAssessor] Performance score: {quality_score:.1f}% ({len(recommendations)} recommendations)"
-        )
         await ctx.send_message(assessment)
 
 
@@ -630,7 +570,6 @@ class AccuracyAssessor(Executor):
             return
 
         batch_id = results[0].batch_id
-        print(f"🎯 [AccuracyAssessor] Assessing accuracy for batch {batch_id}")
 
         processing_time = random.uniform(2, 4)
         await asyncio.sleep(processing_time)
@@ -652,7 +591,6 @@ class AccuracyAssessor(Executor):
             processing_time=processing_time,
         )
 
-        print(f"🎯 [AccuracyAssessor] Accuracy score: {accuracy_score:.1f}% ({len(recommendations)} recommendations)")
         await ctx.send_message(assessment)
 
 
@@ -668,7 +606,6 @@ class FinalProcessor(Executor):
             return
 
         batch_id = assessments[0].batch_id
-        print(f"🏁 [FinalProcessor] Generating final summary for batch {batch_id}")
 
         # Simulate final processing delay
         await asyncio.sleep(2)
@@ -696,7 +633,6 @@ class FinalProcessor(Executor):
             f"🎖️  Final Status: {final_status}"
         )
 
-        print(f"✅ [FinalProcessor] {completion_message}")
         await ctx.add_event(WorkflowCompletedEvent(completion_message))
 
 
