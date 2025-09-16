@@ -22,6 +22,6 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         ChatMessage input = inputTransform.Invoke(message);
         await state.SetLastMessageAsync(context, input).ConfigureAwait(false);
 
-        await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+        await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
     }
 }

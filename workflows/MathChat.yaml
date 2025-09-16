@@ -34,21 +34,27 @@ beginDialog:
     - kind: SetVariable
       id: set_project
       variable: Topic.Project
-      value: =System.LastMessage.Text
+      value: =System.LastMessageText
 
-    - kind: AnswerQuestionWithAI
+    - kind: InvokeAzureAgent
       id: question_student
-      userInput: =Topic.Project
-      additionalInstructions: {Env.FOUNDRY_AGENT_STUDENT}
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_STUDENT
+      input:
+        messages: =[UserMessage(Topic.Project)]
+      output:
+        messages: Topic.Answer
 
     - kind: ResetVariable
       id: reset_project
       variable: Topic.Project
 
-    - kind: AnswerQuestionWithAI
+    - kind: InvokeAzureAgent
       id: question_teacher
-      userInput: =""
-      additionalInstructions: {Env.FOUNDRY_AGENT_TEACHER}
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_TEACHER
 
     - kind: SetVariable
       id: set_count_increment
@@ -59,7 +65,7 @@ beginDialog:
       id: check_completion
       conditions:
 
-        - condition: =!IsBlank(Find("congratulations", Lower(System.LastMessage.Text)))
+        - condition: =!IsBlank(Find("congratulations", Lower(System.LastMessageText)))
           id: check_turn_done
           actions:
 

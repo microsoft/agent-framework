@@ -26,7 +26,7 @@ internal sealed class SetVariableExecutor(SetVariable model, DeclarativeWorkflow
         {
             EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Value);
 
-            await this.AssignAsync(variablePath, expressionResult.Value.ToFormulaValue(), context).ConfigureAwait(false);
+            await this.AssignAsync(variablePath, expressionResult.Value.ToFormula(), context).ConfigureAwait(false);
         }
 
         return default;

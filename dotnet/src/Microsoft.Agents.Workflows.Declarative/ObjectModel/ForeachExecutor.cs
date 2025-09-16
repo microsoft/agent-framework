@@ -48,20 +48,20 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
             EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(this.Model.Items);
             if (expressionResult.Value is TableDataValue tableValue)
             {
-                this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormulaValue())];
+                this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormula())];
             }
             else
             {
-                this._values = [expressionResult.Value.ToFormulaValue()];
+                this._values = [expressionResult.Value.ToFormula()];
             }
         }
 
-        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
+        await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
 
         return default;
     }
 
-    public async ValueTask TakeNextAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public async ValueTask TakeNextAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
     {
         if (this.HasValue = this._index < this._values.Length)
         {
@@ -78,7 +78,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
     }
 
-    public async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
     {
         try
         {
@@ -90,7 +90,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
         finally
         {
-            await this.RaiseCompletionEventAsync(context).ConfigureAwait(false);
+            await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
         }
     }
 }

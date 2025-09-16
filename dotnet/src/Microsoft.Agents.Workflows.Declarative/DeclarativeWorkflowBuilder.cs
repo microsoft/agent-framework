@@ -34,6 +34,7 @@ public static class DeclarativeWorkflowBuilder
         using StreamReader yamlReader = File.OpenText(workflowFile);
         return Build<TInput>(yamlReader, options, inputTransform);
     }
+
     /// <summary>
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
@@ -56,7 +57,7 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
         }
 
-        string rootId = WorkflowActionVisitor.RootId(workflowElement.BeginDialog?.Id.Value ?? "workflow");
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
 
         WorkflowScopes scopes = new();
         scopes.Initialize(WrapWithBot(workflowElement), options.Configuration);

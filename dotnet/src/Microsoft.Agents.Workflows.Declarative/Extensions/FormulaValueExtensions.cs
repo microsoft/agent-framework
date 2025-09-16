@@ -20,7 +20,7 @@ internal static class FormulaValueExtensions
 
     public static FormulaValue NewBlank(this FormulaType? type) => FormulaValue.NewBlank(type ?? FormulaType.Blank);
 
-    public static FormulaValue ToFormulaValue(this object? value) =>
+    public static FormulaValue ToFormula(this object? value) =>
         value switch
         {
             null => FormulaValue.NewBlank(),
@@ -35,8 +35,9 @@ internal static class FormulaValueExtensions
             DateTime dateonlyValue when dateonlyValue.TimeOfDay == TimeSpan.Zero => FormulaValue.NewDateOnly(dateonlyValue),
             DateTime datetimeValue => FormulaValue.New(datetimeValue),
             TimeSpan timeValue => FormulaValue.New(timeValue),
-            object when value is IEnumerable tableValue => tableValue.ToTable(),
             ExpandoObject expandoValue => expandoValue.ToRecord(),
+            object when value is IDictionary dictionaryValue => dictionaryValue.ToRecord(),
+            object when value is IEnumerable tableValue => tableValue.ToTable(),
             _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
         };
 
@@ -143,6 +144,19 @@ internal static class FormulaValueExtensions
     public static RecordDataValue ToRecord(this RecordValue value) =>
         RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
 
+    private static RecordValue ToRecord(this IDictionary value)
+    {
+        return FormulaValue.NewRecordFromFields(GetFields());
+
+        IEnumerable<NamedValue> GetFields()
+        {
+            foreach (string key in value.Keys)
+            {
+                yield return new NamedValue(key, value[key].ToFormula());
+            }
+        }
+    }
+
     private static RecordDataType ToDataType(this RecordType record)
     {
         RecordDataType recordType = new();
@@ -176,48 +190,27 @@ internal static class FormulaValueExtensions
     private static RecordValue ToRecord(this ExpandoObject value) =>
         FormulaValue.NewRecordFromFields(
             value.Select(
-                property => new NamedValue(property.Key, property.Value.ToFormulaValue())));
+                property => new NamedValue(property.Key, property.Value.ToFormula())));
 
     private static TableType ToTableType(this IEnumerable value)
     {
-        Type valueType = value.GetType();
-        Type? elementType = valueType.GetElementType() ?? valueType.GetGenericArguments().FirstOrDefault();
-
-        if (elementType is not null)
+        foreach (object? element in value)
         {
-            if (elementType != typeof(ExpandoObject))
+            if (element is not ExpandoObject expandoElement)
             {
-                throw new DeclarativeModelException($"Invalid table element: {elementType.Name}");
+                throw new DeclarativeModelException($"Invalid table element: {element.GetType().Name}");
             }
 
-            foreach (ExpandoObject element in value)
-            {
-                return element.ToRecordType().ToTable();
-            }
+            return expandoElement.ToRecordType().ToTable(); // Return first element
         }
 
         return TableType.Empty();
     }
 
-    private static TableValue ToTable(this IEnumerable value)
-    {
-        Type valueType = value.GetType();
-        Type? elementType = valueType.GetElementType() ?? valueType.GetGenericArguments().FirstOrDefault();
-
-        if (elementType is null)
-        {
-            return FormulaValue.NewTable(RecordType.EmptySealed());
-        }
-
-        if (elementType != typeof(ExpandoObject))
-        {
-            throw new DeclarativeModelException($"Invalid table element: {elementType.Name}");
-        }
-
-        List<RecordValue> records = [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())];
-
-        return FormulaValue.NewTable(value.ToTableType().ToRecord(), records);
-    }
+    private static TableValue ToTable(this IEnumerable value) =>
+        FormulaValue.NewTable(
+            value.ToTableType().ToRecord(),
+            [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())]);
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
 

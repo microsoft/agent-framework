@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import json
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, MutableMapping, Sequence
 from functools import wraps
@@ -31,6 +32,7 @@ from .telemetry import (
     OtelAttr,
     _capture_exception,  # type: ignore
     get_function_span,
+    get_function_span_attributes,
     meter,
 )
 
@@ -407,7 +409,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
-        if not OTEL_SETTINGS.ENABLED:  # type: ignore
+        if not OTEL_SETTINGS.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -417,16 +419,19 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             return result  # type: ignore[reportReturnType]
 
         setup_telemetry()
-        with get_function_span(
-            function=self,
-            tool_call_id=tool_call_id,
-        ) as span:
-            hist_attributes: dict[str, Any] = {
-                OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
-                OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
-            }
+        attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
+        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            attributes.update({
+                OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
+                if arguments
+                else json.dumps(kwargs)
+                if kwargs
+                else "None"
+            })
+        with get_function_span(attributes=attributes) as span:
+            attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
-            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                 logger.debug(f"Function arguments: {kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -436,19 +441,26 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
-                hist_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 _capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore
-                    logger.debug(f"Function result: {result or 'None'}")
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                    try:
+                        json_result = json.dumps(result)
+                    except (TypeError, OverflowError):
+                        span.set_attribute(OtelAttr.TOOL_RESULT, "<non-serializable result>")
+                        logger.debug("Function result: <non-serializable result>")
+                    else:
+                        span.set_attribute(OtelAttr.TOOL_RESULT, json_result)
+                        logger.debug(f"Function result: {json_result}")
                 return result  # type: ignore[reportReturnType]
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
-                self._invocation_duration_histogram.record(duration, attributes=hist_attributes)
+                self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function duration: %fs", duration)
 
     def parameters(self) -> dict[str, Any]:

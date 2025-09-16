@@ -203,6 +203,8 @@ class OtelAttr(str, Enum):
     TOOL_DESCRIPTION = "gen_ai.tool.description"
     TOOL_NAME = "gen_ai.tool.name"
     TOOL_TYPE = "gen_ai.tool.type"
+    TOOL_ARGUMENTS = "gen_ai.tool.call.arguments"
+    TOOL_RESULT = "gen_ai.tool.call.result"
     # Agent attributes
     AGENT_ID = "gen_ai.agent.id"
     # Client attributes
@@ -885,18 +887,15 @@ def use_agent_telemetry(
 # region Otel Helpers
 
 
-def get_function_span(
-    function: "AIFunction[Any, Any]",
-    tool_call_id: str | None = None,
-) -> "_AgnosticContextManager[Span]":
-    """Starts a span for the given function.
+def get_function_span_attributes(function: "AIFunction[Any, Any]", tool_call_id: str | None = None) -> dict[str, str]:
+    """Get the span attributes for the given function.
 
     Args:
-        function: The function for which to start the span.
+        function: The function for which to get the span attributes.
         tool_call_id: The id of the tool_call that was requested.
 
     Returns:
-        trace.Span: The started span as a context manager.
+        dict[str, str]: The span attributes.
     """
     attributes: dict[str, str] = {
         OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
@@ -906,9 +905,22 @@ def get_function_span(
     }
     if function.description:
         attributes[OtelAttr.TOOL_DESCRIPTION] = function.description
+    return attributes
 
+
+def get_function_span(
+    attributes: dict[str, str],
+) -> "_AgnosticContextManager[Span]":
+    """Starts a span for the given function.
+
+    Args:
+        attributes: The span attributes.
+
+    Returns:
+        trace.Span: The started span as a context manager.
+    """
     return tracer.start_as_current_span(
-        name=f"{OtelAttr.TOOL_EXECUTION_OPERATION} {function.name}",
+        name=f"{attributes[OtelAttr.OPERATION]} {attributes[OtelAttr.TOOL_NAME]}",
         attributes=attributes,
         set_status_on_exception=False,
         end_on_exit=True,
