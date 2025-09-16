@@ -1297,7 +1297,7 @@ FinishReason.TOOL_CALLS = FinishReason(value="tool_calls")  # type: ignore[assig
 
 
 class ChatMessage(AFBaseModel):
-    """Represents a chat message used by a `ModelClient`.
+    """Represents a chat message.
 
     Attributes:
         role: The role of the author of the message.

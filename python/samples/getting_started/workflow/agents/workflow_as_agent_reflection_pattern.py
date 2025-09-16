@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from agent_framework import AgentRunResponseUpdate, ChatClientProtocol, ChatMessage, Contents, Role
 from agent_framework.openai import OpenAIChatClient
-from agent_framework.workflow import AgentRunUpdateEvent, Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework import AgentRunUpdateEvent, Executor, WorkflowBuilder, WorkflowContext, handler
 from pydantic import BaseModel
 
 """
