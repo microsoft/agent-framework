@@ -3,6 +3,7 @@
 ## Quick Install
 
 ```bash
+# Base package including workflow support
 pip install agent-framework
 # Optional: Add Azure integration
 pip install agent-framework[azure]

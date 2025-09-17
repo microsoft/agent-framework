@@ -6,9 +6,9 @@ requires-python = ">=3.10"
 dependencies = [
     "agent-framework",
     "agent-framework-azure",
+    "agent-framework-copilotstudio",
     "agent-framework-foundry",
     "agent-framework-mem0",
-    "agent-framework-workflow",
 ]
 
 [dependency-groups]
@@ -28,23 +28,12 @@ dev = [
     "rich",
     "tomli",
     "tomli-w",
-    "markdownify",
+]
+docs = [
     # Documentation
-    "myst-nb==1.1.2",
-    "pydata-sphinx-theme==0.16.0",
-    "sphinx-copybutton",
-    "sphinx-design",
-    "sphinx",
-    "autodoc_pydantic>=2",
-    "pygments",
-    "sphinxext-rediraffe",
-    "opentelemetry-instrumentation-openai",
-    "markdown-it-py[linkify]",
-    # Documentation tooling
-    "diskcache",
-    "redis",
-    "sphinx-autobuild",
-    "aiofiles>=24.1.0",
+    "debugpy>=1.8.16",
+    "py2docfx>=0.1.20",
+    "pip",
 ]
 
 [tool.uv]
@@ -63,10 +52,10 @@ exclude = [ "packages/agent_framework_project.egg-info" ]
 [tool.uv.sources]
 agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
+agent-framework-copilotstudio = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-runtime = { workspace = true }
-agent-framework-workflow = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -164,7 +153,6 @@ show_error_codes = true
 warn_unused_ignores = false
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
-disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
@@ -174,15 +162,14 @@ exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_cod
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = """python check_md_code_blocks.py ./docs/agent-framework/**/*.md README.md"""
+markdown-code-lint = """python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md"""
 samples-code-check = """pyright ./samples"""
+docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
 docs-clean = "rm -rf docs/build"
-docs-build = "sphinx-build docs/agent-framework docs/build"
-docs-serve = "sphinx-autobuild --watch docs/agent-framework docs/build --port 8000 --jobs auto"
-docs-check = "sphinx-build --fail-on-warning docs/agent-framework docs/build"
-docs-check-examples = "sphinx-build -b code_lint docs/agent-framework docs/build"
+docs-build = "uv run python ./docs/generate_docs.py"
+docs-debug = "uv run python -m debugpy --listen 5678 ./docs/generate_docs.py"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
@@ -193,7 +180,7 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
-all-tests = "pytest --import-mode=importlib --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_foundry --cov=agent_framework_mem0 --cov=agent_framework_workflow --cov-report=term-missing:skip-covered packages/azure/tests packages/foundry/tests packages/main/tests packages/mem0/tests packages/workflow/tests"
+all-tests = "pytest --import-mode=importlib --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_copilotstudio --cov=agent_framework_foundry --cov=agent_framework_mem0 --cov-report=term-missing:skip-covered packages/azure/tests packages/copilotstudio/tests packages/foundry/tests packages/main/tests packages/mem0/tests"
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"
@@ -205,6 +192,29 @@ sequence = [
     { ref = "pre-commit-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+[tool.poe.tasks.docs-full]
+sequence = [
+    { ref = 'build' },
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-full-install]
+sequence = [
+    { ref = "docs-install" },
+    { ref = 'build' },
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-rebuild]
+sequence = [
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
+[tool.poe.tasks.docs-rebuild-debug]
+sequence = [
+    { ref = "docs-clean" },
+    { ref = "docs-debug" }
+]
 
 [tool.setuptools.packages.find]
 where = ["packages"]

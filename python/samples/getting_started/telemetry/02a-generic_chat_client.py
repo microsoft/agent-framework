@@ -108,15 +108,15 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
         client = OpenAIResponsesClient()
 
         # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
+        if scenario == "ai_function" or scenario == "all":
+            with suppress(Exception):
+                await run_ai_function()
         if scenario == "chat_client_stream" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(client, stream=True)
         if scenario == "chat_client" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(client, stream=False)
-        if scenario == "ai_function" or scenario == "all":
-            with suppress(Exception):
-                await run_ai_function()
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ public sealed class AgentProxy : AIAgent
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -57,7 +57,7 @@ public sealed class AgentProxy : AIAgent
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -70,7 +70,7 @@ public sealed class AgentProxy : AIAgent
         }
     }
 
-    private async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
+    private async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
     {
         var handle = await this.RunCoreAsync(messages, threadId, cancellationToken).ConfigureAwait(false);
         var response = await handle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
@@ -85,7 +85,7 @@ public sealed class AgentProxy : AIAgent
     }
 
     private async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         string threadId,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -123,7 +123,7 @@ public sealed class AgentProxy : AIAgent
         return agentProxyThread.ConversationId!;
     }
 
-    private async Task<ActorResponseHandle> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
+    private async Task<ActorResponseHandle> RunCoreAsync(IEnumerable<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
     {
         List<ChatMessage> newMessages = [.. messages];
 

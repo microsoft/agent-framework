@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
@@ -21,10 +20,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
             TemplateLine.Parse(" "),
             TemplateLine.Parse("World"),
         ];
-        RecalcEngine engine = this.CreateEngine();
 
         // Act
-        string? result = engine.Format(template);
+        string? result = this.Engine.Format(template);
 
         // Assert
         Assert.Equal("Hello World", result);
@@ -35,10 +33,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     {
         // Arrange
         List<TemplateLine> template = [];
-        RecalcEngine engine = this.CreateEngine();
 
         // Act
-        string? result = engine.Format(template);
+        string? result = this.Engine.Format(template);
 
         // Assert
         Assert.Equal(string.Empty, result);
@@ -49,10 +46,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     {
         // Arrange
         TemplateLine line = TemplateLine.Parse("Test");
-        RecalcEngine engine = this.CreateEngine();
 
         // Act
-        string? result = engine.Format(line);
+        string? result = this.Engine.Format(line);
 
         // Assert
         Assert.Equal("Test", result);
@@ -63,10 +59,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     {
         // Arrange
         TemplateLine? line = null;
-        RecalcEngine engine = this.CreateEngine();
 
         // Act
-        string? result = engine.Format(line);
+        string? result = this.Engine.Format(line);
 
         // Assert
         Assert.Equal(string.Empty, result);
@@ -78,10 +73,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
         // Arrange
         TemplateSegment textSegment = TextSegment.FromText("Hello World");
         TemplateLine line = new([textSegment]);
-        RecalcEngine engine = this.CreateEngine();
 
         // Act
-        string? result = engine.Format(line);
+        string? result = this.Engine.Format(line);
 
         // Assert
         Assert.Equal("Hello World", result);
@@ -93,10 +87,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
         // Arrange
         ExpressionSegment expressionSegment = new(ValueExpression.Expression("1 + 1"));
         TemplateLine line = new([expressionSegment]);
-        RecalcEngine engine = this.CreateEngine();
 
         // Act
-        string? result = engine.Format(line);
+        string? result = this.Engine.Format(line);
 
         // Assert
         Assert.Equal("2", result);
@@ -106,14 +99,12 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     public void FormatVariableSegment()
     {
         // Arrange
-        this.Scopes.Set("Source", FormulaValue.New("Hello World"));
+        this.State.Set("Source", FormulaValue.New("Hello World"));
         ExpressionSegment expressionSegment = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
         TemplateLine line = new([expressionSegment]);
-        RecalcEngine engine = this.CreateEngine();
-        this.Scopes.Bind(engine);
 
         // Act
-        string? result = engine.Format(line);
+        string? result = this.Engine.Format(line);
 
         // Assert
         Assert.Equal("Hello World", result);
@@ -125,10 +116,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
         // Arrange
         ExpressionSegment expressionSegment = new();
         TemplateLine line = new([expressionSegment]);
-        RecalcEngine engine = this.CreateEngine();
 
         // Act & Assert
-        Assert.Throws<DeclarativeModelException>(() => engine.Format(line));
+        Assert.Throws<DeclarativeModelException>(() => this.Engine.Format(line));
     }
 
     [Fact]
@@ -138,10 +128,9 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
         TemplateSegment textSegment = TextSegment.FromText("Hello ");
         ExpressionSegment expressionSegment = new(ValueExpression.Expression(@"""World"""));
         TemplateLine line = new([textSegment, expressionSegment]);
-        RecalcEngine engine = this.CreateEngine();
 
         // Act
-        string? result = engine.Format(line);
+        string? result = this.Engine.Format(line);
 
         // Assert
         Assert.Equal("Hello World", result);
