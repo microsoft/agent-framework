@@ -77,8 +77,7 @@ internal class AIAgentHostExecutor : Executor
         JsonElement? threadValue = await context.ReadStateAsync<JsonElement?>(ThreadStateKey).ConfigureAwait(false);
         if (threadValue.HasValue)
         {
-            this._thread = await this._agent.DeserializeThreadAsync(threadValue.Value, cancellationToken: cancellation)
-                                            .ConfigureAwait(false);
+            this._thread = this._agent.DeserializeThread(threadValue.Value, cancellationToken: cancellation);
         }
 
         JsonElement? messagesValue = await context.ReadStateAsync<JsonElement?>(PendingMessagesStateKey).ConfigureAwait(false);

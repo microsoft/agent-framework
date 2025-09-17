@@ -54,22 +54,27 @@ def extract_python_code_blocks(markdown_file_path: str) -> list[tuple[str, int]]
     return code_blocks
 
 
-def check_code_blocks(markdown_file_paths: list[str]) -> None:
+def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str] | None = None) -> None:
     """Check Python code blocks in a Markdown file for syntax errors."""
     files_with_errors: list[str] = []
+    exclude_patterns = exclude_patterns or []
 
     for markdown_file_path in markdown_file_paths:
+        # Skip files that match any exclude pattern
+        if any(pattern in markdown_file_path for pattern in exclude_patterns):
+            logger.info(f"Skipping {markdown_file_path} (matches exclude pattern)")
+            continue
         code_blocks = extract_python_code_blocks(markdown_file_path)
         had_errors = False
         for code_block, line_no in code_blocks:
             markdown_file_path_with_line_no = f"{markdown_file_path}:{line_no}"
             logger.info("Checking a code block in %s...", markdown_file_path_with_line_no)
 
-            # Skip blocks that don't import agent_framework modules
-            if all(
+            # Skip blocks that don't import agent_framework modules or import lab modules
+            if (all(
                 all(import_code not in code_block for import_code in [f"import {module}", f"from {module}"])
                 for module in ["agent_framework"]
-            ):
+            ) or "agent_framework.lab" in code_block):
                 logger.info(f' {with_color("OK[ignored]", Colors.CGREENBG)}')
                 continue
 
@@ -79,7 +84,7 @@ def check_code_blocks(markdown_file_paths: list[str]) -> None:
 
                 # Run pyright on the temporary file using subprocess.run
 
-                result = subprocess.run(["pyright", temp_file.name], capture_output=True, text=True)  # nosec
+                result = subprocess.run(["uv", "run", "pyright", temp_file.name], capture_output=True, text=True, cwd=".")  # nosec
                 if result.returncode != 0:
                     highlighted_code = highlight(code_block, PythonLexer(), TerminalFormatter())  # type: ignore
                     logger.info(
@@ -109,5 +114,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check code blocks in Markdown files for syntax errors.")
     # Argument is a list of markdown files containing glob patterns
     parser.add_argument("markdown_files", nargs="+", help="Markdown files to check.")
+    parser.add_argument("--exclude", action="append", help="Exclude files containing this pattern.")
     args = parser.parse_args()
-    check_code_blocks(args.markdown_files)
+    check_code_blocks(args.markdown_files, args.exclude)

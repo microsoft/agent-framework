@@ -427,7 +427,9 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             async_client: An existing client to use. (Optional)
             instruction_role: The role to use for 'instruction' messages, for example,
                 "system" or "developer". If not provided, the default is "system".
-            base_url: The optional base URL to use. If provided will override the standard value for a OpenAI connector.
+            base_url: The optional base URL to use. If provided will override
+                the standard value for a OpenAI connector,
+                the env vars or .env file value.
             env_file_path: Use the environment settings file as a fallback
                 to environment variables. (Optional)
             env_file_encoding: The encoding of the environment settings file. (Optional)
@@ -435,6 +437,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         try:
             openai_settings = OpenAISettings(
                 api_key=SecretStr(api_key) if api_key else None,
+                base_url=base_url,
                 org_id=org_id,
                 chat_model_id=ai_model_id,
                 env_file_path=env_file_path,
@@ -456,11 +459,11 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         super().__init__(
             ai_model_id=openai_settings.chat_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            base_url=openai_settings.base_url if openai_settings.base_url else None,
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
-            base_url=base_url,
         )
 
     @classmethod
