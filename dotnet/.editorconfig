@@ -436,3 +436,6 @@ resharper_redundant_using_directive_highlighting = warning # Resharper's "Redund
 resharper_inconsistent_naming_highlighting = warning # Resharper's "Inconsistent naming" highlighting
 resharper_redundant_this_qualifier_highlighting = warning # Resharper's "Redundant 'this' qualifier" highlighting
 resharper_arrange_this_qualifier_highlighting = warning # Resharper's "Arrange 'this' qualifier" highlighting
+csharp_style_prefer_primary_constructors = true:suggestion
+csharp_prefer_system_threading_lock = true:suggestion
+csharp_style_prefer_simple_property_accessors = true:suggestion

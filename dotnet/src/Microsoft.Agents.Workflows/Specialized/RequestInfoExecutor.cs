@@ -65,14 +65,16 @@ internal class RequestInfoExecutor : Executor
         Throw.IfNull(message);
         Throw.IfNull(message.Data);
 
-        if (!this.Port.Response.IsAssignableFrom(message.Data.GetType()))
+        object? data = message.DataAs(this.Port.Response);
+
+        if (data == null)
         {
             throw new InvalidOperationException(
-                $"Message type {message.Data.GetType().Name} is not assignable to the response type {this.Port.Response.Name} of input port {this.Port.Id}.");
+                $"Message type {message.Data.TypeId} is not assignable to the response type {this.Port.Response.Name} of input port {this.Port.Id}.");
         }
 
         await context.SendMessageAsync(message).ConfigureAwait(false);
-        await context.SendMessageAsync(message.Data).ConfigureAwait(false);
+        await context.SendMessageAsync(data).ConfigureAwait(false);
 
         return message;
     }
