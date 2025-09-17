@@ -17,13 +17,14 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
 {
     private readonly IChatReducer? _chatReducer;
     private readonly ChatReducerTriggerEvent _reducerTriggerEvent;
-    private List<ChatMessage> _messages = new();
+    private List<ChatMessage> _messages;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
     /// </summary>
     public InMemoryChatMessageStore()
     {
+        this._messages = new();
     }
 
     /// <summary>
@@ -61,6 +62,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
 
         if (serializedStoreState.ValueKind != JsonValueKind.Object)
         {
+            this._messages = new();
             return;
         }
 
@@ -70,8 +72,11 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
 
         if (state?.Messages is { Count: > 0 } messages)
         {
-            this._messages.AddRange(messages);
+            this._messages = messages;
+            return;
         }
+
+        this._messages = new();
     }
 
     /// <summary>
@@ -174,7 +179,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
 
     internal sealed class StoreState
     {
-        public IList<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
+        public List<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
     }
 
     /// <summary>
