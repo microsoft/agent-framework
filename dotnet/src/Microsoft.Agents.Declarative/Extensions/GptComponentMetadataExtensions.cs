@@ -2,8 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -84,7 +84,7 @@ public static class GptComponentMetadataExtensions
     }
 
     /// <summary>
-    /// Retrieves the 'tools' property from a <see cref="GptComponentMetadata"/>.
+    /// Retrieves the 'instructions' property from a <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
     public static string? GetInstructions(this GptComponentMetadata element)
@@ -92,6 +92,41 @@ public static class GptComponentMetadataExtensions
         Throw.IfNull(element);
 
         return element.Instructions?.ToTemplateString();
+    }
+
+    /// <summary>
+    /// Retrieves the 'options' property from a <see cref="GptComponentMetadata"/> as a <see cref="ChatOptions"/> instance.
+    /// </summary>
+    /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
+    public static ChatOptions? GetChatOptions(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        var chatOptionsValue = element.ExtensionData?.GetPropertyOrNull<RecordDataValue>(InitializablePropertyPath.Create("model.options"));
+        if (chatOptionsValue is null)
+        {
+            return null;
+        }
+
+        return new ChatOptions()
+        {
+            ConversationId = chatOptionsValue.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("conversation_id"))?.Value,
+            Instructions = chatOptionsValue.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("instructions"))?.Value,
+            Temperature = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("temperature"))?.Value,
+            MaxOutputTokens = (int?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("max_output_tokens"))?.Value,
+            TopP = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("top_p"))?.Value,
+            TopK = (int?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("top_k"))?.Value,
+            FrequencyPenalty = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("frequency_penalty"))?.Value,
+            PresencePenalty = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("presence_penalty"))?.Value,
+            Seed = (long?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("seed"))?.Value,
+            ResponseFormat = chatOptionsValue.GetResponseFormat(),
+            ModelId = chatOptionsValue.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model_id"))?.Value,
+            StopSequences = chatOptionsValue.GetStopSequences(),
+            AllowMultipleToolCalls = (bool?)chatOptionsValue.GetPropertyOrNull<BooleanDataValue>(InitializablePropertyPath.Create("allow_multiple_tool_calls"))?.Value,
+            ToolMode = chatOptionsValue.GetChatToolMode(),
+            Tools = element.GetAITools(),
+            AdditionalProperties = chatOptionsValue.GetAdditionalProperties(),
+        };
     }
 
     /// <summary>
@@ -143,28 +178,41 @@ public static class GptComponentMetadataExtensions
         return metadataValue?.Values.Length > 0 ? metadataValue.Values[0].ToDictionary() : null;
     }
 
-    #region Internal Methods
-    internal static ChatClientAgentOptions ToChatClientAgentOptions(this GptComponentMetadata element)
+    /// <summary>
+    /// Retrieves the 'tools' property from a <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
+    public static List<AITool>? GetAITools(this GptComponentMetadata element)
     {
-        Throw.IfNull(element);
-
-        return new ChatClientAgentOptions
+        return element.GetTools().Select<RecordDataValue, AITool>(tool =>
         {
-            Name = element.GetName(),
-            Description = element.GetDescription(),
-            Instructions = element.GetInstructions(),
-            ChatOptions = element.ToChatOptions(),
-        };
+            var type = tool.GetTypeValue();
+            return type switch
+            {
+                CodeInterpreterType => tool.CreateCodeInterpreterTool(),
+                FileSearchType => tool.CreateFileSearchTool(),
+                FunctionType => tool.CreateFunctionDeclaration(),
+                WebSearchType => tool.CreateWebSearchTool(),
+                McpType => tool.CreateMcpTool(),
+                _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {type}, supported tool types are: {string.Join(",", s_validToolTypes)}"),
+            };
+        }).ToList() ?? [];
     }
 
-    internal static ChatOptions ToChatOptions(this GptComponentMetadata element)
-    {
-        Throw.IfNull(element);
+    #region private
+    private const string CodeInterpreterType = "code_interpreter";
+    private const string FileSearchType = "file_search";
+    private const string FunctionType = "function";
+    private const string WebSearchType = "web_search";
+    private const string McpType = "mcp";
 
-        return new ChatOptions
-        {
-            // TODO: Map other properties as needed
-        };
-    }
+    private static readonly string[] s_validToolTypes =
+    [
+        CodeInterpreterType,
+        FileSearchType,
+        FunctionType,
+        WebSearchType,
+        McpType
+    ];
     #endregion
 }

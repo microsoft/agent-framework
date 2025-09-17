@@ -75,41 +75,41 @@ internal static class RecordDataValueExtensions
     {
         Throw.IfNull(tool);
 
-        StringDataValue? name = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("id"));
-        Throw.IfNull(name?.Value);
-        StringDataValue? description = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("description"));
-        Throw.IfNull(description?.Value);
+        string? name = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("id"))?.Value;
+        Throw.IfNull(name);
+        string? description = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("description"))?.Value;
+        Throw.IfNull(description);
 
         BinaryData parameters = tool.GetParameters();
 
-        return new FunctionToolDefinition(name.Value, description.Value, parameters);
+        return new FunctionToolDefinition(name, description, parameters);
     }
 
     internal static OpenApiToolDefinition CreateOpenApiToolDefinition(this RecordDataValue tool)
     {
         Throw.IfNull(tool);
 
-        StringDataValue? name = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("id"));
-        Throw.IfNull(name?.Value);
-        StringDataValue? description = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("description"));
-        Throw.IfNull(description?.Value);
+        string? name = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("id"))?.Value;
+        Throw.IfNull(name);
+        string? description = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("description"))?.Value;
+        Throw.IfNull(description);
 
         BinaryData spec = tool.GetSpecification();
         OpenApiAuthDetails auth = tool.GetOpenApiAuthDetails();
 
-        return new OpenApiToolDefinition(name.Value, description.Value, spec, auth);
+        return new OpenApiToolDefinition(name, description, spec, auth);
     }
 
     internal static MCPToolDefinition CreateMcpToolDefinition(this RecordDataValue tool)
     {
         Throw.IfNull(tool);
 
-        StringDataValue? serverLabel = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.server_label"));
-        Throw.IfNull(serverLabel?.Value);
-        StringDataValue? serverUrl = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.server_url"));
-        Throw.IfNull(serverUrl?.Value);
+        string? serverLabel = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.server_label"))?.Value;
+        Throw.IfNull(serverLabel);
+        string? serverUrl = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.server_url"))?.Value;
+        Throw.IfNull(serverUrl);
 
-        return new MCPToolDefinition(serverLabel.Value, serverUrl.Value);
+        return new MCPToolDefinition(serverLabel, serverUrl);
     }
 
     internal static AzureFunctionBinding GetInputBinding(this RecordDataValue agentToolDefinition)

@@ -79,7 +79,7 @@ var creationOptions = new AgentCreationOptions()
 {
     ServiceProvider = serviceProvider,
 };
-var agent = await agentFactory.CreateFromYamlAsync(text, creationOptions);
+var agent = await agentFactory.CreateFromYamlAsync(textYaml, creationOptions);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync("Tell me a joke about a pirate in English."));

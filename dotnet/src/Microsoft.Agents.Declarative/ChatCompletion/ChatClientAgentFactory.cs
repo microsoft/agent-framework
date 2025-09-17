@@ -46,7 +46,16 @@ public sealed class ChatClientAgentFactory : AgentFactory
                 throw new ArgumentException("A chat client must be provided via the AgentCreationOptions.", nameof(agentCreationOptions));
             }
 
-            agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(), agentCreationOptions.LoggerFactory);
+            var options = new ChatClientAgentOptions()
+            {
+                Id = agentDefinition.GetId(),
+                Name = agentDefinition.GetName(),
+                Description = agentDefinition.GetDescription(),
+                Instructions = agentDefinition.GetInstructions(),
+                ChatOptions = agentDefinition.GetChatOptions(),
+            };
+
+            agent = new ChatClientAgent(chatClient, options, agentCreationOptions.LoggerFactory);
         }
 
         return Task.FromResult<AIAgent?>(agent);

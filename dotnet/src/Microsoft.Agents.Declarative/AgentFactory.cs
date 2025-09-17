@@ -51,7 +51,7 @@ public abstract class AgentFactory
         Throw.IfNull(agentDefinition);
 
         var agent = await this.TryCreateAsync(agentDefinition, agentCreationOptions, cancellationToken).ConfigureAwait(false);
-        return (AIAgent?)agent ?? throw new NotSupportedException($"Agent type {agentDefinition.GetTypeValue()} is not supported.");
+        return agent ?? throw new NotSupportedException($"Agent type {agentDefinition.GetTypeValue()} is not supported.");
     }
 
     /// <summary>

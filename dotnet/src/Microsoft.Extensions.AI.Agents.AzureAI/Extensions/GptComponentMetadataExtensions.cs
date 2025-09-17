@@ -147,6 +147,7 @@ internal static class GptComponentMetadataExtensions
         FileSearchType,
         FunctionType,
         OpenApiType,
+        McpType
     ];
 
     private static CodeInterpreterToolResource? GetCodeInterpreterToolResource(this GptComponentMetadata element)
