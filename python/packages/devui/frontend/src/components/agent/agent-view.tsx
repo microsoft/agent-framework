@@ -513,7 +513,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* Header */}
-      <div className="border-b pb-3  p-4 flex-shrink-0">
+      <div className="border-b pb-2  p-4 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-sm">
             <div className="flex items-center gap-2">
@@ -560,7 +560,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
             <Button
               variant="outline"
-              size="sm"
+              size="lg"
               onClick={handleNewThread}
               disabled={!selectedAgent || isSubmitting}
             >
