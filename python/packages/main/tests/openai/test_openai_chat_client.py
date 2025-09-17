@@ -16,6 +16,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    DataContent,
     HostedWebSearchTool,
     TextContent,
     ToolProtocol,
@@ -589,3 +590,83 @@ async def test_exception_message_includes_original_error_details() -> None:
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
     assert original_error_message in exception_message
+
+
+def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str, str]) -> None:
+    """Test _openai_content_parser converts DataContent with image media type to OpenAI format."""
+    client = OpenAIChatClient()
+
+    # Test DataContent with image media type
+    image_data_content = DataContent(
+        uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+        media_type="image/png",
+    )
+
+    result = client._openai_content_parser(image_data_content)  # type: ignore
+
+    # Should convert to OpenAI image_url format
+    assert result["type"] == "image_url"
+    assert result["image_url"]["url"] == image_data_content.uri
+
+    # Test DataContent with non-image media type should use default model_dump
+    text_data_content = DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
+
+    result = client._openai_content_parser(text_data_content)  # type: ignore
+
+    # Should use default model_dump format
+    assert result["type"] == "data"
+    assert result["uri"] == text_data_content.uri
+    assert result["media_type"] == "text/plain"
+
+    # Test DataContent with audio media type
+    audio_data_content = DataContent(
+        uri="data:audio/wav;base64,UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA",
+        media_type="audio/wav",
+    )
+
+    result = client._openai_content_parser(audio_data_content)  # type: ignore
+
+    # Should convert to OpenAI input_audio format
+    assert result["type"] == "input_audio"
+    # Data should contain just the base64 part, not the full data URI
+    assert result["input_audio"]["data"] == "UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA"
+    assert result["input_audio"]["format"] == "wav"
+
+    # Test DataContent with MP3 audio
+    mp3_data_content = DataContent(uri="data:audio/mp3;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==", media_type="audio/mp3")
+
+    result = client._openai_content_parser(mp3_data_content)  # type: ignore
+
+    # Should convert to OpenAI input_audio format with mp3
+    assert result["type"] == "input_audio"
+    # Data should contain just the base64 part, not the full data URI
+    assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
+    assert result["input_audio"]["format"] == "mp3"
+
+    # Test DataContent with PDF file
+    pdf_data_content = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXS9QYXJlbnQgMiAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDQgMCBSPj4+Pi9Db250ZW50cyA1IDAgUj4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvRm9udC9TdWJ0eXBlL1R5cGUxL0Jhc2VGb250L0hlbHZldGljYT4+CmVuZG9iago1IDAgb2JqCjw8L0xlbmd0aCA0ND4+CnN0cmVhbQpCVApxCjcwIDUwIFRECi9GMSA4IFRmCihIZWxsbyBXb3JsZCEpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQ1IDAwMDAwIG4gCjAwMDAwMDAzMDcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgo0MDUKJSVFT0Y=",
+        media_type="application/pdf",
+    )
+
+    result = client._openai_content_parser(pdf_data_content)  # type: ignore
+
+    # Should convert to OpenAI file format
+    assert result["type"] == "file"
+    assert result["file"]["filename"] == "document.pdf"
+    assert "file_data" in result["file"]
+    # Base64 data should be the full data URI (OpenAI requirement)
+    assert result["file"]["file_data"].startswith("data:application/pdf;base64,")
+
+    # Test DataContent with PDF and custom filename
+    pdf_with_filename = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQ=",
+        media_type="application/pdf",
+        additional_properties={"filename": "report.pdf"},
+    )
+
+    result = client._openai_content_parser(pdf_with_filename)  # type: ignore
+
+    # Should use custom filename
+    assert result["type"] == "file"
+    assert result["file"]["filename"] == "report.pdf"
