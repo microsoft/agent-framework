@@ -32,6 +32,10 @@ class AgentRunContext:
         messages: The messages being sent to the agent.
         is_streaming: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between agent middleware.
+        response: Agent execution response. Can be set before calling next() to override execution,
+                 or observed after calling next() to see the actual execution result.
+                 For non-streaming: should be AgentRunResponse
+                 For streaming: should be AsyncIterable[AgentRunResponseUpdate]
     """
 
     def __init__(
@@ -53,6 +57,7 @@ class AgentRunContext:
         self.messages = messages
         self.is_streaming = is_streaming
         self.metadata = metadata or {}
+        self.response: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None
 
 
 class FunctionInvocationContext:
@@ -62,6 +67,8 @@ class FunctionInvocationContext:
         function: The function being invoked.
         arguments: The validated arguments for the function.
         metadata: Metadata dictionary for sharing data between function middleware.
+        result: Function execution result. Can be set before calling next() to override execution,
+                or observed after calling next() to see the actual execution result.
     """
 
     def __init__(
@@ -80,6 +87,7 @@ class FunctionInvocationContext:
         self.function = function
         self.arguments = arguments
         self.metadata = metadata or {}
+        self.result: Any = None
 
 
 class AgentMiddleware(ABC):
@@ -96,15 +104,17 @@ class AgentMiddleware(ABC):
         Args:
             context: Agent invocation context containing agent, messages, and metadata.
                     Use context.is_streaming to determine if this is a streaming call.
-                    Middleware can set context.should_skip=True and provide context.response
-                    or context.response_stream to override the agent execution.
+                    Middleware can set context.response to override execution, or observe
+                    the actual execution result after calling next().
+                    For non-streaming: AgentRunResponse
+                    For streaming: AsyncIterable[AgentRunResponseUpdate]
             next: Function to call the next middleware or final agent execution.
                   Does not return anything - all data flows through the context.
 
         Note:
             Middleware should not return anything. All data manipulation should happen
-            within the context object. Set context.should_skip=True and provide
-            context.response or context.response_stream to override execution.
+            within the context object. Set context.response to override execution,
+            or observe context.response after calling next() for actual results.
         """
         ...
 
@@ -122,15 +132,15 @@ class FunctionMiddleware(ABC):
 
         Args:
             context: Function invocation context containing function, arguments, and metadata.
-                    Middleware can set context.should_skip=True and provide context.result
-                    to override the function execution.
+                    Middleware can set context.result to override execution, or observe
+                    the actual execution result after calling next().
             next: Function to call the next middleware or final function execution.
                   Does not return anything - all data flows through the context.
 
         Note:
             Middleware should not return anything. All data manipulation should happen
-            within the context object. Set context.should_skip=True and provide
-            context.result to override execution.
+            within the context object. Set context.result to override execution,
+            or observe context.result after calling next() for actual results.
         """
         ...
 
@@ -229,7 +239,14 @@ class AgentMiddlewarePipeline:
             if index >= len(self._middlewares):
 
                 async def final_wrapper(c: AgentRunContext) -> None:
-                    result_container["response"] = await final_handler(c)
+                    # If response was set before calling next(), skip execution
+                    if c.response is not None and isinstance(c.response, AgentRunResponse):
+                        result_container["response"] = c.response
+                        return
+                    # Execute actual handler and populate context for observability
+                    result = await final_handler(c)
+                    result_container["response"] = result
+                    c.response = result
 
                 return final_wrapper
 
@@ -238,14 +255,24 @@ class AgentMiddlewarePipeline:
 
             async def current_handler(c: AgentRunContext) -> None:
                 await middleware.process(c, next_handler)
+                # After middleware execution, check if response was overridden
+                if c.response is not None and isinstance(c.response, AgentRunResponse):
+                    result_container["response"] = c.response
 
             return current_handler
 
         first_handler = create_next_handler(0)
         await first_handler(context)
 
-        # Return the response from result container
-        return result_container["response"]
+        # Return the response from result container or overridden response
+        if context.response is not None and isinstance(context.response, AgentRunResponse):
+            return context.response
+
+        # If no response was set (next() not called), return empty AgentRunResponse
+        response = result_container["response"]
+        if response is None:
+            return AgentRunResponse(messages=[])
+        return response
 
     async def execute_stream(
         self,
@@ -282,7 +309,15 @@ class AgentMiddlewarePipeline:
             if index >= len(self._middlewares):
 
                 async def final_wrapper(c: AgentRunContext) -> None:  # noqa: RUF029
-                    result_container["response_stream"] = final_handler(c)
+                    # If response was set before calling next(), skip execution
+                    if c.response is not None and hasattr(c.response, "__aiter__"):
+                        result_container["response_stream"] = c.response  # type: ignore
+                        return
+
+                    # Execute actual handler and populate context for observability
+                    result = final_handler(c)
+                    result_container["response_stream"] = result
+                    c.response = result
 
                 return final_wrapper
 
@@ -297,10 +332,16 @@ class AgentMiddlewarePipeline:
         first_handler = create_next_handler(0)
         await first_handler(context)
 
-        # Yield from the response stream in result container
+        # Yield from the response stream in result container or overridden response
+        if context.response is not None and hasattr(context.response, "__aiter__"):
+            async for update in context.response:  # type: ignore
+                yield update
+            return
+
         response_stream = result_container["response_stream"]
         if response_stream is None:
-            raise RuntimeError("No response stream set after middleware execution")
+            # If no response stream was set (next() not called), yield nothing
+            return
 
         async for update in response_stream:
             yield update
@@ -366,7 +407,15 @@ class FunctionMiddlewarePipeline:
             if index >= len(self._middlewares):
 
                 async def final_wrapper(c: FunctionInvocationContext) -> None:
-                    result_container["result"] = await final_handler(c)
+                    # If result was set before calling next(), skip execution
+                    if c.result is not None:
+                        result_container["result"] = c.result
+                        return
+
+                    # Execute actual handler and populate context for observability
+                    result = await final_handler(c)
+                    result_container["result"] = result
+                    c.result = result
 
                 return final_wrapper
 
@@ -381,7 +430,9 @@ class FunctionMiddlewarePipeline:
         first_handler = create_next_handler(0)
         await first_handler(context)
 
-        # Return the result from result container
+        # Return the result from result container or overridden result
+        if context.result is not None:
+            return context.result
         return result_container["result"]
 
     @property
