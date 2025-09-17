@@ -47,7 +47,7 @@ jobs:
           AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "20" # the more the better for stable tests
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           sparse-checkout: |

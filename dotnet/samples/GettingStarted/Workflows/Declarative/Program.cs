@@ -143,11 +143,11 @@ internal sealed class Program
                     Debug.WriteLine($"EXECUTOR EXIT #{executorCompleted.ExecutorId}");
                     break;
 
-                case DeclarativeActionInvokeEvent actionInvoked:
+                case DeclarativeActionInvokedEvent actionInvoked:
                     Debug.WriteLine($"ACTION ENTER #{actionInvoked.ActionId} [{actionInvoked.ActionType}]");
                     break;
 
-                case DeclarativeActionCompleteEvent actionComplete:
+                case DeclarativeActionCompletedEvent actionComplete:
                     Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionComplete.ActionType}]");
                     break;
 

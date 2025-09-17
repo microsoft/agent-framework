@@ -21,6 +21,63 @@ namespace OpenAI;
 public static class OpenAIAssistantClientExtensions
 {
     /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
+    /// </summary>
+    /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <param name="agentId">The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    public static ChatClientAgent GetAIAgent(
+        this AssistantClient assistantClient,
+        string agentId,
+        ChatOptions? chatOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (assistantClient is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClient));
+        }
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
+        }
+
+        var assistant = assistantClient.GetAssistant(agentId, cancellationToken);
+        return assistant.AsAIAgent(assistantClient, chatOptions);
+    }
+
+    /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
+    /// </summary>
+    /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    public static async Task<ChatClientAgent> GetAIAgentAsync(
+        this AssistantClient assistantClient,
+        string agentId,
+        ChatOptions? chatOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (assistantClient is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClient));
+        }
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
+        }
+
+        var assistanceResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
+
+        return assistanceResponse.AsAIAgent(assistantClient, chatOptions);
+    }
+
+    /// <summary>
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
     /// </summary>
     /// <param name="client">The OpenAI <see cref="AssistantClient" /> to use for the agent.</param>

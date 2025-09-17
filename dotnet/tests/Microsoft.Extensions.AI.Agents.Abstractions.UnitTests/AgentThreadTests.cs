@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 
+#pragma warning disable CA1861 // Avoid constant arrays as arguments
+
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
 public class AgentThreadTests
@@ -102,7 +104,7 @@ public class AgentThreadTests
         };
 
         // Act
-        await thread.OnNewMessagesAsync(messages, CancellationToken.None);
+        await thread.MessagesReceivedAsync(messages, CancellationToken.None);
         Assert.Equal("thread-123", thread.ConversationId);
         Assert.Null(thread.MessageStore);
     }
@@ -120,7 +122,7 @@ public class AgentThreadTests
         };
 
         // Act
-        await thread.OnNewMessagesAsync(messages, CancellationToken.None);
+        await thread.MessagesReceivedAsync(messages, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, store.Count);
@@ -171,6 +173,26 @@ public class AgentThreadTests
         // Assert
         Assert.Equal("TestConvId", thread.ConversationId);
         Assert.Null(thread.MessageStore);
+    }
+
+    [Fact]
+    public async Task VerifyDeserializeWithAIContextProviderAsync()
+    {
+        // Arrange
+        var json = JsonSerializer.Deserialize("""
+            {
+                "aiContextProviderState": ["CP1"]
+            }
+            """, TestJsonSerializerContext.Default.JsonElement);
+        Mock<AIContextProvider> mockProvider = new();
+        var thread = new AgentThread() { AIContextProvider = mockProvider.Object };
+
+        // Act
+        await thread.DeserializeAsync(json);
+
+        // Assert
+        Assert.Null(thread.MessageStore);
+        mockProvider.Verify(m => m.DeserializeAsync(It.Is<JsonElement>(e => e.ValueKind == JsonValueKind.Array && e.GetArrayLength() == 1), It.IsAny<JsonSerializerOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -243,6 +265,31 @@ public class AgentThreadTests
 
         var textContent = contentsProperty.EnumerateArray().First();
         Assert.Equal("TestContent", textContent.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task VerifyThreadSerializationWithWithAIContextProviderAsync()
+    {
+        // Arrange
+        Mock<AIContextProvider> mockProvider = new();
+        var providerStateElement = JsonSerializer.SerializeToElement(new[] { "CP1" }, TestJsonSerializerContext.Default.StringArray);
+        mockProvider
+            .Setup(m => m.SerializeAsync(It.IsAny<JsonSerializerOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(providerStateElement);
+
+        var thread = new AgentThread();
+        thread.AIContextProvider = mockProvider.Object;
+
+        // Act
+        var json = await thread.SerializeAsync();
+
+        // Assert
+        Assert.Equal(JsonValueKind.Object, json.ValueKind);
+        Assert.True(json.TryGetProperty("aiContextProviderState", out var providerStateProperty));
+        Assert.Equal(JsonValueKind.Array, providerStateProperty.ValueKind);
+        Assert.Single(providerStateProperty.EnumerateArray());
+        Assert.Equal("CP1", providerStateProperty.EnumerateArray().First().GetString());
+        mockProvider.Verify(m => m.SerializeAsync(It.IsAny<JsonSerializerOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
