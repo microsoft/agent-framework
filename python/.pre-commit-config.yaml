@@ -7,6 +7,7 @@ repos:
       - id: check-toml
         name: Check TOML files
         files: \.toml$
+        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
       - id: check-yaml
         name: Check YAML files
         files: \.yaml$
@@ -17,12 +18,15 @@ repos:
       - id: end-of-file-fixer
         name: Fix End of File
         files: \.py$
+        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
       - id: mixed-line-ending
         name: Check Mixed Line Endings
         files: \.py$
+        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
       - id: check-ast
         name: Check Valid Python Samples
         types: ["python"]
+        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
   - repo: https://github.com/nbQA-dev/nbQA
     rev: 1.9.1
     hooks:
@@ -35,6 +39,7 @@ repos:
       - id: pyupgrade
         name: Upgrade Python syntax
         args: [--py310-plus]
+        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
   - repo: local
     hooks:
       - id: poe-check

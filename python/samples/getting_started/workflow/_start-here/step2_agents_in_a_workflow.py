@@ -2,8 +2,8 @@
 
 import asyncio
 
+from agent_framework import AgentRunEvent, WorkflowBuilder
 from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import AgentRunEvent, WorkflowBuilder
 from azure.identity import AzureCliCredential
 
 """
@@ -59,6 +59,8 @@ async def main():
             print(f"{event.executor_id}: {event.data}")
 
     print(f"{'=' * 60}\n{events.get_completed_event()}")
+    # Summarize the final run state (e.g., COMPLETED)
+    print("Final state:", events.get_final_state())
 
     """
     Sample Output:
