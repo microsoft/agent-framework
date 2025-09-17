@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Agents.Workflows.Reflection;
 
@@ -65,7 +66,7 @@ public abstract class Executor : IIdentified
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public async ValueTask<object?> ExecuteAsync(object message, Type messageType, IWorkflowContext context)
+    public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context)
     {
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message)).ConfigureAwait(false);
 
@@ -79,7 +80,7 @@ public abstract class Executor : IIdentified
         }
         else
         {
-            executionResult = new ExecutorFailureEvent(this.Id, result.Exception);
+            executionResult = new ExecutorFailedEvent(this.Id, result.Exception);
         }
 
         await context.AddEventAsync(executionResult).ConfigureAwait(false);
@@ -141,6 +142,8 @@ public abstract class Executor : IIdentified
     /// <param name="messageType"></param>
     /// <returns></returns>
     public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
+
+    internal bool CanHandle(TypeId messageType) => this.Router.CanHandle(messageType);
 }
 
 /// <summary>

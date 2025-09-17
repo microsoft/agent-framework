@@ -3,6 +3,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.Workflows.Checkpointing;
+using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Extensions.AI;
 using static Microsoft.Agents.Workflows.WorkflowMessageStore;
 
@@ -53,9 +55,38 @@ internal static partial class WorkflowsJsonUtilities
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
-    // Agent abstraction types
+    // Checkpointing Types
+    [JsonSerializable(typeof(Checkpoint))]
+    [JsonSerializable(typeof(CheckpointInfo))]
+    [JsonSerializable(typeof(PortableValue))]
+    [JsonSerializable(typeof(PortableMessageEnvelope))]
+
+    // Runtime State Types
+    [JsonSerializable(typeof(ScopeKey))]
+    [JsonSerializable(typeof(ScopeId))]
+    [JsonSerializable(typeof(ExecutorIdentity))]
+    [JsonSerializable(typeof(RunnerStateData))]
+
+    // Workflow Representation Types
+    [JsonSerializable(typeof(WorkflowInfo))]
+    [JsonSerializable(typeof(EdgeConnection))]
+
+    // Workflow-as-Agent
     [JsonSerializable(typeof(StoreState))]
 
+    // Message Types
+    [JsonSerializable(typeof(ChatMessage))]
+    [JsonSerializable(typeof(ExternalRequest))]
+    [JsonSerializable(typeof(ExternalResponse))]
+    [JsonSerializable(typeof(TurnToken))]
+
+    // Event Types
+    //[JsonSerializable(typeof(WorkflowEvent))]
+    //   Currently cannot be serialized because it includes Exceptions.
+    //   We'll need a way to marshal this correct in the AgentRuntime case.
+    //   For now this is okay, because we never serialize WorkflowEvents into
+    //   checkpoints.
+    [JsonSerializable(typeof(JsonElement))]
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
 }

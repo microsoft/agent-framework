@@ -15,8 +15,8 @@ internal static class Step4EntryPoint
 
         return new WorkflowBuilder(guessNumber)
             .AddEdge(guessNumber, judge)
-            .AddEdge(judge, guessNumber, (message) => message is NumberSignal signal && signal != NumberSignal.Matched)
-            .BuildWithOutput<NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
+            .AddEdge(judge, guessNumber, (NumberSignal signal) => signal != NumberSignal.Matched)
+            .BuildWithOutput<NumberSignal, NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
     }
 
     public static Workflow<NumberSignal, string> WorkflowInstance
@@ -60,10 +60,10 @@ internal static class Step4EntryPoint
         Func<string, int> userGuessCallback,
         string? runningState)
     {
-        object result = request.Port.Id switch
+        object result = request.PortInfo.PortId switch
         {
             "GuessNumber" => userGuessCallback(runningState ?? "Guess the number."),
-            _ => throw new NotSupportedException($"Request {request.Port.Id} is not supported")
+            _ => throw new NotSupportedException($"Request {request.PortInfo.PortId} is not supported")
         };
 
         return request.CreateResponse(result);

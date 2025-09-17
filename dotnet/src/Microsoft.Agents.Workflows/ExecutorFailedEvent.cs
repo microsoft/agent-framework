@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows;
 /// </summary>
 /// <param name="executorId">The unique identifier of the executor that has failed.</param>
 /// <param name="err">The exception representing the error.</param>
-public sealed class ExecutorFailureEvent(string executorId, Exception? err)
+public sealed class ExecutorFailedEvent(string executorId, Exception? err)
     : ExecutorEvent(executorId, data: err)
 {
     /// <summary>
