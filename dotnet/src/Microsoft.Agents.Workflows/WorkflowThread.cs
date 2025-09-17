@@ -18,7 +18,7 @@ internal class WorkflowThread : AgentThread
 
     public WorkflowThread(string workflowId, string? workflowName, string runId)
     {
-        base.MessageStore = this._messageStore = new();
+        this._messageStore = new();
         this.RunId = Throw.IfNullOrEmpty(runId, nameof(runId));
 
         this._workflowId = Throw.IfNullOrEmpty(workflowId);
@@ -56,5 +56,5 @@ internal class WorkflowThread : AgentThread
     }
 
     /// <inheritdoc/>
-    public new WorkflowMessageStore MessageStore => this._messageStore;
+    public WorkflowMessageStore MessageStore => this._messageStore;
 }

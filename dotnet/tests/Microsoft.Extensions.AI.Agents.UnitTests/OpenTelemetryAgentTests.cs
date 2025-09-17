@@ -380,6 +380,10 @@ public class OpenTelemetryAgentTests
             .Build();
 
         var mockAgent = CreateMockAgent(false);
+        var mockThread = new Mock<AgentThread>();
+        mockThread.Setup(t => t.GetService(typeof(AgentThreadMetadata), null))
+            .Returns(new AgentThreadMetadata("thread-123"));
+
         using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
 
         var messages = new List<ChatMessage>
@@ -387,10 +391,8 @@ public class OpenTelemetryAgentTests
             new(ChatRole.User, "Hello")
         };
 
-        var thread = new AgentThread { ConversationId = "thread-123" };
-
         // Act
-        await telemetryAgent.RunAsync(messages, thread);
+        await telemetryAgent.RunAsync(messages, mockThread.Object);
 
         // Assert
         var activity = Assert.Single(activities);

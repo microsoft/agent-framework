@@ -2,6 +2,7 @@
 
 using System.Text;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.OpenAI;
@@ -122,6 +123,6 @@ async Task AFAgent()
     }
 
     // Clean up
-    await assistantsClient.DeleteThreadAsync(thread.ConversationId);
+    await assistantsClient.DeleteThreadAsync(((ChatClientAgentThread)thread).ConversationId);
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }

@@ -38,7 +38,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     Instructions = "You are a friendly assistant. Always address the user by their name.",
-    AIContextProviderFactory = (jse, jso) => new UserInfoMemory(chatClient.AsIChatClient(), jse, jso)
+    AIContextProviderFactory = (ctx) => new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions)
 });
 
 // Create a new thread for the conversation.
@@ -63,7 +63,8 @@ Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedT
 Console.WriteLine("\n>> Read memories from memory component\n");
 
 // It's possible to access the memory component via the thread's AIContextProvider property.
-var userInfo = ((UserInfoMemory)deserializedThread.AIContextProvider!).UserInfo;
+ChatClientAgentThread chatClientAgentThread = (ChatClientAgentThread)deserializedThread;
+var userInfo = ((UserInfoMemory)chatClientAgentThread.AIContextProvider!).UserInfo;
 
 // Output the user info that was captured by the memory component.
 Console.WriteLine($"MEMORY - User Name: {userInfo.UserName}");
@@ -71,14 +72,13 @@ Console.WriteLine($"MEMORY - User Age: {userInfo.UserAge}");
 
 Console.WriteLine("\n>> Use new thread with previously created memories\n");
 
-// Create a new thread.
-thread = agent.GetNewThread();
-
 // It is also possible to add the memory component to an individual thread only instead of all
 // threads via the factory above.
 // In this case we will also use the same user info object, so this thread will share the same
 // memories as the previous thread.
-thread.AIContextProvider = new UserInfoMemory(chatClient.AsIChatClient(), userInfo);
+// For this scenario, we have to know the underlying thread type used by the agent
+// to be able to provide the AIContextProvider.
+thread = new ChatClientAgentThread(new UserInfoMemory(chatClient.AsIChatClient(), userInfo));
 
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.

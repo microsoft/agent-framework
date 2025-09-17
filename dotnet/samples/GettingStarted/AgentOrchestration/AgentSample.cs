@@ -167,7 +167,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         // If a thread is provided, delete it as well.
         if (thread is not null)
         {
-            await persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId, cancellationToken);
+            await persistentAgentsClient.Threads.DeleteThreadAsync(((ChatClientAgentThread)thread).ConversationId, cancellationToken);
         }
     }
 
@@ -183,7 +183,7 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         // If a thread is provided, delete it as well.
         if (thread is not null)
         {
-            await assistantClient.DeleteThreadAsync(thread.ConversationId, cancellationToken);
+            await assistantClient.DeleteThreadAsync(((ChatClientAgentThread)thread).ConversationId, cancellationToken);
         }
     }
 

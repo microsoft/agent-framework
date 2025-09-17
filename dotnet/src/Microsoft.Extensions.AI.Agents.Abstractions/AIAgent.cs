@@ -81,17 +81,15 @@ public abstract class AIAgent
     /// If the thread needs to be created via a service call it would be created on first use.
     /// </para>
     /// </remarks>
-    public virtual AgentThread GetNewThread() => new();
+    public abstract AgentThread GetNewThread();
 
     /// <summary>
     /// Deserialize the thread from JSON.
     /// </summary>
     /// <param name="serializedThread">The <see cref="JsonElement"/> representing the thread state.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
-    public virtual AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(serializedThread, jsonSerializerOptions);
+    public abstract AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.

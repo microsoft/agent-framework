@@ -1,5 +1,4 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -33,7 +32,12 @@ internal sealed class MockAgent(int index) : AIAgent
 
     public override AgentThread GetNewThread()
     {
-        return new AgentThread() { ConversationId = Guid.NewGuid().ToString() };
+        return new Mock<AgentThread>().Object;
+    }
+
+    public override AgentThread DeserializeThread(System.Text.Json.JsonElement serializedThread, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        return new Mock<AgentThread>().Object;
     }
 
     public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

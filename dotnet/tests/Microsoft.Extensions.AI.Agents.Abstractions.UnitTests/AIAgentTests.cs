@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -231,7 +232,6 @@ public class AIAgentTests
 
         var threadMock = new Mock<TestAgentThread> { CallBase = true };
         threadMock.SetupAllProperties();
-        threadMock.Object.ConversationId = "test-thread-id";
 
         await MockAgent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
 
@@ -365,6 +365,11 @@ public class AIAgentTests
         {
             return AIAgent.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
         }
+        public override AgentThread GetNewThread()
+            => throw new NotImplementedException();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
 
         public override Task<AgentRunResponse> RunAsync(
             IEnumerable<ChatMessage> messages,

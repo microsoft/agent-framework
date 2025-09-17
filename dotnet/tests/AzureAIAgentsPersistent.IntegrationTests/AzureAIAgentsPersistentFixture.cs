@@ -29,8 +29,9 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
         List<ChatMessage> messages = [];
+        var typedThread = (ChatClientAgentThread)thread;
 
-        AsyncPageable<PersistentThreadMessage> threadMessages = this._persistentAgentsClient.Messages.GetMessagesAsync(threadId: thread.ConversationId, order: ListSortOrder.Ascending);
+        AsyncPageable<PersistentThreadMessage> threadMessages = this._persistentAgentsClient.Messages.GetMessagesAsync(threadId: typedThread.ConversationId, order: ListSortOrder.Ascending);
 
         await foreach (var threadMessage in threadMessages)
         {
@@ -81,9 +82,10 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public Task DeleteThreadAsync(AgentThread thread)
     {
-        if (thread?.ConversationId is not null)
+        var typedThread = (ChatClientAgentThread)thread;
+        if (typedThread?.ConversationId is not null)
         {
-            return this._persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId);
+            return this._persistentAgentsClient.Threads.DeleteThreadAsync(typedThread.ConversationId);
         }
 
         return Task.CompletedTask;

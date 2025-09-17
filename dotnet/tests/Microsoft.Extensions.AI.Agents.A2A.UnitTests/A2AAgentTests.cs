@@ -157,7 +157,9 @@ public sealed class A2AAgentTests : IDisposable
         await this._agent.RunAsync(inputMessages, thread);
 
         // Assert
-        Assert.Equal("new-context-id", thread.ConversationId);
+        Assert.IsType<A2AAgentThread>(thread);
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal("new-context-id", a2aThread.ContextId);
     }
 
     [Fact]
@@ -170,7 +172,8 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         // Act
         await this._agent.RunAsync(inputMessages, thread);
@@ -202,7 +205,8 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, thread));
@@ -280,7 +284,8 @@ public sealed class A2AAgentTests : IDisposable
         }
 
         // Assert
-        Assert.Equal("new-stream-context", thread.ConversationId);
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal("new-stream-context", a2aThread.ContextId);
     }
 
     [Fact]
@@ -295,7 +300,8 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.StreamingResponseToReturn = new Message();
 
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         // Act
         await foreach (var update in this._agent.RunStreamingAsync(inputMessages, thread))
@@ -314,7 +320,8 @@ public sealed class A2AAgentTests : IDisposable
     {
         // Arrange
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         var inputMessages = new List<ChatMessage>
         {

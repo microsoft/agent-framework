@@ -27,7 +27,7 @@ public class DelegatingAIAgentTests
         this._innerAgentMock = new Mock<AIAgent>();
         this._testResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         this._testStreamingResponses = [new AgentRunResponseUpdate(ChatRole.Assistant, "Test streaming response")];
-        this._testThread = new AgentThread();
+        this._testThread = new TestAgentThread();
 
         // Setup inner agent mock
         this._innerAgentMock.Setup(x => x.Id).Returns("test-agent-id");
@@ -151,7 +151,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new AgentThread();
+        var expectedThread = new TestAgentThread();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         var expectedResult = new TaskCompletionSource<AgentRunResponse>();
@@ -182,7 +182,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new AgentThread();
+        var expectedThread = new TestAgentThread();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         AgentRunResponseUpdate[] expectedResults =
@@ -302,6 +302,10 @@ public class DelegatingAIAgentTests
     private sealed class TestDelegatingAIAgent(AIAgent innerAgent) : DelegatingAIAgent(innerAgent)
     {
         public new AIAgent InnerAgent => base.InnerAgent;
+    }
+
+    private sealed class TestAgentThread : AgentThread
+    {
     }
 
     #endregion
