@@ -112,6 +112,7 @@ When using the Azure AI Foundry extension in VS Code, you can visualize workflow
 
 2. **Add trace exporter to your sample code** (if not already included):
    ```python
+  import os
   from opentelemetry.sdk.resources import Resource
   from opentelemetry.sdk.trace import TracerProvider
   from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -122,9 +123,6 @@ When using the Azure AI Foundry extension in VS Code, you can visualize workflow
       from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
   except ImportError:
       OTLPSpanExporter = None
-  
-  otlp_port = int(os.getenv("FOUNDRY_OTLP_PORT", "4317"))
-  otlp_endpoint = f"http://localhost:{otlp_port}"
    
   # Configure tracing to capture telemetry spans for visualization.
   def set_up_tracing():
@@ -133,6 +131,8 @@ When using the Azure AI Foundry extension in VS Code, you can visualize workflow
           return
 
       try:
+          otlp_port = int(os.getenv("FOUNDRY_OTLP_PORT", "4317"))
+          otlp_endpoint = f"http://localhost:{otlp_port}"
           exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
           resource = Resource.create(
               {service_attributes.SERVICE_NAME: "your-workflow-sample-name"}
