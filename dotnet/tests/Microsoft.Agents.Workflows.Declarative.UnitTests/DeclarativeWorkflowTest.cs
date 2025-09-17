@@ -58,12 +58,21 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopContinueAction()
     {
         await this.RunWorkflow("LoopContinue.yaml");
-        this.AssertExecutionCount(expectedCount: 23);
+        this.AssertExecutionCount(expectedCount: 7);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("continueLoop_now");
         this.AssertExecuted("end_all");
         this.AssertNotExecuted("setVariable_loop");
         this.AssertNotExecuted("sendActivity_loop");
+    }
+
+    [Fact]
+    public async Task EndConversationAction()
+    {
+        await this.RunWorkflow("EndConversation.yaml");
+        this.AssertExecutionCount(expectedCount: 1);
+        this.AssertExecuted("end_all");
+        this.AssertNotExecuted("sendActivity_1");
     }
 
     [Fact]
@@ -89,7 +98,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("conditionItem_even");
+            this.AssertExecuted("conditionItem_even", isScope: true);
             this.AssertExecuted("sendActivity_even");
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
@@ -97,7 +106,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd");
+            this.AssertExecuted("conditionItem_odd", isScope: true);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("conditionItem_even");
             this.AssertNotExecuted("sendActivity_even");
@@ -117,13 +126,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("sendActivity_else");
+            this.AssertExecuted("sendActivity_else", isScope: true);
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd");
+            this.AssertExecuted("conditionItem_odd", isScope: true);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("sendActivity_else");
         }
@@ -220,10 +229,15 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
     }
 
-    private void AssertExecuted(string executorId)
+    private void AssertExecuted(string executorId, bool isScope = false)
     {
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
+        if (!isScope)
+        {
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == executorId);
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == executorId);
+        }
     }
 
     private void AssertMessage(string message)
@@ -250,6 +264,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             {
                 ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
+            }
+            else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)
+            {
+                this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
+            }
+            else if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
+            {
+                this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
             }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {
