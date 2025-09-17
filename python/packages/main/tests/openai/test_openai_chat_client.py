@@ -32,11 +32,9 @@ from agent_framework.openai._shared import prepare_function_call_results
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
     or os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
-    reason=(
-        "No real OPENAI_API_KEY provided; skipping integration tests."
-        if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-        else "Integration tests are disabled."
-    ),
+    reason="No real OPENAI_API_KEY provided; skipping integration tests."
+    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
+    else "Integration tests are disabled.",
 )
 
 
@@ -687,9 +685,7 @@ def test_prepare_function_call_results_with_basemodel():
     model_instance = TestModel(name="test", value=42)
     result = prepare_function_call_results(model_instance)
 
-    # Should return JSON string with excluded fields removed
-    import json
-
+    assert isinstance(result, str)
     parsed = json.loads(result)
     assert parsed["name"] == "test"
     assert parsed["value"] == 42
