@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -53,24 +54,37 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ValidateInputMessages(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? [.. messages];
 
-        var a2aMessage = messages.ToA2AMessage();
-
-        // Linking the message to the existing conversation, if any.
-        a2aMessage.ContextId = thread?.ConversationId;
+        ValidateInputMessageRoles(inputMessages);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
         A2AResponse? a2aResponse;
 
-        // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of the task.
+        // The continuation token provided by a caller indicates that the caller is interested in either task refinement
+        // by sending additional messages to the task or obtaining the status and result of the task.
         if (options is { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
         {
-            a2aResponse = await this._a2aClient.GetTaskAsync(longRunToken.TaskId, cancellationToken).ConfigureAwait(false);
+            // If any messages are provided for a long-running task, we will consider them as the task refinement messages.
+            if (inputMessages is { Count: > 0 })
+            {
+                var a2aMessage = inputMessages.ToA2AMessage();
+                a2aMessage.ContextId = thread?.ConversationId; // Linking the message to the existing conversation, if any.
+                a2aMessage.TaskId = longRunToken.TaskId; // Linking the message to the existing task.
+
+                a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                a2aResponse = await this._a2aClient.GetTaskAsync(longRunToken.TaskId, cancellationToken).ConfigureAwait(false);
+            }
         }
         else
         {
+            var a2aMessage = inputMessages.ToA2AMessage();
+            a2aMessage.ContextId = thread?.ConversationId; // Linking the message to the existing conversation, if any.
+
             a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
         }
 
@@ -96,16 +110,40 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ValidateInputMessages(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? [.. messages];
 
-        var a2aMessage = messages.ToA2AMessage();
-
-        // Linking the message to the existing conversation, if any.
-        a2aMessage.ContextId = thread?.ConversationId;
+        ValidateInputMessageRoles(inputMessages);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        var a2aSseEvents = this._a2aClient.SendMessageStreamAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        ConfiguredCancelableAsyncEnumerable<SseItem<A2AEvent>> a2aSseEvents;
+
+        // The continuation token provided by a caller indicates that the caller is interested in either task refinement
+        // by sending additional messages to the task or reconnecting to the stream if the connection was lost.
+        if (options is { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
+        {
+            // If any messages are provided for a long-running task, we will consider them as the task refinement messages.
+            if (inputMessages is { Count: > 0 })
+            {
+                var a2aMessage = inputMessages.ToA2AMessage();
+                a2aMessage.ContextId = thread?.ConversationId; // Linking the message to the existing conversation, if any.
+                a2aMessage.TaskId = longRunToken.TaskId; // Linking the message to the existing task.
+
+                a2aSseEvents = this._a2aClient.SendMessageStreamAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // No messages provided, so we will reconnect to the task stream.
+                a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(longRunToken.TaskId, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            var a2aMessage = inputMessages.ToA2AMessage();
+            a2aMessage.ContextId = thread?.ConversationId; // Linking the message to the existing conversation, if any.
+
+            a2aSseEvents = this._a2aClient.SendMessageStreamAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -117,7 +155,7 @@ internal sealed class A2AAgent : AIAgent
             {
                 contextId = message.ContextId;
 
-                foreach (var update in this.ConvertToAgentResponse(message).ToAgentRunResponseUpdates())
+                foreach (var update in ConvertToResponseUpdates(this.ConvertToAgentResponse(message), this.Name))
                 {
                     yield return update;
                 }
@@ -126,7 +164,7 @@ internal sealed class A2AAgent : AIAgent
             {
                 contextId = task.ContextId;
 
-                foreach (var update in this.ConvertToAgentResponse(task).ToAgentRunResponseUpdates())
+                foreach (var update in ConvertToResponseUpdates(this.ConvertToAgentResponse(task), this.Name))
                 {
                     yield return update;
                 }
@@ -168,10 +206,8 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override string? Description => this._description ?? base.Description;
 
-    private static void ValidateInputMessages(IEnumerable<ChatMessage> messages)
+    private static void ValidateInputMessageRoles(IEnumerable<ChatMessage> messages)
     {
-        _ = Throw.IfNull(messages);
-
         foreach (var message in messages)
         {
             if (message.Role != ChatRole.User)
@@ -207,17 +243,12 @@ internal sealed class A2AAgent : AIAgent
             AgentId = this.Id,
             ResponseId = task.Id,
             RawRepresentation = task,
-            Messages = task.History?.ToChatMessages(this.Name, task.Artifacts) ?? [],
+            Messages = task.Artifacts is not null ? task.Artifacts.ToChatMessages(this.Name) : [],
             ContinuationToken = GetContinuationToken(task.Id, task.Status.State, throwIfOperationCancelled),
             AdditionalProperties = task.Metadata.ToAdditionalProperties() ?? [],
         };
 
-        response.AdditionalProperties["Status.Timestamp"] = task.Status.Timestamp;
-
-        if (task.Status.Message is { } statusMessage)
-        {
-            response.AdditionalProperties["Status.Message"] = statusMessage.ToChatMessage();
-        }
+        response.AdditionalProperties[nameof(AgentTask.Status)] = task.Status;
 
         return response;
     }
@@ -289,6 +320,48 @@ internal sealed class A2AAgent : AIAgent
         }
 
         return responseUpdate;
+    }
+
+    private static AgentRunResponseUpdate[] ConvertToResponseUpdates(AgentRunResponse agentRunResponse, string? authorName)
+    {
+        if (agentRunResponse.Messages is { Count: 0 })
+        {
+            AgentRunResponseUpdate? extra = null;
+            if (agentRunResponse.AdditionalProperties is not null || agentRunResponse.Usage is not null)
+            {
+                extra = new AgentRunResponseUpdate
+                {
+                    AdditionalProperties = agentRunResponse.AdditionalProperties
+                };
+
+                if (agentRunResponse.Usage is { } usage)
+                {
+                    extra.Contents.Add(new UsageContent(usage));
+                }
+            }
+
+            var updates = new AgentRunResponseUpdate[(extra is null ? 1 : 2)];
+            updates[0] = new AgentRunResponseUpdate
+            {
+                AdditionalProperties = agentRunResponse.AdditionalProperties,
+                AuthorName = authorName,
+                Role = ChatRole.Assistant,
+
+                AgentId = agentRunResponse.AgentId,
+                ResponseId = agentRunResponse.ResponseId,
+                CreatedAt = agentRunResponse.CreatedAt,
+                ContinuationToken = agentRunResponse.ContinuationToken
+            };
+
+            if (extra is not null)
+            {
+                updates[1] = extra;
+            }
+
+            return updates;
+        }
+
+        return agentRunResponse.ToAgentRunResponseUpdates();
     }
 
     private static LongRunContinuationToken? GetContinuationToken(string taskId, TaskState state, bool? throwIfOperationCancelled = true)

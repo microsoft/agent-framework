@@ -169,6 +169,7 @@ public class AgentRunResponse
                 ResponseId = this.ResponseId,
                 MessageId = message.MessageId,
                 CreatedAt = this.CreatedAt,
+                ContinuationToken = this.ContinuationToken
             };
         }
 

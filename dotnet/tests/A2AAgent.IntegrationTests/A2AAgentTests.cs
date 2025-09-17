@@ -58,6 +58,41 @@ public class A2AAgentTests
     }
 
     [Fact]
+    public async Task GetResponseAsync_HavingReceivedUpdate_TakesItIntoAccountAsync()
+    {
+        // Part 1: Start the background run.
+        AIAgent agent = await this.CreateA2AAgentAsync();
+
+        AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
+
+        Assert.NotNull(response.ContinuationToken);
+
+        // Part 2: Send an update.
+        AgentRunOptions options = new()
+        {
+            ContinuationToken = response.ContinuationToken
+        };
+
+        response = await agent.RunAsync("Sorry I meant Belgium.", options: options);
+
+        // Part 3: Poll for completion.
+        int attempts = 0;
+
+        while (response.ContinuationToken is { } token && ++attempts < 10)
+        {
+            options.ContinuationToken = token;
+
+            response = await agent.RunAsync([], options: options);
+
+            // Wait for the response to be processed
+            await Task.Delay(1000);
+        }
+
+        Assert.Null(response.ContinuationToken);
+        Assert.Contains("Brussels", response.Text);
+    }
+
+    [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange

@@ -132,7 +132,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         {
             responseText += update;
 
-            // Capture continuation token of the first event so we  can continue getting
+            // Capture continuation token of the first event so we can continue getting
             // the rest of the events starting from the same point in the test below.
             firstContinuationToken = update.ContinuationToken;
 

@@ -38,40 +38,87 @@ public sealed class A2AAgentStreaming
         Assert.Null(lastContinuationToken);
     }
 
-    //[Fact]
-    //public async Task RunStreamingAsync_HavingReturnedInitialTaskResponse_AllowsToContinueItAsync()
-    //{
-    //    // Part 1: Start the background run and get the first part of the response.
-    //    AIAgent agent = await this.CreateA2AAgentAsync();
+    [Fact]
+    public async Task RunStreamingAsync_HavingReturnedInitialTaskResponse_AllowsToContinueItAsync()
+    {
+        // Part 1: Start the background run and get the first part of the response.
+        AIAgent agent = await this.CreateA2AAgentAsync();
 
-    //    string responseText = "";
-    //    ContinuationToken? firstContinuationToken = null;
-    //    ContinuationToken? lastContinuationToken = null;
+        string responseText = "";
+        ContinuationToken? continuationToken = null;
 
-    //    await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
-    //    {
-    //        responseText += update;
+        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
+        {
+            responseText += update;
 
-    //        break;
-    //    }
+            // Capture continuation token of the first event
+            continuationToken = update.ContinuationToken;
 
-    //    Assert.NotNull(firstContinuationToken);
-    //    Assert.NotNull(responseText);
+            // Break after the first event to simulate connection drop
+            break;
+        }
 
-    //    // Part 2: Continue getting the rest of the response from the saved point
-    //    AgentRunOptions options = new();
-    //    options.ContinuationToken = firstContinuationToken;
+        Assert.NotNull(continuationToken);
+        Assert.Empty(responseText);
 
-    //    await foreach (var update in agent.RunStreamingAsync("What is the capital of France?", options: options))
-    //    {
-    //        responseText += update;
+        // Part 2: Continue getting the response using the continuation token.
+        AgentRunOptions options = new()
+        {
+            ContinuationToken = continuationToken
+        };
 
-    //        lastContinuationToken = update.ContinuationToken;
-    //    }
+        await foreach (var update in agent.RunStreamingAsync(options: options))
+        {
+            responseText += update;
 
-    //    Assert.Contains("Paris", responseText);
-    //    Assert.Null(lastContinuationToken);
-    //}
+            // Keep capturing the continuation token in case the connection drops again
+            continuationToken = update.ContinuationToken;
+        }
+
+        Assert.Contains("Paris", responseText);
+        Assert.Null(continuationToken);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_HavingReceivedUpdate_TakesItIntoAccountAsync()
+    {
+        // Part 1: Start the background run and get the first part of the response.
+        AIAgent agent = await this.CreateA2AAgentAsync();
+
+        string responseText = "";
+        ContinuationToken? continuationToken = null;
+
+        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
+        {
+            responseText += update;
+
+            // Capture continuation token of the first event
+            continuationToken = update.ContinuationToken;
+
+            // Break after the first event to simulate connection drop
+            break;
+        }
+
+        Assert.NotNull(continuationToken);
+        Assert.Empty(responseText);
+
+        // Part 2: Send an update.
+        AgentRunOptions options = new()
+        {
+            ContinuationToken = continuationToken
+        };
+
+        await foreach (var update in agent.RunStreamingAsync("Sorry I meant Belgium.", options: options))
+        {
+            responseText += update;
+
+            // Keep capturing the continuation token in case the connection drops again
+            continuationToken = update.ContinuationToken;
+        }
+
+        Assert.Contains("Brussels", responseText);
+        Assert.Null(continuationToken);
+    }
 
     [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()

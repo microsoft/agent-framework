@@ -11,35 +11,6 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 internal static class A2AMessageExtensions
 {
     /// <summary>
-    /// Converts a list of A2A <see cref="Message"/> to a list of <see cref="ChatMessage"/>.
-    /// </summary>
-    /// <param name="messages">The A2A messages to convert.</param>
-    /// <param name="authorName">The author name to set on the resulting <see cref="ChatMessage"/>.</param>
-    /// <param name="artifacts">The A2A artifacts to convert and add as chat messages.</param>
-    /// <returns>The corresponding list of <see cref="ChatMessage"/>.</returns>
-    internal static IList<ChatMessage> ToChatMessages(this IList<Message> messages, string? authorName = null, IList<Artifact>? artifacts = null)
-    {
-        List<ChatMessage> chatMessages = new(messages.Count);
-
-        foreach (var message in messages)
-        {
-            chatMessages.Add(message.ToChatMessage(authorName));
-        }
-
-        // TBD: Decide how to represent artifacts. Add them after the messages created from the task history messages,
-        // before them or instead of them, or, maybe allow to configure the behavior via A2AAgentOptions?
-        if (artifacts is { Count: > 0 })
-        {
-            foreach (var artifact in artifacts)
-            {
-                chatMessages.Add(artifact.ToChatMessage(authorName));
-            }
-        }
-
-        return chatMessages;
-    }
-
-    /// <summary>
     /// Converts an A2A <see cref="Message"/> to a <see cref="ChatMessage"/>.
     /// </summary>
     /// <param name="message">The A2A message to convert.</param>

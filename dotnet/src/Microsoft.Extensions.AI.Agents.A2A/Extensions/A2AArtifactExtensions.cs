@@ -48,6 +48,24 @@ internal static class A2AArtifactExtensions
         return contents;
     }
 
+    /// <summary>
+    /// Converts a list of A2A <see cref="Artifact"/> to a list of <see cref="ChatMessage"/>.
+    /// </summary>
+    /// <param name="artifacts">The A2A artifacts to convert and add as chat messages.</param>
+    /// <param name="authorName">The author name to set on the resulting <see cref="ChatMessage"/>.</param>
+    /// <returns>The corresponding list of <see cref="ChatMessage"/>.</returns>
+    internal static IList<ChatMessage> ToChatMessages(this IList<Artifact> artifacts, string? authorName = null)
+    {
+        List<ChatMessage> chatMessages = new(artifacts.Count);
+
+        foreach (var artifact in artifacts)
+        {
+            chatMessages.Add(artifact.ToChatMessage(authorName));
+        }
+
+        return chatMessages;
+    }
+
     private static AdditionalPropertiesDictionary AddArtifactPropertiesAsAdditionalProperties(Artifact artifact)
     {
         var additionalProperties = artifact.Metadata.ToAdditionalProperties() ?? [];
