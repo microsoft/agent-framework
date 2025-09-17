@@ -1,10 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Serialization;
+
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
 /// Base class for <see cref="Workflow"/>-scoped events.
 /// </summary>
+[JsonDerivedType(typeof(ExecutorEvent))]
+[JsonDerivedType(typeof(SuperStepEvent))]
+[JsonDerivedType(typeof(WorkflowStartedEvent))]
+[JsonDerivedType(typeof(WorkflowCompletedEvent))]
+[JsonDerivedType(typeof(WorkflowErrorEvent))]
+[JsonDerivedType(typeof(WorkflowWarningEvent))]
+[JsonDerivedType(typeof(RequestInfoEvent))]
 public class WorkflowEvent(object? data = null)
 {
     /// <summary>

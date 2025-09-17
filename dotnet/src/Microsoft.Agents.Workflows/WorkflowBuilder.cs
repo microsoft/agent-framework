@@ -20,15 +20,16 @@ namespace Microsoft.Agents.Workflows;
 /// <see cref="ExecutorIsh.Type.Unbound"/>.</remarks>
 public class WorkflowBuilder
 {
-    private record struct EdgeId(string SourceId, string TargetId)
+    private record struct EdgeConnection(string SourceId, string TargetId)
     {
         public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
     }
 
+    private int _edgeCount = 0;
     private readonly Dictionary<string, ExecutorRegistration> _executors = new();
     private readonly Dictionary<string, HashSet<Edge>> _edges = new();
     private readonly HashSet<string> _unboundExecutors = new();
-    private readonly HashSet<EdgeId> _conditionlessEdges = new();
+    private readonly HashSet<EdgeConnection> _conditionlessConnections = new();
     private readonly Dictionary<string, InputPort> _inputPorts = new();
 
     private readonly string _startExecutorId;
@@ -127,12 +128,58 @@ public class WorkflowBuilder
     /// </summary>
     /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
     /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
+    /// executors already exists.</exception>
+    public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target)
+        => this.AddEdge<object>(source, target, null);
+
+    internal static Func<object?, bool>? CreateConditionFunc<T>(Func<T?, bool>? condition)
+    {
+        if (condition == null)
+        {
+            return null;
+        }
+        return maybeObj =>
+        {
+            if (typeof(T) != typeof(object) && maybeObj is PortableValue portableValue)
+            {
+                maybeObj = portableValue.AsType(typeof(T));
+            }
+            return condition(maybeObj is T typed ? typed : default);
+        };
+    }
+
+    internal static Func<object?, bool>? CreateConditionFunc<T>(Func<object?, bool>? condition)
+    {
+        if (condition == null)
+        {
+            return null;
+        }
+        return maybeObj =>
+        {
+            if (typeof(T) != typeof(object) && maybeObj is PortableValue portableValue)
+            {
+                maybeObj = portableValue.AsType(typeof(T));
+            }
+            return condition(maybeObj);
+        };
+    }
+
+    private EdgeId TakeEdgeId() => new(Interlocked.Increment(ref this._edgeCount));
+
+    /// <summary>
+    /// Adds a directed edge from the specified source executor to the target executor, optionally guarded by a
+    /// condition.
+    /// </summary>
+    /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
+    /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
     /// <param name="condition">An optional predicate that determines whether the edge should be followed based on the input.
     /// If null, the edge is always activated when the source sends a message.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
-    public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target, Func<object?, bool>? condition = null)
+    public WorkflowBuilder AddEdge<T>(ExecutorIsh source, ExecutorIsh target, Func<T?, bool>? condition = null)
     {
         // Add an edge from source to target with an optional condition.
         // This is a low-level builder method that does not enforce any specific executor type.
@@ -140,15 +187,15 @@ public class WorkflowBuilder
         Throw.IfNull(source);
         Throw.IfNull(target);
 
-        EdgeId id = new(source.Id, target.Id);
-        if (condition == null && this._conditionlessEdges.Contains(id))
+        EdgeConnection connection = new(source.Id, target.Id);
+        if (condition == null && this._conditionlessConnections.Contains(connection))
         {
             throw new InvalidOperationException(
                 $"An edge from '{source.Id}' to '{target.Id}' already exists without a condition. " +
                 "You cannot add another edge without a condition for the same source and target.");
         }
 
-        DirectEdgeData directEdge = new(this.Track(source).Id, this.Track(target).Id, condition);
+        DirectEdgeData directEdge = new(this.Track(source).Id, this.Track(target).Id, this.TakeEdgeId(), CreateConditionFunc(condition));
 
         this.EnsureEdgesFor(source.Id).Add(new(directEdge));
 
@@ -162,11 +209,41 @@ public class WorkflowBuilder
     /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
     /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
+    /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params ExecutorIsh[] targets)
+        => this.AddFanOutEdge<object>(source, null, targets);
+
+    internal static Func<object?, int, IEnumerable<int>>? CreateEdgeAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? partitioner)
+    {
+        if (partitioner == null)
+        {
+            return null;
+        }
+
+        return (object? maybeObj, int count) =>
+        {
+            if (typeof(T) != typeof(object) && maybeObj is PortableValue portableValue)
+            {
+                maybeObj = portableValue.AsType(typeof(T));
+            }
+
+            return partitioner(maybeObj is T typed ? typed : default, count);
+        };
+    }
+
+    /// <summary>
+    /// Adds a fan-out edge from the specified source executor to one or more target executors, optionally using a
+    /// custom partitioning function.
+    /// </summary>
+    /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
+    /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
+    /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
     /// <param name="partitioner">An optional function that determines how input is partitioned among the target executors.
     /// If null, messages will route to all targets.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, Func<object?, int, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
+    public WorkflowBuilder AddFanOutEdge<T>(ExecutorIsh source, Func<T?, int, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
     {
         Throw.IfNull(source);
         Throw.IfNullOrEmpty(targets);
@@ -174,7 +251,8 @@ public class WorkflowBuilder
         FanOutEdgeData fanOutEdge = new(
                 this.Track(source).Id,
                 targets.Select(target => this.Track(target).Id).ToList(),
-                partitioner);
+                this.TakeEdgeId(),
+                CreateEdgeAssignerFunc<T>(partitioner));
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
@@ -198,7 +276,8 @@ public class WorkflowBuilder
 
         FanInEdgeData edgeData = new(
             sources.Select(source => this.Track(source).Id).ToList(),
-                this.Track(target).Id);
+                this.Track(target).Id,
+                this.TakeEdgeId());
 
         foreach (string sourceId in edgeData.SourceIds)
         {
