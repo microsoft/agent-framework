@@ -15,11 +15,11 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Internal agent decorator that adds function invocation callback middleware logic.
 /// </summary>
-internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
+internal sealed class RunningMiddlewareAgent : DelegatingAIAgent
 {
     private readonly Func<AgentRunContext, Func<AgentRunContext, Task>, Task> _callbackFunc;
 
-    internal RunningCallbackHandlerAgent(AIAgent innerAgent, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callbackFunc) : base(innerAgent)
+    internal RunningMiddlewareAgent(AIAgent innerAgent, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callbackFunc) : base(innerAgent)
     {
         this._callbackFunc = Throw.IfNull(callbackFunc);
     }

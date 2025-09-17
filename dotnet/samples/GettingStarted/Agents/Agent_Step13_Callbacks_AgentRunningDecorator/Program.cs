@@ -33,7 +33,7 @@ Console.WriteLine("=== Agent with custom middleware ===");
 var agent = persistentAgentsClient.CreateAIAgent(model)
     .AsBuilder()
     .Use((innerAgent) => new GuardrailMiddlewareAgent(innerAgent)) // Decoration based agent run handling
-    .UseRunningContext(async (context, next) => // Context based handling
+    .UseRunningMiddleware(async (context, next) => // Context based handling
     {
         // Guardrail: Filter input messages for PII
         context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();

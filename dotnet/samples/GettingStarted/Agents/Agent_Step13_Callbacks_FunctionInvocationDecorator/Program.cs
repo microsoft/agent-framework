@@ -35,7 +35,7 @@ var agent = new ChatClientAgent(client.AsIChatClient(), new ChatClientAgentOptio
         instructions: "You are an AI assistant that helps people find information.",
         tools: [AIFunctionFactory.Create(GetDateTime)]))
     .AsBuilder()
-    .UseFunctionInvocationContext(async (context, next) =>
+    .UseFunctionInvocationMiddleware(async (context, next) =>
     {
         Console.WriteLine($"""
             === Middleware 1 Before Invoke Start ===
@@ -53,7 +53,7 @@ var agent = new ChatClientAgent(client.AsIChatClient(), new ChatClientAgentOptio
             === Middleware 1 After Invoke End ===
             """);
     })
-    .UseFunctionInvocationContext(async (context, next) =>
+    .UseFunctionInvocationMiddleware(async (context, next) =>
     {
         Console.WriteLine($"""
             === Middleware 2 Before Invoke Start ===

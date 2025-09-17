@@ -51,9 +51,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step13_Callbacks_AgentRunningDecorator/Agent_Step14_Callbacks_AgentRunningDecorator.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step13_Callbacks_AgentRunningProcessor/Agent_Step14_Callbacks_AgentRunningProcessor.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step13_Callbacks_FunctionInvocationDecorator/Agent_Step14_Callbacks_FunctionInvocationDecorator.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step13_Callbacks_FunctionInvocationProcessor/Agent_Step14_Callbacks_FunctionInvocationProcessor.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">

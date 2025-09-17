@@ -20,7 +20,7 @@ public static class AIAgentBuilderExtensions
     /// middleware in the pipeline, and a cancellation token, and returns a task representing the result of the
     /// invocation.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
-    public static AIAgentBuilder UseFunctionInvocationContext(this AIAgentBuilder builder, Func<AgentFunctionInvocationContext?, Func<AgentFunctionInvocationContext, Task>, Task> callback)
+    public static AIAgentBuilder UseFunctionInvocationMiddleware(this AIAgentBuilder builder, Func<AgentFunctionInvocationContext?, Func<AgentFunctionInvocationContext, Task>, Task> callback)
     {
         return builder.Use(innerAgent => new FunctionCallMiddlewareAgent(innerAgent, callback));
     }
@@ -33,8 +33,8 @@ public static class AIAgentBuilderExtensions
     /// cref="AgentRunContext"/> and a function representing the next core agent invocation, and
     /// returns a <see cref="Task"/> that completes when the callback finished processing.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance, allowing for further configuration of the pipeline.</returns>
-    public static AIAgentBuilder UseRunningContext(this AIAgentBuilder builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
+    public static AIAgentBuilder UseRunningMiddleware(this AIAgentBuilder builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
     {
-        return builder.Use((innerAgent) => new RunningCallbackHandlerAgent(innerAgent, callback));
+        return builder.Use((innerAgent) => new RunningMiddlewareAgent(innerAgent, callback));
     }
 }
