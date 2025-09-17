@@ -3,6 +3,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Sample;
 
@@ -119,6 +120,29 @@ public class SampleSmokeTest
          );
 
         string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, rehydrateToRestore: true);
+        Assert.Equal("You guessed correctly! You Win!", guessResult);
+    }
+
+    [Fact]
+    public async Task Test_RunSample_Step5bAsync()
+    {
+        using StringWriter writer = new();
+
+        VerifyingPlaybackResponder<string, int> responder = new(
+            // Iteration 1
+            ("Guess the number.", 50),
+            ("Your guess was too high. Try again.", 23),
+
+            // Iteration 2
+            ("Your guess was too high. Try again.", 23),
+            ("Your guess was too low. Try again.", 42)
+         );
+
+        JsonSerializerOptions options = new(SampleJsonContext.Default.Options);
+        options.MakeReadOnly();
+
+        CheckpointManager memoryJsonManager = CheckpointManager.CreateJson(new InMemoryJsonStore(), options);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, rehydrateToRestore: true, checkpointManager: memoryJsonManager);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
