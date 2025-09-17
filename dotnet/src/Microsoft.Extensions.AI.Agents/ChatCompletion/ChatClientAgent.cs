@@ -228,6 +228,23 @@ public sealed class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
+    public override async Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        if (this.ChatClient.GetService<ICancelableChatClient>() is ICancelableChatClient cancelableChatClient)
+        {
+            CancelResponseOptions? cancelOptions = options?.Thread?.ConversationId is not null
+                ? new CancelResponseOptions { ConversationId = options.Thread.ConversationId }
+                : null;
+
+            ChatResponse? response = await cancelableChatClient.CancelResponseAsync(id, cancelOptions, cancellationToken).ConfigureAwait(false);
+
+            return response is null ? null : new(response) { AgentId = this.Id };
+        }
+
+        return await base.CancelRunAsync(id, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
     {
         return base.GetService(serviceType, serviceKey)
@@ -289,7 +306,12 @@ public sealed class ChatClientAgent : AIAgent
         // If no agent chat options were provided, return the request chat options as is.
         if (this._agentOptions?.ChatOptions is null)
         {
-            return requestChatOptions;
+            var clone = requestChatOptions;
+            if (clone is NewChatOptions newChatOptions)
+            {
+                newChatOptions.ContinuationToken ??= runOptions?.ContinuationToken;
+            }
+            return clone;
         }
 
         // If no request chat options were provided, use the agent's chat options clone.
@@ -314,6 +336,10 @@ public sealed class ChatClientAgent : AIAgent
         requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
         requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
         requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
+        if (requestChatOptions is NewChatOptions ncos)
+        {
+            ncos.ContinuationToken ??= runOptions?.ContinuationToken;
+        }
 
         // Merge only the additional properties from the agent if they are not already set in the request options.
         if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)

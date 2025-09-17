@@ -64,6 +64,7 @@ public class AgentRunResponse
         this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
         this.Usage = response.Usage;
+        this.ContinuationToken = (response as NewChatResponse)?.ContinuationToken;
     }
 
     /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
