@@ -33,7 +33,11 @@ DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memori
 
 
 class RedisProvider(ContextProvider):
-    """Redis-backed context provider with dynamic, filterable schema."""
+    """Redis-backed context provider with dynamic, filterable schema.
+
+    Stores chat messages in RediSearch and retrieves scoped context.
+    Uses full-text or optional hybrid vector search to ground model responses.
+    """
 
     # Connection and indexing
     redis_url: str = "redis://localhost:6379"
@@ -90,6 +94,9 @@ class RedisProvider(ContextProvider):
         drop_redis_index: bool = True,
     ):
         """Initializes a new instance of the RedisProvider class.
+
+        Builds the index schema and optional vectorizer.
+        Wires default partition filters used to scope reads and writes.
 
         Args:
             redis_url: Redis connection URL.
@@ -181,6 +188,8 @@ class RedisProvider(ContextProvider):
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         """Builds a combined filter expression from simple equality tags.
 
+        This ANDs non-empty tag filters and is used to scope all operations to app/agent/user/thread partitions.
+
         Args:
             filters: Mapping of field name to value; falsy values are ignored.
 
@@ -202,6 +211,8 @@ class RedisProvider(ContextProvider):
         vector_distance_metric: Literal["cosine", "ip", "l2"] | None,
     ) -> dict[str, Any]:
         """Builds the RediSearch schema configuration dictionary.
+
+        Defines text and tag fields for messages plus an optional vector field enabling KNN/hybrid search.
 
         Args:
             index_name: Index name.
@@ -250,7 +261,10 @@ class RedisProvider(ContextProvider):
         }
 
     async def _ensure_index(self) -> None:
-        """Ensures the index exists, creating or dropping as configured."""
+        """Ensures the index exists, creating or dropping as configured.
+
+        Called before reads/writes so queries are safe and the schema is applied deterministically.
+        """
         if self.drop_redis_index:
             if not self.fresh_initialization:
                 await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
@@ -267,6 +281,8 @@ class RedisProvider(ContextProvider):
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Inserts one or many documents with partition fields populated.
+
+        Fills default partition fields, optionally embeds content when configured, and loads documents in a batch.
 
         Args:
             data: Single document or list of documents to insert.
@@ -332,6 +348,8 @@ class RedisProvider(ContextProvider):
         dtype: Literal["float32", "float16", "bfloat16"] = "float32",
     ) -> list[dict[str, Any]]:
         """Runs a text or hybrid vector-text search with optional filters.
+
+        Builds a TextQuery or HybridQuery and automatically ANDs partition filters to keep results scoped and safe.
 
         Args:
             text: Query text.
@@ -430,6 +448,8 @@ class RedisProvider(ContextProvider):
     async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
         """Returns all documents in the index.
 
+        Streams results via pagination to avoid excessive memory and response sizes.
+
         Args:
             page_size: Page size used for pagination under the hood.
 
@@ -446,10 +466,16 @@ class RedisProvider(ContextProvider):
 
     @property
     def _effective_thread_id(self) -> str | None:
+        """Resolves the active thread id.
+
+        Returns per-operation thread id when scoping is enabled; otherwise the provider's thread id.
+        """
         return self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id
 
     async def thread_created(self, thread_id: str | None) -> None:
         """Called when a new thread is created.
+
+        Captures the per-operation thread id when scoping is enabled to enforce single-thread usage.
 
         Args:
             thread_id: The ID of the thread or None.
@@ -459,6 +485,8 @@ class RedisProvider(ContextProvider):
 
     async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
         """Called when a new message is being added to the thread.
+
+        Validates scope, normalizes allowed roles, and persists messages to Redis via add().
 
         Args:
             thread_id: The ID of the thread or None.
@@ -481,11 +509,10 @@ class RedisProvider(ContextProvider):
             await self.add(data=messages)
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
-        """Called before invoking the AI model to provide context.
+        """Called before invoking the model to provide scoped context.
 
-        Currently combines all messages by newline and searches as a query text.
-
-        Should this be changed to individual searches?
+        Concatenates recent messages into a query, fetches matching memories from Redis.
+        Prepends them as instructions.
 
         Args:
             messages: List of new messages in the thread.
@@ -505,15 +532,23 @@ class RedisProvider(ContextProvider):
         return Context(contents=[content] if content else None)
 
     async def __aenter__(self) -> Self:
-        """Async context manager entry."""
+        """Async context manager entry.
+
+        No special setup is required; provided for symmetry with the Mem0 provider.
+        """
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        """Async context manager exit."""
+        """Async context manager exit.
+
+        No cleanup is required; indexes/keys remain unless explicitly cleared.
+        """
         return
 
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided.
+
+        Prevents unbounded operations by requiring a partition filter before reads or writes.
 
         Raises:
             ServiceInitializationError: If no filters are provided.
@@ -525,6 +560,8 @@ class RedisProvider(ContextProvider):
 
     def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
         """Validates that a new thread ID doesn't conflict when scoped.
+
+        Prevents cross-thread data leakage by enforcing single-thread usage when per-operation scoping is enabled.
 
         Args:
             thread_id: The new thread ID or None.
