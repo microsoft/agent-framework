@@ -11,7 +11,7 @@ consulted: taochenosu, alliscode, moonbox3, johanste, stephentoub
 
 ## Context and Problem Statement
 
-There are a number of capabilities that are available for chat clients that either lack a content types to accurately capture the response, or that lack a abstracted tool to allow interchangability between chat clients. This ADR captures the proposed new types and tools, the rationale, and the alternatives considered and rejected.
+There are a number of capabilities that are available for chat clients that either lack a content types to accurately capture the response, or that lack a abstracted tool to allow interchangeability between chat clients. This ADR captures the proposed new types and tools, the rationale, and the alternatives considered and rejected.
 
 Currently in MEAI there are: HostedCodeInterpreterTool, HostedFileSearchTool, HostedMcpServerTool, HostedWebSearchTool.
 
@@ -88,7 +88,7 @@ TBD
 
 ## Bash or Shell Tools
 
-Multiple API's currently support Image Generation tools, such as OpenAI Responses [here](https://platform.openai.com/docs/api-reference/responses/create#responses-create-tools). And Anthropic Claude [here](https://docs.claude.com/en/docs/agents-and-tools/tool-use/bash-tool).
+Multiple API's currently support Bash or Shell tools, such as OpenAI Responses [here](https://platform.openai.com/docs/api-reference/responses/create#responses-create-tools). And Anthropic Claude [here](https://docs.claude.com/en/docs/agents-and-tools/tool-use/bash-tool).
 
 They work by having a local bash session which is fed with commands to execute, and the output is returned to the agent, for instance for Claude, the commands are `command` or `restart`.
 
@@ -109,7 +109,7 @@ and for OpenAI:
 
 The commands should then be taken and executed with the local shell session. In OpenAI Agents SDK this is built in, with something called the `LocalShellExecutor`.
 
-The bash and computer use tools are often used in conjuction to allow more control over a local machine.
+The bash and computer use tools are often used in conjunction to allow more control over a local machine.
 
 ### Considered Options
 
@@ -157,7 +157,7 @@ Several of the specialized tools also return specialized response types that are
 
 ## Code interpreter response type
 
-The Code Interpreter tool returns a response that often comprised of code, other inputs, stdout logs and files (usually images, for instance plots).
+The Code Interpreter tool returns a response that is often comprised of code, other inputs, stdout logs and files (usually images, for instance plots).
 
 The interesting thing about the code interpreter is that it can play the role both of a tool that get's executed to provide the right context or as a way to generate the response. In the first case you could consider the inputs and outputs as Annotation or a form of Reasoning, while in the latter it makes more sense to consider it a Content.
 
