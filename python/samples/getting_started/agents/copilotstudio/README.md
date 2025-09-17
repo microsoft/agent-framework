@@ -29,15 +29,15 @@ The examples use MSAL (Microsoft Authentication Library) for authentication. The
 
 Your Azure AD App Registration should have:
 
-1. **API Permissions**: 
+1. **API Permissions**:
    - Power Platform API permissions (https://api.powerplatform.com/.default)
    - Appropriate delegated permissions for your organization
 
-2. **Redirect URIs**: 
-   - For public client flows: `http://localhost` 
+2. **Redirect URIs**:
+   - For public client flows: `http://localhost`
    - Configure as appropriate for your authentication method
 
-3. **Authentication**: 
+3. **Authentication**:
    - Enable "Allow public client flows" if using interactive authentication
 
 ## Usage Patterns
@@ -45,11 +45,19 @@ Your Azure AD App Registration should have:
 ### Basic Usage with Environment Variables
 
 ```python
+import asyncio
 from agent_framework.copilotstudio import CopilotStudioAgent
 
 # Uses environment variables for configuration
-agent = CopilotStudioAgent()
-result = await agent.run("What is the capital of France?")
+async def main():
+    # Create agent using environment variables
+    agent = CopilotStudioAgent()
+
+    # Run a simple query
+    result = await agent.run("What is the capital of France?")
+    print(result)
+
+asyncio.run(main())
 ```
 
 ### Explicit Configuration
@@ -69,7 +77,8 @@ settings = ConnectionSettings(
     environment_id="your-environment-id",
     agent_identifier="your-agent-schema-name",
     cloud=PowerPlatformCloud.PROD,
-    copilot_agent_type=AgentType.PUBLISHED
+    copilot_agent_type=AgentType.PUBLISHED,
+    custom_power_platform_cloud=None
 )
 
 client = CopilotClient(settings=settings, token=token)
@@ -80,7 +89,7 @@ agent = CopilotStudioAgent(client=client)
 
 ### Common Issues
 
-1. **Authentication Errors**: 
+1. **Authentication Errors**:
    - Verify your App Registration has correct permissions
    - Ensure environment variables are set correctly
    - Check that your tenant ID and client ID are valid

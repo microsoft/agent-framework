@@ -2,16 +2,12 @@
 
 ## Installation
 
-To install the base `agent_framework.workflow` package, run:
-
-```bash
-pip install agent-framework-workflow
-```
+Workflow support ships with the core `agent-framework` package, so no extra installation step is required.
 
 To install with visualization support:
 
 ```bash
-pip install agent-framework-workflow[viz]
+pip install agent-framework[viz]
 ```
 
 To export visualization images you also need to [install GraphViz](https://graphviz.org/download/).
