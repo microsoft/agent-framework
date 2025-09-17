@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -13,6 +14,30 @@ internal class WorkflowMessageStore : IChatMessageStore
 {
     private int _bookmark = 0;
     private readonly List<ChatMessage> _chatMessages = new();
+
+    public WorkflowMessageStore()
+    {
+    }
+
+    public WorkflowMessageStore(JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (serializedStoreState.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("The provided JsonElement must be a json object", nameof(serializedStoreState));
+        }
+
+        StoreState? state =
+            JsonSerializer.Deserialize(
+                serializedStoreState,
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+
+        if (state?.Messages is not null)
+        {
+            this._chatMessages.AddRange(state.Messages);
+        }
+
+        this._bookmark = state?.Bookmark ?? 0;
+    }
 
     internal class StoreState
     {
@@ -48,31 +73,6 @@ internal class WorkflowMessageStore : IChatMessageStore
     public void UpdateBookmark()
     {
         this._bookmark = this._chatMessages.Count;
-    }
-
-    public ValueTask DeserializeStateAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        if (serializedStoreState is null)
-        {
-            return default;
-        }
-
-        object? maybeState =
-            JsonSerializer.Deserialize(
-                serializedStoreState.Value,
-                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
-
-        if (maybeState is not StoreState state)
-        {
-            throw new JsonException("Invalid state format for WorkflowMessageStore.");
-        }
-
-        this._chatMessages.Clear();
-        this._chatMessages.AddRange(state.Messages);
-
-        this._bookmark = state.Bookmark;
-
-        return default;
     }
 
     public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
