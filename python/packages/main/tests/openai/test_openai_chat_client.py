@@ -80,6 +80,22 @@ def test_init_base_url(openai_unit_test_env: dict[str, str]) -> None:
     assert str(open_ai_chat_completion.client.base_url) == "http://localhost:1234/v1/"
 
 
+def test_init_base_url_from_settings_env() -> None:
+    """Test that base_url from OpenAISettings environment variable is properly used."""
+    # Set environment variable for base_url
+    with patch.dict(
+        os.environ,
+        {
+            "OPENAI_API_KEY": "dummy",
+            "OPENAI_CHAT_MODEL_ID": "gpt-5",
+            "OPENAI_BASE_URL": "https://custom-openai-endpoint.com/v1",
+        },
+    ):
+        client = OpenAIChatClient()
+        assert client.ai_model_id == "gpt-5"
+        assert str(client.client.base_url) == "https://custom-openai-endpoint.com/v1/"
+
+
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):

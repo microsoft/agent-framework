@@ -27,6 +27,46 @@ public class AgentThread
     }
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="AgentThread"/> class from serialized state.
+    /// </summary>
+    /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    /// <param name="chatMessageStoreFactory">An optional factory function to create a custom <see cref="IChatMessageStore"/>.</param>
+    /// <param name="aiContextProviderFactory">An optional factory function to create a custom <see cref="AIContextProvider"/>.</param>
+    public AgentThread(
+        JsonElement serializedThreadState,
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = null,
+        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = null)
+    {
+        if (serializedThreadState.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
+        }
+
+        var state = JsonSerializer.Deserialize(
+            serializedThreadState,
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+
+        this.AIContextProvider = aiContextProviderFactory?.Invoke(state?.AIContextProviderState ?? default, jsonSerializerOptions);
+
+        if (state?.ConversationId is string threadId)
+        {
+            this.ConversationId = threadId;
+
+            // Since we have an ID, we should not have a chat message store and we can return here.
+            return;
+        }
+
+        this._messageStore = chatMessageStoreFactory?.Invoke(state?.StoreState ?? default, jsonSerializerOptions);
+        if (this._messageStore is null)
+        {
+            // If we didn't get a custom store, create an in-memory one.
+            this._messageStore = new InMemoryChatMessageStore(state?.StoreState ?? default, jsonSerializerOptions);
+        }
+    }
+
+    /// <summary>
     /// Gets or sets the ID of the underlying service thread to support cases where the chat history is stored by the agent service.
     /// </summary>
     /// <remarks>
@@ -173,47 +213,6 @@ public class AgentThread
             default:
                 throw new UnreachableException();
         }
-    }
-
-    /// <summary>
-    /// Deserializes the state contained in the provided <see cref="JsonElement"/> into the properties on this thread.
-    /// </summary>
-    /// <param name="serializedThread">A <see cref="JsonElement"/> representing the state of the thread.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ValueTask"/> that completes when the state has been deserialized.</returns>
-    protected internal virtual async Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        var state = JsonSerializer.Deserialize(
-            serializedThread,
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
-
-        if (state?.ConversationId is string threadId)
-        {
-            this.ConversationId = threadId;
-
-            // Since we have an ID, we should not have a chat message store and we can return here.
-            return;
-        }
-
-        if (state?.AIContextProviderState.HasValue is true && this.AIContextProvider is not null)
-        {
-            await this.AIContextProvider.DeserializeAsync(state.AIContextProviderState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
-        }
-
-        // If we don't have any IChatMessageStore state return here.
-        if (state?.StoreState is null || state?.StoreState.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
-        {
-            return;
-        }
-
-        if (this._messageStore is null)
-        {
-            // If we don't have a chat message store yet, create an in-memory one.
-            this._messageStore = new InMemoryChatMessageStore();
-        }
-
-        await this._messageStore.DeserializeStateAsync(state!.StoreState.Value, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
     }
 
     internal sealed class ThreadState

@@ -9,6 +9,7 @@ dependencies = [
     "agent-framework-copilotstudio",
     "agent-framework-foundry",
     "agent-framework-mem0",
+    "agent-framework-lab-gaia",
 ]
 
 [dependency-groups]
@@ -46,14 +47,15 @@ environments = [
 ]
 
 [tool.uv.workspace]
-members = [ "packages/*" ]
-exclude = [ "packages/agent_framework_project.egg-info" ]
+members = [ "packages/*", "packages/lab/*" ]
+exclude = [ "packages/agent_framework_project.egg-info", "packages/lab", "packages/lab/cookiecutter-agent-framework-lab", "packages/lab/README.md" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
 agent-framework-azure = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-foundry = { workspace = true }
+agent-framework-lab-gaia = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-runtime = { workspace = true }
 
@@ -162,7 +164,7 @@ exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_cod
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = """python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md"""
+markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab"""
 samples-code-check = """pyright ./samples"""
 docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
 docs-clean = "rm -rf docs/build"

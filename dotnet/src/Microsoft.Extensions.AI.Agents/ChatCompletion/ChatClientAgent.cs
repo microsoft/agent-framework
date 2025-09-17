@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -241,11 +242,15 @@ public sealed class ChatClientAgent : AIAgent
     {
         var thread = new AgentThread
         {
-            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(),
-            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke()
+            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null),
+            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(default, null)
         };
         return thread;
     }
+
+    /// <inheritdoc/>
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(serializedThread, jsonSerializerOptions, this._agentOptions?.ChatMessageStoreFactory, this._agentOptions?.AIContextProviderFactory);
 
     #region Private
 
@@ -493,7 +498,7 @@ public sealed class ChatClientAgent : AIAgent
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
             // with the custom MessageStore so that it has somewhere to store the chat history.
-            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
+            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null);
         }
     }
 
