@@ -778,7 +778,7 @@ class TestMiddlewareExecutionControl:
         assert isinstance(result, AgentRunResponse)
         assert result.messages == []  # Empty response
         assert not handler_called
-        assert context.response is None
+        assert context.result is None
 
     async def test_agent_middleware_no_next_no_streaming_execution(self, mock_agent: AgentProtocol) -> None:
         """Test that when agent middleware doesn't call next(), no streaming execution happens."""
@@ -810,7 +810,7 @@ class TestMiddlewareExecutionControl:
         # Verify no execution happened and no updates were yielded
         assert len(updates) == 0
         assert not handler_called
-        assert context.response is None
+        assert context.result is None
 
     async def test_function_middleware_no_next_no_execution(self, mock_function: AIFunction[Any, Any]) -> None:
         """Test that when function middleware doesn't call next(), no execution happens."""
@@ -882,40 +882,6 @@ class TestMiddlewareExecutionControl:
         assert result is not None
         assert isinstance(result, AgentRunResponse)
         assert result.messages == []  # Empty response
-        assert not handler_called
-
-    async def test_agent_middleware_pre_execution_override_with_next(self, mock_agent: AgentProtocol) -> None:
-        """Test that middleware can override response before calling next() - this skips handler execution."""
-
-        class PreOverrideMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
-                # Set override first
-                context.response = AgentRunResponse(
-                    messages=[ChatMessage(role=Role.ASSISTANT, text="pre-override response")]
-                )
-                # Then call next() to continue middleware pipeline
-                await next(context)
-
-        middleware = PreOverrideMiddleware()
-        pipeline = AgentMiddlewarePipeline([middleware])
-        messages = [ChatMessage(role=Role.USER, text="test")]
-        context = AgentRunContext(agent=mock_agent, messages=messages)
-
-        handler_called = False
-
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
-            nonlocal handler_called
-            handler_called = True
-            # This should not be called when response is pre-set
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="original response")])
-
-        result = await pipeline.execute(mock_agent, messages, context, final_handler)
-
-        # Verify pre-override worked and handler was NOT called (because response was already set)
-        assert result is not None
-        assert result.messages[0].text == "pre-override response"
         assert not handler_called
 
     async def test_function_middleware_pre_execution_override_with_next(

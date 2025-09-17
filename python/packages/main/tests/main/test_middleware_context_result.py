@@ -48,7 +48,7 @@ class TestResultOverrideMiddleware:
             ) -> None:
                 # Execute the pipeline first, then override the response
                 await next(context)
-                context.response = override_response
+                context.result = override_response
 
         middleware = ResponseOverrideMiddleware()
         pipeline = AgentMiddlewarePipeline([middleware])
@@ -84,7 +84,7 @@ class TestResultOverrideMiddleware:
             ) -> None:
                 # Execute the pipeline first, then override the response stream
                 await next(context)
-                context.response = override_stream()
+                context.result = override_stream()
 
         middleware = StreamResponseOverrideMiddleware()
         pipeline = AgentMiddlewarePipeline([middleware])
@@ -148,7 +148,7 @@ class TestResultOverrideMiddleware:
                 await next(context)
                 # Then conditionally override based on content
                 if any("special" in msg.text for msg in context.messages if msg.text):
-                    context.response = AgentRunResponse(
+                    context.result = AgentRunResponse(
                         messages=[ChatMessage(role=Role.ASSISTANT, text="Special response from middleware!")]
                     )
 
@@ -187,7 +187,7 @@ class TestResultOverrideMiddleware:
                 await next(context)
                 # Then conditionally override based on content
                 if any("custom stream" in msg.text for msg in context.messages if msg.text):
-                    context.response = custom_stream()
+                    context.result = custom_stream()
 
         # Create ChatAgent with override middleware
         middleware = ChatAgentStreamOverrideMiddleware()
@@ -246,7 +246,7 @@ class TestResultOverrideMiddleware:
         assert isinstance(no_execute_result, AgentRunResponse)
         assert no_execute_result.messages == []  # Empty response
         assert not handler_called
-        assert no_execute_context.response is None
+        assert no_execute_context.result is None
 
         # Reset for next test
         handler_called = False
@@ -320,15 +320,15 @@ class TestResultObservability:
                 self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
             ) -> None:
                 # Context should be empty before next()
-                assert context.response is None
+                assert context.result is None
 
                 # Call next to execute
                 await next(context)
 
                 # Context should now contain the response for observability
-                assert context.response is not None
-                assert isinstance(context.response, AgentRunResponse)
-                observed_responses.append(context.response)
+                assert context.result is not None
+                assert isinstance(context.result, AgentRunResponse)
+                observed_responses.append(context.result)
 
         middleware = ObservabilityMiddleware()
         pipeline = AgentMiddlewarePipeline([middleware])
@@ -391,12 +391,12 @@ class TestResultObservability:
                 await next(context)
 
                 # Now observe and conditionally override
-                assert context.response is not None
-                assert isinstance(context.response, AgentRunResponse)
+                assert context.result is not None
+                assert isinstance(context.result, AgentRunResponse)
 
-                if "modify" in context.response.messages[0].text:
+                if "modify" in context.result.messages[0].text:
                     # Override after observing
-                    context.response = AgentRunResponse(
+                    context.result = AgentRunResponse(
                         messages=[ChatMessage(role=Role.ASSISTANT, text="modified after execution")]
                     )
 
