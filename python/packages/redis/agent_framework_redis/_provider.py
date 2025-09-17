@@ -39,8 +39,6 @@ class RedisProvider(ContextProvider):
     redis_url: str = "redis://localhost:6379"
     index_name: str = "af_memory"
     prefix: str = "memory"
-    key_separator: str = ":"
-    storage_type: Literal["hash", "json"] = "hash"
     fresh_initialization: bool = False
 
     # Vector configuration (optional)
@@ -91,6 +89,28 @@ class RedisProvider(ContextProvider):
         overwrite_redis_index: bool = True,
         drop_redis_index: bool = True,
     ):
+        """Initializes a new instance of the RedisProvider class.
+
+        Args:
+            redis_url: Redis connection URL.
+            index_name: RediSearch index name.
+            prefix: Key prefix for stored documents.
+            fresh_initialization: Whether this is a fresh setup run.
+            vectorizer_api_key: API key for the chosen vectorizer or None.
+            vectorizer_choice: Vectorizer backend to use ("openai" or "hf") or None.
+            vector_field_name: Name of the vector field in the schema or None.
+            vector_datatype: Vector datatype if vectors are enabled.
+            vector_algorithm: Vector index algorithm if vectors are enabled.
+            vector_distance_metric: Vector distance metric if vectors are enabled.
+            application_id: Application scope filter or None.
+            agent_id: Agent scope filter or None.
+            user_id: User scope filter or None.
+            thread_id: Thread scope filter or None.
+            scope_to_per_operation_thread_id: Whether to scope to per-operation thread ID.
+            context_prompt: Prompt to prepend to retrieved memories.
+            overwrite_redis_index: Whether to overwrite the index on create.
+            drop_redis_index: Whether to drop the index before create.
+        """
         # Avoid mypy inferring unfollowed-import types for local variables
         vectorizer: Any | None = None
         if vectorizer_choice == "openai":
@@ -106,27 +126,22 @@ class RedisProvider(ContextProvider):
             vectorizer = OpenAITextVectorizer(
                 model="text-embedding-ada-002",
                 api_config={"api_key": vectorizer_api_key},
-                cache=EmbeddingsCache(name="openai_embeddings_cache"),
+                cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=redis_url),
             )
             vector_dims = vectorizer.dims
         elif vectorizer_choice == "hf":
             vectorizer = HFTextVectorizer(
-                model="sentence-transformers/all-MiniLM-L6-v2", cache=EmbeddingsCache(name="hf_embeddings_cache")
+                model="sentence-transformers/all-MiniLM-L6-v2",
+                cache=EmbeddingsCache(name="hf_embeddings_cache", redis_url=redis_url),
             )
             vector_dims = vectorizer.dims
         else:
             vectorizer = None
             vector_dims = None
 
-        # Opinionated vars - no customization required
-        key_separator: Final[str] = ":"  # local constant
-        storage_type: Final[Literal["hash", "json"]] = "hash"
-
         schema_dict = self._build_schema_dict(
             index_name=index_name,
             prefix=prefix,
-            key_separator=key_separator,
-            storage_type=storage_type,
             vector_field_name=vector_field_name,
             vector_dims=vector_dims,
             vector_datatype=vector_datatype,
@@ -142,8 +157,6 @@ class RedisProvider(ContextProvider):
             redis_url=redis_url,  # type: ignore[reportCallIssue]
             index_name=index_name,  # type: ignore[reportCallIssue]
             prefix=prefix,  # type: ignore[reportCallIssue]
-            key_separator=key_separator,  # type: ignore[reportCallIssue]
-            storage_type=storage_type,  # type: ignore[reportCallIssue]
             fresh_initialization=fresh_initialization,  # type: ignore[reportCallIssue]
             vectorizer_api_key=vectorizer_api_key,  # type: ignore[reportCallIssue]
             vectorizer_choice=vectorizer_choice,  # type: ignore[reportCallIssue]
@@ -166,6 +179,14 @@ class RedisProvider(ContextProvider):
         )
 
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
+        """Builds a combined filter expression from simple equality tags.
+
+        Args:
+            filters: Mapping of field name to value; falsy values are ignored.
+
+        Returns:
+            A combined filter expression or None if no filters are provided.
+        """
         parts = [Tag(k) == v for k, v in filters.items() if v]
         return reduce(and_, parts) if parts else None
 
@@ -174,14 +195,26 @@ class RedisProvider(ContextProvider):
         *,
         index_name: str,
         prefix: str,
-        key_separator: str,
-        storage_type: Literal["hash", "json"],
         vector_field_name: str | None,
         vector_dims: int | None,
         vector_datatype: Literal["float32", "float16", "bfloat16"] | None,
         vector_algorithm: Literal["flat", "hnsw"] | None,
         vector_distance_metric: Literal["cosine", "ip", "l2"] | None,
     ) -> dict[str, Any]:
+        """Builds the RediSearch schema configuration dictionary.
+
+        Args:
+            index_name: Index name.
+            prefix: Key prefix.
+            vector_field_name: Vector field name or None.
+            vector_dims: Vector dimensionality or None.
+            vector_datatype: Vector datatype or None.
+            vector_algorithm: Vector index algorithm or None.
+            vector_distance_metric: Vector distance metric or None.
+
+        Returns:
+            Dict representing the index and fields configuration.
+        """
         fields: list[dict[str, Any]] = [
             {"name": "role", "type": "tag"},
             {"name": "mime_type", "type": "tag"},
@@ -210,14 +243,14 @@ class RedisProvider(ContextProvider):
             "index": {
                 "name": index_name,
                 "prefix": prefix,
-                "key_separator": key_separator,
-                "storage_type": storage_type,
+                "key_separator": ":",
+                "storage_type": "hash",
             },
             "fields": fields,
         }
 
     async def _ensure_index(self) -> None:
-        """Test needed to verify behavior here."""
+        """Ensures the index exists, creating or dropping as configured."""
         if self.drop_redis_index:
             if not self.fresh_initialization:
                 await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
@@ -233,12 +266,14 @@ class RedisProvider(ContextProvider):
         data: dict[str, Any] | list[dict[str, Any]],
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Insert one or many documents with partition fields populated.
+        """Inserts one or many documents with partition fields populated.
 
-        - Accepts either a single dict or a list of dicts.
-        - Sets application_id/agent_id/user_id/thread_id from provider defaults if not provided.
-        - Requires 'content' field in each doc.
-        - If a vector field is configured, enforces presence (defaults to None).
+        Args:
+            data: Single document or list of documents to insert.
+            metadata: Optional metadata dictionary (unused placeholder).
+
+        Raises:
+            ServiceInvalidRequestError: If required fields are missing or invalid.
         """
         # Ensure provider has at least one scope set (symmetry with Mem0Provider)
         self._validate_filters()
@@ -296,11 +331,29 @@ class RedisProvider(ContextProvider):
         alpha: float = 0.7,
         dtype: Literal["float32", "float16", "bfloat16"] = "float32",
     ) -> list[dict[str, Any]]:
-        """Fulltext search over a text field with optional filters.
+        """Runs a text or hybrid vector-text search with optional filters.
 
-        - Applies provider partition filters (application_id/agent_id/user_id/thread_id) when set.
-        - Accepts an optional additional filter_expression which is ANDed with partition filters.
-        - Minimal, safe defaults; validate inputs and keep output shape simple (list of dicts).
+        Args:
+            text: Query text.
+            text_field_name: Text field to search.
+            text_scorer: Scorer to use for text ranking.
+            filter_expression: Additional filter expression to AND with partition filters.
+            return_fields: Fields to return in results.
+            num_results: Maximum number of results.
+            return_score: Whether to include scores for text-only search.
+            dialect: RediSearch dialect version.
+            sort_by: Field to sort by (text-only search).
+            in_order: Whether to preserve field order (text-only search).
+            params: Additional query params.
+            stopwords: Stopwords to apply.
+            alpha: Hybrid balancing parameter when vectors are enabled.
+            dtype: Vector dtype when vectors are enabled.
+
+        Returns:
+            List of result dictionaries.
+
+        Raises:
+            ServiceInvalidRequestError: If input is invalid or the query fails.
         """
         # Enforce presence of at least one provider-level filter (symmetry with Mem0Provider)
         await self._ensure_index()
@@ -375,7 +428,14 @@ class RedisProvider(ContextProvider):
             raise ServiceInvalidRequestError(f"Redis text search failed: {exc}") from exc
 
     async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
-        """Return all docs in the index (paginated under the hood)."""
+        """Returns all documents in the index.
+
+        Args:
+            page_size: Page size used for pagination under the hood.
+
+        Returns:
+            List of all documents.
+        """
         out: list[dict[str, Any]] = []
         async for batch in self.redis_index.paginate(
             FilterQuery(FilterExpression("*"), return_fields=[], num_results=page_size),
@@ -445,17 +505,18 @@ class RedisProvider(ContextProvider):
         return Context(contents=[content] if content else None)
 
     async def __aenter__(self) -> Self:
-        # Nothing special to do for Redis client; keep for symmetry with Mem0Provider
+        """Async context manager entry."""
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        # No-op; indexes/keys remain unless `close()` is called explicitly.
-        return None
+        """Async context manager exit."""
+        return
 
     def _validate_filters(self) -> None:
-        """Ensure at least one provider-level filter is set.
+        """Validates that at least one filter is provided.
 
-        Symmetry with Mem0Provider: require one of agent_id, user_id, application_id, or thread_id.
+        Raises:
+            ServiceInitializationError: If no filters are provided.
         """
         if not self.agent_id and not self.user_id and not self.application_id and not self.thread_id:
             raise ServiceInitializationError(
@@ -463,7 +524,14 @@ class RedisProvider(ContextProvider):
             )
 
     def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
-        """Validate exclusive per-operation thread id usage when scoping is enabled."""
+        """Validates that a new thread ID doesn't conflict when scoped.
+
+        Args:
+            thread_id: The new thread ID or None.
+
+        Raises:
+            ValueError: If a new thread ID conflicts with the existing one.
+        """
         if (
             self.scope_to_per_operation_thread_id
             and thread_id
