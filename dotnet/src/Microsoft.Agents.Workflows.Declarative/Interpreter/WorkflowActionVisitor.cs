@@ -68,7 +68,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                string completionId = this.ContinuationFor(item.Id.Value); // End scope
+                DelegateAction<ExecutorResultMessage>? action = null;
+                ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
+                if (conditionGroup is not null)
+                {
+                    action = conditionGroup.DoneAsync;
+                }
+                string completionId = this.ContinuationFor(item.Id.Value, action); // End scope
                 this._workflowModel.AddLinkFromPeer(item.Id.Value, completionId); // Connect with final action
                 this._workflowModel.AddLink(completionId, Steps.Post(parentId)); // Merge with parent scope
             }
@@ -175,10 +181,10 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
         if (loopExecutor is not null)
         {
-            string parentId = GetParentId(item);
-            this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId);
-            this._workflowModel.AddLink(item.Id.Value, Steps.Post(loopExecutor.Id));
-            this.RestartAfter(item.Id.Value, parentId);
+            DefaultActionExecutor breakLoopExecutor = new(item, this._workflowState);
+            this.ContinueWith(breakLoopExecutor);
+            this._workflowModel.AddLink(breakLoopExecutor.Id, Steps.Post(loopExecutor.Id));
+            this.RestartAfter(breakLoopExecutor.Id, breakLoopExecutor.ParentId);
         }
     }
 
@@ -189,10 +195,10 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
         if (loopExecutor is not null)
         {
-            string parentId = GetParentId(item);
-            this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId);
-            this._workflowModel.AddLink(item.Id.Value, ForeachExecutor.Steps.Next(loopExecutor.Id));
-            this.RestartAfter(item.Id.Value, parentId);
+            DefaultActionExecutor continueLoopExecutor = new(item, this._workflowState);
+            this.ContinueWith(continueLoopExecutor);
+            this._workflowModel.AddLink(continueLoopExecutor.Id, Steps.Post(loopExecutor.Id));
+            this.RestartAfter(continueLoopExecutor.Id, continueLoopExecutor.ParentId);
         }
     }
 
@@ -200,9 +206,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string parentId = GetParentId(item);
-        this.ContinueWith(new DelegateActionExecutor(item.Id.Value, this._workflowState), parentId);
-        this.RestartAfter(item.Id.Value, parentId);
+        DefaultActionExecutor endExecutor = new(item, this._workflowState);
+        this.ContinueWith(endExecutor);
+        this.RestartAfter(item.Id.Value, endExecutor.ParentId);
     }
 
     protected override void Visit(Question item)
