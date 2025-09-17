@@ -75,10 +75,10 @@ public static class Program
         // After the email assistant writes a response, it will be sent to the send email executor
         .AddEdge(emailAssistantExecutor, sendEmailExecutor)
         // Save the analysis result to the database if summary is not needed
-        .AddEdge(
+        .AddEdge<AnalysisResult>(
             emailAnalysisExecutor,
             databaseAccessExecutor,
-            condition: analysisResult => analysisResult is AnalysisResult result && result.EmailLength <= LongEmailThreshold)
+            condition: analysisResult => analysisResult is not null && analysisResult.EmailLength <= LongEmailThreshold)
         // Save the analysis result to the database with summary
         .AddEdge(emailSummaryExecutor, databaseAccessExecutor);
         var workflow = builder.Build<ChatMessage>();
@@ -107,21 +107,21 @@ public static class Program
     /// Creates a partitioner for routing messages based on the analysis result.
     /// </summary>
     /// <returns>A function that takes an analysis result and returns the target partitions.</returns>
-    private static Func<object?, int, IEnumerable<int>> GetPartitioner()
+    private static Func<AnalysisResult?, int, IEnumerable<int>> GetPartitioner()
     {
         return (analysisResult, targetCount) =>
         {
-            if (analysisResult is AnalysisResult result)
+            if (analysisResult is not null)
             {
-                if (result.spamDecision == SpamDecision.Spam)
+                if (analysisResult.spamDecision == SpamDecision.Spam)
                 {
                     return [0]; // Route to spam handler
                 }
-                else if (result.spamDecision == SpamDecision.NotSpam)
+                else if (analysisResult.spamDecision == SpamDecision.NotSpam)
                 {
                     List<int> targets = [1]; // Route to the email assistant
 
-                    if (result.EmailLength > LongEmailThreshold)
+                    if (analysisResult.EmailLength > LongEmailThreshold)
                     {
                         targets.Add(2); // Route to the email summarizer too
                     }

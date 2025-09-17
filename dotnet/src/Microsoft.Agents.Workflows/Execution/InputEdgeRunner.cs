@@ -35,7 +35,7 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         }
 
         // TODO: Throw instead? / Log
-        Debug.WriteLine($"Executor {target.Id} cannot handle message of type {envelope.MessageType.FullName}. Dropping.");
+        Debug.WriteLine($"Executor {target.Id} cannot handle message of type {envelope.MessageType.TypeName}. Dropping.");
 
         return null;
     }
