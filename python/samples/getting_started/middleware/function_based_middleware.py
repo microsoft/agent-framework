@@ -7,7 +7,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
-    AgentInvocationContext,
+    AgentRunContext,
     FunctionInvocationContext,
 )
 from agent_framework.foundry import FoundryChatClient
@@ -24,8 +24,8 @@ def get_weather(
 
 
 async def security_agent_middleware(
-    context: AgentInvocationContext,
-    next: Callable[[AgentInvocationContext], Awaitable[None]],
+    context: AgentRunContext,
+    next: Callable[[AgentRunContext], Awaitable[None]],
 ) -> None:
     """Agent middleware that checks for security violations."""
     # Check for potential security violations in the query

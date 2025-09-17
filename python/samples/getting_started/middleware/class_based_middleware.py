@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentInvocationContext, AgentMiddleware, FunctionInvocationContext, FunctionMiddleware
+from agent_framework import AgentMiddleware, AgentRunContext, FunctionInvocationContext, FunctionMiddleware
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -25,8 +25,8 @@ class SecurityAgentMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentInvocationContext,
-        next: Callable[[AgentInvocationContext], Awaitable[None]],
+        context: AgentRunContext,
+        next: Callable[[AgentRunContext], Awaitable[None]],
     ) -> None:
         # Check for potential security violations in the query
         # Look at the last user message
