@@ -12,12 +12,12 @@ internal sealed class WorkflowEvents
     {
         this.Events = workflowEvents;
         this.EventCounts = workflowEvents.GroupBy(e => e.GetType()).ToImmutableDictionary(e => e.Key, e => e.Count());
-        this.ActionInvokeEvents = workflowEvents.OfType<DeclarativeActionInvokeEvent>().ToImmutableList();
-        this.ActionCompleteEvents = workflowEvents.OfType<DeclarativeActionCompleteEvent>().ToImmutableList();
+        this.ActionInvokeEvents = workflowEvents.OfType<DeclarativeActionInvokedEvent>().ToImmutableList();
+        this.ActionCompleteEvents = workflowEvents.OfType<DeclarativeActionCompletedEvent>().ToImmutableList();
     }
 
     public ImmutableList<WorkflowEvent> Events { get; }
     public IImmutableDictionary<Type, int> EventCounts { get; }
-    public ImmutableList<DeclarativeActionInvokeEvent> ActionInvokeEvents { get; }
-    public ImmutableList<DeclarativeActionCompleteEvent> ActionCompleteEvents { get; private set; }
+    public ImmutableList<DeclarativeActionInvokedEvent> ActionInvokeEvents { get; }
+    public ImmutableList<DeclarativeActionCompletedEvent> ActionCompleteEvents { get; private set; }
 }

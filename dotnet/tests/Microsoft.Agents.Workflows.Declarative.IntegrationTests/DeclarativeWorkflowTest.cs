@@ -74,7 +74,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
 
         WorkflowEvents workflowEvents = await WorkflowHarness.RunAsync(workflow, (TInput)GetInput<TInput>(testcase));
-        foreach (DeclarativeActionInvokeEvent actionInvokeEvent in workflowEvents.ActionInvokeEvents)
+        foreach (DeclarativeActionInvokedEvent actionInvokeEvent in workflowEvents.ActionInvokeEvents)
         {
             this.Output.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
         }
