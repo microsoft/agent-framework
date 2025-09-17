@@ -78,6 +78,8 @@ class OpenAISettings(AFBaseSettings):
     Attributes:
         api_key: OpenAI API key, see https://platform.openai.com/account/api-keys
             (Env var OPENAI_API_KEY)
+        base_url: The base URL for the OpenAI API.
+            (Env var OPENAI_BASE_URL)
         org_id: This is usually optional unless your account belongs to multiple organizations.
             (Env var OPENAI_ORG_ID)
         chat_model_id: The OpenAI chat model ID to use, for example, gpt-3.5-turbo or gpt-4.
@@ -106,6 +108,7 @@ class OpenAISettings(AFBaseSettings):
     env_prefix: ClassVar[str] = "OPENAI_"
 
     api_key: SecretStr | None = None
+    base_url: str | None = None
     org_id: str | None = None
     chat_model_id: str | None = None
     responses_model_id: str | None = None
