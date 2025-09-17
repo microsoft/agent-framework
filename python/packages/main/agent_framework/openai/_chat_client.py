@@ -355,7 +355,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     if content.result is not None:
                         args["content"] = prepare_function_call_results(content.result)
                     elif content.exception is not None:
-                        args["content"] = str(content.exception)
+                        # Send the exception message to the model
+                        # Otherwise we won't have any channels to talk to OpenAI
+                        # TODO(yuge): This should ideally be customizable
+                        args["content"] = "Error: " + str(content.exception)
                 case _:
                     if "content" not in args:
                         args["content"] = []
