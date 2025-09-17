@@ -45,7 +45,7 @@ async Task AFAgent()
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddTransient((sp) => new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-        .GetChatClient(deploymentName)
+        .GetOpenAIResponseClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();

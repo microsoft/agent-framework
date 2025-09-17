@@ -10,21 +10,21 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class TemplateExtensions
 {
-    public static string? Format(this RecalcEngine engine, IEnumerable<TemplateLine> template)
+    public static string Format(this RecalcEngine engine, IEnumerable<TemplateLine> template)
     {
         return string.Concat(template.Select(line => engine.Format(line)));
     }
 
-    public static string? Format(this RecalcEngine engine, TemplateLine? line)
+    public static string Format(this RecalcEngine engine, TemplateLine? line)
     {
         return string.Concat(line?.Segments.Select(segment => engine.Format(segment)) ?? [string.Empty]);
     }
 
-    public static string? Format(this RecalcEngine engine, TemplateSegment segment)
+    public static string Format(this RecalcEngine engine, TemplateSegment segment)
     {
         if (segment is TextSegment textSegment)
         {
-            return textSegment.Value;
+            return textSegment.Value ?? string.Empty;
         }
 
         if (segment is ExpressionSegment expressionSegment)

@@ -82,7 +82,7 @@ namespace SampleApp
 
         public string? ThreadId => this._threadId;
 
-        public async Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+        public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
             this._threadId ??= Guid.NewGuid().ToString();
 

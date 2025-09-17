@@ -25,7 +25,7 @@ internal class WorkflowMessageStore : IChatMessageStore
         this._chatMessages.AddRange(messages);
     }
 
-    public Task AddMessagesAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    public Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
         this._chatMessages.AddRange(messages);
 

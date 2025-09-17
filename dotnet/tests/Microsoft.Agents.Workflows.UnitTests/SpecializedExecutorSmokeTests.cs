@@ -56,7 +56,7 @@ public class SpecializedExecutorSmokeTests
 
         public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
 
-        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new AgentRunResponse(this.Messages)
             {
@@ -65,7 +65,7 @@ public class SpecializedExecutorSmokeTests
             });
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             string responseId = Guid.NewGuid().ToString("N");
             foreach (ChatMessage message in this.Messages)
@@ -179,15 +179,16 @@ public class SpecializedExecutorSmokeTests
 
         await host.TakeTurnAsync(new TurnToken(emitEvents: false), collectingContext);
 
-        collectingContext.Updates.Should().HaveCount(4);
+        // The first empty message is skipped.
+        collectingContext.Updates.Should().HaveCount(MessageStrings.Length - 1);
 
-        for (int i = 0; i < MessageStrings.Length; i++)
+        for (int i = 1; i < MessageStrings.Length; i++)
         {
             string expectedText = MessageStrings[i];
             string[] expectedSplits = splits[i];
 
             ChatMessage equivalent = expected[i];
-            List<ChatMessage> collected = collectingContext.Updates[i];
+            List<ChatMessage> collected = collectingContext.Updates[i - 1];
 
             collected.Should().HaveCount(1);
             collected[0].Text.Should().Be(expectedText);

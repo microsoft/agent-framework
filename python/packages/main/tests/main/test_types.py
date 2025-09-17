@@ -21,6 +21,8 @@ from agent_framework import (
     DataContent,
     ErrorContent,
     FinishReason,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
@@ -38,6 +40,7 @@ from agent_framework import (
     UsageDetails,
     ai_function,
 )
+from agent_framework.exceptions import AdditionItemMismatch
 
 
 @fixture
@@ -296,9 +299,8 @@ def test_function_call_content_add_merging_and_errors():
     # incompatible call ids
     a = FunctionCallContent(call_id="1", name="f", arguments="abc")
     b = FunctionCallContent(call_id="2", name="f", arguments="def")
-    from agent_framework.exceptions import AgentFrameworkException
 
-    with raises(AgentFrameworkException):
+    with raises(AdditionItemMismatch):
         _ = a + b
 
 
@@ -377,6 +379,42 @@ def test_usage_details_add_with_none_and_type_errors():
         _ = u + 42  # type: ignore[arg-type]
     with raises(ValueError):
         u += 42  # type: ignore[arg-type]
+
+
+# region UserInputRequest and Response
+
+
+def test_function_approval_request_and_response_creation():
+    """Test creating a FunctionApprovalRequestContent and producing a response."""
+    fc = FunctionCallContent(call_id="call-1", name="do_something", arguments={"a": 1})
+    req = FunctionApprovalRequestContent(id="req-1", function_call=fc)
+
+    assert req.type == "function_approval_request"
+    assert req.function_call == fc
+    assert req.id == "req-1"
+    assert isinstance(req, BaseContent)
+
+    resp = req.create_response(True)
+
+    assert isinstance(resp, FunctionApprovalResponseContent)
+    assert resp.approved is True
+    assert resp.function_call == fc
+    assert resp.id == "req-1"
+
+
+def test_function_approval_serialization_roundtrip():
+    fc = FunctionCallContent(call_id="c2", name="f", arguments='{"x":1}')
+    req = FunctionApprovalRequestContent(id="id-2", function_call=fc, additional_properties={"meta": 1})
+
+    dumped = req.model_dump()
+    loaded = FunctionApprovalRequestContent.model_validate(dumped)
+    assert loaded == req
+
+    class TestModel(BaseModel):
+        content: Contents
+
+    test_item = TestModel.model_validate({"content": dumped})
+    assert isinstance(test_item.content, FunctionApprovalRequestContent)
 
 
 # region BaseContent Serialization

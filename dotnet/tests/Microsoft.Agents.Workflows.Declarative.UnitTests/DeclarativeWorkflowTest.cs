@@ -58,12 +58,21 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopContinueAction()
     {
         await this.RunWorkflow("LoopContinue.yaml");
-        this.AssertExecutionCount(expectedCount: 23);
+        this.AssertExecutionCount(expectedCount: 7);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("continueLoop_now");
         this.AssertExecuted("end_all");
         this.AssertNotExecuted("setVariable_loop");
         this.AssertNotExecuted("sendActivity_loop");
+    }
+
+    [Fact]
+    public async Task EndConversationAction()
+    {
+        await this.RunWorkflow("EndConversation.yaml");
+        this.AssertExecutionCount(expectedCount: 1);
+        this.AssertExecuted("end_all");
+        this.AssertNotExecuted("sendActivity_1");
     }
 
     [Fact]
@@ -89,7 +98,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("conditionItem_even");
+            this.AssertExecuted("conditionItem_even", isScope: true);
             this.AssertExecuted("sendActivity_even");
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
@@ -97,7 +106,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd");
+            this.AssertExecuted("conditionItem_odd", isScope: true);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("conditionItem_even");
             this.AssertNotExecuted("sendActivity_even");
@@ -117,13 +126,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("sendActivity_else");
+            this.AssertExecuted("sendActivity_else", isScope: true);
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd");
+            this.AssertExecuted("conditionItem_odd", isScope: true);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("sendActivity_else");
         }
@@ -135,6 +144,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 1, "parse_var")]
+    [InlineData("SendActivity.yaml", 2, "activity_input")]
+    [InlineData("SetVariable.yaml", 1, "set_var")]
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
@@ -168,7 +179,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(InvokeSkillAction.Builder))]
     [InlineData(typeof(LogCustomTelemetryEvent.Builder))]
     [InlineData(typeof(OAuthInput.Builder))]
-    [InlineData(typeof(Question.Builder))]
     [InlineData(typeof(RecognizeIntent.Builder))]
     [InlineData(typeof(RepeatDialog.Builder))]
     [InlineData(typeof(ReplaceDialog.Builder))]
@@ -192,41 +202,47 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 BeginDialog =
                     new OnActivity.Builder()
                     {
-                        Id = "workflow",
+                        Id = "anything",
                         Actions = [unsupportedAction]
                     }
             };
         AdaptiveDialog dialog = dialogBuilder.Build();
 
-        WorkflowScopes scopes = new();
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new RootExecutor(), new DeclarativeWorkflowState(RecalcEngineFactory.Create()), options);
-        WorkflowElementWalker walker = new(dialog, visitor);
+        WorkflowActionVisitor visitor = new(new RootExecutor(), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
     }
 
     private void AssertExecutionCount(int expectedCount)
     {
-        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokeEvent)]);
-        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorCompleteEvent)]);
+        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokedEvent)]);
+        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorCompletedEvent)]);
     }
 
     private void AssertNotExecuted(string executorId)
     {
-        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorInvokeEvent>(), e => e.ExecutorId == executorId);
-        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorCompleteEvent>(), e => e.ExecutorId == executorId);
+        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
+        Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
     }
 
-    private void AssertExecuted(string executorId)
+    private void AssertExecuted(string executorId, bool isScope = false)
     {
-        Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokeEvent>(), e => e.ExecutorId == executorId);
-        Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompleteEvent>(), e => e.ExecutorId == executorId);
+        Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
+        Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
+        if (!isScope)
+        {
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == executorId);
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == executorId);
+        }
     }
 
     private void AssertMessage(string message)
     {
-        Assert.Contains(this.WorkflowEvents.OfType<AgentRunResponseEvent>(), e => string.Equals(e.Response.Messages[0].Text.Trim(), message, StringComparison.Ordinal));
+        Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
     }
 
     private Task RunWorkflow(string workflowPath) => this.RunWorkflow<string>(workflowPath, string.Empty);
@@ -244,10 +260,18 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToImmutableList();
         foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
         {
-            if (workflowEvent is ExecutorInvokeEvent invokeEvent)
+            if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
-                DeclarativeExecutorResult? message = invokeEvent.Data as DeclarativeExecutorResult;
+                ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
+            }
+            else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)
+            {
+                this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
+            }
+            else if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
+            {
+                this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
             }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {
@@ -258,7 +282,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     private sealed class RootExecutor() :
-        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.RootId("workflow")),
+        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.Steps.Root("anything")),
         IMessageHandler<string>
     {
         public async ValueTask HandleAsync(string message, IWorkflowContext context)

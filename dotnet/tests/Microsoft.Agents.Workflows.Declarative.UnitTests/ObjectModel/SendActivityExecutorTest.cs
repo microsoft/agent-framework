@@ -22,12 +22,12 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
                 "Test activity message");
 
         // Act
-        SendActivityExecutor action = new(model, this.GetState());
+        SendActivityExecutor action = new(model, this.State);
         WorkflowEvent[] events = await this.Execute(action);
 
         // Assert
         this.VerifyModel(model, action);
-        Assert.Contains(events, e => e is AgentRunResponseEvent);
+        Assert.Contains(events, e => e is MessageActivityEvent);
     }
 
     private SendActivity CreateModel(string displayName, string activityMessage, string? summary = null)

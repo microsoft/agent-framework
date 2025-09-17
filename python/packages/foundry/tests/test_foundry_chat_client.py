@@ -18,12 +18,13 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    MCPStreamableHTTPTool,
     Role,
     TextContent,
     UriContent,
-    ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.foundry import FoundryChatClient, FoundrySettings
 from azure.ai.agents.models import (
     RequiredFunctionToolCall,
     SubmitToolOutputsAction,
@@ -32,8 +33,6 @@ from azure.ai.agents.models import (
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field, ValidationError
-
-from agent_framework_foundry import FoundryChatClient, FoundrySettings
 
 skip_if_foundry_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -61,8 +60,7 @@ def create_test_foundry_chat_client(
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
         agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
-        ai_model_deployment_name=foundry_settings.model_deployment_name,  # type:
-        credential=None,
+        ai_model_id=foundry_settings.model_deployment_name,
     )
 
 
@@ -315,7 +313,6 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
     )
 
     await chat_client._cleanup_agent_if_needed()  # type: ignore
-
     # Verify agent deletion was called
     mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
     assert not chat_client._should_delete_agent  # type: ignore
@@ -415,23 +412,6 @@ def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_proje
     # Verify image was converted to MessageInputImageUrlBlock
     message = run_options["additional_messages"][0]
     assert len(message.content) == 1
-
-
-def test_foundry_chat_client_convert_function_results_to_tool_output(mock_ai_project_client: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output method."""
-
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
-
-    function_results = [
-        FunctionResultContent(call_id='["run_123", "call_456"]', result="Result 1"),
-        FunctionResultContent(call_id='["run_123", "call_789"]', result="Result 2"),
-    ]
-
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output(function_results)  # type: ignore
-
-    assert run_id == "run_123"
-    assert tool_outputs is not None
-    assert len(tool_outputs) == 2
 
 
 def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_ai_project_client: MagicMock) -> None:
@@ -560,30 +540,6 @@ async def test_foundry_chat_client_get_agent_id_or_create_with_run_options(
     assert "tools" in call_args
     assert "instructions" in call_args
     assert "response_format" in call_args
-
-
-async def test_foundry_chat_client_create_agent_stream_with_tool_results(mock_ai_project_client: MagicMock) -> None:
-    """Test _create_agent_stream when tool results match active thread run."""
-    chat_client = create_test_foundry_chat_client(
-        mock_ai_project_client, agent_id="test-agent", thread_id="test-thread"
-    )
-
-    mock_thread_run = MagicMock()
-    mock_thread_run.id = "run_123"
-    mock_thread_run.thread_id = "test-thread"
-
-    with patch.object(chat_client, "_get_active_thread_run", return_value=mock_thread_run):
-        tool_results = [FunctionResultContent(call_id='["run_123", "call_456"]', result="Result")]
-
-        mock_handler = MagicMock()
-        mock_ai_project_client.agents.runs.submit_tool_outputs_stream = AsyncMock(return_value=None)
-
-        with patch("agent_framework_foundry._chat_client.AsyncAgentEventHandler", return_value=mock_handler):
-            stream, thread_id = await chat_client._create_agent_stream("test-thread", "test-agent", {}, tool_results)  # type: ignore
-
-            assert stream is mock_handler
-            assert thread_id == "test-thread"
-            mock_ai_project_client.agents.runs.submit_tool_outputs_stream.assert_called_once()
 
 
 async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_project_client: MagicMock) -> None:
@@ -881,6 +837,27 @@ async def test_foundry_chat_client_agent_code_interpreter():
 
 
 @skip_if_foundry_integration_tests_disabled
+async def test_foundry_chat_client_agent_with_mcp_tools() -> None:
+    """Test MCP tools defined at agent creation with FoundryChatClient."""
+    async with ChatAgent(
+        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
+        name="DocsAgent",
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=MCPStreamableHTTPTool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+        ),
+    ) as agent:
+        # Test that the agent can use MCP tools to answer questions
+        response = await agent.run("What is Azure App Service?")
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        # Verify the response contains relevant information about Azure App Service
+        assert any(term in response.text.lower() for term in ["app service", "azure", "web", "application"])
+
+
+@skip_if_foundry_integration_tests_disabled
 async def test_foundry_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with FoundryChatClient."""
     async with ChatAgent(
@@ -903,42 +880,3 @@ async def test_foundry_chat_client_agent_level_tool_persistence():
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
-
-
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_run_level_tool_isolation():
-    """Test that run-level tools are isolated to specific runs and don't persist with FoundryChatClient."""
-    # Counter to track how many times the weather tool is called
-    call_count = 0
-
-    @ai_function
-    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
-        """Get the current weather in a given location."""
-        nonlocal call_count
-        call_count += 1
-        return f"The weather in {location} is sunny and 25°C."
-
-    async with ChatAgent(
-        chat_client=FoundryChatClient(async_credential=AzureCliCredential()),
-        instructions="You are a helpful assistant.",
-    ) as agent:
-        # First run - use run-level tool
-        first_response = await agent.run(
-            "What's the weather like in Chicago?",
-            tools=[get_weather_with_counter],  # Run-level tool
-        )
-
-        assert isinstance(first_response, AgentRunResponse)
-        assert first_response.text is not None
-        # Should use the run-level weather tool (call count should be 1)
-        assert call_count == 1
-        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "25"])
-
-        # Second run - run-level tool should NOT persist (key isolation test)
-        second_response = await agent.run("What's the weather like in Miami?")
-
-        assert isinstance(second_response, AgentRunResponse)
-        assert second_response.text is not None
-        # Should NOT use the weather tool since it was only run-level in previous call
-        # Call count should still be 1 (no additional calls)
-        assert call_count == 1

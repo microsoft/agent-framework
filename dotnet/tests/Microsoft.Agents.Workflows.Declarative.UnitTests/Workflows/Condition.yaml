@@ -9,7 +9,7 @@ beginDialog:
     - kind: SetVariable
       id: setVariable_test
       variable: Topic.TestValue
-      value: =Value(System.LastMessage.Text)
+      value: =System.LastMessageText
 
     - kind: ConditionGroup
       id: conditionGroup_test
