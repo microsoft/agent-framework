@@ -8,20 +8,25 @@ namespace Microsoft.Agents.Workflows;
 /// <summary>
 /// Represents a connection from a set of nodes to a single node. It will trigger either when all edges have data.
 /// </summary>
-/// <param name="sourceIds">An enumeration of ids of the source executor nodes.</param>
-/// <param name="sinkId">The id of the target executor node.</param>
-public sealed class FanInEdgeData(List<string> sourceIds, string sinkId) : EdgeData
+internal sealed class FanInEdgeData : EdgeData
 {
+    internal FanInEdgeData(List<string> sourceIds, string sinkId, EdgeId id) : base(id)
+    {
+        this.SourceIds = sourceIds;
+        this.SinkId = sinkId;
+        this.Connection = new(sourceIds, [sinkId]);
+    }
+
     /// <summary>
     /// The ordered list of Ids of the source <see cref="Executor"/> nodes.
     /// </summary>
-    public List<string> SourceIds => sourceIds;
+    public List<string> SourceIds { get; }
 
     /// <summary>
     /// The Id of the destination <see cref="Executor"/> node.
     /// </summary>
-    public string SinkId => sinkId;
+    public string SinkId { get; }
 
     /// <inheritdoc />
-    internal override EdgeConnection Connection { get; } = new(sourceIds, [sinkId]);
+    internal override EdgeConnection Connection { get; }
 }
