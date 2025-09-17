@@ -37,6 +37,7 @@ internal static class AIContentExtensions
     {
         return content switch
         {
+            TextInputResponseContent inputResponseConvent => new TextPart { Text = inputResponseConvent.Text ?? string.Empty },
             TextContent textContent => new TextPart { Text = textContent.Text },
             HostedFileContent hostedFileContent => new FilePart { File = new FileWithUri { Uri = hostedFileContent.FileId } },
             _ => throw new NotSupportedException($"Unsupported content type: {content.GetType().Name}."),

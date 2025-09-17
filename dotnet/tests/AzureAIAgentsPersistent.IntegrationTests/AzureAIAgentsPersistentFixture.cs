@@ -66,7 +66,7 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
         var persistentAgent = persistentAgentResponse.Value;
 
         return new ChatClientAgent(
-            this._persistentAgentsClient.AsIChatClient(persistentAgent.Id),
+            this._persistentAgentsClient.AsNewIChatClient(persistentAgent.Id),
             options: new()
             {
                 Id = persistentAgent.Id,

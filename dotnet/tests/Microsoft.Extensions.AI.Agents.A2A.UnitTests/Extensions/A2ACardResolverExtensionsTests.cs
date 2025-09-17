@@ -68,7 +68,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
             Parts = new List<Part> { new TextPart { Text = "Response" } },
         });
 
-        var agent = await this._resolver.GetAIAgentAsync(this._httpClient);
+        var agent = await this._resolver.GetAIAgentAsync(httpClient: this._httpClient);
 
         // Act
         await agent.RunAsync("Test input");

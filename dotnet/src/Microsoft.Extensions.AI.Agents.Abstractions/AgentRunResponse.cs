@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
+
 #if NET9_0_OR_GREATER
 using System.Buffers;
 #endif
@@ -62,6 +64,7 @@ public class AgentRunResponse
         this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
         this.Usage = response.Usage;
+        this.ContinuationToken = (response as NewChatResponse)?.ContinuationToken;
     }
 
     /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
@@ -122,6 +125,11 @@ public class AgentRunResponse
     /// <summary>Gets or sets any additional properties associated with the run response.</summary>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 
+    /// <summary>
+    /// Represent a token that can be used to retrieve result of a long-running operation.
+    /// </summary>
+    public ContinuationToken? ContinuationToken { get; set; }
+
     /// <inheritdoc />
     public override string ToString() => this.Text;
 
@@ -162,6 +170,7 @@ public class AgentRunResponse
                 ResponseId = this.ResponseId,
                 MessageId = message.MessageId,
                 CreatedAt = this.CreatedAt,
+                ContinuationToken = this.ContinuationToken
             };
         }
 

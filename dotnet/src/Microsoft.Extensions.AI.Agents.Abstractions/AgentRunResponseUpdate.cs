@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -74,6 +75,7 @@ public class AgentRunResponseUpdate
         this.RawRepresentation = chatResponseUpdate;
         this.ResponseId = chatResponseUpdate.ResponseId;
         this.Role = chatResponseUpdate.Role;
+        this.ContinuationToken = (chatResponseUpdate as NewChatResponseUpdate)?.ContinuationToken;
     }
 
     /// <summary>Gets or sets the name of the author of the response update.</summary>
@@ -143,6 +145,11 @@ public class AgentRunResponseUpdate
 
     /// <summary>Gets or sets a timestamp for the response update.</summary>
     public DateTimeOffset? CreatedAt { get; set; }
+
+    /// <summary>
+    /// Represent a token that can be used to retrieve result of a long-running operation.
+    /// </summary>
+    public ContinuationToken? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;
