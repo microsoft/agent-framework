@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
 import base64
@@ -27,17 +27,10 @@ async def test_image():
     response = await client.get_response(message)
     print(f"Image Response: {response}")
 
-async def test_audio():
-    """Test audio analysis with Azure (Note: requires gpt-4o-audio-preview model)."""
-    print("Note: Audio requires gpt-4o-audio-preview or similar model in Azure deployment")
-    # Audio example commented out since current Azure deployment doesn't support audio
-    # client = AzureChatClient()
-    # ... audio code would go here
 
 async def main():
     print("=== Testing Azure Multimodal ===")
-    await test_image()
-    await test_audio()
+    await test_image() 
 
 if __name__ == "__main__":
     asyncio.run(main())

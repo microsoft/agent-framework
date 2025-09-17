@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
 import base64
