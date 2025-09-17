@@ -404,8 +404,8 @@ class RedisProvider(ContextProvider):
                     stopwords=normalized_stopwords,
                     dialect=dialect,
                 )
-                results = await self.redis_index.query(query)
-                return cast(list[dict[str, Any]], results)
+                hybrid_results = await self.redis_index.query(query)
+                return cast(list[dict[str, Any]], hybrid_results)
             # Text-only search
             query = TextQuery(
                 text=q,
@@ -422,8 +422,8 @@ class RedisProvider(ContextProvider):
                 in_order=in_order,
                 params=params,
             )
-            results2 = await self.redis_index.query(query)
-            return cast(list[dict[str, Any]], results2)
+            text_results = await self.redis_index.query(query)
+            return cast(list[dict[str, Any]], text_results)
         except Exception as exc:  # pragma: no cover - surface as framework error
             raise ServiceInvalidRequestError(f"Redis text search failed: {exc}") from exc
 
