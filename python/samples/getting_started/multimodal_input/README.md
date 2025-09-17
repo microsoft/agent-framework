@@ -10,7 +10,7 @@ This folder contains examples demonstrating how to send multimodal content (imag
 - **Supported formats**: PNG/JPEG images, WAV/MP3 audio, PDF documents
 
 ### Azure Chat Client
-- **File**: `azure_chat_client_multimodal.py`
+- **File**: `azure_chat_multimodal.py`
 - **Description**: Shows how to send multimodal content to Azure OpenAI service
 - **Supported formats**: PNG/JPEG images, WAV/MP3 audio, PDF documents
 
