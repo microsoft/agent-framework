@@ -40,7 +40,7 @@ internal static class AgentBotElementYaml
     }
 
     /// <summary>
-    /// Normalizing the <see cref="AgentDefinition"/> makes the following changes:
+    /// Normalizing the <see cref="GptComponentMetadata"/> makes the following changes:
     /// <ul>
     ///     <li>
     ///     All string properties that are delimited with "${" and "}" will be resolved as variables from the provided <see cref="IConfiguration"/>.

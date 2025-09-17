@@ -31,7 +31,7 @@ public abstract class AgentFactory
     }
 
     /// <summary>
-    /// Return true if this instance of <see cref="AgentFactory"/> supports creating agents from the provided <see cref="AgentDefinition"/>
+    /// Return true if this instance of <see cref="AgentFactory"/> supports creating agents from the provided <see cref="GptComponentMetadata"/>
     /// </summary>
     /// <param name="agentDefinition">Definition of the agent to check is supported.</param>
     public bool IsSupported(GptComponentMetadata agentDefinition)
@@ -40,7 +40,7 @@ public abstract class AgentFactory
     }
 
     /// <summary>
-    /// Create a <see cref="AIAgent"/> from the specified <see cref="AgentDefinition"/>.
+    /// Create a <see cref="AIAgent"/> from the specified <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="agentDefinition">Definition of the agent to create.</param>
     /// <param name="agentCreationOptions">Options used when creating the agent.</param>
@@ -55,7 +55,7 @@ public abstract class AgentFactory
     }
 
     /// <summary>
-    /// Tries to create a <see cref="AIAgent"/> from the specified <see cref="AgentDefinition"/>.
+    /// Tries to create a <see cref="AIAgent"/> from the specified <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="agentDefinition">Definition of the agent to create.</param>
     /// <param name="agentCreationOptions">Options used when creating the agent.</param>

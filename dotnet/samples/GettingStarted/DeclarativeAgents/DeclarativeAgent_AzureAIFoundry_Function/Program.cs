@@ -94,7 +94,7 @@ namespace Sample
         [Description("Provides the price of the requested menu item.")]
         public float? GetItemPrice(
             [Description("The name of the menu item.")]
-        string menuItem)
+            string menuItem)
         {
             return s_menuItems.FirstOrDefault(i => i.Name.Equals(menuItem, StringComparison.OrdinalIgnoreCase))?.Price;
         }

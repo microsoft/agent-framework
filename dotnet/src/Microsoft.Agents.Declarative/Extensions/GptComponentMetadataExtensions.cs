@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -140,4 +142,29 @@ public static class GptComponentMetadataExtensions
         var metadataValue = element.ExtensionData?.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("metadata"));
         return metadataValue?.Values.Length > 0 ? metadataValue.Values[0].ToDictionary() : null;
     }
+
+    #region Internal Methods
+    internal static ChatClientAgentOptions ToChatClientAgentOptions(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        return new ChatClientAgentOptions
+        {
+            Name = element.GetName(),
+            Description = element.GetDescription(),
+            Instructions = element.GetInstructions(),
+            ChatOptions = element.ToChatOptions(),
+        };
+    }
+
+    internal static ChatOptions ToChatOptions(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        return new ChatOptions
+        {
+            // TODO: Map other properties as needed
+        };
+    }
+    #endregion
 }
