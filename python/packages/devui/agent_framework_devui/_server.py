@@ -257,7 +257,7 @@ class DevServer:
                 return JSONResponse(status_code=500, content=error.model_dump())
 
         @app.post("/v1/threads")
-        async def create_thread(request_data: dict) -> dict:
+        async def create_thread(request_data: dict[str, Any]) -> dict[str, Any]:
             """Create a new thread for an agent."""
             try:
                 agent_id = request_data.get("agent_id")
@@ -280,7 +280,7 @@ class DevServer:
                 raise HTTPException(status_code=500, detail=f"Failed to create thread: {e!s}") from e
 
         @app.get("/v1/threads")
-        async def list_threads(agent_id: str) -> dict:
+        async def list_threads(agent_id: str) -> dict[str, Any]:
             """List threads for an agent."""
             try:
                 executor = await self._ensure_executor()
@@ -297,7 +297,7 @@ class DevServer:
                 raise HTTPException(status_code=500, detail=f"Failed to list threads: {e!s}") from e
 
         @app.get("/v1/threads/{thread_id}")
-        async def get_thread(thread_id: str) -> dict:
+        async def get_thread(thread_id: str) -> dict[str, Any]:
             """Get thread information."""
             try:
                 executor = await self._ensure_executor()
@@ -318,7 +318,7 @@ class DevServer:
                 raise HTTPException(status_code=500, detail=f"Failed to get thread: {e!s}") from e
 
         @app.delete("/v1/threads/{thread_id}")
-        async def delete_thread(thread_id: str) -> dict:
+        async def delete_thread(thread_id: str) -> dict[str, Any]:
             """Delete a thread."""
             try:
                 executor = await self._ensure_executor()
@@ -335,7 +335,7 @@ class DevServer:
                 raise HTTPException(status_code=500, detail=f"Failed to delete thread: {e!s}") from e
 
         @app.get("/v1/threads/{thread_id}/messages")
-        async def get_thread_messages(thread_id: str) -> dict:
+        async def get_thread_messages(thread_id: str) -> dict[str, Any]:
             """Get messages from a thread."""
             try:
                 executor = await self._ensure_executor()

@@ -119,7 +119,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
         del self.thread_storage[thread_id]
         return True
 
-    async def get_thread_messages(self, thread_id: str) -> list[dict]:
+    async def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
         """Get messages from a thread's message store, filtering for UI display."""
         thread = self.get_thread(thread_id)
         if not thread or not thread.message_store:
@@ -166,7 +166,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             logger.error(traceback.format_exc())
             return []
 
-    def _extract_display_text(self, contents: list) -> str:
+    def _extract_display_text(self, contents: list[Any]) -> str:
         """Extract user-facing text from message contents, filtering out internal mechanics."""
         text_parts = []
 
@@ -196,7 +196,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
 
         return " ".join(text_parts).strip()
 
-    async def serialize_thread(self, thread_id: str) -> dict | None:
+    async def serialize_thread(self, thread_id: str) -> dict[str, Any] | None:
         """Serialize thread state for persistence."""
         thread = self.get_thread(thread_id)
         if not thread:
@@ -216,7 +216,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             logger.error(f"Error serializing thread {thread_id}: {e}")
             return None
 
-    async def deserialize_thread(self, thread_id: str, agent_id: str, serialized_state: dict) -> bool:
+    async def deserialize_thread(self, thread_id: str, agent_id: str, serialized_state: dict[str, Any]) -> bool:
         """Deserialize thread state from persistence."""
         try:
             # Create new thread
