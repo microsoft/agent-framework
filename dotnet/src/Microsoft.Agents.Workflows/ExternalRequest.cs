@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -9,11 +10,25 @@ namespace Microsoft.Agents.Workflows;
 /// <summary>
 /// Represents a request to an external input port.
 /// </summary>
-/// <param name="Port">The port to invoke.</param>
+/// <param name="PortInfo">The port to invoke.</param>
 /// <param name="RequestId">A unique identifier for this request instance.</param>
 /// <param name="Data">The data contained in the request.</param>
-public record ExternalRequest(InputPort Port, string RequestId, object Data)
+public record ExternalRequest(InputPortInfo PortInfo, string RequestId, PortableValue Data)
 {
+    /// <summary>
+    /// Attempts to retrieve the underlying data as the specified type.
+    /// </summary>
+    /// <typeparam name="TValue">The type to which the data should be cast or converted.</typeparam>
+    /// <returns>The data cast to the specified type, or null if the data cannot be cast to the specified type.</returns>
+    public TValue? DataAs<TValue>() => this.Data.As<TValue>();
+
+    /// <summary>
+    /// Determines whether the underlying data is of the specified type.
+    /// </summary>
+    /// <typeparam name="TValue">The type to compare with the underlying data.</typeparam>
+    /// <returns>true if the underlying data is of type TValue; otherwise, false.</returns>
+    public bool DataIs<TValue>() => this.Data.Is<TValue>();
+
     /// <summary>
     /// Creates a new <see cref="ExternalRequest"/> for the specified input port and data payload.
     /// </summary>
@@ -32,7 +47,7 @@ public record ExternalRequest(InputPort Port, string RequestId, object Data)
 
         requestId ??= Guid.NewGuid().ToString("N");
 
-        return new ExternalRequest(port, requestId, data);
+        return new ExternalRequest(port.ToPortInfo(), requestId, new PortableValue(data));
     }
 
     /// <summary>
@@ -53,13 +68,13 @@ public record ExternalRequest(InputPort Port, string RequestId, object Data)
     /// <exception cref="InvalidOperationException">Thrown when the input data object does not match the expected response type.</exception>
     public ExternalResponse CreateResponse(object data)
     {
-        if (!Throw.IfNull(this.Port).Response.IsAssignableFrom(Throw.IfNull(data).GetType()))
+        if (!Throw.IfNull(this.PortInfo).ResponseType.IsMatchPolymorphic(Throw.IfNull(data).GetType()))
         {
             throw new InvalidOperationException(
-                $"Message type {data.GetType().Name} is not assignable to the response type {this.Port.Response.Name} of input port {this.Port.Id}.");
+                $"Message type {data.GetType().Name} does not match expected response type {this.PortInfo.ResponseType.TypeName} of input port {this.PortInfo.PortId}.");
         }
 
-        return new ExternalResponse(this.Port, this.RequestId, data);
+        return new ExternalResponse(this.PortInfo, this.RequestId, new PortableValue(data));
     }
 
     /// <summary>

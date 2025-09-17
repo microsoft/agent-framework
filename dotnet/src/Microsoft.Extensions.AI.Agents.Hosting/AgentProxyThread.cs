@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Shared.Diagnostics;
 
@@ -52,6 +53,16 @@ internal sealed partial class AgentProxyThread : AgentThread
     /// Initializes a new instance of the <see cref="AgentProxyThread"/> class with the specified identifier.
     /// </summary>
     public AgentProxyThread() : this(CreateId())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentProxyThread"/> class from serialized state.
+    /// </summary>
+    /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    public AgentProxyThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+        : base(serializedThreadState, jsonSerializerOptions)
     {
     }
 

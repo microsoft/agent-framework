@@ -1,0 +1,20 @@
+{
+    "package_name": "",
+    "package_display_name": "",
+    "package_description": "{{ cookiecutter.package_display_name }} module for Microsoft Agent Framework.",
+    "version": "0.1.0b1",
+    "author_name": "Microsoft",
+    "author_email": "SK-Support@microsoft.com",
+    "license": "MIT",
+    "include_cli_script": ["y", "n"],
+    "cli_script_name": "{{ cookiecutter.package_name }}_cli",
+    "python_requires": ">=3.10",
+    "within_microsoft_agent_framework_repo": ["y", "n"],
+    "__prompts__": {
+        "within_microsoft_agent_framework_repo": "Are you creating this package within the github.com/microsoft/agent-framework repo or a fork of it? (If yes, ensure you create it in python/packages/lab/ directory)"
+    },
+    "_templates_suffix": "",
+    "_copy_without_render": [
+        "*.py.typed"
+    ]
+}

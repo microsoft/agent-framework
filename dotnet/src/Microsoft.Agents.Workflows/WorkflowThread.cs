@@ -25,17 +25,17 @@ internal class WorkflowThread : AgentThread
         this._workflowName = workflowName;
     }
 
+    public WorkflowThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        throw new NotImplementedException("Pending Checkpointing work.");
+    }
+
     public string RunId { get; }
     public int Halts { get; } = 0;
 
     public string ResponseId => $"{this.RunId}@{this.Halts}";
 
     public override Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        throw new NotImplementedException("Pending Checkpointing work.");
-    }
-
-    protected override Task DeserializeAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         throw new NotImplementedException("Pending Checkpointing work.");
     }

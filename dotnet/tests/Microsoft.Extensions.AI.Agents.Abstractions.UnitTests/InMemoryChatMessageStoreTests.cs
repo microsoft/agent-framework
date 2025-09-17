@@ -89,19 +89,17 @@ public class InMemoryChatMessageStoreTests
     }
 
     [Fact]
-    public async Task DeserializeWithEmptyElementAsync()
+    public async Task DeserializeConstructorWithEmptyElementAsync()
     {
-        var newStore = new InMemoryChatMessageStore();
-
         var emptyObject = JsonSerializer.Deserialize<JsonElement>("{}", TestJsonSerializerContext.Default.JsonElement);
 
-        await newStore.DeserializeStateAsync(emptyObject);
+        var newStore = new InMemoryChatMessageStore(emptyObject);
 
         Assert.Empty(newStore);
     }
 
     [Fact]
-    public async Task SerializeAndDeserializeRoundtripsAsync()
+    public async Task SerializeAndDeserializeConstructorRoundtripsAsync()
     {
         var store = new InMemoryChatMessageStore
         {
@@ -110,9 +108,7 @@ public class InMemoryChatMessageStoreTests
         };
 
         var jsonElement = await store.SerializeStateAsync();
-        var newStore = new InMemoryChatMessageStore();
-
-        await newStore.DeserializeStateAsync(jsonElement);
+        var newStore = new InMemoryChatMessageStore(jsonElement.Value);
 
         Assert.Equal(2, newStore.Count);
         Assert.Equal("A", newStore[0].Text);
@@ -141,57 +137,49 @@ public class InMemoryChatMessageStoreTests
     }
 
     [Fact]
-    public async Task DeserializeStateAsync_WithNullSerializedState_DoesNothingAsync()
+    public void DeserializeContructor_WithNullSerializedState_CreatesEmptyStore()
     {
-        // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "Existing message"));
-
         // Act
-        await store.DeserializeStateAsync(null);
+        var store = new InMemoryChatMessageStore(new JsonElement());
 
-        // Assert - Should still have the existing message
-        Assert.Single(store);
-        Assert.Equal("Existing message", store[0].Text);
+        // Assert
+        Assert.Empty(store);
     }
 
     [Fact]
-    public async Task DeserializeStateAsync_WithEmptyMessages_DoesNotAddMessagesAsync()
+    public async Task DeserializeContructor_WithEmptyMessages_DoesNotAddMessagesAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
         var stateWithEmptyMessages = JsonSerializer.SerializeToElement(
             new Dictionary<string, object> { ["Messages"] = new List<ChatMessage>() },
             TestJsonSerializerContext.Default.IDictionaryStringObject);
 
         // Act
-        await store.DeserializeStateAsync(stateWithEmptyMessages);
+        var store = new InMemoryChatMessageStore(stateWithEmptyMessages);
 
         // Assert
         Assert.Empty(store);
     }
 
     [Fact]
-    public async Task DeserializeStateAsync_WithNullMessages_DoesNotAddMessagesAsync()
+    public async Task DeserializeConstructor_WithNullMessages_DoesNotAddMessagesAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
         var stateWithNullMessages = JsonSerializer.SerializeToElement(
             new Dictionary<string, object> { ["Messages"] = null! },
             TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
-        await store.DeserializeStateAsync(stateWithNullMessages);
+        var store = new InMemoryChatMessageStore(stateWithNullMessages);
 
         // Assert
         Assert.Empty(store);
     }
 
     [Fact]
-    public async Task DeserializeStateAsync_WithValidMessages_AddsMessagesAsync()
+    public async Task DeserializeConstructor_WithValidMessages_AddsMessagesAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
         var messages = new List<ChatMessage>
         {
             new(ChatRole.User, "User message"),
@@ -203,7 +191,7 @@ public class InMemoryChatMessageStoreTests
             TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
-        await store.DeserializeStateAsync(serializedState);
+        var store = new InMemoryChatMessageStore(serializedState);
 
         // Assert
         Assert.Equal(2, store.Count);
