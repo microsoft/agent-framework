@@ -40,7 +40,7 @@ await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(serializedTh
 JsonElement reloadedSerializedThread = JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(tempFilePath));
 
 // Deserialize the thread state after loading from storage.
-AgentThread resumedThread = await agent.DeserializeThreadAsync(reloadedSerializedThread);
+AgentThread resumedThread = agent.DeserializeThread(reloadedSerializedThread);
 
 // Run the agent again with the resumed thread.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
