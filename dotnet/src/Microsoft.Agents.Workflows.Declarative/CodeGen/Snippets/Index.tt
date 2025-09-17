@@ -1,0 +1,3 @@
+﻿<#@ include file="AssignVariableTemplate.tt" once="true" #>
+<#@ include file="EvaluateVariableTemplate.tt" once="true" #>
+<#@ include file="FormatMessageTemplate.tt" once="true" #>

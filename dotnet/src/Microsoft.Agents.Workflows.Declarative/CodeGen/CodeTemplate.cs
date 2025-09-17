@@ -5,6 +5,8 @@ using System.CodeDom.Compiler;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using Microsoft.Bot.ObjectModel;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
@@ -21,6 +23,29 @@ internal abstract class CodeTemplate
     /// </summary>
     public abstract string TransformText();
 
+    #region Object Model helpers
+
+    public string VariableName(PropertyPath path) => Throw.IfNull(path.VariableName);
+    public string VariableScope(PropertyPath path) => Throw.IfNull(path.VariableScopeName);
+
+    public static string Format(DataValue value) =>
+        value switch
+        {
+            BlankDataValue blankValue => "null",
+            BooleanDataValue booleanValue => $"{booleanValue.Value}",
+            FloatDataValue decimalValue => $"{decimalValue.Value}",
+            NumberDataValue numberValue => $"{numberValue.Value}",
+            DateDataValue dateValue => $"new DateTime({dateValue.Value.Ticks}, DateTimeKind.{dateValue.Value.Kind})",
+            DateTimeDataValue datetimeValue => $"new DateTimeOffset({datetimeValue.Value.Ticks}, TimeSpan.FromTicks({datetimeValue.Value.Offset}))",
+            TimeDataValue timeValue => $"TimeSpan.FromTicks({timeValue.Value.Ticks})",
+            StringDataValue stringValue => @"""{stringValue.Value}""", // %%% INCOMPLETE: MULTILINE
+            OptionDataValue optionValue => @"""{optionValue.Value}""",
+            _ => $"[{value.GetType().Name}]",
+        };
+
+    #endregion
+
+    #region Properties
     /// <summary>
     /// The string builder that generation-time code is using to assemble generated output
     /// </summary>
@@ -60,7 +85,10 @@ internal abstract class CodeTemplate
     /// </summary>
     public virtual IDictionary<string, object>? Session { get; set; }
 
+    #endregion
+
     #region Transform-time helpers
+
     /// <summary>
     /// Write text directly into the generated output
     /// </summary>
@@ -72,8 +100,8 @@ internal abstract class CodeTemplate
         }
         // If we're starting off, or if the previous text ended with a newline,
         // we have to append the current indent first.
-        if (((this.GenerationEnvironment.Length == 0)
-                    || this._endsWithNewline))
+        if ((this.GenerationEnvironment.Length == 0)
+                    || this._endsWithNewline)
         {
             this.GenerationEnvironment.Append(this._currentIndentField);
             this._endsWithNewline = false;
@@ -85,7 +113,7 @@ internal abstract class CodeTemplate
         }
         // This is an optimization. If the current indent is "", then we don't have to do any
         // of the more complex stuff further down.
-        if ((this._currentIndentField.Length == 0))
+        if (this._currentIndentField.Length == 0)
         {
             this.GenerationEnvironment.Append(textToAppend);
             return;
@@ -103,6 +131,7 @@ internal abstract class CodeTemplate
             this.GenerationEnvironment.Append(textToAppend);
         }
     }
+
     /// <summary>
     /// Write text directly into the generated output
     /// </summary>
@@ -112,6 +141,7 @@ internal abstract class CodeTemplate
         this.GenerationEnvironment.AppendLine();
         this._endsWithNewline = true;
     }
+
     /// <summary>
     /// Write formatted text directly into the generated output
     /// </summary>
@@ -119,6 +149,7 @@ internal abstract class CodeTemplate
     {
         this.Write(string.Format(CultureInfo.CurrentCulture, format, args));
     }
+
     /// <summary>
     /// Write formatted text directly into the generated output
     /// </summary>
@@ -126,6 +157,7 @@ internal abstract class CodeTemplate
     {
         this.WriteLine(string.Format(CultureInfo.CurrentCulture, format, args));
     }
+
     /// <summary>
     /// Raise an error
     /// </summary>
@@ -137,6 +169,7 @@ internal abstract class CodeTemplate
         };
         this.Errors.Add(error);
     }
+
     /// <summary>
     /// Raise a warning
     /// </summary>
@@ -151,36 +184,39 @@ internal abstract class CodeTemplate
         error.IsWarning = true;
         this.Errors.Add(error);
     }
+
     /// <summary>
     /// Increase the indent
     /// </summary>
     public void PushIndent(string indent)
     {
-        if ((indent == null))
+        if (indent is null)
         {
             throw new ArgumentNullException(nameof(indent));
         }
-        this._currentIndentField = (this._currentIndentField + indent);
+        this._currentIndentField += indent;
         this.indentLengths.Add(indent.Length);
     }
+
     /// <summary>
     /// Remove the last indent that was added with PushIndent
     /// </summary>
     public string PopIndent()
     {
         string returnValue = string.Empty;
-        if ((this.indentLengths.Count > 0))
+        if (this.indentLengths.Count > 0)
         {
-            int indentLength = this.indentLengths[(this.indentLengths.Count - 1)];
-            this.indentLengths.RemoveAt((this.indentLengths.Count - 1));
-            if ((indentLength > 0))
+            int indentLength = this.indentLengths[this.indentLengths.Count - 1];
+            this.indentLengths.RemoveAt(this.indentLengths.Count - 1);
+            if (indentLength > 0)
             {
-                returnValue = this._currentIndentField.Substring((this._currentIndentField.Length - indentLength));
-                this._currentIndentField = this._currentIndentField.Remove((this._currentIndentField.Length - indentLength));
+                returnValue = this._currentIndentField.Substring(this._currentIndentField.Length - indentLength);
+                this._currentIndentField = this._currentIndentField.Remove(this._currentIndentField.Length - indentLength);
             }
         }
         return returnValue;
     }
+
     /// <summary>
     /// Remove any indentation
     /// </summary>
@@ -189,9 +225,11 @@ internal abstract class CodeTemplate
         this.indentLengths.Clear();
         this._currentIndentField = string.Empty;
     }
+
     #endregion
 
     #region ToString Helpers
+
     /// <summary>
     /// Utility class to produce culture-oriented representation of an object as a string.
     /// </summary>
@@ -207,5 +245,6 @@ internal abstract class CodeTemplate
     /// Helper to produce culture-oriented representation of an object as a string
     /// </summary>
     public ToStringInstanceHelper ToStringHelper { get; } = new();
+
     #endregion
 }

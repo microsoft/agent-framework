@@ -35,7 +35,7 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Expression("9 - 3"));
 
         // Act, Assert
-        this.ExecuteTest("TestVariable", expressionBuilder, FormulaValue.New(6), nameof(InitializeVariable));
+        this.ExecuteTest("TestVariable", expressionBuilder, FormulaValue.New(6), nameof(InitializeExpression));
     }
 
     private void ExecuteTest(
@@ -54,9 +54,10 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         // Act
         SetVariableTemplate template = new(model);
         string workflowCode = template.TransformText();
+        this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        Assert.Contains(variableName, workflowCode);
+        Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
     }
 
     private SetVariable CreateModel(string variablePath, ValueExpression.Builder valueExpression, string displayName)

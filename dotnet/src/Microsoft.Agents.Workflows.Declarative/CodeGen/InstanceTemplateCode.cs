@@ -6,7 +6,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class InstanceTemplate
 {
-    internal InstanceTemplate(string executorId)
+    public InstanceTemplate(string executorId)
     {
         this.InstanceVariable = executorId.FormatName();
         this.ExecutorType = executorId.FormatType();

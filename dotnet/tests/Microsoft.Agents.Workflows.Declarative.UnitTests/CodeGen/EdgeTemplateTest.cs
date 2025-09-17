@@ -20,6 +20,7 @@ public class EdgeTemplateTest(ITestOutputHelper output) : WorkflowActionTemplate
 
         // Act
         string workflowCode = template.TransformText();
+        this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
         Assert.Equal("builder.AddEdge(setVariable1, invokeAgent2);", workflowCode.Trim());

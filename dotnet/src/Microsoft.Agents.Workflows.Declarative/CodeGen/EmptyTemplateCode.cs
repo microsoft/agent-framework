@@ -7,12 +7,14 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class EmptyTemplate
 {
-    internal EmptyTemplate(DialogAction model)
+    public EmptyTemplate(DialogAction model, string executorComment)
     {
         this.Id = model.GetId();
         this.Name = this.Id.FormatType();
+        this.Comment = executorComment;
     }
 
-    internal string Id { get; }
-    internal string Name { get; }
+    public string Id { get; }
+    public string Name { get; }
+    public string Comment { get; }
 }

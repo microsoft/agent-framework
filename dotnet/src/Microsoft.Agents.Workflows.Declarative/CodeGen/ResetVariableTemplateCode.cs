@@ -8,19 +8,17 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class ResetVariableTemplate
 {
-    internal ResetVariableTemplate(ResetVariable model)
+    public ResetVariableTemplate(ResetVariable model)
     {
         this.Model = model;
         this.Id = model.GetId();
         this.Name = this.Id.FormatType();
-        this.VariableName = Throw.IfNull(this.Model.Variable?.VariableName);
-        this.TopicName = Throw.IfNull(this.Model.Variable?.VariableScopeName);
+        this.Variable = Throw.IfNull(this.Model.Variable);
     }
 
-    internal ResetVariable Model { get; }
+    public ResetVariable Model { get; }
 
-    internal string Id { get; }
-    internal string Name { get; }
-    internal string VariableName { get; }
-    internal string TopicName { get; }
+    public string Id { get; }
+    public string Name { get; }
+    public PropertyPath Variable { get; }
 }

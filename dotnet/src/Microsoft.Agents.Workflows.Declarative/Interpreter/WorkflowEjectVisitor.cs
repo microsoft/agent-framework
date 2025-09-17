@@ -118,7 +118,9 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.Executors.Add(new EmptyTemplate(item).TransformText());
+        string ExecutorComment = @$"Transfers execution to action ""{item.ActionId.Value}""";
+
+        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
         this.Edges.Add(new EdgeTemplate(item.ActionId.Value, item.GetId()).TransformText()); // %%% RESTART
@@ -178,7 +180,9 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.Executors.Add(new EmptyTemplate(item).TransformText());
+        const string ExecutorComment = "Ends the conversation with the user. This action does not delete any conversation history.";
+
+        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
         this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH AND RESTART
     }
@@ -208,7 +212,9 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        //this.ContinueWith(new SetTextVariableExecutor(item, this._workflowState));
+        this.Executors.Add(new SetTextVariableTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(ClearAllVariables item) // %%% TODO
@@ -264,12 +270,20 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     protected override void Visit(CreateConversation item)
     {
-        throw new System.NotImplementedException();
+        this.Trace(item);
+
+        this.Executors.Add(new CreateConversationTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(AddConversationMessage item)
     {
-        throw new System.NotImplementedException();
+        this.Trace(item);
+
+        this.Executors.Add(new AddConversationMessageTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(CopyConversationMessages item)

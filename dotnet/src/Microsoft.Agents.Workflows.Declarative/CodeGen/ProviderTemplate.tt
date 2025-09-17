@@ -25,6 +25,15 @@ namespace <#= this.Namespace #>;
 <#
 }
 #>
+/// <summary>
+/// This class provides a factory method to create a <see cref="Workflow" /> instance.
+/// </summary>
+/// <remarks>
+/// The workflow defined here was generated from a declarative workflow definition.
+/// Declarative workflows utilize Power FX for defining conditions and expressions.
+/// To learn more about Power FX, see:
+/// https://learn.microsoft.com/power-platform/power-fx/formula-reference-copilot-studio
+/// </remarks>
 public static class <#= this.Prefix ?? string.Empty #>WorkflowProvider
 {<#
 foreach (string executor in ByLine(this.Executors, formatGroup: true))

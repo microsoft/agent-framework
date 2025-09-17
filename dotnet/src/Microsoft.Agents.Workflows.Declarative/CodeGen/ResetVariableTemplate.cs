@@ -9,6 +9,7 @@
 // ------------------------------------------------------------------------------
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 {
+    using Microsoft.Bot.ObjectModel;
     using System;
     
     /// <summary>
@@ -26,7 +27,14 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         public override string TransformText()
         {
             this.Write("\n");
-            this.Write("\ninternal sealed class ");
+            this.Write("\n");
+            this.Write("\n");
+            this.Write("\n");
+            this.Write("\n");
+            this.Write("\n");
+            this.Write("\n/// <summary>\n/// Resets the value of a variable, potentially causing re-evaluat" +
+                    "ion of the default value,\n//  question or action that provides the value to this" +
+                    " variable.\n/// </summary>\ninternal sealed class ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
@@ -41,24 +49,157 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line default
             #line hidden
             this.Write("\", session)\n{\n    protected override async ValueTask ExecuteAsync(IWorkflowContex" +
-                    "t context, CancellationToken cancellationToken)\n    {\n        await context.Rese" +
-                    "tStateAsync(\"");
+                    "t context, CancellationToken cancellationToken)\n    {");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.VariableName));
+ 
+        AssignVariable(this.Variable, "UnassignedValue.Instance");
+      
             
             #line default
             #line hidden
-            this.Write("\", \"");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.TopicName));
-            
-            #line default
-            #line hidden
-            this.Write("\").ConfigureAwait(false);\n    }\n}");
+            this.Write("\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+
+void AssignVariable(PropertyPath targetVariable, string valueVariable)
+{
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+this.Write("\n        await context.QueueStateUpdateAsync(key: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(VariableName(targetVariable)));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+this.Write("\", value: ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(valueVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+this.Write(", scopeName: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(VariableScope(targetVariable)));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+this.Write("\").ConfigureAwait(false);");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+
+}
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+
+void EvaluateVariable(ExpressionBase expression, string targetVariable)
+{
+    if (expression is null)
+    { 
+        throw new DeclarativeModelException($"Undefined expression: {this.Id}.");
+    }
+    else if (expression.IsVariableReference)
+    {
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\n        object? ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(" = await context.ReadStateAsync<object>(key: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\", scopeName: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\").ConfigureAwait(false);");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+
+    }
+}
+
+        
+        #line default
+        #line hidden
     }
     
     #line default

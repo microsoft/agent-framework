@@ -6,9 +6,9 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal partial class SetVariableTemplate
+internal partial class SetTextVariableTemplate
 {
-    internal SetVariableTemplate(SetVariable model)
+    public SetTextVariableTemplate(SetTextVariable model)
     {
         this.Model = model;
         this.Id = model.GetId();
@@ -16,9 +16,9 @@ internal partial class SetVariableTemplate
         this.Variable = Throw.IfNull(this.Model.Variable?.Path);
     }
 
-    internal SetVariable Model { get; }
+    public SetTextVariable Model { get; }
 
-    internal string Id { get; }
-    internal string Name { get; }
-    internal PropertyPath Variable { get; }
+    public string Id { get; }
+    public string Name { get; }
+    public PropertyPath Variable { get; }
 }

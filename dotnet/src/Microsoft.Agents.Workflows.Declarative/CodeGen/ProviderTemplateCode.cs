@@ -7,7 +7,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class ProviderTemplate
 {
-    internal ProviderTemplate(
+    public ProviderTemplate(
         string workflowId,
         IEnumerable<string> executors,
         IEnumerable<string> instances,

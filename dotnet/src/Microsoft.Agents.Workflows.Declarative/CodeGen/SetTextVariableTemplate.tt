@@ -1,17 +1,22 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" #>
 <#@ output extension=".cs" #>
+<#@ import namespace="Microsoft.Agents.Workflows.Declarative.Extensions" #>
 <#@ import namespace="Microsoft.Bot.ObjectModel" #>
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
-/// Resets the value of a variable, potentially causing re-evaluation of the default value,
-//  question or action that provides the value to this variable.
+/// Assigns an evaluated message template to the "<#= this.Model.Variable #>" variable.
 /// </summary>
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {<# 
-        AssignVariable(this.Variable, "UnassignedValue.Instance");
-      #>
+    {
+        string textValue =
+            await context.FormatTemplateAsync(
+                """<#
+                FormatMessageTemplate(this.Model.Value); #>
+                """);<# 
+        AssignVariable(this.Variable, "textValue");
+     #>
     }
 }

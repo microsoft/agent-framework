@@ -6,19 +6,19 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal partial class SetVariableTemplate
+internal partial class CreateConversationTemplate
 {
-    internal SetVariableTemplate(SetVariable model)
+    public CreateConversationTemplate(CreateConversation model)
     {
         this.Model = model;
         this.Id = model.GetId();
         this.Name = this.Id.FormatType();
-        this.Variable = Throw.IfNull(this.Model.Variable?.Path);
+        this.ConversationId = Throw.IfNull(this.Model.ConversationId?.Path);
     }
 
-    internal SetVariable Model { get; }
+    public CreateConversation Model { get; }
 
-    internal string Id { get; }
-    internal string Name { get; }
-    internal PropertyPath Variable { get; }
+    public string Id { get; }
+    public string Name { get; }
+    public PropertyPath ConversationId { get; }
 }

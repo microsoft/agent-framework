@@ -17,7 +17,7 @@ internal sealed class ResetVariableExecutor(ResetVariable model, WorkflowFormula
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
-        this.State.Reset(this.Model.Variable);
+        this.State.Reset(this.Model.Variable); // %%% CONSIDER: UnassignedValue.Instance
         Debug.WriteLine(
             $"""
             STATE: {this.GetType().Name} [{this.Id}]

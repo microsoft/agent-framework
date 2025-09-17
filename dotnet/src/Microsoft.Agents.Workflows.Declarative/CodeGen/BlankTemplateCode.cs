@@ -5,16 +5,17 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal partial class SendActivityTemplate
+internal partial class BlankTemplate
 {
-    public SendActivityTemplate(SendActivity model)
+    public BlankTemplate(DialogAction model)
     {
         this.Model = model;
         this.Id = model.GetId();
         this.Name = this.Id.FormatType();
     }
 
-    public SendActivity Model { get; }
+    public DialogAction Model { get; }
+
     public string Id { get; }
     public string Name { get; }
 }

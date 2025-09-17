@@ -56,34 +56,4 @@
     <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.UnitTests" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Update="CodeGen\RootTemplate.cs">
-      <DependentUpon>RootTemplate.tt</DependentUpon>
-    </Compile>
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="CodeGen\EdgeTemplate.tt">
-      <LastGenOutput>EdgeTemplate.cs</LastGenOutput>
-    </None>
-    <None Update="CodeGen\EmptyTemplate.tt">
-      <LastGenOutput>EmptyTemplate.cs</LastGenOutput>
-    </None>
-    <None Update="CodeGen\InstanceTemplate.tt">
-      <LastGenOutput>InstanceTemplate.cs</LastGenOutput>
-    </None>
-    <None Update="CodeGen\ResetVariableTemplate.tt">
-      <LastGenOutput>ResetVariableTemplate.cs</LastGenOutput>
-    </None>
-    <None Update="CodeGen\SendActivityTemplate.tt">
-      <LastGenOutput>SendActivityTemplate.cs</LastGenOutput>
-    </None>
-    <None Update="CodeGen\SetVariableTemplate.tt">
-      <LastGenOutput>SetVariableTemplate.cs</LastGenOutput>
-    </None>
-    <None Update="CodeGen\RootTemplate.tt">
-      <LastGenOutput>RootTemplate.cs</LastGenOutput>
-    </None>
-  </ItemGroup>
-
 </Project>

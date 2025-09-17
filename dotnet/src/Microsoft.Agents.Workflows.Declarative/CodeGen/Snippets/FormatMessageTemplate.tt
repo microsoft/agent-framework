@@ -1,0 +1,9 @@
+﻿<#+
+void FormatMessageTemplate(TemplateLine line)
+{
+        foreach (string text in line.ToTemplateString().ByLine())
+        { #>
+                <#= text #><#+
+        }
+}
+#>

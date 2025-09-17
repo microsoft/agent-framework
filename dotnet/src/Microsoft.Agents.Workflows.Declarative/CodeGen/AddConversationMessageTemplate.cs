@@ -17,9 +17,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class SendActivityTemplate : CodeTemplate
+    internal partial class AddConversationMessageTemplate : CodeTemplate
     {
 #line hidden
         /// <summary>
@@ -34,79 +34,96 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
-            this.Write("\n/// <summary>\n/// Formats a message template and sends an activity event.\n/// </" +
-                    "summary>\ninternal sealed class ");
+            this.Write("\n");
+            this.Write("\n/// <summary>\n/// %%% COMMENT\n/// </summary>\ninternal sealed class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
             this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
             this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
-                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    { ");
+                    "eAsync(IWorkflowContext context, WorkflowAgentProvider agentProvider, Cancellati" +
+                    "onToken cancellationToken)\n    {");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-if (this.Model.Activity is MessageActivityTemplate messageActivity)
-{ 
-            
-            #line default
-            #line hidden
-            this.Write("\n        string activityText = \n            await context.FormatTemplateAsync( ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-    foreach (TemplateLine line in messageActivity.Text)
-    {  
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
+ 
+        EvaluateVariable(this.Model.ConversationId, "conversationId"); 
             
             #line default
             #line hidden
-            this.Write("\n                \"\"\"");
+            this.Write(@"
+        ChatMessage newMessage = new(this.GetRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() }; // %%% TODO: METADATA
+        await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
 
-        foreach (string text in line.ToTemplateString().ByLine())
-        { 
+        AssignVariable(this.Message, "newMessage");
+        
             
             #line default
             #line hidden
-            this.Write("\n                ");
+            this.Write("\n    }\n\n    private IEnumerable<AIContent> GetContent()\n    {");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(text));
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
+
+        foreach (AddConversationMessageContent content in this.Model.Content)
+        {
             
             #line default
             #line hidden
+            this.Write("\n            string contentValue =\n                await context.FormatTemplateAs" +
+                    "ync(\n                    \"\"\"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
 
-        } 
+                    FormatMessageTemplate(content.Value); 
             
             #line default
             #line hidden
-            this.Write("\n                \"\"\"");
+            this.Write("\n                    \"\"\");");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
 
-    } 
-     
+            AgentMessageContentType contentType = content.Type.Value;
+            if (contentType == AgentMessageContentType.ImageUrl)
+            {
             
             #line default
             #line hidden
-            this.Write("\n            );\n        AgentRunResponse response = new([new ChatMessage(ChatRole" +
-                    ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRunRes" +
-                    "ponseEvent(this.Id, response)).ConfigureAwait(false);");
+            this.Write("\n                yield return new UriContent(contentValue, \"image/*\");");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
 
-} 
+            }
+            else if (contentType == AgentMessageContentType.ImageFile)
+            {
+            
+            #line default
+            #line hidden
+            this.Write("\n                yield return new HostedFileContent(contentValue);");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
+
+            }
+            else
+            {
+            
+            #line default
+            #line hidden
+            this.Write("\n                yield return new TextContent(contentValue);");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
+
+            }
+        }
             
             #line default
             #line hidden
@@ -338,6 +355,197 @@ this.Write("\").ConfigureAwait(false);");
     {
         throw new DeclarativeModelException($"Unsupported value type: {this.Id}.");
     }
+}
+
+void EvaluateVariable(StringExpression expression, string targetVariable)
+{
+    if (expression is null)
+    { 
+        throw new DeclarativeModelException($"Undefined expression: {this.Id}.");
+    }
+    else if (expression.IsLiteral)
+    { // %%% INCOMPLETE: MULTILINE 
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\n        string ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(" = \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\";");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+ 
+    }
+    else if (expression.IsVariableReference)
+    { 
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\n        string ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(" = await context.ReadStateAsync<object>(key: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\", scopeName: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\").ConfigureAwait(false);");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+
+    }
+    else if (expression.IsExpression)
+    { 
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\n        string ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(" = await context.EvaluateExpressionAsync(\"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+this.Write("\").ConfigureAwait(false);");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateVariableTemplate.tt"
+ 
+    }
+    else
+    {
+        throw new DeclarativeModelException($"Unsupported value type: {this.Id}.");
+    }
+}
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+
+void FormatMessageTemplate(TemplateLine line)
+{
+        foreach (string text in line.ToTemplateString().ByLine())
+        { 
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+this.Write("\n                ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(text));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+
+        }
 }
 
         

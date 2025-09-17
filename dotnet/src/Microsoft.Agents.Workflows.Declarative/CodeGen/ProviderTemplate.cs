@@ -71,7 +71,17 @@ if (this.Namespace is not null)
             
             #line default
             #line hidden
-            this.Write("\npublic static class ");
+            this.Write(@"
+/// <summary>
+/// This class provides a factory method to create a <see cref=""Workflow"" /> instance.
+/// </summary>
+/// <remarks>
+/// The workflow defined here was generated from a declarative workflow definition.
+/// Declarative workflows utilize Power FX for defining conditions and expressions.
+/// To learn more about Power FX, see:
+/// https://learn.microsoft.com/power-platform/power-fx/formula-reference-copilot-studio
+/// </remarks>
+public static class ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Prefix ?? string.Empty));

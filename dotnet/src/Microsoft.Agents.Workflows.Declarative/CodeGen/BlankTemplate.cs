@@ -17,9 +17,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\BlankTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class SendActivityTemplate : CodeTemplate
+    internal partial class BlankTemplate : CodeTemplate
     {
 #line hidden
         /// <summary>
@@ -34,83 +34,23 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
-            this.Write("\n/// <summary>\n/// Formats a message template and sends an activity event.\n/// </" +
-                    "summary>\ninternal sealed class ");
+            this.Write("\n/// <summary>\n/// %%% COMMENT\n/// </summary>\ninternal sealed class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\BlankTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
             this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\BlankTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
             this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
-                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    { ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-if (this.Model.Activity is MessageActivityTemplate messageActivity)
-{ 
-            
-            #line default
-            #line hidden
-            this.Write("\n        string activityText = \n            await context.FormatTemplateAsync( ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-    foreach (TemplateLine line in messageActivity.Text)
-    {  
-            
-            #line default
-            #line hidden
-            this.Write("\n                \"\"\"");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-        foreach (string text in line.ToTemplateString().ByLine())
-        { 
-            
-            #line default
-            #line hidden
-            this.Write("\n                ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(text));
-            
-            #line default
-            #line hidden
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-        } 
-            
-            #line default
-            #line hidden
-            this.Write("\n                \"\"\"");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-    } 
-     
-            
-            #line default
-            #line hidden
-            this.Write("\n            );\n        AgentRunResponse response = new([new ChatMessage(ChatRole" +
-                    ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRunRes" +
-                    "ponseEvent(this.Id, response)).ConfigureAwait(false);");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SendActivityTemplate.tt"
-
-} 
-            
-            #line default
-            #line hidden
-            this.Write("\n    }\n}");
+                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {\n    " +
+                    "}\n}");
             return this.GenerationEnvironment.ToString();
         }
         

@@ -5,15 +5,14 @@
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
-/// Assigns an evaluated expression, other variable, or literal value to the  "<#= this.Model.Variable #>" variable.
+/// Creates a new conversation and stores the identifier value to the "<#= this.Model.ConversationId #>" variable.
 /// </summary>
-internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
 {
-    // <inheritdoc />
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {<# 
-        EvaluateVariable(this.Model.Value, "evaluatedValue");
-        AssignVariable(this.Variable, "evaluatedValue");
-     #>
+    {
+        string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);<#
+        AssignVariable(this.ConversationId, "conversationId");
+        #>
     }
 }

@@ -26,7 +26,16 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         public override string TransformText()
         {
             this.Write("\n");
-            this.Write("\ninternal sealed class ");
+            this.Write("\n/// <summary>\n/// ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Comment));
+            
+            #line default
+            #line hidden
+            this.Write("\n/// </summary>\n/// <remarks>\n/// This action does nothing but exists so to it ma" +
+                    "y be used as a target for an edge from other actions.\n/// </remarks>\ninternal se" +
+                    "aled class ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
@@ -40,9 +49,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("\", session)\n{\n    protected override ValueTask ExecuteAsync(IWorkflowContext cont" +
-                    "ext, CancellationToken cancellationToken)\n    {\n       // No operation\n       re" +
-                    "turn default;\n    }\n}");
+            this.Write("\", session)\n{\n    /// <inheritdoc />\n    protected override ValueTask ExecuteAsyn" +
+                    "c(IWorkflowContext context, CancellationToken cancellationToken)\n    {\n       //" +
+                    " No operation\n       return default;\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
     }
