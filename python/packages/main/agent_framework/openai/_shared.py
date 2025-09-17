@@ -133,18 +133,18 @@ class OpenAIBase(AFBaseModel):
 class OpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an OpenAI service."""
 
-    MODEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
         self,
         ai_model_id: str = Field(min_length=1),
         api_key: str | None = Field(min_length=1),
-        base_url: str | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        base_url: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a client for OpenAI services.
@@ -153,18 +153,19 @@ class OpenAIConfigMixin(OpenAIBase):
         different types of AI model interactions, like chat or text completion.
 
         Args:
-            ai_model_id (str): OpenAI model identifier. Must be non-empty.
+            ai_model_id: OpenAI model identifier. Must be non-empty.
                 Default to a preset value.
-            api_key (str): OpenAI API key for authentication.
+            api_key: OpenAI API key for authentication.
                 Must be non-empty. (Optional)
-            base_url (str): Base URL for the OpenAI API. (Optional)
-            org_id (str): OpenAI organization ID. This is optional
+            org_id: OpenAI organization ID. This is optional
                 unless the account belongs to multiple organizations.
-            default_headers (Mapping[str, str]): Default headers
+            default_headers: Default headers
                 for HTTP requests. (Optional)
-            client (AsyncOpenAI): An existing OpenAI client, optional.
-            instruction_role (str): The role to use for 'instruction'
+            client: An existing OpenAI client, optional.
+            instruction_role: The role to use for 'instruction'
                 messages, for example, summarization prompts could use `developer` or `system`. (Optional)
+            base_url: The optional base URL to use. If provided will override the standard value for a OpenAI connector.
+                Will not be used when supplying a custom client.
             kwargs: Additional keyword arguments.
 
         """
@@ -177,12 +178,12 @@ class OpenAIConfigMixin(OpenAIBase):
         if not client:
             if not api_key:
                 raise ServiceInitializationError("Please provide an api_key")
-            client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                organization=org_id,
-                default_headers=merged_headers,
-            )
+            args: dict[str, Any] = {"api_key": api_key, "default_headers": merged_headers}
+            if org_id:
+                args["organization"] = org_id
+            if base_url:
+                args["base_url"] = base_url
+            client = AsyncOpenAI(**args)
         args = {
             "ai_model_id": ai_model_id,
             "client": client,

@@ -20,8 +20,8 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
-from .._clients import BaseChatClient, use_tool_calling
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool
+from .._clients import BaseChatClient
+from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -50,8 +50,8 @@ else:
 __all__ = ["OpenAIAssistantsClient"]
 
 
+@use_function_invocation
 @use_telemetry
-@use_tool_calling
 class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     """OpenAI Assistants client."""
 
@@ -162,11 +162,13 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # Extract necessary state from messages and options
-        run_options, tool_results = self._create_run_options(messages, chat_options, **kwargs)
+        run_options, tool_results = self._prepare_options(messages, chat_options, **kwargs)
 
         # Get the thread ID
         thread_id: str | None = (
-            chat_options.conversation_id if chat_options.conversation_id is not None else self.thread_id
+            chat_options.conversation_id
+            if chat_options.conversation_id is not None
+            else run_options.get("conversation_id", self.thread_id)
         )
 
         if thread_id is None and tool_results is not None:
@@ -347,7 +349,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         return contents
 
-    def _create_run_options(
+    def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions | None,
