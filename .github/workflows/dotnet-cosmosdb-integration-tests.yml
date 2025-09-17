@@ -47,7 +47,7 @@ jobs:
           AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "20" # the more the better for stable tests
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -55,7 +55,7 @@ jobs:
             .github
             dotnet
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v4.3.1
+        uses: actions/setup-dotnet@v5.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
       - name: Build dotnet solutions
@@ -145,7 +145,7 @@ jobs:
 
       # Generate test reports and check coverage
       - name: Generate test reports
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.11
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.13
         with:
           reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
           targetdir: "./TestResults/Reports"
