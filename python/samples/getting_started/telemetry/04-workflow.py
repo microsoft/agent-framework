@@ -3,14 +3,14 @@
 import asyncio
 from typing import Any
 
-from agent_framework.telemetry import setup_telemetry
-from agent_framework.workflow import (
+from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
+from agent_framework.telemetry import setup_telemetry
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
