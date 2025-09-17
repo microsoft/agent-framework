@@ -12,18 +12,13 @@ public class GotoTemplateTest(ITestOutputHelper output) : WorkflowActionTemplate
     public void GotoAction()
     {
         // Act, Assert
-        this.ExecuteTest("target_action_id", nameof(GotoAction));
+        this.ExecuteTest(nameof(GotoAction), "target_action_id");
     }
 
-    private void ExecuteTest(
-        string targetId,
-        string displayName)
+    private void ExecuteTest(string displayName, string targetId)
     {
         // Arrange
-        GotoAction model =
-            this.CreateModel(
-                targetId,
-                displayName);
+        GotoAction model = this.CreateModel(displayName, targetId);
 
         // Act
         EmptyTemplate template = new(model, "Go to another action.");
@@ -34,7 +29,7 @@ public class GotoTemplateTest(ITestOutputHelper output) : WorkflowActionTemplate
         //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
     }
 
-    private GotoAction CreateModel(string targetId, string displayName)
+    private GotoAction CreateModel(string displayName, string targetId)
     {
         GotoAction.Builder actionBuilder =
             new()

@@ -16,7 +16,7 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Literal(new NumberDataValue(420)));
 
         // Act, Assert
-        this.ExecuteTest("TestVariable", expressionBuilder, FormulaValue.New(420), nameof(InitializeLiteralValue));
+        this.ExecuteTest(nameof(InitializeLiteralValue), "TestVariable", expressionBuilder, FormulaValue.New(420));
     }
 
     [Fact]
@@ -26,7 +26,7 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("MyValue")));
 
         // Act, Assert
-        this.ExecuteTest("TestVariable", expressionBuilder, FormulaValue.New(6), nameof(InitializeVariable));
+        this.ExecuteTest(nameof(InitializeVariable), "TestVariable", expressionBuilder, FormulaValue.New(6));
     }
 
     [Fact]
@@ -35,21 +35,21 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Expression("9 - 3"));
 
         // Act, Assert
-        this.ExecuteTest("TestVariable", expressionBuilder, FormulaValue.New(6), nameof(InitializeExpression));
+        this.ExecuteTest(nameof(InitializeExpression), "TestVariable", expressionBuilder, FormulaValue.New(6));
     }
 
     private void ExecuteTest(
+        string displayName,
         string variableName,
         ValueExpression.Builder valueExpression,
-        FormulaValue expectedValue,
-        string displayName)
+        FormulaValue expectedValue)
     {
         // Arrange
         SetVariable model =
             this.CreateModel(
+                displayName,
                 FormatVariablePath(variableName),
-                valueExpression,
-                displayName);
+                valueExpression);
 
         // Act
         SetVariableTemplate template = new(model);
@@ -60,7 +60,7 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
     }
 
-    private SetVariable CreateModel(string variablePath, ValueExpression.Builder valueExpression, string displayName)
+    private SetVariable CreateModel(string displayName, string variablePath, ValueExpression.Builder valueExpression)
     {
         SetVariable.Builder actionBuilder =
             new()

@@ -12,7 +12,7 @@ public class EndConversationTest(ITestOutputHelper output) : WorkflowActionTempl
     public void EndConversation()
     {
         // Act, Assert
-        this.ExecuteTest(nameof(GotoAction));
+        this.ExecuteTest(nameof(EndConversation));
     }
 
     private void ExecuteTest(string displayName)

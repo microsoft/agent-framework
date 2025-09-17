@@ -12,21 +12,21 @@ public class SetTextVariableTemplateTest(ITestOutputHelper output) : WorkflowAct
     public void InitializeTemplate()
     {
         // Act, Assert
-        this.ExecuteTest("TestVariable", "// %%% WTF", "// %%% WTF", nameof(InitializeTemplate));
+        this.ExecuteTest(nameof(InitializeTemplate), "TestVariable", "// %%% WTF", "// %%% WTF");
     }
 
     private void ExecuteTest(
+        string displayName,
         string variableName,
         string textValue,
-        string expectedValue,
-        string displayName)
+        string expectedValue)
     {
         // Arrange
         SetTextVariable model =
             this.CreateModel(
+                displayName,
                 FormatVariablePath(variableName),
-                textValue,
-                displayName);
+                textValue);
 
         // Act
         SetTextVariableTemplate template = new(model);
@@ -37,7 +37,7 @@ public class SetTextVariableTemplateTest(ITestOutputHelper output) : WorkflowAct
         Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
     }
 
-    private SetTextVariable CreateModel(string variablePath, string textValue, string displayName)
+    private SetTextVariable CreateModel(string displayName, string variablePath, string textValue)
     {
         SetTextVariable.Builder actionBuilder =
             new()

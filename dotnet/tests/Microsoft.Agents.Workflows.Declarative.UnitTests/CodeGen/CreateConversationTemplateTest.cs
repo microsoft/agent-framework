@@ -12,20 +12,18 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
     public void CreateConversation()
     {
         // Act, Assert
-        this.ExecuteTest("TestVariable", nameof(CreateConversation));
+        this.ExecuteTest(nameof(CreateConversation), "TestVariable");
     }
 
     // %%% TODO: WITH METADATA
 
-    private void ExecuteTest(
-        string variableName,
-        string displayName)
+    private void ExecuteTest(string displayName, string variableName)
     {
         // Arrange
         CreateConversation model =
             this.CreateModel(
-                FormatVariablePath(variableName),
-                displayName);
+                displayName,
+                FormatVariablePath(variableName));
 
         // Act
         CreateConversationTemplate template = new(model);
@@ -36,7 +34,7 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
         Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
     }
 
-    private CreateConversation CreateModel(string variablePath, string displayName)
+    private CreateConversation CreateModel(string displayName, string variablePath)
     {
         CreateConversation.Builder actionBuilder =
             new()
