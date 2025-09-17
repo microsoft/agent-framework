@@ -31,7 +31,7 @@ public static class Program
         var workflow = WorkflowHelper.GetWorkflow();
 
         // Create checkpoint manager
-        var checkpointManager = new CheckpointManager();
+        var checkpointManager = CheckpointManager.Default;
         var checkpoints = new List<CheckpointInfo>();
 
         // Execute the workflow and save checkpoints

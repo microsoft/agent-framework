@@ -13,4 +13,11 @@ public abstract class EdgeData
     /// Gets the connection representation of the edge.
     /// </summary>
     internal abstract EdgeConnection Connection { get; }
+
+    internal EdgeData(EdgeId id)
+    {
+        this.Id = id;
+    }
+
+    internal EdgeId Id { get; }
 }

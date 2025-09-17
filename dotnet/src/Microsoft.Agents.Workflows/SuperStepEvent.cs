@@ -1,10 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Serialization;
+
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
 /// Base class for SuperStep-scoped events, for example, <see cref="SuperStepCompletedEvent"/>
 /// </summary>
+[JsonDerivedType(typeof(SuperStepStartedEvent))]
+[JsonDerivedType(typeof(SuperStepCompletedEvent))]
 public class SuperStepEvent(int stepNumber, object? data = null) : WorkflowEvent(data)
 {
     /// <summary>

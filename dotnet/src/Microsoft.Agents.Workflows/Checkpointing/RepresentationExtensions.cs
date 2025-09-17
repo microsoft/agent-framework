@@ -18,12 +18,12 @@ internal static class RepresentationExtensions
     public static EdgeInfo ToEdgeInfo(this Edge edge)
     {
         Throw.IfNull(edge);
-        return edge.EdgeType switch
+        return edge.Kind switch
         {
-            Edge.Type.Direct => new DirectEdgeInfo(edge.DirectEdgeData!),
-            Edge.Type.FanOut => new FanOutEdgeInfo(edge.FanOutEdgeData!),
-            Edge.Type.FanIn => new FanInEdgeInfo(edge.FanInEdgeData!),
-            _ => throw new NotSupportedException($"Unsupported edge type: {edge.EdgeType}")
+            EdgeKind.Direct => new DirectEdgeInfo(edge.DirectEdgeData!),
+            EdgeKind.FanOut => new FanOutEdgeInfo(edge.FanOutEdgeData!),
+            EdgeKind.FanIn => new FanInEdgeInfo(edge.FanInEdgeData!),
+            _ => throw new NotSupportedException($"Unsupported edge type: {edge.Kind}")
         };
     }
 
@@ -54,6 +54,6 @@ internal static class RepresentationExtensions
     public static WorkflowInfo ToWorkflowInfo<TInput>(this Workflow<TInput> workflow)
         => workflow.ToWorkflowInfo(outputType: null, outputExecutorId: null);
 
-    public static WorkflowInfo GetInfo<TInput, TResult>(this Workflow<TInput, TResult> workflow)
+    public static WorkflowInfo ToWorkflowInfo<TInput, TResult>(this Workflow<TInput, TResult> workflow)
         => workflow.ToWorkflowInfo(outputType: new TypeId(typeof(TResult)), outputExecutorId: workflow.OutputCollectorId);
 }

@@ -43,14 +43,19 @@ serve(entities=[agent], auto_open=True)
 
 For your agents to be discovered by the DevUI, they must be organized in a directory structure like below. Each agent/workflow must have an `__init__.py` that exports the required variable (`agent` or `workflow`).
 
+**Note**: `.env` files are optional but will be automatically loaded if present in the agent/workflow directory or parent entities directory. Use them to store API keys, configuration variables, and other environment-specific settings.
+
 ```
 agents/
 ├── weather_agent/
 │   ├── __init__.py      # Must export: agent = ChatAgent(...)
-│   └── agent.py
+│   ├── agent.py
+│   └── .env             # Optional: API keys, config vars
 ├── my_workflow/
 │   ├── __init__.py      # Must export: workflow = WorkflowBuilder()...
-│   └── workflow.py
+│   ├── workflow.py
+│   └── .env             # Optional: environment variables
+└── .env                 # Optional: shared environment variables
 ```
 
 ## OpenAI-Compatible API
@@ -63,7 +68,7 @@ curl -X POST http://localhost:8080/v1/responses \
   -H "Content-Type: application/json" \
   -d @- << 'EOF'
 {
-  "model": "agent-framework", 
+  "model": "agent-framework",
   "input": "Hello world",
   "extra_body": {"entity_id": "weather_agent"}
 }
@@ -72,21 +77,21 @@ EOF
 
 Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/executors/agent_framework/_mapper.py`. See the mapping table below:
 
-| Agent Framework Content | OpenAI Event | Type |
-|-------------------------|--------------|------|
-| `TextContent` | `ResponseTextDeltaEvent` | Official |
-| `TextReasoningContent` | `ResponseReasoningTextDeltaEvent` | Official |
-| `FunctionCallContent` | `ResponseFunctionCallArgumentsDeltaEvent` | Official |
-| `FunctionResultContent` | `ResponseFunctionResultComplete` | Custom |
-| `ErrorContent` | `ResponseErrorEvent` | Official |
-| `UsageContent` | `ResponseUsageEventComplete` | Custom |
-| `DataContent` | `ResponseTraceEventComplete` | Custom |
-| `UriContent` | `ResponseTraceEventComplete` | Custom |
-| `HostedFileContent` | `ResponseTraceEventComplete` | Custom |
-| `HostedVectorStoreContent` | `ResponseTraceEventComplete` | Custom |
-| `FunctionApprovalRequestContent` | Custom event | Custom |
-| `FunctionApprovalResponseContent` | Custom event | Custom |
-| `WorkflowEvent` | `ResponseWorkflowEventComplete` | Custom |
+| Agent Framework Content           | OpenAI Event                              | Type     |
+| --------------------------------- | ----------------------------------------- | -------- |
+| `TextContent`                     | `ResponseTextDeltaEvent`                  | Official |
+| `TextReasoningContent`            | `ResponseReasoningTextDeltaEvent`         | Official |
+| `FunctionCallContent`             | `ResponseFunctionCallArgumentsDeltaEvent` | Official |
+| `FunctionResultContent`           | `ResponseFunctionResultComplete`          | Custom   |
+| `ErrorContent`                    | `ResponseErrorEvent`                      | Official |
+| `UsageContent`                    | `ResponseUsageEventComplete`              | Custom   |
+| `DataContent`                     | `ResponseTraceEventComplete`              | Custom   |
+| `UriContent`                      | `ResponseTraceEventComplete`              | Custom   |
+| `HostedFileContent`               | `ResponseTraceEventComplete`              | Custom   |
+| `HostedVectorStoreContent`        | `ResponseTraceEventComplete`              | Custom   |
+| `FunctionApprovalRequestContent`  | Custom event                              | Custom   |
+| `FunctionApprovalResponseContent` | Custom event                              | Custom   |
+| `WorkflowEvent`                   | `ResponseWorkflowEventComplete`           | Custom   |
 
 ## CLI Options
 
