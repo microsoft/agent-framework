@@ -88,7 +88,7 @@ internal sealed class Program
             {
                 Debug.WriteLine($"STEP EXIT #{executorComplete.ExecutorId}");
             }
-            else if (evt is ExecutorFailureEvent executorFailure)
+            else if (evt is ExecutorFailedEvent executorFailure)
             {
                 Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
             }
