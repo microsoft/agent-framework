@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import json
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, MutableMapping, Sequence
 from functools import wraps
@@ -31,6 +32,7 @@ from .telemetry import (
     OtelAttr,
     _capture_exception,  # type: ignore
     get_function_span,
+    get_function_span_attributes,
     meter,
 )
 
@@ -70,6 +72,9 @@ FUNCTION_INVOKING_CHAT_CLIENT_MARKER: Final[str] = "__function_invoking_chat_cli
 DEFAULT_MAX_ITERATIONS: Final[int] = 10
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
 # region Helpers
+
+ArgsT = TypeVar("ArgsT", bound=BaseModel)
+ReturnT = TypeVar("ReturnT")
 
 
 def _parse_inputs(
@@ -119,13 +124,10 @@ def _parse_inputs(
 class ToolProtocol(Protocol):
     """Represents a generic tool that can be specified to an AI service.
 
-    Attributes:
+    Parameters:
         name: The name of the tool.
         description: A description of the tool.
         additional_properties: Additional properties associated with the tool.
-
-    Methods:
-        parameters: The parameters accepted by the tool, in a json schema format.
     """
 
     name: str
@@ -138,10 +140,6 @@ class ToolProtocol(Protocol):
     def __str__(self) -> str:
         """Return a string representation of the tool."""
         ...
-
-
-ArgsT = TypeVar("ArgsT", bound=BaseModel)
-ReturnT = TypeVar("ReturnT")
 
 
 class BaseTool(AFBaseModel):
@@ -407,7 +405,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
-        if not OTEL_SETTINGS.ENABLED:  # type: ignore
+        if not OTEL_SETTINGS.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -417,16 +415,19 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             return result  # type: ignore[reportReturnType]
 
         setup_telemetry()
-        with get_function_span(
-            function=self,
-            tool_call_id=tool_call_id,
-        ) as span:
-            hist_attributes: dict[str, Any] = {
-                OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
-                OtelAttr.TOOL_CALL_ID: tool_call_id or "unknown",
-            }
+        attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
+        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            attributes.update({
+                OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
+                if arguments
+                else json.dumps(kwargs)
+                if kwargs
+                else "None"
+            })
+        with get_function_span(attributes=attributes) as span:
+            attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
-            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                 logger.debug(f"Function arguments: {kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -436,19 +437,26 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
-                hist_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 _capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore
-                    logger.debug(f"Function result: {result or 'None'}")
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                    try:
+                        json_result = json.dumps(result)
+                    except (TypeError, OverflowError):
+                        span.set_attribute(OtelAttr.TOOL_RESULT, "<non-serializable result>")
+                        logger.debug("Function result: <non-serializable result>")
+                    else:
+                        span.set_attribute(OtelAttr.TOOL_RESULT, json_result)
+                        logger.debug(f"Function result: {json_result}")
                 return result  # type: ignore[reportReturnType]
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
-                self._invocation_duration_histogram.record(duration, attributes=hist_attributes)
+                self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function duration: %fs", duration)
 
     def parameters(self) -> dict[str, Any]:
@@ -504,11 +512,20 @@ def ai_function(
     In order to add descriptions to parameters, in your function signature,
     use the `Annotated` type from `typing` and the `Field` class from `pydantic`:
 
-            from typing import Annotated
+    Example:
 
+        .. code-block:: python
+
+            from typing import Annotated
             from pydantic import Field
 
-            <field_name>: Annotated[<type>, Field(description="<description>")]
+
+            def ai_function_example(
+                arg1: Annotated[str, Field(description="The first argument")],
+                arg2: Annotated[int, Field(description="The second argument")],
+            ) -> str:
+                # An example function that takes two arguments and returns a string.
+                return f"arg1: {arg1}, arg2: {arg2}"
 
     Args:
         func: The function to wrap. If None, returns a decorator.

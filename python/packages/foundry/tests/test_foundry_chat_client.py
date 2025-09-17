@@ -23,7 +23,6 @@ from agent_framework import (
     TextContent,
     UriContent,
 )
-from agent_framework import __version__ as AF_VERSION
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.foundry import FoundryChatClient, FoundrySettings
 from azure.ai.agents.models import (
@@ -315,9 +314,7 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
 
     await chat_client._cleanup_agent_if_needed()  # type: ignore
     # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
-        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
-    )
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
     assert not chat_client._should_delete_agent  # type: ignore
 
 
@@ -358,9 +355,7 @@ async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> 
     await chat_client.close()
 
     # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
-        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
-    )
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
 
 
 async def test_foundry_chat_client_async_context_manager(mock_ai_project_client: MagicMock) -> None:
@@ -374,9 +369,7 @@ async def test_foundry_chat_client_async_context_manager(mock_ai_project_client:
         pass  # Just test that we can enter and exit
 
     # Verify cleanup was called on exit
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with(
-        "agent-to-delete", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
-    )
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
 
 
 def test_foundry_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
@@ -419,23 +412,6 @@ def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_proje
     # Verify image was converted to MessageInputImageUrlBlock
     message = run_options["additional_messages"][0]
     assert len(message.content) == 1
-
-
-def test_foundry_chat_client_convert_function_results_to_tool_output(mock_ai_project_client: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output method."""
-
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
-
-    function_results = [
-        FunctionResultContent(call_id='["run_123", "call_456"]', result="Result 1"),
-        FunctionResultContent(call_id='["run_123", "call_789"]', result="Result 2"),
-    ]
-
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output(function_results)  # type: ignore
-
-    assert run_id == "run_123"
-    assert tool_outputs is not None
-    assert len(tool_outputs) == 2
 
 
 def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_ai_project_client: MagicMock) -> None:
@@ -566,30 +542,6 @@ async def test_foundry_chat_client_get_agent_id_or_create_with_run_options(
     assert "response_format" in call_args
 
 
-async def test_foundry_chat_client_create_agent_stream_with_tool_results(mock_ai_project_client: MagicMock) -> None:
-    """Test _create_agent_stream when tool results match active thread run."""
-    chat_client = create_test_foundry_chat_client(
-        mock_ai_project_client, agent_id="test-agent", thread_id="test-thread"
-    )
-
-    mock_thread_run = MagicMock()
-    mock_thread_run.id = "run_123"
-    mock_thread_run.thread_id = "test-thread"
-
-    with patch.object(chat_client, "_get_active_thread_run", return_value=mock_thread_run):
-        tool_results = [FunctionResultContent(call_id='["run_123", "call_456"]', result="Result")]
-
-        mock_handler = MagicMock()
-        mock_ai_project_client.agents.runs.submit_tool_outputs_stream = AsyncMock(return_value=None)
-
-        with patch("agent_framework_foundry._chat_client.AsyncAgentEventHandler", return_value=mock_handler):
-            stream, thread_id = await chat_client._create_agent_stream("test-thread", "test-agent", {}, tool_results)  # type: ignore
-
-            assert stream is mock_handler
-            assert thread_id == "test-thread"
-            mock_ai_project_client.agents.runs.submit_tool_outputs_stream.assert_called_once()
-
-
 async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_project_client: MagicMock) -> None:
     """Test _prepare_thread cancels active thread run when provided."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
@@ -603,9 +555,7 @@ async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_pro
     result = await chat_client._prepare_thread("test-thread", mock_thread_run, run_options)  # type: ignore
 
     assert result == "test-thread"
-    mock_ai_project_client.agents.runs.cancel.assert_called_once_with(
-        "test-thread", "run_123", headers={"User-Agent": f"agent-framework-python/{AF_VERSION}"}
-    )
+    mock_ai_project_client.agents.runs.cancel.assert_called_once_with("test-thread", "run_123")
 
 
 def test_foundry_chat_client_create_function_call_contents_basic(mock_ai_project_client: MagicMock) -> None:

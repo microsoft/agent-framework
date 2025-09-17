@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework.workflow import WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, executor
+from agent_framework import WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, executor
 
 """
 Sample: Foundational sequential workflow with streaming using function-style executors.

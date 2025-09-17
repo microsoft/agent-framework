@@ -3,9 +3,8 @@
 import asyncio
 from typing import Any
 
-from agent_framework import ChatMessage, Role
+from agent_framework import ChatMessage, ConcurrentBuilder, Role, WorkflowCompletedEvent
 from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import ConcurrentBuilder, WorkflowCompletedEvent
 from azure.identity import AzureCliCredential
 
 """

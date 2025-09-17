@@ -10,12 +10,12 @@ using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests.PowerFx;
 
-public class RecalcEngineFactoryTests(ITestOutputHelper output) : RecalcEngineTest(output)
+public class RecalcEngineFactoryTests(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Fact]
     public void VariableUpdateTest()
     {
-        RecalcEngine engine = this.CreateEngine();
+        RecalcEngine engine = RecalcEngineFactory.Create();
 
         FormulaValue evalResult;
 
@@ -60,7 +60,7 @@ public class RecalcEngineFactoryTests(ITestOutputHelper output) : RecalcEngineTe
     public void DefaultNotNull()
     {
         // Act
-        RecalcEngine engine = this.CreateEngine();
+        RecalcEngine engine = RecalcEngineFactory.Create();
 
         // Assert
         Assert.NotNull(engine);
@@ -70,8 +70,8 @@ public class RecalcEngineFactoryTests(ITestOutputHelper output) : RecalcEngineTe
     public void NewInstanceEachTime()
     {
         // Act
-        RecalcEngine engine1 = this.CreateEngine();
-        RecalcEngine engine2 = this.CreateEngine();
+        RecalcEngine engine1 = RecalcEngineFactory.Create();
+        RecalcEngine engine2 = RecalcEngineFactory.Create();
 
         // Assert
         Assert.NotNull(engine1);
@@ -83,7 +83,7 @@ public class RecalcEngineFactoryTests(ITestOutputHelper output) : RecalcEngineTe
     public void HasSetFunctionEnabled()
     {
         // Arrange
-        RecalcEngine engine = this.CreateEngine();
+        RecalcEngine engine = RecalcEngineFactory.Create();
 
         // Act
         CheckResult result = engine.Check("1+1");
