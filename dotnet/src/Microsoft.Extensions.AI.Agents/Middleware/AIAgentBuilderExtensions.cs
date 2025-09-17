@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -21,7 +20,7 @@ public static class AIAgentBuilderExtensions
     /// middleware in the pipeline, and a cancellation token, and returns a task representing the result of the
     /// invocation.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
-    public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> callback)
+    public static AIAgentBuilder UseFunctionInvocationContext(this AIAgentBuilder builder, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, Task>, Task> callback)
     {
         return builder.Use(innerAgent => new FunctionInvokingCallbackHandlerAgent(innerAgent, callback));
     }
@@ -31,10 +30,10 @@ public static class AIAgentBuilderExtensions
     /// </summary>
     /// <param name="builder">The <see cref="AIAgentBuilder"/> to which the middleware is added.</param>
     /// <param name="callback">A delegate that processes agent running invocations. The delegate takes the current <see
-    /// cref="AgentInvokeCallbackContext"/> and a function representing the next core agent invocation, and
+    /// cref="AgentRunContext"/> and a function representing the next core agent invocation, and
     /// returns a <see cref="Task"/> that completes when the callback finished processing.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance, allowing for further configuration of the pipeline.</returns>
-    public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> callback)
+    public static AIAgentBuilder UseRunningContext(this AIAgentBuilder builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
     {
         return builder.Use((innerAgent) => new RunningCallbackHandlerAgent(innerAgent, callback));
     }

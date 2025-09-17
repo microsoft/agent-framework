@@ -16,9 +16,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 internal sealed class FunctionInvokingCallbackHandlerAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> _callbackFunc;
+    private readonly Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, Task>, Task> _callbackFunc;
 
-    internal FunctionInvokingCallbackHandlerAgent(AIAgent innerAgent, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> callbackFunc) : base(innerAgent)
+    internal FunctionInvokingCallbackHandlerAgent(AIAgent innerAgent, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, Task>, Task> callbackFunc) : base(innerAgent)
     {
         this._callbackFunc = callbackFunc;
     }
@@ -44,14 +44,28 @@ internal sealed class FunctionInvokingCallbackHandlerAgent : DelegatingAIAgent
         return options;
     }
 
-    private sealed class MiddlewareFunction(AIAgent agent, AIFunction innerFunction, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, ValueTask<object?>>, CancellationToken, ValueTask<object?>> next) : DelegatingAIFunction(innerFunction)
+    private sealed class MiddlewareFunction(AIAgent agent, AIFunction innerFunction, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, Task>, Task> next) : DelegatingAIFunction(innerFunction)
     {
-        protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
-            => next(
-                    FunctionInvokingChatClient.CurrentContext is not null
-                        ? new AgentFunctionInvocationCallbackContext(agent, FunctionInvokingChatClient.CurrentContext, cancellationToken)
-                        : null,
-                    (ctx) => base.InvokeCoreAsync(ctx.Arguments, ctx.CancellationToken),
-                    cancellationToken);
+        protected async override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+        {
+            if (FunctionInvokingChatClient.CurrentContext is null)
+            {
+                // If there's no current function invocation context, there's nothing to do.
+                return null;
+            }
+
+            var context = new AgentFunctionInvocationCallbackContext(agent, FunctionInvokingChatClient.CurrentContext, cancellationToken);
+
+            await next(context, CoreLogicAsync).ConfigureAwait(false);
+
+            return context.Result;
+
+            async Task CoreLogicAsync(AgentFunctionInvocationCallbackContext ctx)
+            {
+                var result = await base.InvokeCoreAsync(ctx.Arguments, ctx.CancellationToken).ConfigureAwait(false);
+
+                ctx.Result = result;
+            }
+        }
     }
 }

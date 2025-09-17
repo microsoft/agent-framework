@@ -17,9 +17,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> _callbackFunc;
+    private readonly Func<AgentRunContext, Func<AgentRunContext, Task>, Task> _callbackFunc;
 
-    internal RunningCallbackHandlerAgent(AIAgent innerAgent, Func<AgentInvokeCallbackContext, Func<AgentInvokeCallbackContext, Task>, Task> callbackFunc) : base(innerAgent)
+    internal RunningCallbackHandlerAgent(AIAgent innerAgent, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callbackFunc) : base(innerAgent)
     {
         this._callbackFunc = Throw.IfNull(callbackFunc);
     }
@@ -27,13 +27,13 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var context = new AgentInvokeCallbackContext(this, messages, thread, options, isStreaming: false, cancellationToken);
+        var context = new AgentRunContext(this, messages, thread, options, isStreaming: false, cancellationToken);
 
-        async Task CoreLogicAsync(AgentInvokeCallbackContext ctx)
+        async Task CoreLogicAsync(AgentRunContext ctx)
         {
             var response = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken).ConfigureAwait(false);
 
-            ctx.SetRawResponse(response);
+            ctx.SetRunResponse(response);
         }
 
         await this._callbackFunc(context, CoreLogicAsync).ConfigureAwait(false);
@@ -44,17 +44,17 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var context = new AgentInvokeCallbackContext(this, messages, thread, options, isStreaming: true, cancellationToken);
+        var context = new AgentRunContext(this, messages, thread, options, isStreaming: true, cancellationToken);
 
-        Task CoreLogic(AgentInvokeCallbackContext ctx)
+        Task CoreLogicAsync(AgentRunContext ctx)
         {
             var enumerable = this.InnerAgent.RunStreamingAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
-            ctx.SetRawResponse(enumerable);
+            ctx.SetRunStreamingResponse(enumerable);
 
             return Task.CompletedTask;
         }
 
-        await this._callbackFunc(context, CoreLogic).ConfigureAwait(false);
+        await this._callbackFunc(context, CoreLogicAsync).ConfigureAwait(false);
 
         await foreach (var update in context.RunStreamingResponse!.ConfigureAwait(false))
         {

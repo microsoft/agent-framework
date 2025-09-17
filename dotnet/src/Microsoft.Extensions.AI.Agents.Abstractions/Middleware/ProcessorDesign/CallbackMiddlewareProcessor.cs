@@ -41,7 +41,7 @@ public sealed class CallbackMiddlewareProcessor
     {
         switch (middleware)
         {
-            case CallbackMiddleware<AgentInvokeCallbackContext>:
+            case CallbackMiddleware<AgentRunContext>:
                 this._agentCallbacks.Add(middleware);
                 break;
             default:

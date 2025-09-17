@@ -30,9 +30,10 @@ var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCr
 // Example 3: Agent with custom middleware
 Console.WriteLine("=== Agent with custom middleware ===");
 
-var agent = persistentAgentsClient.CreateAIAgent(model).AsBuilder()
-    .Use((innerAgent) => new GuardrailCallbackAgent(innerAgent)) // Decoration based agent run handling
-    .Use(async (context, next) => // Context based handling
+var agent = persistentAgentsClient.CreateAIAgent(model)
+    .AsBuilder()
+    .Use((innerAgent) => new GuardrailMiddlewareAgent(innerAgent)) // Decoration based agent run handling
+    .UseRunningContext(async (context, next) => // Context based handling
     {
         // Guardrail: Filter input messages for PII
         context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
@@ -43,11 +44,11 @@ var agent = persistentAgentsClient.CreateAIAgent(model).AsBuilder()
         if (!context.IsStreaming)
         {
             // Guardrail: Filter output messages for PII
-            context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+            context.RunResponse!.Messages = context.RunResponse!.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
         }
         else
         {
-            context.SetRawResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
+            context.SetRunStreamingResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
         }
 
         async IAsyncEnumerable<AgentRunResponseUpdate> StreamingPiiDetectionAsync(IAsyncEnumerable<AgentRunResponseUpdate> upstream)
@@ -107,11 +108,11 @@ await foreach (var update in agent.RunStreamingAsync("My name is Jane Smith, cal
 // Cleanup
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
-internal sealed class GuardrailCallbackAgent : DelegatingAIAgent
+internal sealed class GuardrailMiddlewareAgent : DelegatingAIAgent
 {
     private readonly string[] _forbiddenKeywords = { "harmful", "illegal", "violence" }; // Expand as needed
 
-    public GuardrailCallbackAgent(AIAgent innerAgent) : base(innerAgent) { }
+    public GuardrailMiddlewareAgent(AIAgent innerAgent) : base(innerAgent) { }
 
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {

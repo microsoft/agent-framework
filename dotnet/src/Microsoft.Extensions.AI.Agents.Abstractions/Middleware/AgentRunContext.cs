@@ -12,10 +12,10 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Provides context information for agent invocation callback middleware.
 /// </summary>
-public sealed class AgentInvokeCallbackContext : CallbackContext
+public sealed class AgentRunContext : CallbackContext
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentInvokeCallbackContext"/> class.
+    /// Initializes a new instance of the <see cref="AgentRunContext"/> class.
     /// </summary>
     /// <param name="agent">The agent instance being invoked.</param>
     /// <param name="messages">The messages being passed to the agent.</param>
@@ -23,7 +23,7 @@ public sealed class AgentInvokeCallbackContext : CallbackContext
     /// <param name="options">The options for the agent invocation.</param>
     /// <param name="isStreaming">A value indicating whether this is a streaming invocation.</param>
     /// <param name="cancellationToken">The cancellation token for the operation.</param>
-    public AgentInvokeCallbackContext(
+    public AgentRunContext(
         AIAgent agent,
         IEnumerable<ChatMessage> messages,
         AgentThread? thread,
@@ -63,7 +63,7 @@ public sealed class AgentInvokeCallbackContext : CallbackContext
     /// </summary>
     /// <param name="streamingResponse">The streaming response to set.</param>
     /// <exception cref="System.InvalidOperationException">Can't set a streaming response for a non-streaming invocation.</exception>
-    public void SetRawResponse(IAsyncEnumerable<AgentRunResponseUpdate>? streamingResponse)
+    public void SetRunStreamingResponse(IAsyncEnumerable<AgentRunResponseUpdate>? streamingResponse)
     {
         if (this.IsStreaming is false)
         {
@@ -78,7 +78,7 @@ public sealed class AgentInvokeCallbackContext : CallbackContext
     /// </summary>
     /// <param name="response">The <see cref="AgentRunResponse"/> to set.</param>
     /// <exception cref="System.InvalidOperationException">Can't set a non-streaming response for a streaming invocation.</exception>
-    public void SetRawResponse(AgentRunResponse? response)
+    public void SetRunResponse(AgentRunResponse? response)
     {
         if (this.IsStreaming is true)
         {

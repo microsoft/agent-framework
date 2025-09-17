@@ -56,21 +56,21 @@ public sealed class CallbackEnabledAgent : DelegatingAIAgent
 
         // The roaming context is used to hold into the context that was passed through the middleware chain.
         // This allows us to capture any specialized AgentInvokeCallbackContext context that may have been passed through the chain
-        AgentInvokeCallbackContext roamingContext = null!;
+        AgentRunContext roamingContext = null!;
 
-        async Task CoreLogic(AgentInvokeCallbackContext ctx)
+        async Task CoreLogic(AgentRunContext ctx)
         {
             // There's a possibility that the provided context was customized by a specialized AgentInvokeCallbackContext context 
             roamingContext ??= ctx;
             var result = await this.InnerAgent.RunAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken)
                 .ConfigureAwait(false);
 
-            ctx.SetRawResponse(result);
+            ctx.SetRunResponse(result);
         }
 
-        await this._callbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
+        await this._callbacksProcessor.ProcessAsync<AgentRunContext>(
             // Starting context
-            new AgentInvokeCallbackContext(
+            new AgentRunContext(
                 agent: this,
                 messages: messages,
                 thread,
@@ -94,7 +94,7 @@ public sealed class CallbackEnabledAgent : DelegatingAIAgent
         _ = Throw.IfNull(messages);
 
         // The context is used through the middleware chain.
-        AgentInvokeCallbackContext roamingContext = new(
+        AgentRunContext roamingContext = new(
                 agent: this,
                 messages: messages,
                 thread: thread,
@@ -102,15 +102,15 @@ public sealed class CallbackEnabledAgent : DelegatingAIAgent
                 isStreaming: true,
                 cancellationToken: cancellationToken);
 
-        Task CoreLogic(AgentInvokeCallbackContext ctx)
+        Task CoreLogic(AgentRunContext ctx)
         {
             var enumerable = this.InnerAgent.RunStreamingAsync(ctx.Messages, ctx.Thread, ctx.Options, ctx.CancellationToken);
-            ctx.SetRawResponse(enumerable);
+            ctx.SetRunStreamingResponse(enumerable);
 
             return Task.CompletedTask;
         }
 
-        await this._callbacksProcessor.ProcessAsync<AgentInvokeCallbackContext>(
+        await this._callbacksProcessor.ProcessAsync<AgentRunContext>(
             roamingContext,
             CoreLogic,
             cancellationToken)
@@ -129,6 +129,6 @@ public sealed class CallbackEnabledAgent : DelegatingAIAgent
     /// Add a <see cref="ICallbackMiddleware"/> to the agent.
     /// </summary>
     /// <param name="callback">A callback implementation that the agent will be aware of.</param>
-    public void AddCallback(ICallbackMiddleware<AgentInvokeCallbackContext> callback)
+    public void AddCallback(ICallbackMiddleware<AgentRunContext> callback)
         => CallbackMiddlewareProcessorExtensions.AddCallback(this._callbacksProcessor, callback);
 }

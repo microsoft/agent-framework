@@ -60,13 +60,14 @@ await foreach (var update in agent.RunStreamingAsync("My name is Jane Smith, cal
 // Cleanup
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
-internal sealed class PiiDetectionMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
+internal sealed class PiiDetectionMiddleware : CallbackMiddleware<AgentRunContext>
 {
-    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
+    public override async Task OnProcessAsync(AgentRunContext context, Func<AgentRunContext, Task> next, CancellationToken cancellationToken)
     {
         // Guardrail: Filter input messages for PII
         context.Messages = context.Messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
         Console.WriteLine($"Pii Middleware - Filtered messages: {new ChatResponse(context.Messages).Text}");
+
         await next(context).ConfigureAwait(false);
 
         if (!context.IsStreaming)
@@ -76,7 +77,7 @@ internal sealed class PiiDetectionMiddleware : CallbackMiddleware<AgentInvokeCal
         }
         else
         {
-            context.SetRawResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
+            context.SetRunStreamingResponse(StreamingPiiDetectionAsync(context.RunStreamingResponse!));
         }
 
         async IAsyncEnumerable<AgentRunResponseUpdate> StreamingPiiDetectionAsync(IAsyncEnumerable<AgentRunResponseUpdate> upstream)
@@ -113,11 +114,11 @@ internal sealed class PiiDetectionMiddleware : CallbackMiddleware<AgentInvokeCal
     }
 }
 
-internal sealed class GuardrailCallbackMiddleware : CallbackMiddleware<AgentInvokeCallbackContext>
+internal sealed class GuardrailCallbackMiddleware : CallbackMiddleware<AgentRunContext>
 {
     private readonly string[] _forbiddenKeywords = { "harmful", "illegal", "violence" }; // Expand as needed
 
-    public override async Task OnProcessAsync(AgentInvokeCallbackContext context, Func<AgentInvokeCallbackContext, Task> next, CancellationToken cancellationToken)
+    public override async Task OnProcessAsync(AgentRunContext context, Func<AgentRunContext, Task> next, CancellationToken cancellationToken)
     {
         // Guardrail: Filter input messages for forbidden content
         context.Messages = this.FilterMessages(context.Messages);
@@ -131,7 +132,7 @@ internal sealed class GuardrailCallbackMiddleware : CallbackMiddleware<AgentInvo
         }
         else
         {
-            context.SetRawResponse(StreamingGuardRailAsync(context.RunStreamingResponse!));
+            context.SetRunStreamingResponse(StreamingGuardRailAsync(context.RunStreamingResponse!));
         }
 
         async IAsyncEnumerable<AgentRunResponseUpdate> StreamingGuardRailAsync(IAsyncEnumerable<AgentRunResponseUpdate> upstream)

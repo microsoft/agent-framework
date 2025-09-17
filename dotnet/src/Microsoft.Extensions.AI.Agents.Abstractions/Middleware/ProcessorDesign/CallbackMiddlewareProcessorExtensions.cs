@@ -47,12 +47,12 @@ public static class CallbackMiddlewareProcessorExtensions
         => processor.GetCallbacksForContext(typeof(TContext));
 
     /// <summary>
-    /// Adds a <see cref="AgentInvokeCallbackContext"/> middleware to the <see cref="CallbackMiddlewareProcessor"/>.
+    /// Adds a <see cref="AgentRunContext"/> middleware to the <see cref="CallbackMiddlewareProcessor"/>.
     /// </summary>
     /// <param name="processor">The <see cref="CallbackMiddlewareProcessor"/> to which the middleware will be added. Cannot be <see
     /// langword="null"/>.</param>
     /// <param name="middleware">The callback middleware to add. Cannot be <see langword="null"/>.</param>
-    public static CallbackMiddlewareProcessor AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<AgentInvokeCallbackContext> middleware)
+    public static CallbackMiddlewareProcessor AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<AgentRunContext> middleware)
         => processor.AddCallback(Throw.IfNull(middleware));
 
     /// <summary>

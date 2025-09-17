@@ -119,4 +119,9 @@ public class AgentFunctionInvocationCallbackContext : CallbackContext
         get => this._functionInvocationContext.IsStreaming;
         set => this._functionInvocationContext.IsStreaming = value;
     }
+
+    /// <summary>
+    /// Gets or sets the result of the function invocation.
+    /// </summary>
+    public object? Result { get; set; }
 }

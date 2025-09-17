@@ -30,13 +30,53 @@ static string GetWeather([Description("The location to get the weather for.")] s
 
 var agent = persistentAgentsClient.CreateAIAgent(model)
     .AsBuilder()
-    .Use((functionInvocationContext, next, ct) =>
+    .UseFunctionInvocationContext(async (context, next) =>
     {
-        Console.WriteLine($"IsStreaming: {functionInvocationContext!.IsStreaming}");
+        // Example: get function information
+        var functionName = context!.Function.Description;
 
-        return next(functionInvocationContext);
+        // Example: get chat history
+        var chatHistory = context.Messages;
+
+        // Example: get information about all functions which will be invoked
+        var functionCalls = context.CallContent;
+
+        // In function calling functionality there are two loops.
+        // Outer loop is "request" loop - it performs multiple requests to LLM until user ask will be satisfied.
+        // Inner loop is "function" loop - it handles LLM response with multiple function calls.
+
+        // Workflow example:
+        // 1. Request to LLM #1 -> Response with 3 functions to call.
+        //      1.1. Function #1 called.
+        //      1.2. Function #2 called.
+        //      1.3. Function #3 called.
+        // 2. Request to LLM #2 -> Response with 2 functions to call.
+        //      2.1. Function #1 called.
+        //      2.2. Function #2 called.
+
+        // context.RequestSequenceIndex - it's a sequence number of outer/request loop operation.
+        // context.FunctionSequenceIndex - it's a sequence number of inner/function loop operation.
+        // context.FunctionCount - number of functions which will be called per request (based on example above: 3 for first request, 2 for second request).
+
+        // Example: get request sequence index
+        Console.WriteLine($"Request sequence index: {context.FunctionCallIndex}");
+
+        // Example: get function sequence index
+        Console.WriteLine($"Function sequence index: {context.Iteration}");
+
+        // Example: get total number of functions which will be called
+        Console.WriteLine($"Total number of functions: {context.FunctionCount}");
+
+        // Calling next filter in pipeline or function itself.
+        // By skipping this call, next filters and function won't be invoked, and function call loop will proceed to the next function.
+        await next(context);
+
+        // Example: Terminate the function call request loop after this function invocation.
+        context.Terminate = true;
+
+        Console.WriteLine($"IsStreaming: {context.IsStreaming}");
     })
-    .Use((functionInvocationContext, next, ct) =>
+    .UseFunctionInvocationContext((functionInvocationContext, next) =>
     {
         Console.WriteLine($"City Name: {(functionInvocationContext!.Arguments.TryGetValue("location", out var location) ? location : "not provided")}");
 
