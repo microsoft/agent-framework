@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
 
@@ -32,7 +32,7 @@ def _current_event_origin() -> WorkflowEventSource:
 
 
 @contextmanager
-def _runner_event_origin() -> Iterator[None]:
+def _runner_event_origin() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     """Temporarily mark subsequently created events as originating from the runner."""
     token = _event_origin_context.set(WorkflowEventSource.RUNNER)
     try:
@@ -56,19 +56,19 @@ class WorkflowEvent:
 
 
 class WorkflowStartedEvent(WorkflowEvent):
-    """Event triggered when a workflow starts."""
+    """Built-in lifecycle event emitted when a workflow run begins."""
 
     ...
 
 
 class WorkflowCompletedEvent(WorkflowEvent):
-    """Event triggered when a workflow completes."""
+    """Built-in lifecycle event emitted when a workflow run completes successfully."""
 
     ...
 
 
 class WorkflowWarningEvent(WorkflowEvent):
-    """Event triggered when a warning occurs in the workflow."""
+    """Executor-origin event signaling a warning surfaced by user code."""
 
     def __init__(self, data: str):
         """Initialize the workflow warning event with optional data and warning message."""
@@ -80,7 +80,7 @@ class WorkflowWarningEvent(WorkflowEvent):
 
 
 class WorkflowErrorEvent(WorkflowEvent):
-    """Event triggered when an error occurs in the workflow."""
+    """Executor-origin event signaling an error surfaced by user code."""
 
     def __init__(self, data: Exception):
         """Initialize the workflow error event with optional data and error message."""
@@ -140,7 +140,7 @@ class WorkflowRunState(str, Enum):
 
 
 class WorkflowStatusEvent(WorkflowEvent):
-    """Event indicating a transition in the workflow run state."""
+    """Built-in lifecycle event emitted for workflow run state transitions."""
 
     def __init__(
         self,
@@ -193,7 +193,7 @@ class WorkflowErrorDetails:
 
 
 class WorkflowFailedEvent(WorkflowEvent):
-    """Terminal failure event for a workflow run."""
+    """Built-in lifecycle event emitted when a workflow run terminates with an error."""
 
     def __init__(
         self,
@@ -307,3 +307,6 @@ class AgentRunEvent(ExecutorEvent):
     def __repr__(self) -> str:
         """Return a string representation of the agent run event."""
         return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+
+
+WorkflowLifecycleEvent: TypeAlias = WorkflowStartedEvent | WorkflowStatusEvent | WorkflowFailedEvent
