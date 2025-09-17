@@ -68,7 +68,7 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <summary>
     /// Gets or sets the <see cref="InMemoryChatMessageStore"/> used by this thread.
     /// </summary>
-    public InMemoryChatMessageStore? MessageStore => this._messageStore;
+    public InMemoryChatMessageStore MessageStore => this._messageStore;
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
