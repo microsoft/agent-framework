@@ -2,6 +2,7 @@
 
 import json
 import os
+from datetime import datetime
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
@@ -740,3 +741,25 @@ def test_prepare_function_call_results_string_passthrough():
     result = prepare_function_call_results("simple string")
     assert result == "simple string"
     assert isinstance(result, str)
+
+
+def test_prepare_function_call_results_with_none_values():
+    """Test that None values in BaseModel fields are preserved to avoid validation errors during reloading."""
+
+    class Flight(BaseModel):
+        flight_id: str
+        departure: datetime | None
+        arrival: datetime | None
+
+    # Test single BaseModel with None values (performance shortcut)
+    flight_with_nones = Flight(flight_id="123", departure=None, arrival=None)
+    result = prepare_function_call_results(flight_with_nones)
+
+    assert isinstance(result, str)
+    parsed = json.loads(result)
+    assert parsed["flight_id"] == "123"
+    assert parsed["departure"] is None
+    assert parsed["arrival"] is None
+
+    new_flight = Flight.model_validate_json(result)
+    assert new_flight == flight_with_nones

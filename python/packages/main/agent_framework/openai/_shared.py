@@ -63,6 +63,10 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
 
 def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str | list[str]:
     """Prepare the values of the function call results."""
+    if isinstance(content, BaseModel):
+        # BaseModel is already dumpable, shortcut for performance
+        return content.model_dump_json(exclude={"raw_representation", "additional_properties"})
+
     dumpable = _prepare_function_call_results_as_dumpable(content)
     if isinstance(dumpable, str):
         return dumpable
