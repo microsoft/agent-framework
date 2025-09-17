@@ -6,12 +6,12 @@ using Microsoft.Bot.ObjectModel;
 namespace Microsoft.Agents.Workflows.Declarative;
 
 /// <summary>
-/// Event that indicates a declarative action has completed.
+/// Event that indicates a declarative action has been invoked.
 /// </summary>
-public sealed class DeclarativeActionCompleteEvent : WorkflowEvent
+public sealed class DeclarativeActionInvokedEvent : WorkflowEvent
 {
     /// <summary>
-    /// The declarative action identifier.
+    /// The declarative action id.
     /// </summary>
     public string ActionId { get; }
 
@@ -25,10 +25,16 @@ public sealed class DeclarativeActionCompleteEvent : WorkflowEvent
     /// </summary>
     public string? ParentActionId { get; }
 
-    internal DeclarativeActionCompleteEvent(DialogAction action) : base(action)
+    /// <summary>
+    /// Identifier of the previous action.
+    /// </summary>
+    public string? PriorActionId { get; }
+
+    internal DeclarativeActionInvokedEvent(DialogAction action, string? priorActionId) : base(action)
     {
         this.ActionId = action.GetId();
         this.ActionType = action.GetType().Name;
         this.ParentActionId = action.GetParentId();
+        this.PriorActionId = priorActionId;
     }
 }
