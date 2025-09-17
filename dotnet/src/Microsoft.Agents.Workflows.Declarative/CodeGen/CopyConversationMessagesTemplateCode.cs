@@ -5,16 +5,16 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal partial class RetrieveConversationMessageTemplate
+internal partial class CopyConversationMessagesTemplate
 {
-    public RetrieveConversationMessageTemplate(RetrieveConversationMessage model)
+    public CopyConversationMessagesTemplate(CopyConversationMessages model)
     {
         this.Model = model;
         this.Id = model.GetId();
         this.Name = this.Id.FormatType();
     }
 
-    public RetrieveConversationMessage Model { get; }
+    public CopyConversationMessages Model { get; }
 
     public string Id { get; }
     public string Name { get; }

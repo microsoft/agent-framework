@@ -18,9 +18,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class SetVariableTemplate : CodeTemplate
+    internal partial class RetrieveConversationMessagesTemplate : CodeTemplate
     {
 #line hidden
         /// <summary>
@@ -37,40 +37,43 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
-            this.Write("\n/// <summary>\n/// Assigns an evaluated expression, other variable, or literal va" +
-                    "lue to the  \"");
+            this.Write("\n/// <summary>\n/// %%% COMMENT\n/// </summary>\ninternal sealed class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Variable));
-            
-            #line default
-            #line hidden
-            this.Write("\" variable.\n/// </summary>\ninternal sealed class ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
-            this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
+            this.Write("Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExe" +
+                    "cutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
-                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {");
+            this.Write(@""", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        ChatMessage messages = 
+            await agentProvider.GetMessageAsync(
+                converationId, 
+                limit: null, 
+                after: null,
+                before: null,
+                newestFirst: null,
+                cancellationToken).ConfigureAwait(false);");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
- 
-        EvaluateValueExpression(this.Model.Value, "evaluatedValue");
-        AssignVariable(this.Variable, "evaluatedValue");
-     
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
+
+        AssignVariable(this.Model.Messages, "messages");
+        
             
             #line default
             #line hidden
-            this.Write("\n    }\n}\n");
+            this.Write("\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
         

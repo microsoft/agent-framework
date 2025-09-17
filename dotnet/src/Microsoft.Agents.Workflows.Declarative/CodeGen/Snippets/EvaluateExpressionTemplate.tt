@@ -1,0 +1,77 @@
+﻿<#+
+void EvaluateValueExpression(ValueExpression expression, string targetVariable) =>
+    EvaluateValueExpression<object>(expression, targetVariable);
+
+void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVariable)
+{
+    if (expression is null)
+    { 
+        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    }
+    else if (expression.IsLiteral)
+    { #>
+        <#= typeof(TValue).Name #>? <#= targetVariable #> = <#= Format(expression.LiteralValue) #>;<#+ 
+    }
+    else if (expression.IsVariableReference)
+    { #>
+        <#= typeof(TValue).Name #>? <#= targetVariable #> = await context.ReadStateAsync<<#= typeof(TValue).Name #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsExpression)
+    { #>
+        <#= typeof(TValue).Name #>? <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    }
+    else
+    {
+        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    }
+}
+
+void EvaluateStringExpression(StringExpression expression, string targetVariable)
+{
+    if (expression is null)
+    { 
+        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    }
+    else if (expression.IsLiteral)
+    { // %%% INCOMPLETE: MULTILINE #>
+        string <#= targetVariable #> = "<#= expression.LiteralValue #>";<#+ 
+    }
+    else if (expression.IsVariableReference)
+    { #>
+        string <#= targetVariable #> = await context.ReadStateAsync<object>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsExpression)
+    { #>
+        string <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    }
+    else
+    {
+        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    }
+}
+
+// %%% TODO: Expose underlying enum and map to public one.
+void EvaluateEnumExpression<TEnum>(EnumExpression<TEnum> expression, string targetVariable) where TEnum : EnumWrapper
+{
+    if (expression is null)
+    {
+        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    }
+    else if (expression.IsLiteral)
+    { #>
+        <#= typeof(TEnum).Name #> <#= targetVariable #> = <#= typeof(TEnum).Name #>.<#= expression.LiteralValue #>;<#+ 
+    }
+    else if (expression.IsVariableReference)
+    { #>
+        <#= typeof(TEnum).Name #> <#= targetVariable #> = await context.ReadStateAsync<<#= typeof(TEnum).Name #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsExpression)
+    { #>
+        <#= typeof(TEnum).Name #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= typeof(TEnum).Name #>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    }
+    else
+    {
+        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    }
+}
+#>

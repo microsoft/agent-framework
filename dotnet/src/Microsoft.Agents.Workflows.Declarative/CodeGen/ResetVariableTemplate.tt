@@ -1,6 +1,5 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" #>
 <#@ output extension=".cs" #>
-<#@ import namespace="Microsoft.Bot.ObjectModel" #>
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>

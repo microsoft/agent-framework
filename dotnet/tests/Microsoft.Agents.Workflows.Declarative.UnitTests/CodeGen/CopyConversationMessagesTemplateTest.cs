@@ -1,0 +1,60 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Bot.ObjectModel;
+using Xunit.Abstractions;
+
+namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
+
+public class CopyConversationMessagesTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
+{
+    [Fact]
+    public void CopyConversationMessages()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(CopyConversationMessages),
+            StringExpression.Literal("#conv_dm99"),
+            ValueExpression.Variable(PropertyPath.TopicVariable("MyMessages")));
+    }
+
+    // %%% TODO: WITH METADATA
+
+    private void ExecuteTest(
+        string displayName,
+        StringExpression conversation,
+        ValueExpression messages)
+    {
+        // Arrange
+        CopyConversationMessages model =
+            this.CreateModel(
+                displayName,
+                conversation,
+                messages);
+
+        // Act
+        CopyConversationMessagesTemplate template = new(model);
+        string workflowCode = template.TransformText();
+        this.Output.WriteLine(workflowCode.Trim());
+
+        // Assert
+        //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+    }
+
+    private CopyConversationMessages CreateModel(
+        string displayName,
+        StringExpression conversation,
+        ValueExpression messages)
+    {
+        CopyConversationMessages.Builder actionBuilder =
+            new()
+            {
+                Id = this.CreateActionId("copy_messages"),
+                DisplayName = this.FormatDisplayName(displayName),
+                ConversationId = conversation,
+                Messages = messages,
+            };
+
+        return actionBuilder.Build();
+    }
+}

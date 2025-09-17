@@ -1,19 +1,18 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" #>
 <#@ output extension=".cs" #>
-<#@ import namespace="Microsoft.Agents.Workflows.Declarative.Extensions" #>
-<#@ import namespace="Microsoft.Bot.ObjectModel" #>
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
 /// %%% COMMENT
 /// </summary>
-internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     // <inheritdoc />
-    protected override async ValueTask ExecuteAsync(IWorkflowContext context, WorkflowAgentProvider agentProvider, CancellationToken cancellationToken)
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
-        EvaluateVariable(this.Model.ConversationId, "conversationId"); #>
-        ChatMessage newMessage = new(this.GetRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() }; // %%% TODO: METADATA
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId");
+        EvaluateEnumExpression<AgentMessageRoleWrapper>(this.Model.Role, "role"); #> // %%% TODO: RAW ENUM
+        ChatMessage newMessage = new(role, [.. this.GetContent()]); //{ AdditionalProperties = this.GetMetadata() }; // %%% TODO: METADATA
         await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#
         AssignVariable(this.Message, "newMessage");
         #>
@@ -21,25 +20,27 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
 
     private IEnumerable<AIContent> GetContent()
     {<#
+        int index = 0;
         foreach (AddConversationMessageContent content in this.Model.Content)
-        {#>
-            string contentValue =
-                await context.FormatTemplateAsync(
-                    """<#
-                    FormatMessageTemplate(content.Value); #>
-                    """);<#
+        {
+           ++index;#>
+        string contentValue<#= index #> =
+            await context.FormatTemplateAsync(
+                """<#
+                FormatMessageTemplate(content.Value); #>
+                """);<#
             AgentMessageContentType contentType = content.Type.Value;
             if (contentType == AgentMessageContentType.ImageUrl)
             {#>
-                yield return new UriContent(contentValue, "image/*");<#
+        yield return new UriContent(contentValue, "image/*");<#
             }
             else if (contentType == AgentMessageContentType.ImageFile)
             {#>
-                yield return new HostedFileContent(contentValue);<#
+        yield return new HostedFileContent(contentValue);<#
             }
             else
             {#>
-                yield return new TextContent(contentValue);<#
+        yield return new TextContent(contentValue<#= index #>);<#
             }
         }#>
     }

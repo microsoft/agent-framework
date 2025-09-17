@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
@@ -23,10 +24,22 @@ internal abstract class CodeTemplate
     /// </summary>
     public abstract string TransformText();
 
+    #region Agent Framework helpers
+
+    public static string GetRole(AgentMessageRole? role) =>
+        role switch
+        {
+            AgentMessageRole.Agent => $"{nameof(ChatRole)}.{nameof(ChatRole.Assistant)}",
+            AgentMessageRole.User => $"{nameof(ChatRole)}.{nameof(ChatRole.User)}",
+            _ => $"{nameof(ChatRole)}.{nameof(ChatRole.User)}",
+        };
+
+    #endregion
+
     #region Object Model helpers
 
-    public string VariableName(PropertyPath path) => Throw.IfNull(path.VariableName);
-    public string VariableScope(PropertyPath path) => Throw.IfNull(path.VariableScopeName);
+    public static string VariableName(PropertyPath path) => Throw.IfNull(path.VariableName);
+    public static string VariableScope(PropertyPath path) => Throw.IfNull(path.VariableScopeName);
 
     public static string Format(DataValue value) =>
         value switch

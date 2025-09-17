@@ -1,3 +1,6 @@
-﻿<#@ include file="AssignVariableTemplate.tt" once="true" #>
-<#@ include file="EvaluateVariableTemplate.tt" once="true" #>
+﻿<#@ import namespace="Microsoft.Agents.Workflows.Declarative.Extensions" #>
+<#@ import namespace="Microsoft.Bot.ObjectModel" #>
+<#@ import namespace="Microsoft.Extensions.AI" #>
+<#@ include file="AssignVariableTemplate.tt" once="true" #>
+<#@ include file="EvaluateExpressionTemplate.tt" once="true" #>
 <#@ include file="FormatMessageTemplate.tt" once="true" #>

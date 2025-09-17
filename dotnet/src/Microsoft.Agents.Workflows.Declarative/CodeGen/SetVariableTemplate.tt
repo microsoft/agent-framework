@@ -1,7 +1,5 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" #>
 <#@ output extension=".cs" #>
-<#@ import namespace="Microsoft.Agents.Workflows.Declarative.Extensions" #>
-<#@ import namespace="Microsoft.Bot.ObjectModel" #>
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
@@ -12,7 +10,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
     // <inheritdoc />
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
-        EvaluateVariable(this.Model.Value, "evaluatedValue");
+        EvaluateValueExpression(this.Model.Value, "evaluatedValue");
         AssignVariable(this.Variable, "evaluatedValue");
      #>
     }
