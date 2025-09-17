@@ -145,7 +145,7 @@ async def example_multiple_agents() -> None:
         context_providers=RedisProvider(
             redis_url="redis://localhost:6379",
             index_name="redis_threads_agents",
-            overwrite_redis_index=True,
+            overwrite_redis_index=False,
             drop_redis_index=False,
             application_id="threads_demo_app",
             agent_id="agent_work",
