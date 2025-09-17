@@ -15,6 +15,7 @@ one of the following categories:
 ## Lab Packages
 
 - [**gaia**](./gaia/): GAIA benchmark implementation (`agent-framework-lab-gaia`)
+- [**lighting**](./lighting/): Reinforcement learning for agents (`agent-framework-lab-lighting`)
 
 ## How do I contribute?
 
