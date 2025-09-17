@@ -16,9 +16,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 internal sealed class FunctionCallMiddlewareAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentFunctionInvocationContext?, Func<AgentFunctionInvocationContext, Task>, Task> _callbackFunc;
+    private readonly Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> _callbackFunc;
 
-    internal FunctionCallMiddlewareAgent(AIAgent innerAgent, Func<AgentFunctionInvocationContext?, Func<AgentFunctionInvocationContext, Task>, Task> callbackFunc) : base(innerAgent)
+    internal FunctionCallMiddlewareAgent(AIAgent innerAgent, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callbackFunc) : base(innerAgent)
     {
         this._callbackFunc = callbackFunc;
     }
@@ -60,7 +60,7 @@ internal sealed class FunctionCallMiddlewareAgent : DelegatingAIAgent
         return options;
     }
 
-    private sealed class MiddlewareEnabledFunction(AIAgent agent, AIFunction innerFunction, Func<AgentFunctionInvocationContext?, Func<AgentFunctionInvocationContext, Task>, Task> next) : DelegatingAIFunction(innerFunction)
+    private sealed class MiddlewareEnabledFunction(AIAgent agent, AIFunction innerFunction, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> next) : DelegatingAIFunction(innerFunction)
     {
         protected async override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {

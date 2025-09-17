@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Provides context information for agent invocation callback middleware.
 /// </summary>
-public sealed class AgentRunContext : CallbackContext
+public sealed class AgentRunContext : AgentMiddlewareContext
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentRunContext"/> class.
