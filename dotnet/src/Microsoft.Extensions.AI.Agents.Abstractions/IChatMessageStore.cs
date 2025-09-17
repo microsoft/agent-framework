@@ -45,27 +45,10 @@ public interface IChatMessageStore
     Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Deserializes the state contained in the provided <see cref="JsonElement"/> into the properties on this store.
-    /// </summary>
-    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the state of the store.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ValueTask"/> that completes when the state has been deserialized.</returns>
-    /// <remarks>
-    /// This method, together with <see cref="SerializeStateAsync(JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
-    /// if this store only has messages in memory.
-    /// </remarks>
-    ValueTask DeserializeStateAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    /// <remarks>
-    /// This method, together with <see cref="DeserializeStateAsync(JsonElement?, JsonSerializerOptions?, CancellationToken)"/> can be used to save and load messages from a persistent store
-    /// if this store only has messages in memory.
-    /// </remarks>
     ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 }
