@@ -37,6 +37,8 @@ from agent_framework.telemetry import (
     use_telemetry,
 )
 
+from .utils import CopyingMock
+
 # region Test constants
 
 
@@ -198,8 +200,14 @@ def test_start_span_basic():
         mock_function = Mock()
         mock_function.name = "test_function"
         mock_function.description = "Test function description"
+        attributes = {
+            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+            OtelAttr.TOOL_NAME: "test_function",
+            OtelAttr.TOOL_DESCRIPTION: "Test function description",
+            OtelAttr.TOOL_TYPE: "function",
+        }
 
-        result = get_function_span(mock_function)
+        result = get_function_span(attributes)
 
         assert result == mock_span
         mock_tracer.start_as_current_span.assert_called_once()
@@ -217,7 +225,7 @@ def test_start_span_with_tool_call_id():
     """Test starting a span with tool_call_id."""
     mock_tracer = Mock()
     with patch("agent_framework.telemetry.tracer", mock_tracer):
-        mock_span = Mock()
+        mock_span = CopyingMock()
         mock_tracer.start_as_current_span.return_value = mock_span
 
         mock_function = Mock()
@@ -225,30 +233,19 @@ def test_start_span_with_tool_call_id():
         mock_function.description = "Test function"
 
         tool_call_id = "test_call_123"
+        attributes = {
+            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+            OtelAttr.TOOL_NAME: "test_function",
+            OtelAttr.TOOL_DESCRIPTION: "Test function",
+            OtelAttr.TOOL_TYPE: "function",
+            OtelAttr.TOOL_CALL_ID: tool_call_id,
+        }
 
-        _ = get_function_span(mock_function, tool_call_id)
+        _ = get_function_span(attributes)
 
         call_args = mock_tracer.start_as_current_span.call_args
         attributes = call_args[1]["attributes"]
         assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_123"
-
-
-def test_start_span_without_description():
-    """Test starting a span when function has no description."""
-    mock_tracer = Mock()
-    with patch("agent_framework.telemetry.tracer", mock_tracer):
-        mock_span = Mock()
-        mock_tracer.start_as_current_span.return_value = mock_span
-
-        mock_function = Mock()
-        mock_function.name = "test_function"
-        mock_function.description = None
-
-        get_function_span(mock_function)
-
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-        assert OtelAttr.TOOL_DESCRIPTION not in attributes
 
 
 # region Test use_telemetry decorator
@@ -375,25 +372,6 @@ async def test_streaming_response_with_otel(mock_chat_client, otel_settings):
             mock_log_messages.assert_not_called()
 
         mock_set_output.assert_called_once()
-
-
-def test_start_as_current_span_with_none_metadata():
-    """Test get_function_span with None metadata."""
-    mock_tracer = Mock()
-    with patch("agent_framework.telemetry.tracer", mock_tracer):
-        mock_span = Mock()
-        mock_tracer.start_as_current_span.return_value = mock_span
-
-        mock_function = Mock()
-        mock_function.name = "test_function"
-        mock_function.description = "Test description"
-
-        result = get_function_span(mock_function, None)
-
-        assert result == mock_span
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.TOOL_CALL_ID] == "unknown"
 
 
 def test_prepend_user_agent_with_none_value():
