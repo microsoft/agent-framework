@@ -280,7 +280,7 @@ support for long-running operations without breaking existing functionality.
     ```
 
 - Other agent run operations:
-    GetRunStepAsync, UpdateRunAsync
+    GetRunStepAsync
 
 </details>
 
@@ -354,7 +354,7 @@ support for long-running operations without breaking existing functionality.
 | Supported modes<sup>1</sup> | Sync, Async               | Async                               | Sync, Async          |
 | Getting status support      | ✅                        | ✅                                 | ✅                   |
 | Getting result support      | ✅                        | ✅                                 | ✅                   |
-| Update support              | ❌                        | ✅                                 | ✅                   |
+| Update support              | ❌                        | ❌                                 | ✅                   |
 | Cancellation support        | ✅                        | ✅                                 | ✅                   |
 | Delete support              | ✅                        | ❌                                 | ❌                   |
 | Non-streaming support       | ✅                        | ✅                                 | ✅                   |
@@ -383,12 +383,12 @@ the following operations are used for working with long-running operations:
   - **Delete Long-Running Execution**: This method is used to delete a long-running operation.
 
 To support these operations by `IChatClient` implementations, the following options are available:
-- **1.1 New IAsyncChatClient Interface For All Long-Running Execution Operations**
-- **1.2 New IAsyncChatClient Interface For Uncommon Operations + Use Get{Streaming}ResponseAsync For Common Operations**
-- **1.3 New IAsyncChatClient Interface For Uncommon Operations + Use Get{Streaming}ResponseAsync For Common Operations + Capability Check**
-- **1.4 Individual Interface Per Uncommon Operation + Use Get{Streaming}ResponseAsync For Common Operations**
+- **1.1 New IAsyncChatClient Interface for All Long-Running Execution Operations**
+- **1.2 New IAsyncChatClient Interface for Uncommon Operations + Use Get{Streaming}ResponseAsync for Common Operations**
+- **1.3 New IAsyncChatClient Interface for Uncommon Operations + Use Get{Streaming}ResponseAsync for Common Operations + Capability Check**
+- **1.4 Individual Interface per Uncommon Operation + Use Get{Streaming}ResponseAsync for Common Operations**
 
-#### 1.1 New IAsyncChatClient Interface For All Long-Running Execution Operations
+#### 1.1 New IAsyncChatClient Interface for All Long-Running Execution Operations
 
 This option suggests adding a new interface `IAsyncChatClient` that some implementations of `IChatClient` may implement to support long-running operations.
 ```csharp
@@ -457,11 +457,11 @@ else
 - Not extensible: Adding new methods to the `IAsyncChatClient` interface after its release will break existing implementations of the interface.
 - Missing capability check: Callers cannot determine if chat clients support specific uncommon operations before attempting to use them.
 - Insufficient information: Callers may not have enough information to decide whether a prompt should run as a long-running operation.
-- The new methods calls bypass existing decorators such as logging, telemetry, etc.
-- An alternative solution for decorating the new methods will have to be put in place because the new methods calls bypass existing decorators 
+- The new method calls bypass existing decorators such as logging, telemetry, etc.
+- An alternative solution for decorating the new methods will have to be put in place because the new method calls bypass existing decorators 
 such as logging, telemetry, etc.
 
-#### 1.2 New IAsyncChatClient Interface For Uncommon Operations + Use Get{Streaming}ResponseAsync For Common Operations
+#### 1.2 New IAsyncChatClient Interface for Uncommon Operations + Use Get{Streaming}ResponseAsync for Common Operations
 
 This option suggests using the existing `GetResponseAsync` and `GetStreamingResponseAsync` methods of the `IChatClient` interface to support 
 common long-running operations, such as starting long-running operations, getting their status, their results, and potentially 
@@ -593,7 +593,7 @@ or a quick prompt completion.
 With the `GetResponseAsync` method becoming responsible for starting, getting status, getting results and updating long-running operations,
 there are only a few operations left in the `IAsyncChatClient` interface - cancel and delete. As a result, the `IAsyncChatClient` interface
 name may not be the best fit, as it suggests that it is responsible for all long-running operations while it is not. Should 
-the interface be renamed to reflect operations it supports? What should the new name be? Option 1.4 considers an alternative
+the interface be renamed to reflect the operations it supports? What should the new name be? Option 1.4 considers an alternative
 that might solve the naming issue. 
 
 **Pros:**
@@ -604,10 +604,10 @@ while still having the option to control the execution mode to determine how to 
 **Cons:**  
 - Not extensible: Adding new methods to the `IAsyncChatClient` interface after its release will break existing implementations of the interface. 
 - Missing capability check: Callers cannot determine if chat clients support specific uncommon operations before attempting to use them.
-- An alternative solution for decorating the new methods will have to be put in place because the new methods calls bypass existing decorators 
+- An alternative solution for decorating the new methods will have to be put in place because the new method calls bypass existing decorators 
 such as logging, telemetry, etc.
 
-#### 1.3 New IAsyncChatClient Interface For Uncommon Operations + Use Get{Streaming}ResponseAsync For Common Operations + Capability Check
+#### 1.3 New IAsyncChatClient Interface for Uncommon Operations + Use Get{Streaming}ResponseAsync for Common Operations + Capability Check
 
 This option extends the previous option with a way for callers to determine if a chat client supports uncommon operations before attempting to use them.
 
@@ -698,10 +698,10 @@ while still having the option to control the execution mode to determine how to 
   
 **Cons:**  
 - Not extensible: Adding new members to the `IAsyncChatClient` interface after its release will break existing implementations of the interface.  
-- An alternative solution for decorating the new methods will have to be put in place because the new methods calls bypass existing decorators 
+- An alternative solution for decorating the new methods will have to be put in place because the new method calls bypass existing decorators 
 such as logging, telemetry, etc.
 
-#### 1.4 Individual Interface Per Uncommon Operation + Use Get{Streaming}ResponseAsync For Common Operations
+#### 1.4 Individual Interface per Uncommon Operation + Use Get{Streaming}ResponseAsync for Common Operations
 
 This option suggests using the existing `Get{Streaming}ResponseAsync` methods of the `IChatClient` interface to support 
 common long-running operations, such as starting long-running operations, getting their status, and their results, and potentially 
@@ -1385,9 +1385,10 @@ TBD
 ## Decision Outcome
 
 ### Long-Running Execution Support for Chat Clients
- - Option **"1.4 Individual Interface Per Uncommon Operation ..."** suggesting using an individual interface per uncommon operation
-   (~~update~~, cancel, delete) is selected with an small exception that the update operation will be implemented by existing `GetResponseAsync`
-   and `GetStreamingResponseAsync` methods instead of having a dedicated interface for it.
+ - Option **"1.4 Individual Interface per Uncommon Operation + Use Get{Streaming}ResponseAsync for Common Operations"** is selected:
+   - Start, update, get status, and get result of long-running operations will be handled by the existing `Get{Streaming}ResponseAsync` methods of the `IChatClient`.
+   - Cancellation of long-running operations will be handled by a new `CancelResponseAsync` method of a new `ICancelableChatClient` interface.
+   - Deletion is skipped for now and can be implemented later if needed, following the same approach as cancellation.
 
 ### Long-Running Operations Support for AF Agents
 TBD
