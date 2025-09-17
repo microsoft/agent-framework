@@ -1,6 +1,7 @@
 # Agent Framework Lab
 
 This directory contains experimental packages for Microsoft Agent Framework that are distributed as separate installable packages under the `agent_framework.lab` namespace.
+Lab packages are not part of the core framework and may experience breaking changes or be deprecated in the future.
 
 ## What are Lab Packages?
 
@@ -83,7 +84,7 @@ You will be prompted for:
 
 ### After Package Creation
 
-1. **Implement your functionality** in `agent_framework_lab_{package_name}/`
+1. **Implement your functionality** in `agent_framework_lab_your_package_name/`
 2. **Update exports** in `__init__.py` `__all__` list
 3. **Add dependencies** to `pyproject.toml`
 4. **Write tests** in the `tests/` directory
@@ -93,16 +94,16 @@ You will be prompted for:
 
 After creating your package, add it to the workspace configuration:
 
-```bash
+```
 # Edit python/pyproject.toml
 # Add to dependencies section:
 dependencies = [
     # ... existing packages ...
-    "agent-framework-lab-{your_package_name}",
+    "agent-framework-lab-your-package-name",
 ]
 
 # Add to [tool.uv.sources] section:
-agent-framework-lab-{your_package_name} = { workspace = true }
+agent-framework-lab-your-package-name = { workspace = true }
 ```
 
 ### Usage
@@ -118,13 +119,13 @@ pip install git+https://github.com/your-username/your-lab-package-repo.git
 2. or from PyPI if you have uploaded your lab package there:
 
 ```bash
-pip install agent-framework-lab-{your_package_name}
+pip install "agent-framework-lab-your-package-name"
 ```
 
 Then, they can use your lab package:
 
 ```python
-from agent_framework.lab.{your_package_name} import YourClass, your_function
+from agent_framework.lab.your_package_name import YourClass, your_function
 
 # Use the functionality
 instance = YourClass()
@@ -133,8 +134,8 @@ result = your_function()
 
 ## Guidelines
 
-1. **Naming**: Use lowercase with hyphens for package names (`agent-framework-lab-{name}`)
-2. **Namespace**: Always use `agent_framework.lab.{name}` for imports
+1. **Naming**: Use lowercase with hyphens for package names (`agent-framework-lab-your-package-name`)
+2. **Namespace**: Always use `agent_framework.lab.your_package_name` for imports
 3. **Versioning**: Start with `0.1.0b1` for beta releases
 4. **Dependencies**: Minimize external dependencies, always include `agent-framework`
 5. **Documentation**: Include comprehensive README with usage examples

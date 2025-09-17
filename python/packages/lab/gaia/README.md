@@ -61,5 +61,5 @@ package with the real one.**
 We provide a console viewer for reading GAIA results:
 
 ```bash
-uv run gaia_viewer gaia_results_<timestamp>.jsonl --detailed
+uv run gaia_viewer "gaia_results_<timestamp>.jsonl" --detailed
 ```
