@@ -461,7 +461,7 @@ public class ChatClientAgentTests
             .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
             .Returns(new ValueTask());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = (_, _) => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
         await agent.RunAsync(requestMessages);
@@ -506,7 +506,7 @@ public class ChatClientAgentTests
             .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
             .Returns(new ValueTask());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = (_, _) => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync(requestMessages));
@@ -548,7 +548,7 @@ public class ChatClientAgentTests
             .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AIContext());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = () => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = (_, _) => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "user message")]);
@@ -1713,7 +1713,7 @@ public class ChatClientAgentTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             Instructions = "Test instructions",
-            ChatMessageStoreFactory = () =>
+            ChatMessageStoreFactory = (_, _) =>
             {
                 factoryCalled = true;
                 return mockStore.Object;
@@ -1738,7 +1738,7 @@ public class ChatClientAgentTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             Instructions = "Test instructions",
-            AIContextProviderFactory = () =>
+            AIContextProviderFactory = (_, _) =>
             {
                 factoryCalled = true;
                 return mockContextProvider.Object;
