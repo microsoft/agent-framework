@@ -110,6 +110,14 @@ public sealed class ChatClientAgent : AIAgent
         (AgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
+        // If we have an AIToolsTransformer, we should use it to transform the tools before sending them to the chat client.
+        if (chatOptions is not null
+            && options is ChatClientAgentRunOptions agentChatOptions
+            && agentChatOptions.AIToolsTransformer is not null)
+        {
+            chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
+        }
+
         var agentName = this.GetLoggingAgentName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
@@ -160,6 +168,15 @@ public sealed class ChatClientAgent : AIAgent
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
+
+        // If we have an AIToolsTransformer, we should use it to transform the tools before sending them to the chat client.
+        if (chatOptions is not null
+            && options is ChatClientAgentRunOptions agentChatOptions
+            && agentChatOptions.AIToolsTransformer is not null)
+        {
+            chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
+        }
+
         var loggingAgentName = this.GetLoggingAgentName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);

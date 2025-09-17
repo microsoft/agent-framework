@@ -12,9 +12,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <remarks>This context provides information about the agent and the function invocation, as well as a
 /// cancellation token to monitor for cancellation requests during the callback execution. It is intended for use within
 /// the lifecycle of an agent function invocation.</remarks>
-public class AgentFunctionInvocationCallbackContext : CallbackContext
+public class AgentFunctionInvocationContext : CallbackContext
 {
-    internal AgentFunctionInvocationCallbackContext(AIAgent agent, FunctionInvocationContext functionInvocationContext, CancellationToken cancellationToken) : base(agent, cancellationToken)
+    internal AgentFunctionInvocationContext(AIAgent agent, FunctionInvocationContext functionInvocationContext, CancellationToken cancellationToken) : base(agent, cancellationToken)
     {
         this._functionInvocationContext = functionInvocationContext;
     }
@@ -123,5 +123,5 @@ public class AgentFunctionInvocationCallbackContext : CallbackContext
     /// <summary>
     /// Gets or sets the result of the function invocation.
     /// </summary>
-    public object? Result { get; set; }
+    public object? FunctionResult { get; set; }
 }

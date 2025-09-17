@@ -5,7 +5,8 @@
 
 using System;
 using System.ComponentModel;
-using Azure.AI.Agents.Persistent;
+using System.Linq;
+using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
@@ -16,89 +17,66 @@ using var loggerFactory = LoggerFactory.Create(builder =>
     builder.AddConsole().SetMinimumLevel(LogLevel.Information));
 
 // Get Azure AI Foundry configuration from environment variables
-var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-var model = System.Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // Get a client to create/retrieve server side agents with
-var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
-
-Console.WriteLine("=== Example: Agent with custom function middleware ===");
+var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName);
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
-var agent = persistentAgentsClient.CreateAIAgent(model)
+[Description("The current datetime offset.")]
+static string GetDateTime()
+    => DateTimeOffset.Now.ToString();
+
+var agent = new ChatClientAgent(client.AsIChatClient(), new ChatClientAgentOptions(
+        instructions: "You are an AI assistant that helps people find information.",
+        tools: [AIFunctionFactory.Create(GetDateTime)]))
     .AsBuilder()
     .UseFunctionInvocationContext(async (context, next) =>
     {
-        // Example: get function information
-        var functionName = context!.Function.Description;
-
-        // Example: get chat history
-        var chatHistory = context.Messages;
-
-        // Example: get information about all functions which will be invoked
-        var functionCalls = context.CallContent;
-
-        // In function calling functionality there are two loops.
-        // Outer loop is "request" loop - it performs multiple requests to LLM until user ask will be satisfied.
-        // Inner loop is "function" loop - it handles LLM response with multiple function calls.
-
-        // Workflow example:
-        // 1. Request to LLM #1 -> Response with 3 functions to call.
-        //      1.1. Function #1 called.
-        //      1.2. Function #2 called.
-        //      1.3. Function #3 called.
-        // 2. Request to LLM #2 -> Response with 2 functions to call.
-        //      2.1. Function #1 called.
-        //      2.2. Function #2 called.
-
-        // context.RequestSequenceIndex - it's a sequence number of outer/request loop operation.
-        // context.FunctionSequenceIndex - it's a sequence number of inner/function loop operation.
-        // context.FunctionCount - number of functions which will be called per request (based on example above: 3 for first request, 2 for second request).
-
-        // Example: get request sequence index
-        Console.WriteLine($"Request sequence index: {context.FunctionCallIndex}");
-
-        // Example: get function sequence index
-        Console.WriteLine($"Function sequence index: {context.Iteration}");
-
-        // Example: get total number of functions which will be called
-        Console.WriteLine($"Total number of functions: {context.FunctionCount}");
-
-        // Calling next filter in pipeline or function itself.
-        // By skipping this call, next filters and function won't be invoked, and function call loop will proceed to the next function.
+        Console.WriteLine($"""
+            === Middleware 1 Before Invoke Start ===
+              Function Name: {context!.Function.Name}
+              Function call index: {context.FunctionCallIndex}
+              Function iteration: {context.Iteration}
+              Total number of functions: {context.FunctionCount}
+            === Middleware 1 Before Invoke End ===
+            """);
         await next(context);
-
-        // Example: Terminate the function call request loop after this function invocation.
-        context.Terminate = true;
-
-        Console.WriteLine($"IsStreaming: {context.IsStreaming}");
+        Console.WriteLine($"""
+            === Middleware 1 After Invoke Start ===")
+              Function Name: {context!.Function.Name}
+              IsStreaming: {context.IsStreaming}
+            === Middleware 1 After Invoke End ===
+            """);
     })
-    .UseFunctionInvocationContext((functionInvocationContext, next) =>
+    .UseFunctionInvocationContext(async (context, next) =>
     {
-        Console.WriteLine($"City Name: {(functionInvocationContext!.Arguments.TryGetValue("location", out var location) ? location : "not provided")}");
-
-        return next(functionInvocationContext);
+        Console.WriteLine($"""
+            === Middleware 2 Before Invoke Start ===
+              Function Name: {context!.Function.Name}
+              Location: {(context!.Arguments.TryGetValue("location", out var location) ? location : "location parameter not provided")}
+            === Middleware 2 Before Invoke End  ===
+            """);
+        await next(context);
+        Console.WriteLine($"""
+            === Middleware 2 After Invoke Start ===")
+              Function Name: {context!.Function.Name}
+              Function Result: {context.FunctionResult}
+            === Middleware 2 After Invoke End ===
+            """);
     })
     .Build();
 
 var thread = agent.GetNewThread();
 
 var options = new ChatClientAgentRunOptions(new() { Tools = [AIFunctionFactory.Create(GetWeather)] });
-var response = await agent.RunAsync("What's the weather in Seattle?", thread, options);
-Console.WriteLine(response);
 
-// Example 4: Streaming with middleware
+Console.WriteLine("=== Example: Non-Streaming Agent with custom function middleware ===");
+var runResponse = await agent.RunAsync("What's the current time and the weather in Seattle?", thread, options);
+
 Console.WriteLine("=== Example: Streaming Agent with custom function middleware ===");
-await foreach (var update in agent.RunStreamingAsync("What's the weather in Seattle?", thread, options))
-{
-    if (update.Text is not null)
-    {
-        Console.Write(update.Text);
-    }
-}
-
-// Cleanup
-await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
+var streamingRunResponse = agent.RunStreamingAsync("What's the current time and the weather in Seattle?", thread, options).ToListAsync();

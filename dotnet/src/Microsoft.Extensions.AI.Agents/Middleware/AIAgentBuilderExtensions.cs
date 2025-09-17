@@ -20,9 +20,9 @@ public static class AIAgentBuilderExtensions
     /// middleware in the pipeline, and a cancellation token, and returns a task representing the result of the
     /// invocation.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
-    public static AIAgentBuilder UseFunctionInvocationContext(this AIAgentBuilder builder, Func<AgentFunctionInvocationCallbackContext?, Func<AgentFunctionInvocationCallbackContext, Task>, Task> callback)
+    public static AIAgentBuilder UseFunctionInvocationContext(this AIAgentBuilder builder, Func<AgentFunctionInvocationContext?, Func<AgentFunctionInvocationContext, Task>, Task> callback)
     {
-        return builder.Use(innerAgent => new FunctionInvokingCallbackHandlerAgent(innerAgent, callback));
+        return builder.Use(innerAgent => new FunctionCallMiddlewareAgent(innerAgent, callback));
     }
 
     /// <summary>

@@ -57,9 +57,9 @@ await foreach (var update in agent.RunStreamingAsync("My name is Jane Smith, cal
 // Cleanup
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
-internal sealed class UsedApiFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationCallbackContext>
+internal sealed class UsedApiFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationContext>
 {
-    public override async Task OnProcessAsync(AgentFunctionInvocationCallbackContext context, Func<AgentFunctionInvocationCallbackContext, Task> next, CancellationToken cancellationToken)
+    public override async Task OnProcessAsync(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next, CancellationToken cancellationToken)
     {
         Console.WriteLine($"IsStreaming: {context!.IsStreaming}");
 
@@ -67,9 +67,9 @@ internal sealed class UsedApiFunctionInvocationCallback : CallbackMiddleware<Age
     }
 }
 
-internal sealed class CityInformationFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationCallbackContext>
+internal sealed class CityInformationFunctionInvocationCallback : CallbackMiddleware<AgentFunctionInvocationContext>
 {
-    public override async Task OnProcessAsync(AgentFunctionInvocationCallbackContext context, Func<AgentFunctionInvocationCallbackContext, Task> next, CancellationToken cancellationToken)
+    public override async Task OnProcessAsync(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next, CancellationToken cancellationToken)
     {
         Console.WriteLine($"City Name: {(context!.Arguments.TryGetValue("location", out var location) ? location : "not provided")}");
         await next(context);

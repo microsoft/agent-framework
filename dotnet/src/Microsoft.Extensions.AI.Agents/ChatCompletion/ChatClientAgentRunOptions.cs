@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
+
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
@@ -18,4 +21,10 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
 
     /// <summary>Gets or sets optional chat options to pass to the agent's invocation.</summary>
     public ChatOptions? ChatOptions { get; set; }
+
+    /// <summary>
+    /// Gets or sets a agent level tool transformation function.
+    /// </summary>
+    /// <remarks>If provided, this function will be used to transform the all tools at running time, including Agent level tools.</remarks>
+    internal Func<IList<AITool>?, IList<AITool>?>? AIToolsTransformer { get; set; }
 }

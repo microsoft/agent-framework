@@ -15,6 +15,6 @@ public static class CallbackMiddlewareProcessorFunctionInvocationExtensions
     /// <param name="processor">The <see cref="CallbackMiddlewareProcessor"/> to which the middleware will be added. Cannot be <see
     /// langword="null"/>.</param>
     /// <param name="middleware">The callback middleware to add. Cannot be <see langword="null"/>.</param>
-    public static CallbackMiddlewareProcessor AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<AgentFunctionInvocationCallbackContext> middleware)
+    public static CallbackMiddlewareProcessor AddCallback(this CallbackMiddlewareProcessor processor, ICallbackMiddleware<AgentFunctionInvocationContext> middleware)
         => processor.AddCallback(Throw.IfNull(middleware));
 }
