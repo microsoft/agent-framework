@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -22,23 +23,20 @@ internal class WorkflowMessageStore : IChatMessageStore
     {
         if (serializedStoreState.ValueKind != JsonValueKind.Object)
         {
-            return;
+            throw new ArgumentException("The provided JsonElement must be a json object", nameof(serializedStoreState));
         }
 
-        object? maybeState =
+        StoreState? state =
             JsonSerializer.Deserialize(
                 serializedStoreState,
-                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
 
-        if (maybeState is not StoreState state)
+        if (state?.Messages is not null)
         {
-            throw new JsonException("Invalid state format for WorkflowMessageStore.");
+            this._chatMessages.AddRange(state.Messages);
         }
 
-        this._chatMessages.Clear();
-        this._chatMessages.AddRange(state.Messages);
-
-        this._bookmark = state.Bookmark;
+        this._bookmark = state?.Bookmark ?? 0;
     }
 
     internal class StoreState
