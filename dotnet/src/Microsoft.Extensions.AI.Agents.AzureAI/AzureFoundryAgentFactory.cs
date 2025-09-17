@@ -69,6 +69,9 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
                     instructions: agentDefinition.GetInstructions(),
                     tools: agentDefinition.GetFoundryToolDefinitions(),
                     toolResources: agentDefinition.GetFoundryToolResources(),
+                    temperature: agentDefinition.GetTemperature(),
+                    topP: agentDefinition.GetTopP(),
+                    responseFormat: agentDefinition.GetResponseFormat(),
                     metadata: agentDefinition.GetMetadata(),
                     cancellationToken: cancellationToken).ConfigureAwait(false);
             }

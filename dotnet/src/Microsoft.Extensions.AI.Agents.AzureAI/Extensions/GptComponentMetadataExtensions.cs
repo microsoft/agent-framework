@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Shared.Diagnostics;
 
@@ -17,9 +18,9 @@ internal static class GptComponentMetadataExtensions
     /// Return the Foundry tool definitions which corresponds with the provided <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
-    public static IEnumerable<Azure.AI.Agents.Persistent.ToolDefinition> GetFoundryToolDefinitions(this GptComponentMetadata element)
+    internal static IEnumerable<Azure.AI.Agents.Persistent.ToolDefinition> GetFoundryToolDefinitions(this GptComponentMetadata element)
     {
-        //Throw.IfNull(element);
+        Throw.IfNull(element);
 
         return element.GetTools().Select<RecordDataValue, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
         {
@@ -43,9 +44,9 @@ internal static class GptComponentMetadataExtensions
     /// Return the Foundry tool resources which corresponds with the provided <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
-    public static ToolResources GetFoundryToolResources(this GptComponentMetadata element)
+    internal static ToolResources GetFoundryToolResources(this GptComponentMetadata element)
     {
-        //Throw.IfNull(element);
+        Throw.IfNull(element);
 
         var toolResources = new ToolResources();
 
@@ -66,6 +67,65 @@ internal static class GptComponentMetadataExtensions
         }
 
         return toolResources;
+    }
+
+    /// <summary>
+    /// Return the temperature which corresponds with the provided <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
+    internal static float? GetTemperature(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        var temperature = element.ExtensionData?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("model.options.temperature"));
+        return (float?)temperature?.Value;
+    }
+
+    /// <summary>
+    /// Return the top_p which corresponds with the provided <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
+    internal static float? GetTopP(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        var topP = element.ExtensionData?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("model.options.top_p"));
+        return (float?)topP?.Value;
+    }
+
+    /// <summary>
+    /// Return the response_format which corresponds with the provided <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="element">Instance of <see cref="GptComponentMetadata"/></param>
+    internal static BinaryData? GetResponseFormat(this GptComponentMetadata element)
+    {
+        Throw.IfNull(element);
+
+        try
+        {
+            var responseFormatStr = element.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model.options.response_format"));
+            if (responseFormatStr?.Value is not null)
+            {
+                return new BinaryData(responseFormatStr.Value);
+            }
+        }
+        catch (InvalidCastException)
+        {
+            // Ignore and try next
+        }
+
+        var responseFormRec = element.ExtensionData?.GetPropertyOrNull<RecordDataValue>(InitializablePropertyPath.Create("model.options.response_format"));
+        if (responseFormRec is not null)
+        {
+#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+            var json = JsonSerializer.Serialize(responseFormRec, ElementSerializer.CreateOptions());
+#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
+#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+            return new BinaryData(json);
+        }
+
+        return null;
     }
 
     #region private

@@ -20,16 +20,57 @@ var serviceCollection = new ServiceCollection();
 serviceCollection.AddTransient<PersistentAgentsClient>((sp) => persistentAgentsClient);
 IServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
 
+// Response format to ensure the output is structured.
+var responseFormat = "{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"assistant_response\",\"strict\":true,\"schema\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"language\":{\"type\":\"string\",\"description\":\"The language of the answer.\"},\"answer\":{\"type\":\"string\",\"description\":\"The answer text.\"}},\"required\":[\"language\",\"answer\"],\"additionalProperties\":false}}}";
+
 // Define the agent using a YAML definition.
 var text =
     $"""
     kind: GptComponentMetadata
     type: azure_foundry_agent
-    name: Joker
-    description: Joker Agent
-    instructions: You are good at telling jokes.
+    name: Assistant
+    description: Helpful assistant
+    instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
     model:
       id: {model}
+      options:
+        temperature: 0.9
+        top_p: 0.95
+        response_format: {responseFormat}
+    """;
+
+// Alternatively, you can define the response format using as YAML for better readability.
+var textYaml =
+    $"""
+    kind: GptComponentMetadata
+    type: azure_foundry_agent
+    name: Assistant
+    description: Helpful assistant
+    instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
+    model:
+      id: {model}
+      options:
+        temperature: 0.9
+        top_p: 0.95
+        response_format:
+          type: json_schema
+          json_schema:
+            name: assistant_response
+            strict: true
+            schema:
+              $schema: http://json-schema.org/draft-07/schema#
+              type: object
+              properties:
+                language:
+                  type: string
+                  description: The language of the answer.
+                answer:
+                  type: string
+                  description: The answer text.
+              required:
+                - language
+                - answer
+              additionalProperties: false
     """;
 
 // Create the agent from the YAML definition.
@@ -41,10 +82,10 @@ var creationOptions = new AgentCreationOptions()
 var agent = await agentFactory.CreateFromYamlAsync(text, creationOptions);
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent!.RunAsync("Tell me a joke about a pirate."));
+Console.WriteLine(await agent!.RunAsync("Tell me a joke about a pirate in English."));
 
 // Invoke the agent with streaming support.
-await foreach (var update in agent!.RunStreamingAsync("Tell me a joke about a pirate."))
+await foreach (var update in agent!.RunStreamingAsync("Tell me a joke about a pirate in French."))
 {
     Console.WriteLine(update);
 }
