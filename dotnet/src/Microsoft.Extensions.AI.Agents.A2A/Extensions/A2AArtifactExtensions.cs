@@ -52,18 +52,36 @@ internal static class A2AArtifactExtensions
     /// Converts a list of A2A <see cref="Artifact"/> to a list of <see cref="ChatMessage"/>.
     /// </summary>
     /// <param name="artifacts">The A2A artifacts to convert and add as chat messages.</param>
+    /// <param name="taskStatus">The current status of the task producing the artifacts.</param>
     /// <param name="authorName">The author name to set on the resulting <see cref="ChatMessage"/>.</param>
     /// <returns>The corresponding list of <see cref="ChatMessage"/>.</returns>
-    internal static IList<ChatMessage> ToChatMessages(this IList<Artifact> artifacts, string? authorName = null)
+    internal static IList<ChatMessage> ToChatMessages(this IList<Artifact>? artifacts, AgentTaskStatus taskStatus, string? authorName = null)
     {
-        List<ChatMessage> chatMessages = new(artifacts.Count);
+        List<ChatMessage>? chatMessages = null;
+
+        // If the task is waiting for user input, add a TextInputRequestContent message first.
+        if (taskStatus.State == TaskState.InputRequired)
+        {
+            ChatMessage chatMessage = new(ChatRole.Assistant, taskStatus.GetUserInputRequests())
+            {
+                AuthorName = authorName,
+                Role = ChatRole.Assistant,
+            };
+
+            (chatMessages ??= []).Add(chatMessage);
+        }
+
+        if (artifacts is null || artifacts.Count == 0)
+        {
+            return chatMessages ?? [];
+        }
 
         foreach (var artifact in artifacts)
         {
-            chatMessages.Add(artifact.ToChatMessage(authorName));
+            (chatMessages ??= []).Add(artifact.ToChatMessage(authorName));
         }
 
-        return chatMessages;
+        return chatMessages ?? [];
     }
 
     private static AdditionalPropertiesDictionary AddArtifactPropertiesAsAdditionalProperties(Artifact artifact)

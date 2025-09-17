@@ -238,13 +238,15 @@ internal sealed class A2AAgent : AIAgent
 
     private AgentRunResponse ConvertToAgentResponse(AgentTask task, bool throwIfOperationCancelled = true)
     {
+        ThrowIfNotProcessable(task.Status.State, throwIfOperationCancelled);
+
         AgentRunResponse response = new()
         {
             AgentId = this.Id,
             ResponseId = task.Id,
             RawRepresentation = task,
-            Messages = task.Artifacts is not null ? task.Artifacts.ToChatMessages(this.Name) : [],
-            ContinuationToken = GetContinuationToken(task.Id, task.Status.State, throwIfOperationCancelled),
+            Messages = task.Artifacts.ToChatMessages(task.Status, this.Name),
+            ContinuationToken = GetContinuationToken(task.Id, task.Status.State),
             AdditionalProperties = task.Metadata.ToAdditionalProperties() ?? [],
         };
 
@@ -295,6 +297,8 @@ internal sealed class A2AAgent : AIAgent
 
         if (taskUpdateEvent is TaskStatusUpdateEvent statusUpdateEvent)
         {
+            ThrowIfNotProcessable(statusUpdateEvent.Status.State);
+            responseUpdate.Contents = statusUpdateEvent.Status.GetUserInputRequests();
             responseUpdate.ContinuationToken = GetContinuationToken(statusUpdateEvent.TaskId, statusUpdateEvent.Status.State);
             responseUpdate.AdditionalProperties[nameof(TaskStatusUpdateEvent.Status)] = statusUpdateEvent.Status;
             responseUpdate.AdditionalProperties[nameof(TaskStatusUpdateEvent.Final)] = statusUpdateEvent.Final;
@@ -364,7 +368,17 @@ internal sealed class A2AAgent : AIAgent
         return agentRunResponse.ToAgentRunResponseUpdates();
     }
 
-    private static LongRunContinuationToken? GetContinuationToken(string taskId, TaskState state, bool? throwIfOperationCancelled = true)
+    private static LongRunContinuationToken? GetContinuationToken(string taskId, TaskState state)
+    {
+        if (state != TaskState.Completed)
+        {
+            return new LongRunContinuationToken(taskId);
+        }
+
+        return null;
+    }
+
+    private static void ThrowIfNotProcessable(TaskState state, bool? throwIfOperationCancelled = true)
     {
         if (state == TaskState.Failed)
         {
@@ -380,12 +394,5 @@ internal sealed class A2AAgent : AIAgent
         {
             throw new TaskCanceledException("The task is rejected.");
         }
-
-        if (state != TaskState.Completed)
-        {
-            return new LongRunContinuationToken(taskId);
-        }
-
-        return null;
     }
 }

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
 using A2A;
 
 namespace Microsoft.Extensions.AI.Agents.A2A;
@@ -28,6 +29,11 @@ internal static class A2APartExtensions
             {
                 RawRepresentation = filePart,
                 AdditionalProperties = filePart.Metadata.ToAdditionalProperties()
+            },
+            DataPart dataPart => new DataContent(JsonSerializer.SerializeToUtf8Bytes(dataPart.Data, A2AJsonContext.Default.IDictionaryStringJsonElement), "application/json")
+            {
+                RawRepresentation = dataPart,
+                AdditionalProperties = dataPart.Metadata.ToAdditionalProperties()
             },
             _ => throw new NotSupportedException($"Part type '{part.GetType().Name}' is not supported.")
         };

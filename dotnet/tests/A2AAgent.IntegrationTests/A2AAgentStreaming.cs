@@ -4,10 +4,15 @@ using System;
 using System.ClientModel;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using A2A;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.AI.Agents.A2A;
+
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 namespace AgentConformance.IntegrationTests;
 
@@ -118,6 +123,66 @@ public sealed class A2AAgentStreaming
 
         Assert.Contains("Brussels", responseText);
         Assert.Null(continuationToken);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_HavingTaskRequiringUserInput_CanHandleItAsync()
+    {
+        AIAgent agent = await this.CreateA2AAgentAsync();
+
+        AgentThread thread = agent.GetNewThread();
+
+        ContinuationToken? continuationToken = null;
+        UserInputRequestContent[]? userInputsRequests = null;
+
+        // 1. Ask the agent to book a flight intentionally omitting details to trigger user input request
+        await foreach (var update in agent.RunStreamingAsync("I'd like to book a flight.", thread))
+        {
+            // Capture continuation token to be able to continue the task later
+            continuationToken = update.ContinuationToken;
+
+            // 2. Wait for the user input request
+            if (update.UserInputRequests.Any())
+            {
+                userInputsRequests = [.. update.UserInputRequests];
+                break; // Exit the loop to handle user input
+            }
+        }
+
+        List<ChatMessage> messages = [];
+
+        // 3. Handle user input requests
+        if (userInputsRequests is not null)
+        {
+            if (userInputsRequests.Single() is TextInputRequestContent detailsRequest)
+            {
+                Assert.Contains("Where would you like to fly to, and from where?", detailsRequest.Text);
+                messages.Add(new ChatMessage(ChatRole.User, [detailsRequest.CreateResponse("I want to fly from New York (JFK) to London (LHR) around October 10th, returning October 17th.")]));
+            }
+        }
+
+        // 4. Provide the user responses to the agent
+        AgentRunOptions options = new()
+        {
+            ContinuationToken = continuationToken
+        };
+
+        List<AIContent> contents = [];
+
+        await foreach (var update in agent.RunStreamingAsync(messages, thread, options))
+        {
+            contents.AddRange(update.Contents);
+        }
+
+        var dataContent = Assert.Single(contents.OfType<DataContent>());
+
+        var originalContent = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(Encoding.UTF8.GetString(dataContent.Data.ToArray()));
+        Assert.NotNull(originalContent);
+        Assert.Equal("XYZ123", originalContent["confirmationId"].GetString());
+        Assert.Equal("JFK", originalContent["from"].GetString());
+        Assert.Equal("LHR", originalContent["to"].GetString());
+        Assert.Equal("2024-10-10T18:00:00Z", originalContent["departure"].GetString());
+        Assert.Equal("2024-10-11T06:00:00Z", originalContent["arrival"].GetString());
     }
 
     [Fact]
