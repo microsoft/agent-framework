@@ -77,8 +77,8 @@ redis = [
 runtime = [
     { name = "agent-framework-runtime", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-workflow = [
-    { name = "agent-framework-workflow", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+viz = [
+    { name = "graphviz", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -87,9 +87,9 @@ requires-dist = [
     { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
     { name = "agent-framework-redis", marker = "extra == 'redis'", editable = "packages/redis" },
     { name = "agent-framework-runtime", marker = "extra == 'runtime'", editable = "packages/runtime" },
-    { name = "agent-framework-workflow", marker = "extra == 'workflow'", editable = "packages/workflow" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.7.0" },
     { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0b41" },
+    { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.20.0" },
     { name = "mcp", extras = ["ws"], specifier = ">=1.13" },
     { name = "openai", specifier = ">=1.99.0" },
     { name = "opentelemetry-api", specifier = "~=1.24" },
@@ -100,7 +100,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
-provides-extras = ["azure", "foundry", "redis", "workflow", "runtime"]
+provides-extras = ["azure", "foundry", "redis", "viz", "runtime"]
 
 [[package]]
 name = "agent-framework-azure"
@@ -152,6 +152,15 @@ requires-dist = [
 ]
 
 [[package]]
+name = "agent-framework-lab-gaia"
+version = "0.0.1a0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/5e/a930d107884b20747a3629d98b52e8ca91fd5cde8d5aa9e0ab4eafff0c1b/agent_framework_lab_gaia-0.0.1a0.tar.gz", hash = "sha256:82976e2baaac494a6422163065d5145fae4f5d23c7ed1d35e7c5fe9a4729bda7", size = 1868, upload-time = "2025-09-12T07:23:19.171Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/35/20427ce6dd8e0ad0dabfcfb8302f604165c604359b8c2bd2ec8d07e2aa44/agent_framework_lab_gaia-0.0.1a0-py3-none-any.whl", hash = "sha256:c30d4659e892ad73e264d339bf08ac4f1779cd1a6959975ac6df6405ef580a01", size = 2238, upload-time = "2025-09-12T07:23:17.557Z" },
+]
+
+[[package]]
 name = "agent-framework-mem0"
 version = "0.1.0b1"
 source = { editable = "packages/mem0" }
@@ -175,9 +184,9 @@ dependencies = [
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-lab-gaia", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-workflow", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -221,9 +230,9 @@ requires-dist = [
     { name = "agent-framework-azure", editable = "packages/azure" },
     { name = "agent-framework-copilotstudio", editable = "packages/copilotstudio" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
+    { name = "agent-framework-lab-gaia" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-redis", editable = "packages/redis" },
-    { name = "agent-framework-workflow", editable = "packages/workflow" },
 ]
 
 [package.metadata.requires-dev]

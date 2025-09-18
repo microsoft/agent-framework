@@ -46,8 +46,8 @@ foundry = [
 redis = [
     "agent-framework-redis"
 ]
-workflow = [
-    "agent-framework-workflow"
+viz = [
+    "graphviz>=0.20.0",
 ]
 runtime = [
     "agent-framework-runtime"
