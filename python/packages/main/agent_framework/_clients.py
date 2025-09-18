@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, ContextProvider
-from ._middleware import MiddlewareType
+from ._middleware import Middleware
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import ToolProtocol
@@ -347,7 +347,10 @@ class BaseChatClient(AFBaseModel, ABC):
         self._prepare_tool_choice(chat_options=chat_options)
 
         # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+        if "_function_middleware_pipeline" in kwargs:
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+        else:
+            filtered_kwargs = kwargs
 
         return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **filtered_kwargs)
 
@@ -431,7 +434,10 @@ class BaseChatClient(AFBaseModel, ABC):
         self._prepare_tool_choice(chat_options=chat_options)
 
         # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+        if "_function_middleware_pipeline" in kwargs:
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+        else:
+            filtered_kwargs = kwargs
 
         async for update in self._inner_get_streaming_response(
             messages=prepped_messages, chat_options=chat_options, **filtered_kwargs
@@ -474,7 +480,7 @@ class BaseChatClient(AFBaseModel, ABC):
         | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: MiddlewareType | list[MiddlewareType] | None = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> "ChatAgent":
         """Create an agent with the given name and instructions.

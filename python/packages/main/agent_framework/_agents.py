@@ -12,7 +12,7 @@ from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
-from ._middleware import MiddlewareType, use_agent_middleware
+from ._middleware import Middleware, use_agent_middleware
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, ToolProtocol
@@ -146,7 +146,7 @@ class BaseAgent(AFBaseModel):
     name: str | None = None
     description: str | None = None
     context_providers: AggregateContextProvider | None = None
-    middleware: MiddlewareType | list[MiddlewareType] | None = None
+    middleware: Middleware | list[Middleware] | None = None
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -235,7 +235,7 @@ class ChatAgent(BaseAgent):
         additional_properties: dict[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: MiddlewareType | list[MiddlewareType] | None = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a ChatAgent.

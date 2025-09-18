@@ -1,5 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Function-based Middleware Example
+
+This sample demonstrates how to implement middleware using simple async functions instead of classes.
+The example includes:
+
+- Security middleware that validates agent requests for sensitive information
+- Logging middleware that tracks function execution timing and parameters
+- Performance monitoring to measure execution duration
+
+Function-based middleware is ideal for simple, stateless operations and provides a more
+lightweight approach compared to class-based middleware. Both agent and function middleware
+can be implemented as async functions that accept context and next parameters.
+"""
+
 import asyncio
 import time
 from collections.abc import Awaitable, Callable

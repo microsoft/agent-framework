@@ -1,5 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Exception Handling with Middleware
+
+This sample demonstrates how to use middleware for centralized exception handling in function calls.
+The example shows:
+
+- How to catch exceptions thrown by functions and provide graceful error responses
+- Overriding function results when errors occur to provide user-friendly messages
+- Using middleware to implement retry logic, fallback mechanisms, or error reporting
+
+The middleware catches TimeoutError from an unstable data service and replaces it with
+a helpful message for the user, preventing raw exceptions from reaching the end user.
+"""
+
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Annotated

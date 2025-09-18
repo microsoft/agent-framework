@@ -1,5 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Result Override with Middleware
+
+This sample demonstrates how to use middleware to intercept and modify function results
+after execution. The example shows:
+
+- How to execute the original function first and then modify its result
+- Replacing function outputs with custom messages or transformed data
+- Using middleware for result filtering, formatting, or enhancement
+
+The weather override middleware lets the original weather function execute normally,
+then replaces its result with a custom "perfect weather" message, demonstrating
+how middleware can be used for content filtering, A/B testing, or result enhancement.
+"""
+
 import asyncio
 from collections.abc import Awaitable, Callable
 from random import randint

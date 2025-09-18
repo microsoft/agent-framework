@@ -1,5 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Class-based Middleware Example
+
+This sample demonstrates how to implement middleware using class-based approach by inheriting
+from AgentMiddleware and FunctionMiddleware base classes. The example includes:
+
+- SecurityAgentMiddleware: Checks for security violations in user queries and blocks requests
+  containing sensitive information like passwords or secrets
+- LoggingFunctionMiddleware: Logs function execution details including timing and parameters
+
+This approach is useful when you need stateful middleware or complex logic that benefits
+from object-oriented design patterns.
+"""
+
 import asyncio
 import time
 from collections.abc import Awaitable, Callable

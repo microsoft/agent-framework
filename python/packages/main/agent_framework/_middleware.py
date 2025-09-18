@@ -2,7 +2,8 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
 
@@ -19,11 +20,12 @@ __all__ = [
     "AgentRunContext",
     "FunctionInvocationContext",
     "FunctionMiddleware",
-    "MiddlewareType",
+    "Middleware",
     "use_agent_middleware",
 ]
 
 
+@dataclass
 class AgentRunContext:
     """Context object for agent middleware invocations.
 
@@ -38,28 +40,14 @@ class AgentRunContext:
                 For streaming: should be AsyncIterable[AgentRunResponseUpdate]
     """
 
-    def __init__(
-        self,
-        agent: "AgentProtocol",
-        messages: list[ChatMessage],
-        is_streaming: bool = False,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize agent invocation context.
-
-        Args:
-            agent: The agent being invoked.
-            messages: The messages being sent to the agent.
-            is_streaming: Whether this is a streaming invocation.
-            metadata: Metadata dictionary.
-        """
-        self.agent = agent
-        self.messages = messages
-        self.is_streaming = is_streaming
-        self.metadata = metadata or {}
-        self.result: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None
+    agent: "AgentProtocol"
+    messages: list[ChatMessage]
+    is_streaming: bool = False
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
+    result: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None
 
 
+@dataclass
 class FunctionInvocationContext:
     """Context object for function middleware invocations.
 
@@ -71,23 +59,10 @@ class FunctionInvocationContext:
                 to see the actual execution result or can be set to override the execution result.
     """
 
-    def __init__(
-        self,
-        function: "AIFunction[Any, Any]",
-        arguments: "BaseModel",
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize function invocation context.
-
-        Args:
-            function: The function being invoked.
-            arguments: The validated arguments for the function.
-            metadata: Metadata dictionary.
-        """
-        self.function = function
-        self.arguments = arguments
-        self.metadata = metadata or {}
-        self.result: Any = None
+    function: "AIFunction[Any, Any]"
+    arguments: "BaseModel"
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
+    result: Any = None
 
 
 class AgentMiddleware(ABC):
@@ -153,7 +128,7 @@ FunctionMiddlewareCallable = Callable[
 ]
 
 # Type alias for all middleware types
-MiddlewareType = AgentMiddleware | AgentMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable
+Middleware: TypeAlias = AgentMiddleware | AgentMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable
 
 
 class AgentMiddlewareWrapper(AgentMiddleware):
@@ -451,12 +426,12 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     original_run = agent_class.run  # type: ignore[attr-defined]
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
 
-    def _initialize_middleware_pipelines(self: Any, middlewares: MiddlewareType | list[MiddlewareType] | None) -> None:
+    def _initialize_middleware_pipelines(self: Any, middlewares: Middleware | list[Middleware] | None) -> None:
         """Initialize agent and function middleware pipelines from the provided middleware list."""
         if not middlewares:
             return
 
-        middleware_list: list[MiddlewareType] = middlewares if isinstance(middlewares, list) else [middlewares]  # type: ignore
+        middleware_list: list[Middleware] = middlewares if isinstance(middlewares, list) else [middlewares]  # type: ignore
 
         # Separate agent and function middleware using isinstance checks
         agent_middlewares: list[AgentMiddleware | AgentMiddlewareCallable] = []
