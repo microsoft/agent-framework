@@ -18,7 +18,7 @@ internal abstract class CodeTemplate
     private List<int>? _indentLengthsField;
     private bool _endsWithNewline;
 
-    private string CurrentIndentField { get; } = string.Empty;
+    private string CurrentIndentField { get; set; } = string.Empty;
 
     /// <summary>
     /// Create the template output
@@ -208,7 +208,7 @@ internal abstract class CodeTemplate
         {
             throw new ArgumentNullException(nameof(indent));
         }
-        this._currentIndentField += indent;
+        this.CurrentIndentField += indent;
         this.indentLengths.Add(indent.Length);
     }
 
@@ -225,7 +225,7 @@ internal abstract class CodeTemplate
             if (indentLength > 0)
             {
                 returnValue = this.CurrentIndentField.Substring(this.CurrentIndentField.Length - indentLength);
-                this._currentIndentField = this.CurrentIndentField.Remove(this.CurrentIndentField.Length - indentLength);
+                this.CurrentIndentField = this.CurrentIndentField.Remove(this.CurrentIndentField.Length - indentLength);
             }
         }
         return returnValue;
@@ -237,7 +237,7 @@ internal abstract class CodeTemplate
     public void ClearIndent()
     {
         this.indentLengths.Clear();
-        this._currentIndentField = string.Empty;
+        this.CurrentIndentField = string.Empty;
     }
 
     #endregion
