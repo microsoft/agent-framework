@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from collections.abc import MutableSequence, Sequence
-from datetime import datetime, timezone
 from functools import reduce
 from operator import and_
 from typing import Any, Literal, cast
@@ -62,7 +61,7 @@ class RedisProvider(ContextProvider):
     overwrite_redis_index: bool = True
     drop_redis_index: bool = True
     _per_operation_thread_id: str | None = None
-    token_escaper: Any | None = None
+    token_escaper: TokenEscaper | None = None
     # Conversation tracking
     _conversation_id: str | None = None
 
@@ -142,7 +141,7 @@ class RedisProvider(ContextProvider):
 
         redis_index = AsyncSearchIndex.from_dict(schema_dict, redis_url=redis_url, validate_on_load=True)
 
-        token_escaper: Any = TokenEscaper()
+        token_escaper: TokenEscaper = TokenEscaper()
 
         super().__init__(
             redis_url=redis_url,  # type: ignore[reportCallIssue]
@@ -295,8 +294,6 @@ class RedisProvider(ContextProvider):
             d.setdefault("thread_id", self._effective_thread_id)
             # Conversation defaults
             d.setdefault("conversation_id", self._conversation_id)
-            d.setdefault("created_at_isoformat", datetime.now(timezone.utc).isoformat())
-            d.setdefault("created_at_timestamp", datetime.now(timezone.utc).timestamp())
 
             # Logical requirement
             if "content" not in d:
@@ -494,78 +491,16 @@ class RedisProvider(ContextProvider):
                 and message.text
                 and message.text.strip()
             ):
-                dt = datetime.now(timezone.utc)
                 shaped: dict[str, Any] = {
                     "role": message.role.value,
                     "content": message.text,
                     "conversation_id": self._conversation_id,
                     "message_id": message.message_id,
                     "author_name": message.author_name,
-                    "created_at_isoformat": dt.isoformat(),
-                    "created_at_timestamp": dt.timestamp(),
                 }
                 messages.append(shaped)
         if messages:
             await self._add(data=messages)
-
-    async def get_conversation_history(
-        self,
-        *,
-        num_results: int = 20,
-        return_fields: list[str] | None = None,
-    ) -> Context:
-        """Fetch stored messages for the current scope and conversation.
-
-        Messages in the current conversation are returned in the order they were added.
-
-        Args:
-            num_results: Maximum number of results.
-            return_fields: Optional explicit fields to return.
-
-        Returns:
-            A list of message records.
-        """
-        await self._ensure_index()
-        self._validate_filters()
-
-        combined_filter = self._build_filter_from_dict({
-            "application_id": self.application_id,
-            "agent_id": self.agent_id,
-            "user_id": self.user_id,
-            "thread_id": self._effective_thread_id,
-            "conversation_id": self._conversation_id,
-        })
-
-        query = FilterQuery(
-            combined_filter,
-            return_fields=(
-                return_fields
-                if return_fields is not None
-                else [
-                    "role",
-                    "content",
-                    "conversation_id",
-                    "message_id",
-                    "author_name",
-                    "created_at_timestamp",
-                    "application_id",
-                    "agent_id",
-                    "user_id",
-                    "thread_id",
-                ]
-            ),
-            num_results=num_results,
-            sort_by="created_at_timestamp",
-        )
-        results = await self.redis_index.query(query)
-        results = cast(list[dict[str, Any]], results)
-        conversation_history = "\n\n".join(
-            str(result.get("role", "")) + ": " + str(result.get("content", ""))
-            for result in results
-            if result.get("content") and result.get("role")
-        )
-        content = TextContent(f"Conversation History:\n{conversation_history}") if conversation_history else None
-        return Context(contents=[content] if content else None)
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called before invoking the model to provide scoped context.

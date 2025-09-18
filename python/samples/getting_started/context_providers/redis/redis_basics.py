@@ -134,33 +134,8 @@ async def main() -> None:
 
     # Inspect retrieved memories that would be injected into instructions
     # (Debug-only output so you can verify retrieval works as expected.)
+    print("Model Invoking Result:")
     print(ctx)
-    print('\n')
-
-    # Verify stored conversation history retrieval for current scope
-    print("1a. Conversation history via provider.get_conversation_history():")
-    print("-" * 40)
-
-    # Start a new thread ('runB') to demonstrate isolated conversation histories
-    await provider.thread_created(thread_id="runB")
-    messages = [
-        ChatMessage(role=Role.USER, text="runB CONVO: FIRST MESSAGE"),
-        ChatMessage(role=Role.ASSISTANT, text="runB CONVO: FIRST RESPONSE"),
-        ChatMessage(role=Role.USER, text="runB CONVO: SECOND MESSAGE"),
-        ChatMessage(role=Role.ASSISTANT, text="runB CONVO: SECOND RESPONSE"),
-    ]
-    await provider.messages_adding(thread_id="runB", new_messages=messages)
-    # Retrieve a plain-text transcript of the current thread for debugging/inspection
-    runB_conversation_history = await provider.get_conversation_history(num_results=20)
-    print("Conversation History for runB:\n")
-    print(runB_conversation_history)
-    print('\n')
-
-    # Switch back to the 'runA' thread and retrieve its transcript
-    await provider.thread_created(thread_id="runA")
-    runA_conversation_history = await provider.get_conversation_history(num_results=20)
-    print("Conversation History for runA:\n")
-    print(runA_conversation_history)
     print('\n')
 
     # --- Agent + provider: teach and recall a preference ---
