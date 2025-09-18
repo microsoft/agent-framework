@@ -135,7 +135,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             throw new InvalidOperationException("Cannot export state when there are queued events. Please process or clear the events before exporting state.");
         }
 
-        Dictionary<ExecutorIdentity, List<ExportedState>> queuedMessages = this._nextStep.ExportMessages();
+        Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> queuedMessages = this._nextStep.ExportMessages();
         RunnerStateData result = new(instantiatedExecutors: [.. this._executors.Keys],
                                      queuedMessages,
                                      outstandingRequests: [.. this._externalRequests.Values]);

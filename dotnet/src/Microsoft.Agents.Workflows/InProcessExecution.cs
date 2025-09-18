@@ -79,7 +79,7 @@ public static class InProcessExecution
         CheckpointManager checkpointManager,
         CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput> runner = new(workflow, checkpointManager);
+        InProcessRunner<TInput> runner = new(workflow, checkpointManager, runId: fromCheckpoint.RunId);
         StreamingRun result = await runner.ResumeStreamAsync(fromCheckpoint, cancellation).ConfigureAwait(false);
 
         return new(result, runner);
@@ -155,7 +155,7 @@ public static class InProcessExecution
         CheckpointManager checkpointManager,
         CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput, TResult> runner = new(workflow, checkpointManager);
+        InProcessRunner<TInput, TResult> runner = new(workflow, checkpointManager, runId: fromCheckpoint.RunId);
         StreamingRun<TResult> result = await runner.ResumeStreamAsync(fromCheckpoint, cancellation).ConfigureAwait(false);
 
         return new(result, runner);
@@ -225,7 +225,7 @@ public static class InProcessExecution
         CheckpointManager checkpointManager,
         CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput> runner = new(workflow, checkpointManager);
+        InProcessRunner<TInput> runner = new(workflow, checkpointManager, runId: fromCheckpoint.RunId);
         Run result = await runner.ResumeAsync(fromCheckpoint, cancellation).ConfigureAwait(false);
 
         return new(result, runner);
@@ -298,7 +298,7 @@ public static class InProcessExecution
         CheckpointManager checkpointManager,
         CancellationToken cancellation = default) where TInput : notnull
     {
-        InProcessRunner<TInput, TResult> runner = new(workflow, checkpointManager);
+        InProcessRunner<TInput, TResult> runner = new(workflow, checkpointManager, runId: fromCheckpoint.RunId);
         Run<TResult> result = await runner.ResumeAsync(fromCheckpoint, cancellation).ConfigureAwait(false);
 
         return new(result, runner);
