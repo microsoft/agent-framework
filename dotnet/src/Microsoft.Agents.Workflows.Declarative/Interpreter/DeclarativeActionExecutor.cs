@@ -34,8 +34,9 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
             throw new DeclarativeModelException($"Missing required properties for element: {model.GetId()} ({model.GetType().Name}).");
         }
 
-        this.Model = model;
         this._state = state;
+
+        this.Model = model;
     }
 
     public DialogAction Model { get; }

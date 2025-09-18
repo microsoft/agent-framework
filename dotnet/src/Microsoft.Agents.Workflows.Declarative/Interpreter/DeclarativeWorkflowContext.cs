@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -14,11 +15,10 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 {
-    public static readonly FrozenSet<string> ManagedScopes = // %%% SYSTEM SCOPE ???
+    public static readonly FrozenSet<string> ManagedScopes =
         [
             VariableScopeNames.Topic,
             VariableScopeNames.Global,
-            VariableScopeNames.System,
         ];
 
     public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state)
@@ -61,6 +61,12 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         this.State.Bind();
     }
 
+    public async ValueTask QueueSystemUpdateAsync<TValue>(string key, TValue? value)
+    {
+        await this.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true).ConfigureAwait(false);
+        this.State.Bind();
+    }
+
     /// <inheritdoc/>
     public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null) => this.Source.ReadStateAsync<T>(key, scopeName);
 
@@ -70,11 +76,12 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     /// <inheritdoc/>
     public ValueTask SendMessageAsync(object message, string? targetId = null) => this.Source.SendMessageAsync(message, targetId);
 
-    private async ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName)
+    private async ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true)
     {
-        bool isManagedScope = ManagedScopes.Contains(Throw.IfNull(scopeName));
+        bool isManagedScope =
+            ManagedScopes.Contains(Throw.IfNull(scopeName)) ||
+            (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal));
 
-        // %%% TODO: Only update WorkflowFormulaState when scopeName is known.
         ValueTask task = value switch
         {
             null => QueueEmptyStateAsync(),

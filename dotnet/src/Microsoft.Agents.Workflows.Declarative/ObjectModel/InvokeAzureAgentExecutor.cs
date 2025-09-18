@@ -38,7 +38,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
 
-        ChatMessage response = agentResponse.Messages.Last();
+        ChatMessage response = agentResponse.Messages[agentResponse.Messages.Count - 1];
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, response.ToRecord(), context).ConfigureAwait(false);
 
         return default;
@@ -78,7 +78,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             if (assignValue is not null && conversationId is null)
             {
                 conversationId = assignValue;
-                await this.SetConversationIdAsync(context, conversationId).ConfigureAwait(false);
+
+                RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
+                conversation.UpdateField("Id", FormulaValue.New(conversationId));
+                await context.QueueStateUpdateAsync(SystemScope.Names.Conversation, conversation, VariableScopeNames.System).ConfigureAwait(false);
+                await context.QueueStateUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System).ConfigureAwait(false);
+
                 await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
             }
         }
@@ -105,14 +110,6 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         EvaluationResult<string> conversationIdResult = this.Evaluator.GetValue(this.Model.ConversationId);
         return conversationIdResult.Value.Length == 0 ? null : conversationIdResult.Value;
-    }
-
-    private async ValueTask SetConversationIdAsync(IWorkflowContext context, string conversationId)
-    {
-        RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
-        conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        await context.QueueStateUpdateAsync(SystemScope.Names.Conversation, conversation, VariableScopeNames.System).ConfigureAwait(false);
-        await context.QueueStateUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System).ConfigureAwait(false);
     }
 
     private string GetAgentName() =>

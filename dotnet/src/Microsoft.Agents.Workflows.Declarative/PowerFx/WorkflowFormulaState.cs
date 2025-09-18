@@ -25,21 +25,22 @@ internal sealed class WorkflowFormulaState
         [
             VariableScopeNames.Topic,
             VariableScopeNames.Global,
-            //VariableScopeNames.System, // %%% NEEDED ???
+            VariableScopeNames.System,
         ];
 
     private readonly Dictionary<string, WorkflowScope> _scopes;
+
     private int _isInitialized;
 
-    public RecalcEngine Engine { get; } // %%% MOVE ???
+    public RecalcEngine Engine { get; }
 
-    public WorkflowExpressionEngine Evaluator { get; } // %%% MOVE ???
+    public WorkflowExpressionEngine Evaluator { get; }
 
     public WorkflowFormulaState(RecalcEngine engine)
     {
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope());
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
-        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope());
         this.Bind();
     }
 

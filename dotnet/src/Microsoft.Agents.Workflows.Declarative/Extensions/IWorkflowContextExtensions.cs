@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.Kit;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
@@ -28,30 +27,22 @@ internal static class IWorkflowContextExtensions
     public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.VariableScopeName));
 
+    public static ValueTask QueueSystemUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value) =>
+        DeclarativeContext(context).QueueSystemUpdateAsync(key, value);
+
     public static FormulaValue ReadState(this IWorkflowContext context, PropertyPath variablePath) =>
         context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.VariableScopeName));
 
-    public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null)
+    public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
+        DeclarativeContext(context).State.Get(key, scopeName);
+
+    private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)
     {
         if (context is not DeclarativeWorkflowContext declarativeContext)
         {
             throw new DeclarativeActionException($"Invalid workflow context: {context.GetType().Name}.");
         }
 
-        return declarativeContext.State.Get(key, scopeName);
-    }
-
-    public static async Task<WorkflowFormulaState> GetStateAsync(this IWorkflowContext context, CancellationToken cancellationToken) // %%% REFINE
-    {
-        if (context is DeclarativeWorkflowContext declarativeContext)
-        {
-            return declarativeContext.State;
-        }
-
-        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
-
-        await state.RestoreAsync(context, cancellationToken).ConfigureAwait(false);
-
-        return state;
+        return declarativeContext;
     }
 }
