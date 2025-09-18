@@ -24,7 +24,7 @@ internal sealed class PortableValueConverter(JsonMarshaller marshaller) : JsonCo
         SequencePosition initial = reader.Position;
 
         JsonTypeInfo<PortableValue> baseTypeInfo = WorkflowsJsonUtilities.JsonContext.Default.PortableValue;
-        PortableValue? maybeValue = JsonSerializer.Deserialize<PortableValue>(ref reader, baseTypeInfo);
+        PortableValue? maybeValue = JsonSerializer.Deserialize(ref reader, baseTypeInfo);
 
         if (maybeValue is null)
         {

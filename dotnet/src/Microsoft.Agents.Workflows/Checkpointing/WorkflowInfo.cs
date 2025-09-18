@@ -8,7 +8,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Checkpointing;
 
-internal class WorkflowInfo
+internal sealed class WorkflowInfo
 {
     [JsonConstructor]
     internal WorkflowInfo(
@@ -27,12 +27,12 @@ internal class WorkflowInfo
         this.InputType = Throw.IfNull(inputType);
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
 
-        if (outputType != null && outputCollectorId != null)
+        if (outputType is not null && outputCollectorId is not null)
         {
             this.OutputType = outputType;
             this.OutputCollectorId = outputCollectorId;
         }
-        else if (outputCollectorId != null)
+        else if (outputCollectorId is not null)
         {
             throw new InvalidOperationException(
                 $"Either both or none of OutputType and OutputCollectorId must be set. ({nameof(outputType)}: {outputType} vs. {nameof(outputCollectorId)}: {outputCollectorId})"
@@ -108,6 +108,6 @@ internal class WorkflowInfo
 
     public bool IsMatch<TInput, TResult>(Workflow<TInput, TResult> workflow)
         => this.IsMatch(workflow as Workflow)
-           && this.OutputType != null && this.OutputType.IsMatch(typeof(TResult))
-           && this.OutputCollectorId != null && this.OutputCollectorId == workflow.OutputCollectorId;
+           && this.OutputType?.IsMatch(typeof(TResult)) is true
+           && this.OutputCollectorId is not null && this.OutputCollectorId == workflow.OutputCollectorId;
 }

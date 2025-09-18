@@ -116,12 +116,9 @@ internal static partial class ValidationExtensions
                         innerValidatorExpr
                     );
 
-            Expression<Func<EdgeInfo, bool>> validatorExpr = Expression.Lambda<Func<EdgeInfo, bool>>(
+            return Expression.Lambda<Func<EdgeInfo, bool>>(
                 bodyExpression,
-                outerParam
-            );
-
-            return validatorExpr;
+                outerParam);
         }
     }
 

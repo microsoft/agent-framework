@@ -6,9 +6,9 @@ using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class StepContext
+internal sealed class StepContext
 {
-    public Dictionary<ExecutorIdentity, List<MessageEnvelope>> QueuedMessages { get; } = new();
+    public Dictionary<ExecutorIdentity, List<MessageEnvelope>> QueuedMessages { get; } = [];
 
     public bool HasMessages => this.QueuedMessages.Values.Any(messageList => messageList.Count > 0);
 
@@ -16,7 +16,7 @@ internal class StepContext
     {
         if (!this.QueuedMessages.TryGetValue(executorId, out var messages))
         {
-            this.QueuedMessages[executorId] = messages = new();
+            this.QueuedMessages[executorId] = messages = [];
         }
 
         return messages;
@@ -29,8 +29,7 @@ internal class StepContext
         return this.QueuedMessages.Keys.ToDictionary(
             keySelector: identity => identity,
             elementSelector: identity => this.QueuedMessages[identity]
-                                             .Select(v => new PortableMessageEnvelope(v))
-                                             .ToList()
+                                             .ConvertAll(v => new PortableMessageEnvelope(v))
         );
     }
 
@@ -38,9 +37,9 @@ internal class StepContext
     {
         foreach (ExecutorIdentity identity in messages.Keys)
         {
-            this.QueuedMessages[identity] = messages[identity].Select(UnwrapExportedState).ToList();
+            this.QueuedMessages[identity] = messages[identity].ConvertAll(UnwrapExportedState);
         }
 
-        MessageEnvelope UnwrapExportedState(PortableMessageEnvelope es) => es.ToMessageEnvelope();
+        static MessageEnvelope UnwrapExportedState(PortableMessageEnvelope es) => es.ToMessageEnvelope();
     }
 }

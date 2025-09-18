@@ -28,10 +28,10 @@ public sealed class TestConfiguration
         var configType = typeof(T);
         var configTypeName = configType.Name;
 
-        var trimText = "Configuration";
-        if (configTypeName.EndsWith(trimText, StringComparison.OrdinalIgnoreCase))
+        const string TrimText = "Configuration";
+        if (configTypeName.EndsWith(TrimText, StringComparison.OrdinalIgnoreCase))
         {
-            configTypeName = configTypeName.Substring(0, configTypeName.Length - trimText.Length);
+            configTypeName = configTypeName.Substring(0, configTypeName.Length - TrimText.Length);
         }
 
         return s_configuration.GetRequiredSection(configTypeName).Get<T>() ??

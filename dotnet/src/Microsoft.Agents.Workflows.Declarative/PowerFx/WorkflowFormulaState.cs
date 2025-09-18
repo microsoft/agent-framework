@@ -105,10 +105,11 @@ internal sealed class WorkflowFormulaState
             foreach (string key in keys)
             {
                 object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
-                if (value is null || value is UnassignedValue)
+                if (value is null or UnassignedValue)
                 {
                     value = FormulaValue.NewBlank();
                 }
+
                 this.Set(key, value.ToFormula(), scopeName);
             }
 
@@ -142,7 +143,7 @@ internal sealed class WorkflowFormulaState
 
     private WorkflowScope GetScope(string? scopeName)
     {
-        scopeName ??= WorkflowFormulaState.DefaultScopeName;
+        scopeName ??= DefaultScopeName;
 
         if (!VariableScopeNames.IsValidName(scopeName))
         {

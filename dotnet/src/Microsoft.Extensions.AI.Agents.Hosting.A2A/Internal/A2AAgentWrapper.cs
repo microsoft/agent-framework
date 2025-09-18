@@ -8,7 +8,6 @@ using A2A;
 using Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Internal;
 
@@ -17,7 +16,6 @@ namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Internal;
 /// </summary>
 internal sealed class A2AAgentWrapper
 {
-    private readonly ILogger _logger;
     private readonly AIAgent _innerAgent;
     private readonly IActorClient _actorClient;
 
@@ -26,8 +24,6 @@ internal sealed class A2AAgentWrapper
         AIAgent innerAgent,
         ILoggerFactory? loggerFactory = null)
     {
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgentWrapper>();
-
         this._actorClient = actorClient;
         this._innerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
     }

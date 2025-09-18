@@ -85,15 +85,15 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     public virtual async Task ThreadMaintainsHistoryAsync()
     {
         // Arrange
-        var q1 = "What is the capital of France.";
-        var q2 = "And Austria?";
+        const string Q1 = "What is the capital of France.";
+        const string Q2 = "And Austria?";
         var agent = this.Fixture.Agent;
         var thread = agent.GetNewThread();
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var responseUpdates1 = await agent.RunStreamingAsync(q1, thread).ToListAsync();
-        var responseUpdates2 = await agent.RunStreamingAsync(q2, thread).ToListAsync();
+        var responseUpdates1 = await agent.RunStreamingAsync(Q1, thread).ToListAsync();
+        var responseUpdates2 = await agent.RunStreamingAsync(Q2, thread).ToListAsync();
 
         // Assert
         var response1Text = string.Concat(responseUpdates1.Select(x => x.Text));
@@ -105,8 +105,8 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         Assert.Equal(4, chatHistory.Count);
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.User));
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.Assistant));
-        Assert.Equal(q1, chatHistory[0].Text);
-        Assert.Equal(q2, chatHistory[2].Text);
+        Assert.Equal(Q1, chatHistory[0].Text);
+        Assert.Equal(Q2, chatHistory[2].Text);
         Assert.Contains("Paris", chatHistory[1].Text);
         Assert.Contains("Vienna", chatHistory[3].Text);
     }

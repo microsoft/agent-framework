@@ -11,32 +11,22 @@ public class CopilotStudioRunStreamingTests() : RunStreamingTests<CopilotStudioF
     private const string ManualVerification = "For manual verification";
 
     [Fact(Skip = "Copilot Studio does not support thread history retrieval, so this test is not applicable.")]
-    public override Task ThreadMaintainsHistoryAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public override Task ThreadMaintainsHistoryAsync() =>
+        Task.CompletedTask;
 
     [Fact(Skip = ManualVerification)]
-    public override Task RunWithChatMessageReturnsExpectedResultAsync()
-    {
-        return base.RunWithChatMessageReturnsExpectedResultAsync();
-    }
+    public override Task RunWithChatMessageReturnsExpectedResultAsync() =>
+        base.RunWithChatMessageReturnsExpectedResultAsync();
 
     [Fact(Skip = ManualVerification)]
-    public override Task RunWithChatMessagesReturnsExpectedResultAsync()
-    {
-        return base.RunWithChatMessagesReturnsExpectedResultAsync();
-    }
+    public override Task RunWithChatMessagesReturnsExpectedResultAsync() =>
+        base.RunWithChatMessagesReturnsExpectedResultAsync();
 
     [Fact(Skip = ManualVerification)]
-    public override Task RunWithNoMessageDoesNotFailAsync()
-    {
-        return base.RunWithNoMessageDoesNotFailAsync();
-    }
+    public override Task RunWithNoMessageDoesNotFailAsync() =>
+        base.RunWithNoMessageDoesNotFailAsync();
 
     [Fact(Skip = ManualVerification)]
-    public override Task RunWithStringReturnsExpectedResultAsync()
-    {
-        return base.RunWithStringReturnsExpectedResultAsync();
-    }
+    public override Task RunWithStringReturnsExpectedResultAsync() =>
+        base.RunWithStringReturnsExpectedResultAsync();
 }

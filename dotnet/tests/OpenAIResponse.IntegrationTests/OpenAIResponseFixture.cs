@@ -64,36 +64,30 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         throw new NotSupportedException("This test currently only supports text messages");
     }
 
-    public Task<ChatClientAgent> CreateChatClientAgentAsync(
+    public async Task<ChatClientAgent> CreateChatClientAgentAsync(
         string name = "HelpfulAssistant",
         string instructions = "You are a helpful assistant.",
-        IList<AITool>? aiTools = null)
-    {
-        return Task.FromResult(new ChatClientAgent(
-            this._openAIResponseClient.AsIChatClient(),
-            options: new()
-            {
-                Name = name,
-                Instructions = instructions,
-                ChatOptions = new ChatOptions
+        IList<AITool>? aiTools = null) =>
+            new ChatClientAgent(
+                this._openAIResponseClient.AsIChatClient(),
+                options: new()
                 {
-                    Tools = aiTools,
-                    RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
-                },
-            }));
-    }
+                    Name = name,
+                    Instructions = instructions,
+                    ChatOptions = new ChatOptions
+                    {
+                        Tools = aiTools,
+                        RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
+                    },
+                });
 
-    public Task DeleteAgentAsync(ChatClientAgent agent)
-    {
+    public Task DeleteAgentAsync(ChatClientAgent agent) =>
         // Chat Completion does not require/support deleting agents, so this is a no-op.
-        return Task.CompletedTask;
-    }
+        Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread)
-    {
+    public Task DeleteThreadAsync(AgentThread thread) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
-        return Task.CompletedTask;
-    }
+        Task.CompletedTask;
 
     public async Task InitializeAsync()
     {
@@ -103,8 +97,5 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         this._agent = await this.CreateChatClientAgentAsync();
     }
 
-    public Task DisposeAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public Task DisposeAsync() => Task.CompletedTask;
 }

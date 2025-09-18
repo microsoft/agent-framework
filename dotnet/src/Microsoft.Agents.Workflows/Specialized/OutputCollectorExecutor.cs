@@ -6,7 +6,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class OutputCollectorExecutor<TInput, TResult> : Executor, IOutputSink<TResult>
+internal sealed class OutputCollectorExecutor<TInput, TResult> : Executor, IOutputSink<TResult>
 {
     private readonly StreamingAggregator<TInput, TResult> _aggregator;
     private readonly Func<TInput, TResult?, bool>? _completionCondition;
@@ -19,10 +19,8 @@ internal class OutputCollectorExecutor<TInput, TResult> : Executor, IOutputSink<
         this._completionCondition = completionCondition;
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-    {
-        return routeBuilder.AddHandler<TInput>(this.HandleAsync);
-    }
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.AddHandler<TInput>(this.HandleAsync);
 
     public ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {

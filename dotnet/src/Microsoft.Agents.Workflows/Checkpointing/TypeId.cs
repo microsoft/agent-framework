@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 /// <summary>
 /// A representation of a type's identity, including its assembly and type names.
 /// </summary>
-public class TypeId
+public sealed class TypeId : IEquatable<TypeId>
 {
     /// <inheritdoc cref="System.Reflection.Assembly.FullName"/>
     public string AssemblyName { get; }
@@ -43,15 +43,29 @@ public class TypeId
 
     /// <inheritdoc />
     public override bool Equals(object? obj)
-        => obj is TypeId other
-            && this.AssemblyName == other.AssemblyName
-            && this.TypeName == other.TypeName;
+        => this.Equals(obj as TypeId);
+
+    /// <inheritdoc />
+    public bool Equals(TypeId? other)
+    {
+        if (other is null)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        return this.AssemblyName == other.AssemblyName && this.TypeName == other.TypeName;
+    }
 
     /// <inheritdoc />
     public override int GetHashCode() => HashCode.Combine(this.AssemblyName, this.TypeName);
 
     /// <inheritdoc />
-    public static bool operator ==(TypeId? left, TypeId? right) => object.ReferenceEquals(left, right) || (!object.ReferenceEquals(left, null) && left.Equals(right));
+    public static bool operator ==(TypeId? left, TypeId? right) => left is null ? right is null : left.Equals(right);
 
     /// <inheritdoc />
     public static bool operator !=(TypeId? left, TypeId? right) => !(left == right);
@@ -84,7 +98,7 @@ public class TypeId
     {
         Type? candidateType = type;
 
-        while (candidateType != null)
+        while (candidateType is not null)
         {
             if (this.IsMatch(candidateType))
             {

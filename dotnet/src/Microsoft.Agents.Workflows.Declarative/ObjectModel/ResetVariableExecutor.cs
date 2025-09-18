@@ -15,7 +15,7 @@ internal sealed class ResetVariableExecutor(ResetVariable model, WorkflowFormula
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        PropertyPath variablePath = Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
+        Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 
         this.State.Reset(this.Model.Variable);
         Debug.WriteLine(

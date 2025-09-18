@@ -1138,6 +1138,59 @@ def test_chat_options_tool_choice_dict_mapping(ai_tool):
     assert settings["tool_choice"] == "required"
 
 
+def test_chat_options_to_provider_settings_with_falsy_values():
+    """Test that falsy values (except None) are included in provider settings."""
+    options = ChatOptions(
+        temperature=0.0,  # falsy but not None
+        top_p=0.0,  # falsy but not None
+        presence_penalty=False,  # falsy but not None
+        frequency_penalty=None,  # None - should be excluded
+        additional_properties={"empty_string": "", "zero": 0, "false_flag": False, "none_value": None},
+    )
+
+    settings = options.to_provider_settings()
+
+    # Falsy values that are not None should be included
+    assert "temperature" in settings
+    assert isinstance(settings["temperature"], float)
+    assert settings["temperature"] == 0.0
+    assert "top_p" in settings
+    assert isinstance(settings["top_p"], float)
+    assert settings["top_p"] == 0.0
+    assert "presence_penalty" in settings
+    assert isinstance(settings["presence_penalty"], float)  # converted to float
+    assert settings["presence_penalty"] == 0.0
+
+    # None values should be excluded
+    assert "frequency_penalty" not in settings
+
+    # Additional properties - falsy values should always be included
+    assert "empty_string" in settings
+    assert settings["empty_string"] == ""
+    assert "zero" in settings
+    assert settings["zero"] == 0
+    assert "false_flag" in settings
+    assert settings["false_flag"] is False
+    assert "none_value" in settings
+    assert settings["none_value"] is None
+
+
+def test_chat_options_empty_logit_bias_and_metadata_excluded():
+    """Test that empty logit_bias and metadata are excluded from provider settings."""
+    options = ChatOptions(
+        ai_model_id="gpt-4o",
+        logit_bias={},  # empty dict should be excluded
+        metadata={},  # empty dict should be excluded
+    )
+
+    settings = options.to_provider_settings()
+
+    # Empty logit_bias and metadata should be excluded
+    assert "logit_bias" not in settings
+    assert "metadata" not in settings
+    assert settings["model"] == "gpt-4o"
+
+
 # region AgentRunResponse
 
 

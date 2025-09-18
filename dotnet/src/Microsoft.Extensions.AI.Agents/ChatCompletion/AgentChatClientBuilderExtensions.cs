@@ -21,9 +21,7 @@ public static class AgentChatClientBuilderExtensions
         _ = Throw.IfNull(builder);
         _ = Throw.IfNull(agent);
 
-        return builder.Use((innerClient, services) =>
-        {
-            return new AgentInvokedChatClient(agent, innerClient);
-        });
+        return builder.Use((innerClient, services) 
+            => new AgentInvokedChatClient(innerClient));
     }
 }

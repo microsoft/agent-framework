@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 /// </summary>
 internal sealed class InMemoryCheckpointManager : ICheckpointManager
 {
-    private readonly Dictionary<string, RunCheckpointCache<Checkpoint>> _store = new();
+    private readonly Dictionary<string, RunCheckpointCache<Checkpoint>> _store = [];
 
     private RunCheckpointCache<Checkpoint> GetRunStore(string runId)
     {

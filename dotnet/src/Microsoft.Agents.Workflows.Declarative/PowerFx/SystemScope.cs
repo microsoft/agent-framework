@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Frozen;
-using System.Collections.Generic;
 using System.Globalization;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
@@ -31,22 +30,20 @@ internal static class SystemScope
         public const string UserLanguage = nameof(UserLanguage);
     }
 
-    public static FrozenSet<string> AllNames { get; } = GetNames().ToFrozenSet();
-
-    public static IEnumerable<string> GetNames()
-    {
-        yield return Names.Activity;
-        yield return Names.Bot;
-        yield return Names.Conversation;
-        yield return Names.ConversationId;
-        yield return Names.InternalId;
-        yield return Names.LastMessage;
-        yield return Names.LastMessageId;
-        yield return Names.LastMessageText;
-        yield return Names.Recognizer;
-        yield return Names.User;
-        yield return Names.UserLanguage;
-    }
+    public static FrozenSet<string> AllNames { get; } =
+    [
+        Names.Activity,
+        Names.Bot,
+        Names.Conversation,
+        Names.ConversationId,
+        Names.InternalId,
+        Names.LastMessage,
+        Names.LastMessageId,
+        Names.LastMessageText,
+        Names.Recognizer,
+        Names.User,
+        Names.UserLanguage,
+    ];
 
     public static void InitializeSystem(this WorkflowFormulaState scopes)
     {
@@ -59,7 +56,7 @@ internal static class SystemScope
 
         scopes.Set(
             Names.Conversation,
-            RecordValue.NewRecordFromFields(
+            FormulaValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
                 new NamedValue("LocalTimeZone", FormulaValue.New(TimeZoneInfo.Local.StandardName)),
                 new NamedValue("LocalTimeZoneOffset", FormulaValue.New(TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow))),
@@ -70,17 +67,17 @@ internal static class SystemScope
 
         scopes.Set(
             Names.Recognizer,
-            RecordValue.NewRecordFromFields(
+            FormulaValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
                 new NamedValue("Text", FormulaType.String.NewBlank())),
             VariableScopeNames.System);
 
         scopes.Set(
             Names.User,
-            RecordValue.NewRecordFromFields(
-                new NamedValue("Language", StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))),
+            FormulaValue.NewRecordFromFields(
+                new NamedValue("Language", FormulaValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))),
             VariableScopeNames.System);
-        scopes.Set(Names.UserLanguage, StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName), VariableScopeNames.System);
+        scopes.Set(Names.UserLanguage, FormulaValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName), VariableScopeNames.System);
 
         void Set(string key, string? value = null)
         {
