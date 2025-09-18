@@ -5,9 +5,6 @@
 using System;
 using Microsoft.Agents.Declarative;
 
-var apiKey = Environment.GetEnvironmentVariable("OPENAI_APIKEY") ?? throw new InvalidOperationException("OPENAI_APIKEY is not set.");
-var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
-
 // Define the agent using a YAML definition.
 var text =
     """

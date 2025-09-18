@@ -19,15 +19,15 @@ public class AgentCreationOptions
     /// <summary>
     /// Gets or sets the <see cref="IChatClient"/> instance to use when creating the <see cref="AIAgent"/>.
     /// </summary>
-    public IChatClient? ChatClient { get; set; } = null;
+    public IChatClient? ChatClient { get; set; }
 
     /// <summary>
     /// Gets or sets the <see cref="IServiceProvider"/> instance to use when creating the <see cref="AIAgent"/>.
     /// </summary>
-    public IServiceProvider? ServiceProvider { get; set; } = null;
+    public IServiceProvider? ServiceProvider { get; set; }
 
     /// <summary>
     /// Gets or sets the <see cref="ILoggerFactory"/> instance to use when creating the <see cref="AIAgent"/>.
     /// </summary>
-    public ILoggerFactory? LoggerFactory { get; set; } = null;
+    public ILoggerFactory? LoggerFactory { get; set; }
 }

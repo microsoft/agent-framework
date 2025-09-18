@@ -37,6 +37,7 @@ var text =
     """;
 
 // Alternatively, you can define the response format using as YAML for better readability.
+/*
 var textYaml =
     """
     kind: GptComponentMetadata
@@ -68,6 +69,7 @@ var textYaml =
                 - answer
               additionalProperties: false
     """;
+*/
 
 // Create the agent from the YAML definition.
 var agentFactory = new ChatClientAgentFactory();

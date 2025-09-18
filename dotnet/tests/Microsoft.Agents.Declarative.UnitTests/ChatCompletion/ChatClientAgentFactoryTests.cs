@@ -57,14 +57,14 @@ public class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithUnsupportedAgentType_ReturnsNullAsync()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: unsupported_type
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
         var options = new AgentCreationOptions();
 
@@ -79,14 +79,14 @@ public class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithSupportedTypeAndChatClientInOptions_CreatesAgentAsync()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: chat_client_agent
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
         var options = new AgentCreationOptions
         {
@@ -106,14 +106,14 @@ public class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithSupportedTypeAndChatClientFromServiceProvider_CreatesAgentAsync()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: chat_client_agent
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
 
         this._mockServiceProvider
@@ -139,14 +139,14 @@ public class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithSupportedTypeButNoChatClient_ThrowsArgumentExceptionAsync()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: chat_client_agent
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
         var options = new AgentCreationOptions();
 
@@ -162,14 +162,14 @@ public class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithSupportedTypeButServiceProviderReturnsNull_ThrowsArgumentExceptionAsync()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: chat_client_agent
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
 
 #pragma warning disable CS8603 // Possible null reference return.
@@ -195,14 +195,14 @@ public class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithChatClientInOptionsAndServiceProvider_PrefersChatClientInOptionsAsync()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: chat_client_agent
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
         var optionsChatClient = new Mock<IChatClient>().Object;
         var serviceProviderChatClient = new Mock<IChatClient>().Object;
@@ -234,14 +234,14 @@ public class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithCancellationToken_CompletesSuccessfullyAsync()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: chat_client_agent
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
         var options = new AgentCreationOptions
         {
@@ -304,14 +304,14 @@ public class ChatClientAgentFactoryTests
     public void IsSupported_WithSupportedType_ReturnsTrue()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: chat_client_agent
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
 
         // Act
@@ -325,14 +325,14 @@ public class ChatClientAgentFactoryTests
     public void IsSupported_WithUnsupportedType_ReturnsFalse()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: unsupported_type
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
 
         // Act
@@ -346,13 +346,13 @@ public class ChatClientAgentFactoryTests
     public void IsSupported_WithNullType_ReturnsFalse()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
 
         // Act
@@ -366,14 +366,14 @@ public class ChatClientAgentFactoryTests
     public void IsSupported_WithEmptyType_ReturnsFalse()
     {
         // Arrange
-        var yaml =
+        const string Yaml =
             """
             kind: GptComponentMetadata
             type: 
             name: JokerAgent
             instructions: You are good at telling jokes.
             """;
-        var agentDefinition = AgentBotElementYaml.FromYaml(yaml);
+        var agentDefinition = AgentBotElementYaml.FromYaml(Yaml);
         var factory = new ChatClientAgentFactory();
 
         // Act
