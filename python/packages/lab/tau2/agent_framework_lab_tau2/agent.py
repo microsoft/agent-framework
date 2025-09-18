@@ -199,9 +199,9 @@ class Tau2TaskRunner:
             WorkflowBuilder(max_iterations=10000)  # Set to unlimited, because we are not relying on this
             .set_start_executor(orchestrator)  # Start with orchestrator
             .add_edge(orchestrator, assistant_executor)  # Orchestrator -> Assistant
-            .add_edge(assistant_executor, orchestrator)  # Assistant -> Orchestrator
+            .add_edge(assistant_executor, orchestrator, condition=self.should_not_stop)  # Assistant -> Orchestrator
             .add_edge(orchestrator, user_executor)  # Orchestrator -> User
-            .add_edge(user_executor, orchestrator)  # User -> Orchestrator
+            .add_edge(user_executor, orchestrator, condition=self.should_not_stop)  # User -> Orchestrator
             .build()
         )
 
