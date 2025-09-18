@@ -324,7 +324,6 @@ class RedisProvider(ContextProvider):
         sort_by: str | None = None,
         in_order: bool = False,
         params: dict[str, Any] | None = None,
-        stopwords: str | set[str] | None = "english",
         alpha: float = 0.7,
         dtype: Literal["float32", "float16", "bfloat16"] = "float32",
     ) -> list[dict[str, Any]]:
@@ -344,7 +343,6 @@ class RedisProvider(ContextProvider):
             sort_by: Field to sort by (text-only search).
             in_order: Whether to preserve field order (text-only search).
             params: Additional query params.
-            stopwords: Stopwords to apply.
             alpha: Hybrid balancing parameter when vectors are enabled.
             dtype: Vector dtype when vectors are enabled.
 
@@ -380,10 +378,6 @@ class RedisProvider(ContextProvider):
             else ["content", "role", "application_id", "agent_id", "user_id", "thread_id"]
         )
 
-        # Normalize stopwords to match TextQuery's expected types
-        normalized_stopwords: str | set[str] | None = stopwords
-        if isinstance(stopwords, list):
-            normalized_stopwords = set(stopwords)
         try:
             if self.vectorizer and self.vector_field_name:
                 # Build hybrid query: combine full-text and vector similarity
@@ -400,8 +394,8 @@ class RedisProvider(ContextProvider):
                     dtype=dtype,
                     num_results=num_results,
                     return_fields=return_fields,
-                    stopwords=normalized_stopwords,
                     dialect=dialect,
+                    stopwords=None,
                 )
                 hybrid_results = await self.redis_index.query(query)
                 return cast(list[dict[str, Any]], hybrid_results)
@@ -413,13 +407,13 @@ class RedisProvider(ContextProvider):
                 filter_expression=combined_filter,
                 num_results=num_results,
                 return_fields=return_fields,
-                stopwords=normalized_stopwords,
                 dialect=dialect,
                 # return_score supported on TextQuery; omit on HybridQuery for compatibility
                 return_score=return_score,
                 sort_by=sort_by,
                 in_order=in_order,
                 params=params,
+                stopwords=None,
             )
             text_results = await self.redis_index.query(query)
             return cast(list[dict[str, Any]], text_results)

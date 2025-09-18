@@ -77,7 +77,7 @@ async def main() -> None:
     """
 
     # Configure API keys and model IDs (replace placeholders)
-    OPENAI_API_KEY = "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"
+    OPENAI_API_KEY = "<API KEY HERE>"
     OPENAI_MODEL_ID = "gpt-4o-mini"
 
     print("1. Standalone provider usage:")
@@ -121,6 +121,7 @@ async def main() -> None:
     # Inspect retrieved memories injected into instructions
     # Debug Check to verify that context provider works as expected
     print(ctx)
+    print('\n')
 
 
     # --- Agent + provider: teach and recall a preference ---

@@ -37,7 +37,7 @@ from redisvl.extensions.cache.embeddings import EmbeddingsCache
 
 
 # Configure your OpenAI credentials for the chat client used in this sample
-OPENAI_API_KEY = "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"
+OPENAI_API_KEY = "<API KEY HERE>"
 OPENAI_MODEL_ID = "gpt-4o-mini"
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
