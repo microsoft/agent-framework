@@ -9,12 +9,12 @@ using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class AIAgentHostExecutor : Executor
+internal sealed class AIAgentHostExecutor : Executor
 {
     private readonly bool _emitEvents;
     private readonly AIAgent _agent;
-    private readonly List<ChatMessage> _pendingMessages = new();
-    private AgentThread? _thread = null;
+    private readonly List<ChatMessage> _pendingMessages = [];
+    private AgentThread? _thread;
 
     public AIAgentHostExecutor(AIAgent agent, bool emitEvents = false) : base(id: agent.Id)
     {
@@ -22,22 +22,13 @@ internal class AIAgentHostExecutor : Executor
         this._emitEvents = emitEvents;
     }
 
-    private AgentThread EnsureThread(IWorkflowContext context)
-    {
-        if (this._thread != null)
-        {
-            return this._thread;
-        }
+    private AgentThread EnsureThread(IWorkflowContext context) =>
+        this._thread ??= this._agent.GetNewThread();
 
-        return this._thread = this._agent.GetNewThread();
-    }
-
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-    {
-        return routeBuilder.AddHandler<ChatMessage>(this.QueueMessageAsync)
-                           .AddHandler<List<ChatMessage>>(this.QueueMessagesAsync)
-                           .AddHandler<TurnToken>(this.TakeTurnAsync);
-    }
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.AddHandler<ChatMessage>(this.QueueMessageAsync)
+                    .AddHandler<List<ChatMessage>>(this.QueueMessagesAsync)
+                    .AddHandler<TurnToken>(this.TakeTurnAsync);
 
     public ValueTask QueueMessagesAsync(List<ChatMessage> messages, IWorkflowContext context)
     {
@@ -51,12 +42,12 @@ internal class AIAgentHostExecutor : Executor
         return default;
     }
 
-    private const string ThreadStateKey = nameof(AIAgentHostExecutor._thread);
-    private const string PendingMessagesStateKey = nameof(AIAgentHostExecutor._pendingMessages);
+    private const string ThreadStateKey = nameof(_thread);
+    private const string PendingMessagesStateKey = nameof(_pendingMessages);
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
     {
         Task threadTask = Task.CompletedTask;
-        if (this._thread != null)
+        if (this._thread is not null)
         {
             JsonElement threadValue = await this._thread.SerializeAsync(cancellationToken: cancellation).ConfigureAwait(false);
             threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue).AsTask();
@@ -90,10 +81,10 @@ internal class AIAgentHostExecutor : Executor
 
     public async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context)
     {
-        bool emitEvents = token.EmitEvents.HasValue ? token.EmitEvents.Value : this._emitEvents;
+        bool emitEvents = token.EmitEvents ?? this._emitEvents;
         IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(this._pendingMessages, this.EnsureThread(context));
 
-        List<AIContent> updates = new();
+        List<AIContent> updates = [];
         ChatMessage? currentStreamingMessage = null;
 
         await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
@@ -114,7 +105,7 @@ internal class AIAgentHostExecutor : Executor
             // providing some mechanisms to help the user complete the request, or route it out of the
             // workflow.
 
-            if (currentStreamingMessage == null || currentStreamingMessage.MessageId != update.MessageId)
+            if (currentStreamingMessage is null || currentStreamingMessage.MessageId != update.MessageId)
             {
                 await PublishCurrentMessageAsync().ConfigureAwait(false);
                 currentStreamingMessage = new(update.Role ?? ChatRole.Assistant, update.Contents)
@@ -135,7 +126,7 @@ internal class AIAgentHostExecutor : Executor
 
         async ValueTask PublishCurrentMessageAsync()
         {
-            if (currentStreamingMessage != null)
+            if (currentStreamingMessage is not null)
             {
                 currentStreamingMessage.Contents = updates;
                 updates = [];

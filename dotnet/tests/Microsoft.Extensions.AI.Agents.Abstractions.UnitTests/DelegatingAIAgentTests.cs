@@ -60,11 +60,9 @@ public class DelegatingAIAgentTests
     /// Verify that constructor throws ArgumentNullException when innerAgent is null.
     /// </summary>
     [Fact]
-    public void RequiresInnerAgent()
-    {
+    public void RequiresInnerAgent() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>("innerAgent", () => new TestDelegatingAIAgent(null!));
-    }
 
     /// <summary>
     /// Verify that constructor sets the inner agent correctly.
@@ -218,11 +216,9 @@ public class DelegatingAIAgentTests
     /// Verify that GetService throws ArgumentNullException when serviceType is null.
     /// </summary>
     [Fact]
-    public void GetServiceThrowsForNullType()
-    {
+    public void GetServiceThrowsForNullType() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>("serviceType", () => this._delegatingAgent.GetService(null!));
-    }
 
     /// <summary>
     /// Verify that GetService returns the delegating agent itself when requesting compatible type and key is null.

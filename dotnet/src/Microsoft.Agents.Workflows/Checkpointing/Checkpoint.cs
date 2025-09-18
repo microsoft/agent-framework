@@ -7,7 +7,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Checkpointing;
 
-internal class Checkpoint
+internal sealed class Checkpoint
 {
     [JsonConstructor]
     internal Checkpoint(
@@ -33,8 +33,8 @@ internal class Checkpoint
     public WorkflowInfo Workflow { get; }
     public RunnerStateData RunnerData { get; }
 
-    public Dictionary<ScopeKey, PortableValue> StateData { get; } = new();
-    public Dictionary<EdgeId, PortableValue> EdgeStateData { get; } = new();
+    public Dictionary<ScopeKey, PortableValue> StateData { get; } = [];
+    public Dictionary<EdgeId, PortableValue> EdgeStateData { get; } = [];
 
     public CheckpointInfo? Parent { get; }
 }

@@ -10,16 +10,13 @@ namespace Microsoft.Agents.Workflows.UnitTests;
 
 public class BaseTestExecutor<TActual> : ReflectingExecutor<TActual> where TActual : ReflectingExecutor<TActual>
 {
-    protected void OnInvokedHandler()
-    {
-        this.InvokedHandler = true;
-    }
+    protected void OnInvokedHandler() => this.InvokedHandler = true;
 
     public bool InvokedHandler
     {
         get;
         private set;
-    } = false;
+    }
 }
 
 public class DefaultHandler : BaseTestExecutor<DefaultHandler>, IMessageHandler<object>
@@ -68,7 +65,7 @@ public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor<TypedHan
 
 public class RoutingReflectionTests
 {
-    private async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput, TE>(BaseTestExecutor<TE> executor, TInput? input = default) where TInput : new() where TE : ReflectingExecutor<TE>
+    private static async ValueTask<CallResult?> RunTestReflectAndRouteMessageAsync<TInput, TE>(BaseTestExecutor<TE> executor, TInput? input = default) where TInput : new() where TE : ReflectingExecutor<TE>
     {
         MessageRouter router = executor.Router;
 
@@ -89,7 +86,7 @@ public class RoutingReflectionTests
     {
         DefaultHandler executor = new();
 
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, DefaultHandler>(executor);
+        CallResult? result = await RunTestReflectAndRouteMessageAsync<object, DefaultHandler>(executor);
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
@@ -101,7 +98,7 @@ public class RoutingReflectionTests
     {
         TypedHandler<int> executor = new();
 
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, TypedHandler<int>>(executor, 3);
+        CallResult? result = await RunTestReflectAndRouteMessageAsync<object, TypedHandler<int>>(executor, 3);
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
@@ -113,14 +110,11 @@ public class RoutingReflectionTests
     {
         TypedHandlerWithOutput<int, string> executor = new()
         {
-            Handler = (message, context) =>
-            {
-                return new ValueTask<string>($"{message}");
-            }
+            Handler = (message, context) => new ValueTask<string>($"{message}")
         };
 
         const string Expected = "3";
-        CallResult? result = await this.RunTestReflectAndRouteMessageAsync<object, TypedHandlerWithOutput<int, string>>(executor, int.Parse(Expected));
+        CallResult? result = await RunTestReflectAndRouteMessageAsync<object, TypedHandlerWithOutput<int, string>>(executor, int.Parse(Expected));
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);

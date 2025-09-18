@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Moq;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 
@@ -15,13 +14,10 @@ namespace Microsoft.Agents.Orchestration.UnitTest;
 /// </summary>
 internal sealed class MockAgent(int index) : AIAgent
 {
-    public static MockAgent CreateWithResponse(int index, string response)
+    public static MockAgent CreateWithResponse(int index, string response) => new(index)
     {
-        return new(index)
-        {
-            Response = [new(ChatRole.Assistant, response)]
-        };
-    }
+        Response = [new(ChatRole.Assistant, response)]
+    };
 
     public int InvokeCount { get; private set; }
 
@@ -31,19 +27,11 @@ internal sealed class MockAgent(int index) : AIAgent
 
     public override string? Description => $"test {index}";
 
-    public override AgentThread GetNewThread()
-    {
-        return new AgentThread() { ConversationId = Guid.NewGuid().ToString() };
-    }
+    public override AgentThread GetNewThread() => new() { ConversationId = Guid.NewGuid().ToString() };
 
     public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         this.InvokeCount++;
-        if (thread == null)
-        {
-            Mock<AgentThread> mockThread = new(MockBehavior.Strict);
-            thread = mockThread.Object;
-        }
 
         return Task.FromResult(new AgentRunResponse(messages: [.. this.Response]));
     }

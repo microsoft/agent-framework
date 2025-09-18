@@ -42,7 +42,7 @@ using var tracerProvider = Sdk.CreateTracerProviderBuilder()
     .AddSource(SourceName) // Our custom activity source
     .AddSource("Microsoft.Extensions.AI.Agents") // Agent Framework telemetry
     .AddHttpClientInstrumentation() // Capture HTTP calls to OpenAI
-    .AddOtlpExporter(options => { options.Endpoint = new Uri(otlpEndpoint); })
+    .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
     .Build();
 
 // Setup metrics with resource and instrument name filtering
@@ -52,7 +52,7 @@ using var meterProvider = Sdk.CreateMeterProviderBuilder()
     .AddMeter("Microsoft.Extensions.AI.Agents") // Agent Framework metrics
     .AddHttpClientInstrumentation() // HTTP client metrics
     .AddRuntimeInstrumentation() // .NET runtime metrics
-    .AddOtlpExporter(options => { options.Endpoint = new Uri(otlpEndpoint); })
+    .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
     .Build();
 
 // Setup structured logging with OpenTelemetry
@@ -62,10 +62,7 @@ serviceCollection.AddLogging(loggingBuilder => loggingBuilder
     .AddOpenTelemetry(options =>
     {
         options.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"));
-        options.AddOtlpExporter(otlpOptions =>
-        {
-            otlpOptions.Endpoint = new Uri(otlpEndpoint);
-        });
+        options.AddOtlpExporter(otlpOptions => otlpOptions.Endpoint = new Uri(otlpEndpoint));
         options.IncludeScopes = true;
         options.IncludeFormattedMessage = true;
     }));
@@ -97,7 +94,7 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 appLogger.LogInformation("OpenTelemetry Aspire Demo application started");
 
 [Description("Get the weather for a given location.")]
-static async Task<string> GetWeather([Description("The location to get the weather for.")] string location)
+static async Task<string> GetWeatherAsync([Description("The location to get the weather for.")] string location)
 {
     await Task.Delay(2000);
     return $"The weather in {location} is cloudy with a high of 15°C.";
@@ -109,7 +106,7 @@ using var instrumentedChatClient = new AzureOpenAIClient(new Uri(endpoint), new 
         .AsIChatClient() // Converts a native OpenAI SDK ChatClient into a Microsoft.Extensions.AI.IChatClient
         .AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(loggerFactory: loggerFactory, sourceName: SourceName, (cfg) => { cfg.EnableSensitiveData = true; })
+        .UseOpenTelemetry(loggerFactory: loggerFactory, sourceName: SourceName, (cfg) => cfg.EnableSensitiveData = true)
         .Build();
 
 appLogger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
@@ -117,7 +114,7 @@ appLogger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
 using var agent = new ChatClientAgent(instrumentedChatClient,
             name: "OpenTelemetryDemoAgent",
             instructions: "You are a helpful assistant that provides concise and informative responses.",
-            tools: [AIFunctionFactory.Create(GetWeather)])
+            tools: [AIFunctionFactory.Create(GetWeatherAsync)])
         .WithOpenTelemetry(loggerFactory, SourceName); // Enable telemetry on the agent
 
 var thread = agent.GetNewThread();
@@ -127,9 +124,10 @@ appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.
 // Create a parent span for the entire agent session
 using var sessionActivity = activitySource.StartActivity("Agent Session");
 var sessionId = thread.ConversationId ?? Guid.NewGuid().ToString();
-sessionActivity?.SetTag("agent.name", "OpenTelemetryDemoAgent");
-sessionActivity?.SetTag("session.id", sessionId);
-sessionActivity?.SetTag("session.start_time", DateTimeOffset.UtcNow.ToString("O"));
+sessionActivity?
+    .SetTag("agent.name", "OpenTelemetryDemoAgent")
+    .SetTag("session.id", sessionId)
+    .SetTag("session.start_time", DateTimeOffset.UtcNow.ToString("O"));
 
 appLogger.LogInformation("Starting agent session with ID: {SessionId}", sessionId);
 using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = sessionId, ["AgentName"] = "OpenTelemetryDemoAgent" }))
@@ -152,11 +150,12 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
 
         // Create a child span for each individual interaction
         using var activity = activitySource.StartActivity("Agent Interaction");
-        activity?.SetTag("user.input", userInput);
-        activity?.SetTag("agent.name", "OpenTelemetryDemoAgent");
-        activity?.SetTag("interaction.number", interactionCount);
+        activity?
+            .SetTag("user.input", userInput)
+            .SetTag("agent.name", "OpenTelemetryDemoAgent")
+            .SetTag("interaction.number", interactionCount);
 
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -197,9 +196,10 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
             responseTimeHistogram.Record(responseTime,
                 new KeyValuePair<string, object?>("status", "error"));
 
-            activity?.SetTag("response.success", false);
-            activity?.SetTag("error.message", ex.Message);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?
+                .SetTag("response.success", false)
+                .SetTag("error.message", ex.Message)
+                .SetStatus(ActivityStatusCode.Error, ex.Message);
 
             appLogger.LogError(ex, "Agent interaction #{InteractionNumber} failed after {ResponseTime:F2} seconds: {ErrorMessage}",
                 interactionCount, responseTime, ex.Message);
@@ -207,8 +207,9 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
     }
 
     // Add session summary to the parent span
-    sessionActivity?.SetTag("session.total_interactions", interactionCount);
-    sessionActivity?.SetTag("session.end_time", DateTimeOffset.UtcNow.ToString("O"));
+    sessionActivity?
+        .SetTag("session.total_interactions", interactionCount)
+        .SetTag("session.end_time", DateTimeOffset.UtcNow.ToString("O"));
 
     appLogger.LogInformation("Agent session completed. Total interactions: {TotalInteractions}", interactionCount);
 } // End of logging scope

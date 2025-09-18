@@ -1870,10 +1870,17 @@ class ChatOptions(AFBaseModel):
         # No tool choice if no tools are defined
         if self.tools is None or len(self.tools) == 0:
             default_exclude.add("tool_choice")
+        # No metadata and logit bias if they are empty
+        # Prevents 400 error
+        if not self.logit_bias:
+            default_exclude.add("logit_bias")
+        if not self.metadata:
+            default_exclude.add("metadata")
+
         merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
 
         settings = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
-        settings = {k: v for k, v in settings.items() if v}
+        settings = {k: v for k, v in settings.items() if v is not None}
         settings.update(self.additional_properties)
         for key in merged_exclude:
             settings.pop(key, None)

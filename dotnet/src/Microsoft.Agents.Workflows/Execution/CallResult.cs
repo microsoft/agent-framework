@@ -19,18 +19,18 @@ internal sealed class CallResult
     /// If the call was successful, this property contains the result of the call. For calls to
     /// void handlers, this will be <c>null</c>.
     /// </summary>
-    public object? Result { get; init; } = null;
+    public object? Result { get; init; }
 
     /// <summary>
     /// If the call failed, this property contains the exception that was raised during the call.
     /// </summary>
-    public Exception? Exception { get; init; } = null;
+    public Exception? Exception { get; init; }
 
     /// <summary>
     /// Indicates whether the call was successful. A call is considered successful if it returned
     /// without throwing an exception.
     /// </summary>
-    public bool IsSuccess => this.Exception == null;
+    public bool IsSuccess => this.Exception is null;
 
     private CallResult(bool isVoid = false)
     {
@@ -43,19 +43,13 @@ internal sealed class CallResult
     /// </summary>
     /// <param name="result">The result to return.</param>
     /// <returns>A <see cref="CallResult"/> indicating the result of the call.</returns>
-    public static CallResult ReturnResult(object? result = null)
-    {
-        return new() { Result = result };
-    }
+    public static CallResult ReturnResult(object? result = null) => new() { Result = result };
 
     /// <summary>
     /// Create a <see cref="CallResult"/> indicating a successful call that returned no result (void).
     /// </summary>
     /// <returns>A <see cref="CallResult"/> indicating the result of the call.</returns>
-    public static CallResult ReturnVoid()
-    {
-        return new(isVoid: true);
-    }
+    public static CallResult ReturnVoid() => new(isVoid: true);
 
     /// <summary>
     /// Create a <see cref="CallResult"/> indicating that an exception was raised during the call.

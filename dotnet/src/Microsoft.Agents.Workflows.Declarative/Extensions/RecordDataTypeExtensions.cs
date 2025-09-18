@@ -23,12 +23,12 @@ internal static class RecordDataTypeExtensions
                 FormulaValue? parsedValue =
                     property.Value.Type switch
                     {
-                        StringDataType => StringValue.New(propertyElement.GetString()),
-                        NumberDataType => NumberValue.New(propertyElement.GetDecimal()),
-                        BooleanDataType => BooleanValue.New(propertyElement.GetBoolean()),
-                        DateTimeDataType => DateTimeValue.New(propertyElement.GetDateTime()),
-                        DateDataType => DateValue.New(propertyElement.GetDateTime()),
-                        TimeDataType => TimeValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
+                        StringDataType => FormulaValue.New(propertyElement.GetString()),
+                        NumberDataType => FormulaValue.New(propertyElement.GetDecimal()),
+                        BooleanDataType => FormulaValue.New(propertyElement.GetBoolean()),
+                        DateTimeDataType => FormulaValue.New(propertyElement.GetDateTime()),
+                        DateDataType => FormulaValue.New(propertyElement.GetDateTime()),
+                        TimeDataType => FormulaValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
                         RecordDataType recordType => recordType.ParseRecord(propertyElement),
                         TableDataType tableType => ParseTable(tableType, propertyElement),
                         _ => throw new InvalidOperationException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'"),

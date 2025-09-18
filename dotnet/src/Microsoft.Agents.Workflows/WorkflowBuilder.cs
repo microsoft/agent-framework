@@ -25,12 +25,12 @@ public class WorkflowBuilder
         public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
     }
 
-    private int _edgeCount = 0;
-    private readonly Dictionary<string, ExecutorRegistration> _executors = new();
-    private readonly Dictionary<string, HashSet<Edge>> _edges = new();
-    private readonly HashSet<string> _unboundExecutors = new();
-    private readonly HashSet<EdgeConnection> _conditionlessConnections = new();
-    private readonly Dictionary<string, InputPort> _inputPorts = new();
+    private int _edgeCount;
+    private readonly Dictionary<string, ExecutorRegistration> _executors = [];
+    private readonly Dictionary<string, HashSet<Edge>> _edges = [];
+    private readonly HashSet<string> _unboundExecutors = [];
+    private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
+    private readonly Dictionary<string, InputPort> _inputPorts = [];
 
     private readonly string _startExecutorId;
 
@@ -65,8 +65,8 @@ public class WorkflowBuilder
                         $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {incoming.ExecutorType.Name}) is already bound.");
                 }
 
-                if (existing.RawExecutorishData != null &&
-                    !object.ReferenceEquals(existing.RawExecutorishData, incoming.RawExecutorishData))
+                if (existing.RawExecutorishData is not null &&
+                    !ReferenceEquals(existing.RawExecutorishData, incoming.RawExecutorishData))
                 {
                     throw new InvalidOperationException(
                         $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but different instance is already bound.");
@@ -116,7 +116,7 @@ public class WorkflowBuilder
         // If it does not exist, create a new one.
         if (!this._edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
         {
-            this._edges[sourceId] = edges = new HashSet<Edge>();
+            this._edges[sourceId] = edges = [];
         }
 
         return edges;
@@ -136,7 +136,7 @@ public class WorkflowBuilder
 
     internal static Func<object?, bool>? CreateConditionFunc<T>(Func<T?, bool>? condition)
     {
-        if (condition == null)
+        if (condition is null)
         {
             return null;
         }
@@ -152,7 +152,7 @@ public class WorkflowBuilder
 
     internal static Func<object?, bool>? CreateConditionFunc<T>(Func<object?, bool>? condition)
     {
-        if (condition == null)
+        if (condition is null)
         {
             return null;
         }
@@ -188,7 +188,7 @@ public class WorkflowBuilder
         Throw.IfNull(target);
 
         EdgeConnection connection = new(source.Id, target.Id);
-        if (condition == null && this._conditionlessConnections.Contains(connection))
+        if (condition is null && this._conditionlessConnections.Contains(connection))
         {
             throw new InvalidOperationException(
                 $"An edge from '{source.Id}' to '{target.Id}' already exists without a condition. " +
@@ -216,7 +216,7 @@ public class WorkflowBuilder
 
     internal static Func<object?, int, IEnumerable<int>>? CreateEdgeAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? partitioner)
     {
-        if (partitioner == null)
+        if (partitioner is null)
         {
             return null;
         }
@@ -252,7 +252,7 @@ public class WorkflowBuilder
                 this.Track(source).Id,
                 targets.Select(target => this.Track(target).Id).ToList(),
                 this.TakeEdgeId(),
-                CreateEdgeAssignerFunc<T>(partitioner));
+                CreateEdgeAssignerFunc(partitioner));
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
@@ -302,9 +302,9 @@ public class WorkflowBuilder
         var culture = System.Globalization.CultureInfo.CurrentCulture;
         var uiCulture = System.Globalization.CultureInfo.CurrentUICulture;
 
-        return factory.StartNew(PropagateCultureAndInvoke).Unwrap().GetAwaiter().GetResult();
+        return factory.StartNew(PropagateCultureAndInvokeAsync).Unwrap().GetAwaiter().GetResult();
 
-        Task<TResult> PropagateCultureAndInvoke()
+        Task<TResult> PropagateCultureAndInvokeAsync()
         {
             // Set the culture and UI culture to the captured values
             System.Globalization.CultureInfo.CurrentCulture = culture;

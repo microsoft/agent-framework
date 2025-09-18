@@ -15,8 +15,6 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
 {
-    private readonly IChatReducer? _chatReducer;
-    private readonly ChatReducerTriggerEvent _reducerTriggerEvent;
     private List<ChatMessage> _messages;
 
     /// <summary>
@@ -24,7 +22,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     /// </summary>
     public InMemoryChatMessageStore()
     {
-        this._messages = new();
+        this._messages = [];
     }
 
     /// <summary>
@@ -57,37 +55,32 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     /// <param name="reducerTriggerEvent">The event that should trigger the reducer invocation.</param>
     public InMemoryChatMessageStore(IChatReducer? chatReducer, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
     {
-        this._chatReducer = chatReducer;
-        this._reducerTriggerEvent = reducerTriggerEvent;
+        this.ChatReducer = chatReducer;
+        this.ReducerTriggerEvent = reducerTriggerEvent;
 
-        if (serializedStoreState.ValueKind != JsonValueKind.Object)
+        if (serializedStoreState.ValueKind is JsonValueKind.Object)
         {
-            this._messages = new();
-            return;
+            var state = serializedStoreState.Deserialize(
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+            if (state?.Messages is { } messages)
+            {
+                this._messages = messages;
+                return;
+            }
         }
 
-        var state = JsonSerializer.Deserialize(
-            serializedStoreState,
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
-
-        if (state?.Messages is { Count: > 0 } messages)
-        {
-            this._messages = messages;
-            return;
-        }
-
-        this._messages = new();
+        this._messages = [];
     }
 
     /// <summary>
     /// Gets the chat reducer used to process or reduce chat messages. If null, no reduction logic will be applied.
     /// </summary>
-    public IChatReducer? ChatReducer => this._chatReducer;
+    public IChatReducer? ChatReducer { get; }
 
     /// <summary>
     /// Gets the event that triggers the reducer invocation in this store.
     /// </summary>
-    public ChatReducerTriggerEvent ReducerTriggerEvent => this._reducerTriggerEvent;
+    public ChatReducerTriggerEvent ReducerTriggerEvent { get; }
 
     /// <inheritdoc />
     public int Count => this._messages.Count;
@@ -109,18 +102,18 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
 
         this._messages.AddRange(messages);
 
-        if (this._reducerTriggerEvent == ChatReducerTriggerEvent.AfterMessageAdded && this._chatReducer is not null)
+        if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
         {
-            this._messages = (await this._chatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
+            this._messages = (await this.ChatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
         }
     }
 
     /// <inheritdoc />
     public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
     {
-        if (this._reducerTriggerEvent == ChatReducerTriggerEvent.BeforeMessagesRetrieval && this._chatReducer is not null)
+        if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
-            this._messages = (await this._chatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
+            this._messages = (await this.ChatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
         }
 
         return this._messages;
@@ -179,7 +172,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
 
     internal sealed class StoreState
     {
-        public List<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
+        public List<ChatMessage> Messages { get; set; } = [];
     }
 
     /// <summary>

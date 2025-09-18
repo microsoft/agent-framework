@@ -17,10 +17,10 @@ Console.WriteLine($"User Input: {userInput}");
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
 
@@ -40,7 +40,7 @@ async Task SKAgent()
     Console.WriteLine(result.Message);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     var agent = new OpenAIClient(apiKey).GetChatClient(modelId).CreateAIAgent(
         instructions: "You are a helpful assistant",

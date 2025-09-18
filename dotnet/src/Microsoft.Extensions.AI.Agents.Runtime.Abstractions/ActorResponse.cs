@@ -38,7 +38,7 @@ public sealed class ActorResponse
     public override string ToString()
     {
         string dataString;
-        if (this.Data.ValueKind == JsonValueKind.Undefined)
+        if (this.Data.ValueKind is JsonValueKind.Undefined)
         {
             dataString = "undefined";
         }

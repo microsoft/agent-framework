@@ -8,7 +8,7 @@ using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class FanInEdgeState
+internal sealed class FanInEdgeState
 {
     private List<PortableMessageEnvelope> _pendingMessages;
     public FanInEdgeState(FanInEdgeData fanInEdge)

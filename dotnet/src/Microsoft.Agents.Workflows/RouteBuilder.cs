@@ -23,7 +23,7 @@ namespace Microsoft.Agents.Workflows;
 /// </remarks>
 public class RouteBuilder
 {
-    private readonly Dictionary<Type, MessageHandlerF> _typedHandlers = new();
+    private readonly Dictionary<Type, MessageHandlerF> _typedHandlers = [];
 
     internal RouteBuilder AddHandler(Type messageType, MessageHandlerF handler, bool overwrite = false)
     {
@@ -126,8 +126,5 @@ public class RouteBuilder
         }
     }
 
-    internal MessageRouter Build()
-    {
-        return new MessageRouter(this._typedHandlers);
-    }
+    internal MessageRouter Build() => new(this._typedHandlers);
 }
