@@ -1,0 +1,28 @@
+﻿<#+
+void EvaluateValueExpression(ValueExpression expression, string targetVariable) =>
+    EvaluateValueExpression<object>(expression, targetVariable);
+
+void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVariable)
+{
+    if (expression is null)
+    { 
+        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    }
+    else if (expression.IsLiteral)
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = <#= Format(expression.LiteralValue) #>;<#+ 
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.ReadStateAsync<<#= GetTypeAlias<TValue>() #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsExpression)
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    }
+    else
+    {
+        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    }
+}
+#>

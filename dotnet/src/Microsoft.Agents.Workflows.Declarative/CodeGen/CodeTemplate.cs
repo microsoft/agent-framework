@@ -4,6 +4,7 @@ using System;
 using System.CodeDom.Compiler;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -74,7 +75,14 @@ internal abstract class CodeTemplate
             TimeDataValue timeValue => $"TimeSpan.FromTicks({timeValue.Value.Ticks})",
             StringDataValue stringValue => @$"""{stringValue.Value}""", // %%% INCOMPLETE: MULTILINE
             OptionDataValue optionValue => @$"""{optionValue.Value}""",
-            _ => $"[{value.GetType().Name}]",
+            // Indenting is important here to make the generated code readable.  Don't change it without testing the output.
+            RecordDataValue recordValue =>
+                $"""
+                [
+                                {string.Join(",\n                ", recordValue.Properties.Select(p => $"[\"{p.Key}\"] = {Format(p.Value)}"))}
+                            ]
+                """,
+            _ => $"throw new InvalidOperationException(); // Unable to format '{value.GetType().Name}'",
         };
 
     public static string GetTypeAlias<TValue>() => GetTypeAlias(typeof(TValue));

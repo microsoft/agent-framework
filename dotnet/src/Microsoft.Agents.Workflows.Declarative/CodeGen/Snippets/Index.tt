@@ -3,5 +3,8 @@
 <#@ import namespace="Microsoft.Extensions.AI" #>
 <#@ import namespace="System.Collections.Generic" #>
 <#@ include file="AssignVariableTemplate.tt" once="true" #>
-<#@ include file="EvaluateExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateEnumExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateRecordExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateStringExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateValueExpressionTemplate.tt" once="true" #>
 <#@ include file="FormatMessageTemplate.tt" once="true" #>

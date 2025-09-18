@@ -2,6 +2,7 @@
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
+
 /// <summary>
 /// Adds a new message to the specified agent conversation
 /// </summary>
@@ -12,7 +13,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
     {<# 
         EvaluateStringExpression(this.Model.ConversationId, "conversationId");
         EvaluateEnumExpression<AgentMessageRoleWrapper, ChatRole>(this.Model.Role, "role", RoleMap, DefaultRole, qualifyResult: true); #>
-        ChatMessage newMessage = new(role, [.. this.GetContent()]); //{ AdditionalProperties = this.GetMetadata() }; // %%% TODO: METADATA
+        ChatMessage newMessage = new(role, [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
         await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#
         AssignVariable(this.Message, "newMessage");
         #>
@@ -43,5 +44,17 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         yield return new TextContent(contentValue<#= index #>);<#
             }
         }#>
+    }
+
+    private AdditionalPropertiesDictionary? GetMetadata()
+    {<# 
+        EvaluateRecordExpression<object>(this.Model.Metadata, "metadata"); #>
+
+        if (metadata is null)
+        {
+            return null;    
+        }
+
+        return new AdditionalPropertiesDictionary(metadata);
     }
 }

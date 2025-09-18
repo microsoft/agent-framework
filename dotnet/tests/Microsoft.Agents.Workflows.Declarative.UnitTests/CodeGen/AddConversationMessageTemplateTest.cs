@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
@@ -46,7 +47,51 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
             ]);
     }
 
-    // %%% TODO: WITH METADATA
+    [Fact]
+    public void WithMetadataLiteral()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(AddConversationMessage),
+            "TestVariable",
+            conversation: StringExpression.Literal("#rev_9"),
+            role: EnumExpression<AgentMessageRoleWrapper>.Literal(AgentMessageRole.Agent),
+            metadata: ObjectExpression<RecordDataValue>.Literal(
+                new RecordDataValue(
+                    new Dictionary<string, DataValue>
+                    {
+                        { "key1", StringDataValue.Create("value1") },
+                        { "key2", NumberDataValue.Create(42) },
+                    }.ToImmutableDictionary())),
+            content:
+            [
+                new AddConversationMessageContent.Builder()
+                {
+                    Type = AgentMessageContentType.Text,
+                    Value = TemplateLine.Parse("Hello! How can I help you today?"),
+                },
+            ]);
+    }
+
+    [Fact]
+    public void WithMetadataVariable()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(AddConversationMessage),
+            "TestVariable",
+            conversation: StringExpression.Literal("#rev_9"),
+            role: EnumExpression<AgentMessageRoleWrapper>.Literal(AgentMessageRole.Agent),
+            metadata: ObjectExpression<RecordDataValue>.Variable(PropertyPath.TopicVariable("MyMetadata")),
+            content:
+            [
+                new AddConversationMessageContent.Builder()
+                {
+                    Type = AgentMessageContentType.Text,
+                    Value = TemplateLine.Parse("Hello! How can I help you today?"),
+                },
+            ]);
+    }
 
     private void ExecuteTest(
         string displayName,
