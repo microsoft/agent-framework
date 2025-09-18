@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 /// </summary>
 public sealed class FanOutEdgeInfo : EdgeInfo
 {
-    internal FanOutEdgeInfo(FanOutEdgeData data) : this(data.EdgeAssigner != null, data.Connection) { }
+    internal FanOutEdgeInfo(FanOutEdgeData data) : this(data.EdgeAssigner is not null, data.Connection) { }
 
     [JsonConstructor]
     internal FanOutEdgeInfo(bool hasAssigner, EdgeConnection connection) : base(EdgeKind.FanOut, connection)
@@ -26,6 +26,6 @@ public sealed class FanOutEdgeInfo : EdgeInfo
     internal override bool IsMatchInternal(EdgeData edgeData)
     {
         return edgeData is FanOutEdgeData fanOutEdge
-            && this.HasAssigner == (fanOutEdge.EdgeAssigner != null);
+            && this.HasAssigner == (fanOutEdge.EdgeAssigner is not null);
     }
 }

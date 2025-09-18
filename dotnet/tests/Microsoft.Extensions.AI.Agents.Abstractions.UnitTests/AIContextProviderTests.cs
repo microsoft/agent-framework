@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Threading;
@@ -14,7 +13,7 @@ public class AIContextProviderTests
     public async Task InvokedAsync_ReturnsCompletedTaskAsync()
     {
         var provider = new TestAIContextProvider();
-        var messages = new ReadOnlyCollection<ChatMessage>(new List<ChatMessage>());
+        var messages = new ReadOnlyCollection<ChatMessage>([]);
         var task = provider.InvokedAsync(new(messages));
         Assert.Equal(default, task);
     }

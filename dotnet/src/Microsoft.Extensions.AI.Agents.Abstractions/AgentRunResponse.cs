@@ -250,11 +250,9 @@ public class AgentRunResponse
             return default;
         }
 
-        T? deserialized = default;
-
         // If there's an exception here, we want it to propagate, since the Result property is meant to throw directly
 
-        deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)serializerOptions.GetTypeInfo(typeof(T)));
+        T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)serializerOptions.GetTypeInfo(typeof(T)));
 
         if (deserialized is null)
         {

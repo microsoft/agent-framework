@@ -8,9 +8,9 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class StateScope
+internal sealed class StateScope
 {
-    private readonly Dictionary<string, PortableValue> _stateData = new();
+    private readonly Dictionary<string, PortableValue> _stateData = [];
     public ScopeId ScopeId { get; }
 
     public StateScope(ScopeId scopeId)
@@ -63,7 +63,7 @@ internal class StateScope
 
         foreach (string key in updates.Keys)
         {
-            if (updates == null || updates[key].Count == 0)
+            if (updates is null || updates[key].Count == 0)
             {
                 continue;
             }

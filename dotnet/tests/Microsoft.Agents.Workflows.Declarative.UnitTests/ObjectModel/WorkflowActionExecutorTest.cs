@@ -24,7 +24,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
 
-    internal async Task<WorkflowEvent[]> Execute(DeclarativeActionExecutor executor)
+    internal async Task<WorkflowEvent[]> ExecuteAsync(DeclarativeActionExecutor executor)
     {
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
@@ -36,7 +36,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         return events;
     }
 
-    internal void VerifyModel(DialogAction model, DeclarativeActionExecutor action)
+    internal static void VerifyModel(DialogAction model, DeclarativeActionExecutor action)
     {
         Assert.Equal(model.Id, action.Id);
         Assert.Equal(model, action.Model);
@@ -52,12 +52,10 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     protected void VerifyUndefined(string variableName) => this.VerifyUndefined(variableName, VariableScopeNames.Topic);
 
-    internal void VerifyUndefined(string variableName, string scopeName)
-    {
+    internal void VerifyUndefined(string variableName, string scopeName) =>
         Assert.IsType<BlankValue>(this.State.Get(variableName, scopeName));
-    }
 
-    protected TAction AssignParent<TAction>(DialogAction.Builder actionBuilder) where TAction : DialogAction
+    protected static TAction AssignParent<TAction>(DialogAction.Builder actionBuilder) where TAction : DialogAction
     {
         OnActivity.Builder activityBuilder =
             new()
@@ -76,9 +74,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         ReflectingExecutor<TestWorkflowExecutor>(nameof(TestWorkflowExecutor)),
         IMessageHandler<WorkflowFormulaState>
     {
-        public async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context)
-        {
+        public async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context) =>
             await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
-        }
     }
 }

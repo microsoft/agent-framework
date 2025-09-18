@@ -26,11 +26,10 @@ internal static class WorkflowHelper
         AIAgent englishAgent = GetLanguageAgent("English", chatClient);
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(startExecutor);
-        builder.AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent]);
-        builder.AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent]);
-
-        return builder.Build<List<ChatMessage>>();
+        return new WorkflowBuilder(startExecutor)
+            .AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent])
+            .AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent])
+            .Build<List<ChatMessage>>();
     }
 
     /// <summary>
@@ -39,11 +38,8 @@ internal static class WorkflowHelper
     /// <param name="targetLanguage">The target language for translation</param>
     /// <param name="chatClient">The chat client to use for the agent</param>
     /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static ChatClientAgent GetLanguageAgent(string targetLanguage, IChatClient chatClient)
-    {
-        string instructions = $"You're a helpful assistant who always responds in {targetLanguage}.";
-        return new ChatClientAgent(chatClient, instructions, name: $"{targetLanguage}Agent");
-    }
+    private static ChatClientAgent GetLanguageAgent(string targetLanguage, IChatClient chatClient) =>
+        new(chatClient, instructions: $"You're a helpful assistant who always responds in {targetLanguage}.", name: $"{targetLanguage}Agent");
 
     /// <summary>
     /// Executor that starts the concurrent processing by sending messages to the agents.
