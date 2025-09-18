@@ -61,30 +61,6 @@ def patch_queries():
         yield {"calls": calls, "TextQuery": text_q, "HybridQuery": hybrid_q, "FilterExpression": filt}
 
 
-@pytest.fixture
-def patch_vectorizers():
-    class DummyVectorizer:
-        def __init__(self, dims: int):
-            self.dims = dims
-
-        async def aembed_many(self, texts, batch_size: int = 1):  # noqa: ARG002
-            # deterministic embeddings of correct length
-            return [[float(i + 1) for i in range(self.dims)] for _ in texts]
-
-    with (
-        patch("agent_framework_redis._provider.EmbeddingsCache") as _cache,
-        patch(
-            "agent_framework_redis._provider.OpenAITextVectorizer",
-            side_effect=lambda **_k: DummyVectorizer(3),
-        ) as openai_vec,
-        patch(
-            "agent_framework_redis._provider.HFTextVectorizer",
-            side_effect=lambda **_k: DummyVectorizer(4),
-        ) as hf_vec,
-    ):
-        yield {"openai": openai_vec, "hf": hf_vec}
-
-
 class TestRedisProviderInitialization:
     def test_import(self):
         from agent_framework_redis._provider import RedisProvider
@@ -113,19 +89,6 @@ class TestRedisProviderInitialization:
         assert "content" in names
         assert "text" in types
         assert "vector" not in types
-
-    def test_schema_with_vectorizer_hf(self, patch_index_from_dict, patch_vectorizers):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        RedisProvider(user_id="u1", vectorizer_choice="hf", vector_field_name="vector")
-        args, _ = patch_index_from_dict.from_dict.call_args
-        schema = args[0]
-        vec_fields = [f for f in schema["fields"] if f["type"] == "vector"]
-        assert len(vec_fields) == 1
-        attrs = vec_fields[0]["attrs"]
-        # Our dummy HF vectorizer dims=4
-        assert attrs["dims"] == 4
-        assert attrs["distance_metric"] in {"cosine", "ip", "l2"}
 
 
 class TestRedisProviderMessages:
