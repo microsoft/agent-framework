@@ -309,7 +309,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             options_dict["store"] = True
         if chat_options.conversation_id:
             options_dict["previous_response_id"] = chat_options.conversation_id
-        if not chat_options.ai_model_id:
+        if chat_options.ai_model_id is None:
             options_dict["model"] = self.ai_model_id
         return options_dict
 
