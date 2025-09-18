@@ -1,3 +1,4 @@
+
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
@@ -304,12 +305,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
 
         # other settings
-        if "store" not in options_dict:
-            options_dict["store"] = False
-        if "conversation_id" in options_dict:
-            options_dict["previous_response_id"] = options_dict["conversation_id"]
-            options_dict.pop("conversation_id")
-        if "model" not in options_dict:
+        if chat_options.store:
+            options_dict["store"] = True
+        if chat_options.conversation_id:
+            options_dict["previous_response_id"] = chat_options.conversation_id
+        if not chat_options.ai_model_id:
             options_dict["model"] = self.ai_model_id
         return options_dict
 
