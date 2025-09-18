@@ -6,10 +6,10 @@ import sys
 from collections.abc import MutableSequence, Sequence
 from functools import reduce
 from operator import and_
-from typing import Any, Final, Literal, cast
+from typing import Any, Literal, cast
 
-from agent_framework import ChatMessage, Context, ContextProvider, Role, TextContent  # type: ignore[no-any-unimported]
-from agent_framework.exceptions import (  # type: ignore[no-any-unimported]
+from agent_framework import ChatMessage, Context, ContextProvider, Role, TextContent
+from agent_framework.exceptions import (
     ServiceInitializationError,
     ServiceInvalidRequestError,
 )
@@ -25,8 +25,6 @@ from redisvl.index import AsyncSearchIndex
 from redisvl.query import FilterQuery, HybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
-
-DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
 
 
 class RedisProvider(ContextProvider):
@@ -58,7 +56,7 @@ class RedisProvider(ContextProvider):
     scope_to_per_operation_thread_id: bool = False
 
     # Prompt and runtime
-    context_prompt: str = DEFAULT_CONTEXT_PROMPT
+    context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT
     redis_index: Any = None
     overwrite_redis_index: bool = True
     drop_redis_index: bool = True
@@ -85,7 +83,7 @@ class RedisProvider(ContextProvider):
         user_id: str | None = None,
         thread_id: str | None = None,
         scope_to_per_operation_thread_id: bool = False,
-        context_prompt: str = DEFAULT_CONTEXT_PROMPT,
+        context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
         overwrite_redis_index: bool = True,
         drop_redis_index: bool = True,
     ):
