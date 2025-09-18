@@ -73,6 +73,7 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
         # Full benchmark mode: create timestamped results file
         timestamp = datetime.now().strftime("%m%d%H%M")  # Format: MMDDHHMM
         result_filename = f"results/{assistant_model}_user-{user_model}_{timestamp}.jsonl"
+        os.makedirs("results", exist_ok=True)
         result_fp = open(result_filename, "a")  # Append mode for resumability
         logger.info(f"Results will be saved to: {result_filename}")
     else:

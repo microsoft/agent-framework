@@ -59,6 +59,7 @@ class TaskRunner:
     full_conversation: list[ChatMessage]
     termination_reason: TerminationReason | None
     full_reward_info: RewardInfo | None
+    _final_user_message: list[ChatMessage] | None
 
     # Configuration
     max_steps: int
@@ -73,6 +74,7 @@ class TaskRunner:
         self.full_conversation = []
         self.termination_reason = None
         self.full_reward_info = None
+        self._final_user_message = None
         logger.info("TaskRunner has been re-initialized.")
         return self
 
@@ -114,6 +116,10 @@ class TaskRunner:
         if is_from_user and self._is_user_stop(response_text):
             logger.info(f"User requested stop with message: '{response_text}' - terminating conversation")
             self.termination_reason = TerminationReason.USER_STOP
+            # The final user message won't appear in the assistant's message store,
+            # because it will never arrive there.
+            # We need to store it because it's needed for evaluation.
+            self._final_user_message = flip_messages(response.agent_run_response.messages)
             return False
 
         return True
@@ -284,10 +290,15 @@ class TaskRunner:
         # The workflow runs until termination conditions are met (max steps, stop signals, etc.)
         await workflow.run(initial_greeting)
 
-        # Extract complete conversation history from assistant's message store
-        # We use list_all_messages() to get the full conversation, not just the truncated window
+        # STEP 7: Ensemble the conversation history needed for evaluation.
+        # It's coming from three parts:
+        # 1. The initial greeting
+        # 2. The assistant's message store (not just the truncated window)
+        # 3. The final user message (if any)
         message_store = cast(SlidingWindowChatMessageList, assistant_executor._agent_thread.message_store)
         full_conversation = [first_message] + await message_store.list_all_messages()
+        if self._final_user_message is not None:
+            full_conversation.extend(self._final_user_message)
 
         logger.opt(colors=True).info(
             f"<green>WORKFLOW COMPLETED WITH {len(full_conversation)} MESSAGES. "
