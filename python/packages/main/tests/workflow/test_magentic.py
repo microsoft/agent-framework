@@ -30,8 +30,11 @@ from agent_framework import (
 )
 from agent_framework._agents import BaseAgent
 from agent_framework._clients import ChatClientProtocol as AFChatClient
+from agent_framework._workflow._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflow._magentic import (
     MagenticContext,
+    MagenticAgentExecutor,
+    MagenticOrchestratorExecutor,
     MagenticStartMessage,
 )
 
@@ -93,6 +96,30 @@ class FakeManager(MagenticManagerBase):
     satisfied_after_signoff: bool = True
     next_speaker_name: str = "agentA"
     instruction_text: str = "Proceed with step 1"
+
+    def snapshot_state(self) -> dict[str, Any]:
+        state = super().snapshot_state()
+        if self.task_ledger is not None:
+            state = dict(state)
+            state["task_ledger"] = {
+                "facts": self.task_ledger.facts.model_dump(mode="json"),
+                "plan": self.task_ledger.plan.model_dump(mode="json"),
+            }
+        return state
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        super().restore_state(state)
+        ledger_state = state.get("task_ledger")
+        if isinstance(ledger_state, dict):
+            facts_payload = ledger_state.get("facts")
+            plan_payload = ledger_state.get("plan")
+            if facts_payload is not None and plan_payload is not None:
+                try:
+                    facts = ChatMessage.model_validate(facts_payload)
+                    plan = ChatMessage.model_validate(plan_payload)
+                    self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
         facts = ChatMessage(role=Role.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- A\n")
@@ -252,6 +279,63 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     assert data.role == Role.ASSISTANT
 
 
+async def test_magentic_checkpoint_resume_round_trip():
+    storage = InMemoryCheckpointStorage()
+
+    manager1 = FakeManager(max_round_count=10)
+    wf = (
+        MagenticBuilder()
+        .participants(agentA=_DummyExec("agentA"))
+        .with_standard_manager(manager1)
+        .with_plan_review()
+        .with_checkpointing(storage)
+        .build()
+    )
+
+    task_text = "checkpoint task"
+    req_event: RequestInfoEvent | None = None
+    async for ev in wf.run_stream(task_text):
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
+            req_event = ev
+            break
+    assert req_event is not None
+
+    checkpoints = await storage.list_checkpoints()
+    assert checkpoints
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+    resume_checkpoint = checkpoints[-1]
+
+    manager2 = FakeManager(max_round_count=10)
+    wf_resume = (
+        MagenticBuilder()
+        .participants(agentA=_DummyExec("agentA"))
+        .with_standard_manager(manager2)
+        .with_plan_review()
+        .with_checkpointing(storage)
+        .build()
+    )
+
+    orchestrator = next(
+        exec for exec in wf_resume.workflow.executors.values() if isinstance(exec, MagenticOrchestratorExecutor)
+    )
+
+    reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+    completed: WorkflowCompletedEvent | None = None
+    async for event in wf_resume.workflow.run_stream_from_checkpoint(
+        resume_checkpoint.checkpoint_id,
+        responses={req_event.request_id: reply},
+    ):
+        if isinstance(event, WorkflowCompletedEvent):
+            completed = event
+    assert completed is not None
+
+    assert orchestrator._context is not None
+    assert orchestrator._context.chat_history
+    assert orchestrator._context.chat_history[0].text == task_text
+    assert orchestrator._task_ledger is not None
+    assert manager2.task_ledger is not None
+
+
 class _DummyExec(Executor):
     def __init__(self, name: str) -> None:
         super().__init__(name)
@@ -259,6 +343,26 @@ class _DummyExec(Executor):
     @handler
     async def _noop(self, message: object, ctx: WorkflowContext[object]) -> None:  # pragma: no cover - not called
         pass
+
+
+def test_magentic_agent_executor_snapshot_roundtrip():
+    backing_executor = _DummyExec("backing")
+    agent_exec = MagenticAgentExecutor(backing_executor, "agentA")
+    agent_exec._chat_history.extend(
+        [
+            ChatMessage(role=Role.USER, text="hello"),
+            ChatMessage(role=Role.ASSISTANT, text="world", author_name="agentA"),
+        ]
+    )
+
+    state = agent_exec.snapshot_state()
+
+    restored_executor = MagenticAgentExecutor(_DummyExec("backing2"), "agentA")
+    restored_executor.restore_state(state)
+
+    assert len(restored_executor._chat_history) == 2
+    assert restored_executor._chat_history[0].text == "hello"
+    assert restored_executor._chat_history[1].author_name == "agentA"
 
 
 from agent_framework import StandardMagenticManager  # noqa: E402

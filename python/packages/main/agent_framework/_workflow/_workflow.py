@@ -363,6 +363,14 @@ class Workflow(AFBaseModel):
             if not restored:
                 raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
 
+            # Process any pending messages from the checkpoint first
+            # This ensures that RequestInfoExecutor state is properly populated
+            # before we try to handle responses
+            if await self._runner.context.has_messages():
+                # Run one iteration to process pending messages
+                # This will populate RequestInfoExecutor._request_events properly
+                await self._runner._run_iteration()
+
             if responses:
                 request_info_executor = self._find_request_info_executor()
                 if request_info_executor:

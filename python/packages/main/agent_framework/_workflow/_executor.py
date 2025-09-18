@@ -2,10 +2,11 @@
 
 import contextlib
 import functools
+import importlib
 import inspect
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from types import UnionType
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_origin, overload
 
@@ -677,10 +678,104 @@ class RequestInfoExecutor(Executor):
         super().__init__(id=executor_id)
         self._request_events: dict[str, RequestInfoEvent] = {}
         self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
+        self._state_loaded = False
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize pending requests so checkpoint restoration can resume seamlessly."""
+
+        def _encode_event(event: RequestInfoEvent) -> dict[str, Any]:
+            request_data = event.data
+            payload: dict[str, Any]
+            if is_dataclass(request_data):
+                payload = {
+                    "kind": "dataclass",
+                    "type": f"{request_data.__class__.__module__}:{request_data.__class__.__qualname__}",
+                    "value": asdict(request_data),
+                }
+            elif hasattr(request_data, "model_dump"):
+                payload = {
+                    "kind": "pydantic",
+                    "type": f"{request_data.__class__.__module__}:{request_data.__class__.__qualname__}",
+                    "value": request_data.model_dump(mode="json"),
+                }
+            else:
+                payload = {
+                    "kind": "raw",
+                    "type": f"{request_data.__class__.__module__}:{request_data.__class__.__qualname__}",
+                    "value": request_data.__dict__,
+                }
+
+            return {
+                "source_executor_id": event.source_executor_id,
+                "request_type": f"{event.request_type.__module__}:{event.request_type.__qualname__}",
+                "request_data": payload,
+            }
+
+        return {
+            "request_events": {rid: _encode_event(event) for rid, event in self._request_events.items()},
+            "sub_workflow_contexts": dict(self._sub_workflow_contexts),
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore pending request bookkeeping from checkpoint state."""
+
+        self._request_events.clear()
+        stored_events = state.get("request_events", {})
+
+        for request_id, payload in stored_events.items():
+            request_type_qual = payload.get("request_type", "")
+            request_type = self._import_qualname(request_type_qual)
+            request_data_meta = payload.get("request_data", {})
+            request_data = self._decode_request_data(request_data_meta)
+            event = RequestInfoEvent(
+                request_id=request_id,
+                source_executor_id=payload.get("source_executor_id", ""),
+                request_type=request_type,
+                request_data=request_data,
+            )
+            self._request_events[request_id] = event
+
+        sub_contexts = state.get("sub_workflow_contexts", {})
+        if isinstance(sub_contexts, dict):
+            self._sub_workflow_contexts = {k: dict(v) for k, v in sub_contexts.items()}
+        else:
+            self._sub_workflow_contexts = {}
+
+    @staticmethod
+    def _import_qualname(qualname: str) -> type[Any]:
+        module_name, _, type_name = qualname.partition(":")
+        if not module_name or not type_name:
+            raise ValueError(f"Invalid qualified name: {qualname}")
+        module = importlib.import_module(module_name)
+        attr: Any = module
+        for part in type_name.split("."):
+            attr = getattr(attr, part)
+        if not isinstance(attr, type):
+            raise TypeError(f"Resolved object is not a type: {qualname}")
+        return attr
+
+    def _decode_request_data(self, metadata: dict[str, Any]) -> RequestInfoMessage:
+        kind = metadata.get("kind")
+        type_name = metadata.get("type", "")
+        value = metadata.get("value", {})
+        request_cls = self._import_qualname(type_name) if type_name else RequestInfoMessage
+
+        if kind == "dataclass" and isinstance(value, dict):
+            return request_cls(**value)
+        if kind == "pydantic" and isinstance(value, dict) and hasattr(request_cls, "model_validate"):
+            return request_cls.model_validate(value)
+        if isinstance(value, dict):
+            with contextlib.suppress(TypeError):
+                return request_cls(**value)
+            instance = request_cls.__new__(request_cls)
+            instance.__dict__.update(value)
+            return instance
+        return request_cls()
 
     @handler
     async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:
         """Run the RequestInfoExecutor with the given message."""
+        await self._ensure_state_loaded(ctx)
         source_executor_id = ctx.get_source_executor_id()
 
         event = RequestInfoEvent(
@@ -691,6 +786,7 @@ class RequestInfoExecutor(Executor):
         )
         self._request_events[message.request_id] = event
         await ctx.add_event(event)
+        await ctx.set_state(self.snapshot_state())
 
     @handler
     async def handle_sub_workflow_request(
@@ -703,6 +799,7 @@ class RequestInfoExecutor(Executor):
         This method handles requests that were forwarded from parent workflows
         because they couldn't be handled locally.
         """
+        await self._ensure_state_loaded(ctx)
         # When called directly from runner, we need to use the sub_workflow_id as the source
         source_executor_id = message.sub_workflow_id
 
@@ -721,6 +818,7 @@ class RequestInfoExecutor(Executor):
         )
         self._request_events[message.request_id] = event
         await ctx.add_event(event)
+        await ctx.set_state(self.snapshot_state())
 
     async def handle_response(
         self,
@@ -735,6 +833,8 @@ class RequestInfoExecutor(Executor):
             response_data: The data returned in the response.
             ctx: The workflow context for sending the response.
         """
+        await self._ensure_state_loaded(ctx)
+
         if request_id not in self._request_events:
             raise ValueError(f"No request found with ID: {request_id}")
 
@@ -765,6 +865,16 @@ class RequestInfoExecutor(Executor):
             )
 
             await ctx.send_message(correlated_response, target_id=event.source_executor_id)
+        await ctx.set_state(self.snapshot_state())
+
+    async def _ensure_state_loaded(self, ctx: WorkflowContext[Any]) -> None:
+        if self._state_loaded:
+            return
+        state = await ctx.get_state()
+        if isinstance(state, dict) and state:
+            with contextlib.suppress(Exception):
+                self.restore_state(state)
+        self._state_loaded = True
 
 
 # endregion: Request Info Executor
