@@ -57,7 +57,7 @@ public class SpecializedExecutorSmokeTests
             => new TestAgentThread();
 
         public static TestAIAgent FromStrings(params string[] messages) =>
-            new TestAIAgent(ToChatMessages(messages));
+            new(ToChatMessages(messages));
 
         public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
 
