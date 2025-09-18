@@ -51,6 +51,7 @@ name = "agent-framework"
 version = "0.1.0b1"
 source = { editable = "packages/main" }
 dependencies = [
+    { name = "aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-monitor-opentelemetry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-monitor-opentelemetry-exporter", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -65,11 +66,20 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-runtime", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 azure = [
     { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 foundry = [
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+mem0 = [
+    { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 redis = [
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -83,10 +93,16 @@ viz = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-framework-azure", marker = "extra == 'all'", editable = "packages/azure" },
     { name = "agent-framework-azure", marker = "extra == 'azure'", editable = "packages/azure" },
+    { name = "agent-framework-foundry", marker = "extra == 'all'", editable = "packages/foundry" },
     { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
+    { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
+    { name = "agent-framework-mem0", marker = "extra == 'mem0'", editable = "packages/mem0" },
     { name = "agent-framework-redis", marker = "extra == 'redis'", editable = "packages/redis" },
+    { name = "agent-framework-runtime", marker = "extra == 'all'", editable = "packages/runtime" },
     { name = "agent-framework-runtime", marker = "extra == 'runtime'", editable = "packages/runtime" },
+    { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.7.0" },
     { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0b41" },
     { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.20.0" },
@@ -100,7 +116,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
 ]
-provides-extras = ["azure", "foundry", "redis", "viz", "runtime"]
+provides-extras = ["azure", "foundry", "redis", "viz", "runtime", "mem0", "all"]
 
 [[package]]
 name = "agent-framework-azure"

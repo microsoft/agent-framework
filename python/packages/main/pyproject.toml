@@ -33,7 +33,8 @@ dependencies = [
     "azure-monitor-opentelemetry>=1.7.0",
     "azure-monitor-opentelemetry-exporter>=1.0.0b41",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
-    "opentelemetry-semantic-conventions-ai>=0.4.13"
+    "opentelemetry-semantic-conventions-ai>=0.4.13",
+    "aiofiles>=24.1.0"
 ]
 
 [project.optional-dependencies]
@@ -51,6 +52,15 @@ viz = [
 ]
 runtime = [
     "agent-framework-runtime"
+]
+mem0 = [
+    "agent-framework-mem0"
+]
+all = [
+    "agent-framework-azure",
+    "agent-framework-foundry",
+    "agent-framework-runtime",
+    "agent-framework-mem0"
 ]
 
 [tool.uv]
@@ -109,10 +119,6 @@ include = "../../shared_tasks.toml"
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
 test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests"
 
-[tool.uv.build-backend]
-module-name = "agent_framework"
-module-root = ""
-
 [build-system]
-requires = ["uv_build>=0.8.2,<0.9.0"]
-build-backend = "uv_build"
+requires = ["flit-core >= 3.9,<4.0"]
+build-backend = "flit_core.buildapi"
