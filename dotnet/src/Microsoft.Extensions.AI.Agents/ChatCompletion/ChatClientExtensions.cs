@@ -12,12 +12,6 @@ internal static class ChatClientExtensions
     {
         var chatBuilder = chatClient.AsBuilder();
 
-        // AgentInvokingChatClient should be the outermost decorator
-        if (chatClient is not AgentInvokedChatClient agentInvokingChatClient)
-        {
-            chatBuilder.UseAgentInvocation(agent);
-        }
-
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {
             _ = chatBuilder.Use((innerClient, services) =>

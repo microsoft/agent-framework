@@ -251,10 +251,10 @@ public static class PersistentAgentsClientExtensions
             switch (middlewareFunction)
             {
                 case Func<AgentRunContext, Func<AgentRunContext, Task>, Task> runMiddleware:
-                    agentBuilder.UseRunningMiddleware(runMiddleware);
+                    agentBuilder.UseRunningContext(runMiddleware);
                     break;
                 case Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> functionMiddleware:
-                    agentBuilder.UseFunctionInvocationMiddleware(functionMiddleware);
+                    agentBuilder.UseFunctionInvocationContext(functionMiddleware);
                     break;
                 default:
                     throw new ArgumentException($"Unsupported middleware function type: {middlewareFunction.GetType().FullName}.", nameof(middlewareConfig));

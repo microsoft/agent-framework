@@ -52,7 +52,9 @@ internal sealed class FunctionCallMiddlewareAgent : DelegatingAIAgent
 
             IList<AITool>? LocalTransformerImpl(IList<AITool>? tools)
                 => tools?.Select(tool => tool is AIFunction aiFunction
-                    ? new MiddlewareEnabledFunction(this, aiFunction, this._callbackFunc)
+                    ? aiFunction is ApprovalRequiredAIFunction approvalRequiredAiFunction
+                    ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._callbackFunc))
+                    : new MiddlewareEnabledFunction(this, aiFunction, this._callbackFunc)
                     : tool)
                 .ToList();
         }
@@ -78,9 +80,7 @@ internal sealed class FunctionCallMiddlewareAgent : DelegatingAIAgent
 
             async Task CoreLogicAsync(AgentFunctionInvocationContext ctx)
             {
-                var result = await base.InvokeCoreAsync(ctx.Arguments, ctx.CancellationToken).ConfigureAwait(false);
-
-                ctx.FunctionResult = result;
+                ctx.FunctionResult = await base.InvokeCoreAsync(ctx.Arguments, ctx.CancellationToken).ConfigureAwait(false);
             }
         }
     }

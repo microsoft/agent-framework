@@ -170,7 +170,7 @@ dotnet_diagnostic.RCS1173.severity = warning # Use coalesce expression instead o
 dotnet_diagnostic.RCS1186.severity = warning # Use Regex instance instead of static method.
 dotnet_diagnostic.RCS1188.severity = warning # Remove redundant auto-property initialization.
 dotnet_diagnostic.RCS1197.severity = suggestion # Optimize StringBuilder.AppendLine call.
-dotnet_diagnostic.RCS1201.severity = warning # Use method chaining.
+dotnet_diagnostic.RCS1201.severity = suggestion # Use method chaining.
 
 dotnet_diagnostic.IDE0001.severity = warning # Simplify name
 dotnet_diagnostic.IDE0002.severity = warning # Simplify member access

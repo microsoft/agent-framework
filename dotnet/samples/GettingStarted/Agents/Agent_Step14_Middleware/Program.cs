@@ -2,6 +2,8 @@
 
 #pragma warning disable RCS1110 // Declare type inside namespace
 #pragma warning disable CA1812 // Declare type inside namespace
+#pragma warning disable CS8321
+#pragma warning disable VSTHRD200 // Use "Async" suffix for async methods
 
 using System;
 using System.Collections.Generic;
@@ -40,10 +42,10 @@ var originalAgent = new ChatClientAgent(client.AsIChatClient(), new ChatClientAg
         tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]));
 
 var middlewareEnabledAgent = originalAgent.AsBuilder()
-    .UseMiddleware(FunctionCallMiddleware1)
-    .UseMiddleware(FunctionCallMiddleware2)
-    .UseMiddleware(PIIMiddleware)
-    .UseMiddleware(GuardrailMiddleware)
+    .UseFunctionInvocationContext(FunctionCallMiddleware1)
+    .UseFunctionInvocationContext(FunctionCallMiddleware2)
+    .UseRunningContext(PIIMiddleware)
+    .UseRunningContext(GuardrailMiddleware)
     .Build();
 
 var thread = middlewareEnabledAgent.GetNewThread();
@@ -65,14 +67,23 @@ Console.WriteLine($"Function calling response: {functionCallResponse}");
 
 // Special per-request middleware agent.
 
-Console.WriteLine("\n=== Example 4: Modifying Agent per-request middleware ===");
-// var result = middlewareAgent // Using your per-request on top of existing middleware
-var response = await originalAgent // Using only the per-request middleware
+Console.WriteLine("\n=== Example 4: Per-request middleware with human in the loop function approval ===");
+
+// Adding a function with approval required
+var optionsWithApproval = new ChatClientAgentRunOptions(new()
+{
+    Tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))]
+});
+
+// var response = middlewareAgent  // Using per-request middleware in addition to agent-level middleware
+var response = await originalAgent // Using per-request middleware without agent-level middleware
     .AsBuilder()
-    .UseFunctionInvocationMiddleware(PerRequestFunctionCallingMiddleware)
-    .UseRunningMiddleware(PerRequestResponseOverrideMiddleware)
+    // Setup the middleware
+    .Use(PerRequestFunctionCallingMiddleware)
+    .Use(ConsolePromptingApprovalMiddleware)
     .Build()
-    .RunAsync("What's the current time and the weather in Seattle?", thread, options);
+    .RunAsync("What's the current time and the weather in Seattle?", thread, optionsWithApproval);
+
 Console.WriteLine($"Per-request middleware response: {response}");
 
 async Task FunctionCallMiddleware1(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
@@ -94,21 +105,6 @@ async Task PerRequestFunctionCallingMiddleware(AgentFunctionInvocationContext co
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Pre-Invoke");
     await next(context);
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Post-Invoke");
-}
-
-async Task PerRequestResponseOverrideMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
-{
-    Console.WriteLine("Per-Request Running Middleware - Pre-Run");
-
-    await next(context);
-
-    // This middleware overrides the response after the agent has run.
-    context.SetRunResponse(
-        new AgentRunResponse(
-            new ChatResponse([new(ChatRole.Assistant, "This response was modified by per-request middleware.")]
-        )));
-
-    Console.WriteLine("Per-Request Running Middleware - Post-Run");
 }
 
 async Task PIIMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
@@ -168,9 +164,7 @@ async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Ta
 
     static string FilterContent(string content)
     {
-        var forbiddenKeywords = new[] { "harmful", "illegal", "violence" }; // Expand as needed
-
-        foreach (var keyword in forbiddenKeywords)
+        foreach (var keyword in new[] { "harmful", "illegal", "violence" })
         {
             if (content.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             {
@@ -179,5 +173,32 @@ async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Ta
         }
 
         return content;
+    }
+}
+
+async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
+{
+    await next(context);
+
+    var userInputRequests = context.RunResponse!.UserInputRequests.ToList();
+
+    while (userInputRequests.Count > 0)
+    {
+        // Ask the user to approve each function call request.
+        // For simplicity, we are assuming here that only function approval requests are being made.
+
+        // Pass the user input responses back to the agent for further processing.
+        context.Messages = userInputRequests
+            .OfType<FunctionApprovalRequestContent>()
+            .Select(functionApprovalRequest =>
+            {
+                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
+                return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
+            })
+            .ToList();
+
+        await next(context);
+
+        userInputRequests = context.RunResponse!.UserInputRequests.ToList();
     }
 }
