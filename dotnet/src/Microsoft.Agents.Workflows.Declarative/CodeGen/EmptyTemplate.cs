@@ -17,7 +17,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     
     #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class EmptyTemplate : CodeTemplate
+    internal partial class EmptyTemplate : ActionTemplate
     {
 #line hidden
         /// <summary>

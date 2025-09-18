@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Shared.Diagnostics;
 
@@ -10,15 +9,10 @@ internal partial class SetVariableTemplate
 {
     internal SetVariableTemplate(SetVariable model)
     {
-        this.Model = model;
-        this.Id = model.GetId();
-        this.Name = this.Id.FormatType();
+        this.Model = this.Initialize(model);
         this.Variable = Throw.IfNull(this.Model.Variable?.Path);
     }
 
-    internal SetVariable Model { get; }
-
-    internal string Id { get; }
-    internal string Name { get; }
+    public SetVariable Model { get; }
     internal PropertyPath Variable { get; }
 }

@@ -19,9 +19,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class RetrieveConversationMessagesTemplate : ActionTemplate
+    internal partial class ForeachTemplate : ActionTemplate
     {
 #line hidden
         /// <summary>
@@ -43,53 +43,23 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
-            this.Write("f\n/// <summary>\n/// Retrieves a specific message from an agent conversation.\n/// " +
-                    "</summary>\ninternal sealed class ");
+            this.Write("\n/// <summary>\n/// %%% COMMENT\n/// </summary>\ninternal sealed class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
-            this.Write("Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExe" +
-                    "cutor(id: \"");
+            this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
             this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
-                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
-
-        EvaluateStringExpression(this.Model.ConversationId, "conversationId");
-        EvaluateIntExpression(this.Model.Limit, "limit");
-        EvaluateStringExpression(this.Model.MessageAfter, "after", isNullable: true);
-        EvaluateStringExpression(this.Model.MessageBefore, "before", isNullable: true);
-        EvaluateEnumExpression<AgentMessageSortOrderWrapper, bool>(this.Model.SortOrder, "newestFirst", SortMap, defaultValue: DefaultSort); 
-            
-            #line default
-            #line hidden
-            this.Write(@"
-        ChatMessage messages = 
-            await agentProvider.GetMessageAsync(
-                converationId, 
-                limit, 
-                after,
-                before,
-                newestFirst,
-                cancellationToken).ConfigureAwait(false);");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
-
-        AssignVariable(this.Model.Messages, "messages");
-        
-            
-            #line default
-            #line hidden
-            this.Write("\n    }\n}");
+                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {\n    " +
+                    "}\n}");
             return this.GenerationEnvironment.ToString();
         }
         

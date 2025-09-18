@@ -4,12 +4,12 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal partial class CopyConversationMessagesTemplate
+internal partial class ForeachTemplate
 {
-    public CopyConversationMessagesTemplate(CopyConversationMessages model)
+    public ForeachTemplate(Foreach model)
     {
         this.Model = this.Initialize(model);
     }
 
-    public CopyConversationMessages Model { get; }
+    public Foreach Model { get; }
 }

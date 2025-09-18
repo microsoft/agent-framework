@@ -2,7 +2,6 @@
 
 using System.Collections.Frozen;
 using System.Collections.Generic;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -13,16 +12,12 @@ internal partial class AddConversationMessageTemplate
 {
     public AddConversationMessageTemplate(AddConversationMessage model)
     {
-        this.Model = model;
-        this.Id = model.GetId();
-        this.Name = this.Id.FormatType();
+        this.Model = this.Initialize(model);
         this.Message = Throw.IfNull(this.Model.Message?.Path);
     }
 
     public AddConversationMessage Model { get; }
 
-    public string Id { get; }
-    public string Name { get; }
     public PropertyPath Message { get; }
 
     public const string DefaultRole = nameof(ChatRole.User);

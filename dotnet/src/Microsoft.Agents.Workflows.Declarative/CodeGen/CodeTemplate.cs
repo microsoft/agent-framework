@@ -7,7 +7,6 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
@@ -25,18 +24,6 @@ internal abstract class CodeTemplate
     /// Create the template output
     /// </summary>
     public abstract string TransformText();
-
-    #region Agent Framework helpers
-
-    public static string GetRole(AgentMessageRole? role) =>
-        role switch
-        {
-            AgentMessageRole.Agent => $"{nameof(ChatRole)}.{nameof(ChatRole.Assistant)}",
-            AgentMessageRole.User => $"{nameof(ChatRole)}.{nameof(ChatRole.User)}",
-            _ => $"{nameof(ChatRole)}.{nameof(ChatRole.User)}",
-        };
-
-    #endregion
 
     #region Object Model helpers
 
