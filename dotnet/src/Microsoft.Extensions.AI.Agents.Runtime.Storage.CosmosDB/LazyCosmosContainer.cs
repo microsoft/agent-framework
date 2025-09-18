@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
-using System.Collections.ObjectModel;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +13,10 @@ namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 /// </summary>
 internal sealed class LazyCosmosContainer : IAsyncDisposable
 {
-    private readonly static Random s_random = new();
+#if !NET
+    [ThreadStatic]
+    private static Random? t_random;
+#endif
 
     private readonly CosmosClient? _cosmosClient;
     private readonly string? _databaseName;
@@ -24,7 +26,7 @@ internal sealed class LazyCosmosContainer : IAsyncDisposable
     private Task<Container>? _initTask;
 
     // internal for testing
-    internal readonly static string[] CosmosPartitionKeyPaths = ["/actorType", "/actorKey"];
+    internal static readonly string[] CosmosPartitionKeyPaths = ["/actorType", "/actorKey"];
 
     /// <summary>
     /// LazyCosmosContainer constructor that initializes the container lazily.
@@ -73,7 +75,7 @@ internal sealed class LazyCosmosContainer : IAsyncDisposable
                 if (ex.RetryAfter is not null && ex.RetryAfter > TimeSpan.Zero)
                 {
                     var retry = ex.RetryAfter.Value;
-                    var jitterMs = this.RandomNextDouble() * retry.TotalMilliseconds; // 0..retry
+                    var jitterMs = RandomNextDouble() * retry.TotalMilliseconds; // 0..retry
                     var delay = retry + TimeSpan.FromMilliseconds(jitterMs);
                     await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                     previousDelay = delay;
@@ -83,7 +85,7 @@ internal sealed class LazyCosmosContainer : IAsyncDisposable
                 // sleep = min(maxDelay, random(baseDelay, previousDelay * 3))
                 var minMs = baseDelay.TotalMilliseconds;
                 var maxMs = Math.Min(maxDelay.TotalMilliseconds, Math.Max(minMs, previousDelay.TotalMilliseconds * 3));
-                var sleepMs = this.RandomNextDouble() * (maxMs - minMs) + minMs;
+                var sleepMs = (RandomNextDouble() * (maxMs - minMs)) + minMs;
                 var jitterDelay = TimeSpan.FromMilliseconds(sleepMs);
 
                 await Task.Delay(jitterDelay, cancellationToken).ConfigureAwait(false);
@@ -109,41 +111,41 @@ internal sealed class LazyCosmosContainer : IAsyncDisposable
         };
 
         // Add composite index for efficient queries
-        containerProperties.IndexingPolicy.CompositeIndexes.Add(new Collection<CompositePath>
-        {
+        containerProperties.IndexingPolicy.CompositeIndexes.Add(
+        [
             new() { Path = "/actorType", Order = CompositePathSortOrder.Ascending },
             new() { Path = "/actorKey", Order = CompositePathSortOrder.Ascending },
             new() { Path = "/key", Order = CompositePathSortOrder.Ascending }
-        });
+        ]);
 
         var container = await database.Database.CreateContainerIfNotExistsAsync(containerProperties, cancellationToken: cancellationToken).ConfigureAwait(false);
         return container.Container;
     }
 
-    private static bool IsTransient(Exception exception)
+    private static bool IsTransient(Exception exception) => exception switch
     {
-        return exception switch
+        CosmosException cosmosEx => cosmosEx.StatusCode switch
         {
-            CosmosException cosmosEx => cosmosEx.StatusCode switch
-            {
 #if NET9_0_OR_GREATER
-                HttpStatusCode.TooManyRequests => true,     // 429 - Rate limited
+            HttpStatusCode.TooManyRequests => true,     // 429 - Rate limited
 #endif
-                HttpStatusCode.InternalServerError => true, // 500 - Server error
-                HttpStatusCode.BadGateway => true,          // 502 - Bad gateway
-                HttpStatusCode.ServiceUnavailable => true,  // 503 - Service unavailable
-                HttpStatusCode.GatewayTimeout => true,      // 504 - Gateway timeout
-                HttpStatusCode.RequestTimeout => true,      // 408 - Request timeout
-                _ => false
-            },
-            TaskCanceledException or OperationCanceledException or ArgumentException => false,
-            _ => true // Retry other exceptions (network issues, etc.)
-        };
-    }
+            HttpStatusCode.InternalServerError => true, // 500 - Server error
+            HttpStatusCode.BadGateway => true,          // 502 - Bad gateway
+            HttpStatusCode.ServiceUnavailable => true,  // 503 - Service unavailable
+            HttpStatusCode.GatewayTimeout => true,      // 504 - Gateway timeout
+            HttpStatusCode.RequestTimeout => true,      // 408 - Request timeout
+            _ => false
+        },
+        TaskCanceledException or OperationCanceledException or ArgumentException => false,
+        _ => true // Retry other exceptions (network issues, etc.)
+    };
 
-#pragma warning disable CA5394 // Do not use insecure randomness
-    private double RandomNextDouble() => s_random.NextDouble();
-#pragma warning restore CA5394 // Do not use insecure randomness
+    private static double RandomNextDouble() =>
+#if NET
+        Random.Shared.NextDouble();
+#else
+        (t_random ??= new()).NextDouble();
+#endif
 
     public ValueTask DisposeAsync()
     {

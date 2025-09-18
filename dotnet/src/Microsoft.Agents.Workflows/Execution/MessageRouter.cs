@@ -16,7 +16,7 @@ using MessageHandlerF =
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class MessageRouter
+internal sealed class MessageRouter
 {
     private readonly Dictionary<Type, MessageHandlerF> _typedHandlers;
     private readonly Dictionary<TypeId, Type> _runtimeTypeMap;

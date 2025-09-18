@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 /// </summary>
 public sealed class DirectEdgeInfo : EdgeInfo
 {
-    internal DirectEdgeInfo(DirectEdgeData data) : this(data.Condition != null, data.Connection) { }
+    internal DirectEdgeInfo(DirectEdgeData data) : this(data.Condition is not null, data.Connection) { }
 
     [JsonConstructor]
     internal DirectEdgeInfo(bool hasCondition, EdgeConnection connection) : base(EdgeKind.Direct, connection)
@@ -26,6 +26,6 @@ public sealed class DirectEdgeInfo : EdgeInfo
     internal override bool IsMatchInternal(EdgeData edgeData)
     {
         return edgeData is DirectEdgeData directEdge
-            && this.HasCondition == (directEdge.Condition != null);
+            && this.HasCondition == (directEdge.Condition is not null);
     }
 }

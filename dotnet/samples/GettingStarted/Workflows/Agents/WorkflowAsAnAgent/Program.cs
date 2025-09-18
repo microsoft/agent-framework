@@ -64,7 +64,7 @@ public static class Program
             Dictionary<string, List<AgentRunResponseUpdate>> buffer = [];
             await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, thread).ConfigureAwait(false))
             {
-                if (update.MessageId == null)
+                if (update.MessageId is null)
                 {
                     // skip updates that don't have a message ID
                     continue;

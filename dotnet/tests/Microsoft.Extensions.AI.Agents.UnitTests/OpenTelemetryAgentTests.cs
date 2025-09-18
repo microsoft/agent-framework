@@ -449,14 +449,14 @@ public class OpenTelemetryAgentTests
         var mockLogger = new Mock<ILogger>();
         mockLoggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>()))
             .Returns(mockLogger.Object);
-        var sourceName = "custom-source";
-        var enableSensitiveData = true;
+        const string SourceName = "custom-source";
+        const bool EnableSensitiveData = true;
 
         // Act
         using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(
             loggerFactory: mockLoggerFactory.Object,
-            sourceName: sourceName,
-            enableSensitiveData: enableSensitiveData);
+            sourceName: SourceName,
+            enableSensitiveData: EnableSensitiveData);
 
         // Assert
         Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
@@ -555,10 +555,10 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
         var mockLogger = new Mock<ILogger>();
-        var sourceName = "test-source";
+        const string SourceName = "test-source";
 
         // Act
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, SourceName);
 
         // Assert
         Assert.Equal("test-id", telemetryAgent.Id);
@@ -575,10 +575,10 @@ public class OpenTelemetryAgentTests
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
-        var sourceName = "test-source";
+        const string SourceName = "test-source";
 
         // Act
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, logger: null, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, logger: null, SourceName);
 
         // Assert
         Assert.Equal("test-id", telemetryAgent.Id);
@@ -635,10 +635,10 @@ public class OpenTelemetryAgentTests
         var mockLogger = new Mock<ILogger>();
         mockLoggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>()))
             .Returns(mockLogger.Object);
-        var sourceName = "test-source";
+        const string SourceName = "test-source";
 
         // Act
-        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(mockLoggerFactory.Object, sourceName);
+        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(mockLoggerFactory.Object, SourceName);
 
         // Assert
         Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
@@ -837,8 +837,8 @@ public class OpenTelemetryAgentTests
         // Arrange
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
-        var sourceName = "test-source";
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+        const string SourceName = "test-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: SourceName);
 
         // Act
         var result = telemetryAgent.GetService(typeof(ActivitySource));
@@ -847,7 +847,7 @@ public class OpenTelemetryAgentTests
         Assert.NotNull(result);
         Assert.IsType<ActivitySource>(result);
         var activitySource = (ActivitySource)result;
-        Assert.Equal(sourceName, activitySource.Name);
+        Assert.Equal(SourceName, activitySource.Name);
     }
 
     /// <summary>
@@ -902,18 +902,18 @@ public class OpenTelemetryAgentTests
         // Arrange
         var mockAgent = new Mock<AIAgent>();
         var customService = new object();
-        var serviceKey = "test-key";
-        mockAgent.Setup(a => a.GetService(typeof(string), serviceKey))
+        const string ServiceKey = "test-key";
+        mockAgent.Setup(a => a.GetService(typeof(string), ServiceKey))
             .Returns(customService);
 
         using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
 
         // Act
-        var result = telemetryAgent.GetService(typeof(string), serviceKey);
+        var result = telemetryAgent.GetService(typeof(string), ServiceKey);
 
         // Assert
         Assert.Same(customService, result);
-        mockAgent.Verify(a => a.GetService(typeof(string), serviceKey), Times.Once);
+        mockAgent.Verify(a => a.GetService(typeof(string), ServiceKey), Times.Once);
     }
 
     /// <summary>
@@ -928,8 +928,8 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.GetService(typeof(ActivitySource), null))
             .Returns(innerActivitySource);
 
-        var sourceName = "telemetry-source";
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+        const string SourceName = "telemetry-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: SourceName);
 
         // Act
         var result = telemetryAgent.GetService(typeof(ActivitySource));
@@ -938,7 +938,7 @@ public class OpenTelemetryAgentTests
         Assert.NotNull(result);
         Assert.IsType<ActivitySource>(result);
         var activitySource = (ActivitySource)result;
-        Assert.Equal(sourceName, activitySource.Name);
+        Assert.Equal(SourceName, activitySource.Name);
         Assert.NotSame(innerActivitySource, result); // Should return OpenTelemetryAgent's ActivitySource, not inner agent's
 
         // Cleanup
@@ -1019,8 +1019,8 @@ public class OpenTelemetryAgentTests
         // Arrange
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
-        var sourceName = "test-source";
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+        const string SourceName = "test-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: SourceName);
 
         // Act - Request ActivitySource with a service key (base.GetService will return null due to serviceKey)
         var result = telemetryAgent.GetService(typeof(ActivitySource), "some-key");
@@ -1029,7 +1029,7 @@ public class OpenTelemetryAgentTests
         Assert.NotNull(result);
         Assert.IsType<ActivitySource>(result);
         var activitySource = (ActivitySource)result;
-        Assert.Equal(sourceName, activitySource.Name);
+        Assert.Equal(SourceName, activitySource.Name);
         // Verify that the inner agent's GetService was NOT called because ActivitySource is handled by the telemetry agent itself
         mockAgent.Verify(a => a.GetService(typeof(ActivitySource), "some-key"), Times.Never);
     }
@@ -1202,9 +1202,9 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(activities)
             .Build();
 
-        var customProviderName = "custom-ai-provider";
+        const string CustomProviderName = "custom-ai-provider";
         var mockAgent = new Mock<AIAgent>();
-        var customMetadata = new AIAgentMetadata(customProviderName);
+        var customMetadata = new AIAgentMetadata(CustomProviderName);
 
         // Setup mock agent to return custom metadata
         mockAgent.Setup(a => a.GetService(typeof(AIAgentMetadata), null))
@@ -1226,12 +1226,12 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
 
         // Verify that the custom provider name appears in telemetry
-        Assert.Equal(customProviderName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        Assert.Equal(CustomProviderName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
 
         // Verify that GetService returns the same custom provider name
         var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
         Assert.NotNull(agentMetadata);
-        Assert.Equal(customProviderName, agentMetadata.ProviderName);
+        Assert.Equal(CustomProviderName, agentMetadata.ProviderName);
     }
 
     /// <summary>
@@ -1353,9 +1353,9 @@ public class OpenTelemetryAgentTests
             .AddInMemoryExporter(activities)
             .Build();
 
-        var providerName = "consistent-provider";
+        const string ProviderName = "consistent-provider";
         var mockChatClient = new Mock<IChatClient>();
-        var chatClientMetadata = new ChatClientMetadata(providerName);
+        var chatClientMetadata = new ChatClientMetadata(ProviderName);
         mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
             .Returns(chatClientMetadata);
         mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
@@ -1384,7 +1384,7 @@ public class OpenTelemetryAgentTests
         // Verify that all activities have the same provider name
         foreach (var activity in activities)
         {
-            Assert.Equal(providerName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+            Assert.Equal(ProviderName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
         }
 
         // Verify that GetService consistently returns the same provider name
@@ -1392,8 +1392,8 @@ public class OpenTelemetryAgentTests
         var agentMetadata2 = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
         Assert.NotNull(agentMetadata1);
         Assert.NotNull(agentMetadata2);
-        Assert.Equal(providerName, agentMetadata1.ProviderName);
-        Assert.Equal(providerName, agentMetadata2.ProviderName);
+        Assert.Equal(ProviderName, agentMetadata1.ProviderName);
+        Assert.Equal(ProviderName, agentMetadata2.ProviderName);
         Assert.Same(agentMetadata1, agentMetadata2); // Should be cached
     }
 
@@ -1459,26 +1459,26 @@ public class OpenTelemetryAgentTests
         if (throwError)
         {
             mockAgent.Setup(a => a.RunStreamingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
-                .Returns(ThrowingAsyncEnumerable());
+                .Returns(ThrowingAsyncEnumerableAsync());
         }
         else
         {
             mockAgent.Setup(a => a.RunStreamingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
-                .Returns(CreateStreamingResponse());
+                .Returns(CreateStreamingResponseAsync());
         }
 
         return mockAgent;
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> ThrowingAsyncEnumerable([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> ThrowingAsyncEnumerableAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
             throw new InvalidOperationException("Streaming error");
 #pragma warning disable CS0162 // Unreachable code detected
             yield break;
-#pragma warning restore CS0162 // Unreachable code detected
+#pragma warning restore CS0162
         }
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> CreateStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> CreateStreamingResponseAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
@@ -1505,11 +1505,9 @@ public class OpenTelemetryAgentTests
     }
 
     [Fact]
-    public void Constructor_NullAgent_ThrowsArgumentNullException()
-    {
+    public void Constructor_NullAgent_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new OpenTelemetryAgent(null!));
-    }
 
     [Fact]
     public void Constructor_WithParameters_SetsProperties()
@@ -1522,10 +1520,10 @@ public class OpenTelemetryAgentTests
         var mockLogger = new Mock<ILogger>();
 
         var logger = new Mock<ILogger>().Object;
-        var sourceName = "custom-source";
+        const string SourceName = "custom-source";
 
         // Act
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, SourceName);
 
         // Assert
         Assert.Equal("test-id", telemetryAgent.Id);
@@ -1654,7 +1652,7 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
         mockAgent.Setup(a => a.RunStreamingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
-            .Returns(CreatePartialStreamingResponse());
+            .Returns(CreatePartialStreamingResponseAsync());
 
         using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
 
@@ -1676,7 +1674,7 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.Equal("partial-response-id", activity.GetTagItem(OpenTelemetryConsts.GenAI.Response.Id));
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> CreatePartialStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> CreatePartialStreamingResponseAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
@@ -2053,10 +2051,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2106,10 +2101,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2159,10 +2151,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2225,10 +2214,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2316,10 +2302,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2384,10 +2367,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2468,10 +2448,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2522,10 +2499,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2589,10 +2563,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2700,10 +2671,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");

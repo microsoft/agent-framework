@@ -21,13 +21,11 @@ public static class AgentExtensions
     /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
     /// <param name="enableSensitiveData">When <see langword="true"/> indicates whether potentially sensitive information should be included in telemetry. Default is <see langword="false"/></param>
     /// <returns>An <see cref="OpenTelemetryAgent"/> that wraps the original agent with telemetry.</returns>
-    public static OpenTelemetryAgent WithOpenTelemetry(this AIAgent agent, ILoggerFactory? loggerFactory = null, string? sourceName = null, bool? enableSensitiveData = null)
-    {
-        return new OpenTelemetryAgent(agent, loggerFactory?.CreateLogger(typeof(OpenTelemetryAgent)), sourceName)
+    public static OpenTelemetryAgent WithOpenTelemetry(this AIAgent agent, ILoggerFactory? loggerFactory = null, string? sourceName = null, bool? enableSensitiveData = null) =>
+        new(agent, loggerFactory?.CreateLogger(typeof(OpenTelemetryAgent)), sourceName)
         {
             EnableSensitiveData = enableSensitiveData ?? false
         };
-    }
 
     /// <summary>
     /// Creates a <see cref="AIFunction"/> that will invoke the provided Agent.

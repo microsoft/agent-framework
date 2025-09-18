@@ -14,15 +14,13 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 public abstract class InMemoryAgentThread : AgentThread
 {
-    private readonly InMemoryChatMessageStore _messageStore;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class.
     /// </summary>
     /// <param name="messageStore">An optional <see cref="InMemoryChatMessageStore"/> to use for storing chat messages. If null, a new instance will be created.</param>
     protected InMemoryAgentThread(InMemoryChatMessageStore? messageStore = null)
     {
-        this._messageStore = messageStore ?? new InMemoryChatMessageStore();
+        this.MessageStore = messageStore ?? new InMemoryChatMessageStore();
     }
 
     /// <summary>
@@ -31,10 +29,10 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <param name="messages">The messages to initialize the thread with.</param>
     protected InMemoryAgentThread(IEnumerable<ChatMessage> messages)
     {
-        this._messageStore = new InMemoryChatMessageStore();
+        this.MessageStore = new InMemoryChatMessageStore();
         foreach (var message in messages)
         {
-            this._messageStore.Add(message);
+            this.MessageStore.Add(message);
         }
     }
 
@@ -60,7 +58,7 @@ public abstract class InMemoryAgentThread : AgentThread
             serializedThreadState,
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentThreadState))) as InMemoryAgentThreadState;
 
-        this._messageStore =
+        this.MessageStore =
             messageStoreFactory?.Invoke(state?.StoreState ?? default, jsonSerializerOptions) ??
             new InMemoryChatMessageStore(state?.StoreState ?? default, jsonSerializerOptions);
     }
@@ -68,7 +66,7 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <summary>
     /// Gets or sets the <see cref="InMemoryChatMessageStore"/> used by this thread.
     /// </summary>
-    public InMemoryChatMessageStore MessageStore => this._messageStore;
+    public InMemoryChatMessageStore MessageStore { get; }
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
@@ -78,7 +76,7 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
     public override async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        var storeState = await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        var storeState = await this.MessageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
 
         var state = new InMemoryAgentThreadState
         {
@@ -90,7 +88,7 @@ public abstract class InMemoryAgentThread : AgentThread
 
     /// <inheritdoc />
     protected internal override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-        => this._messageStore.AddMessagesAsync(newMessages, cancellationToken);
+        => this.MessageStore.AddMessagesAsync(newMessages, cancellationToken);
 
     internal sealed class InMemoryAgentThreadState
     {

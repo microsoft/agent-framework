@@ -21,9 +21,7 @@ public class AgentRunOptionsTests
     }
 
     [Fact]
-    public void CloningConstructorThrowsIfNull()
-    {
+    public void CloningConstructorThrowsIfNull() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new AgentRunOptions(null!));
-    }
 }

@@ -54,11 +54,9 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_WithNullA2AClient_ThrowsArgumentNullException()
-    {
+    public void Constructor_WithNullA2AClient_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new A2AAgent(null!));
-    }
 
     [Fact]
     public void Constructor_WithDefaultParameters_UsesBaseProperties()
@@ -96,10 +94,10 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Hello! How can I help you today?" }
-            }
+            ]
         };
 
         var inputMessages = new List<ChatMessage>
@@ -139,10 +137,10 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Response" }
-            },
+            ],
             ContextId = "new-context-id"
         };
 
@@ -197,10 +195,10 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Response" }
-            },
+            ],
             ContextId = "different-context"
         };
 
@@ -225,7 +223,7 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Hello" } },
+            Parts = [new TextPart { Text = "Hello" }],
             ContextId = "stream-context"
         };
 
@@ -271,14 +269,14 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Response" } },
+            Parts = [new TextPart { Text = "Response" }],
             ContextId = "new-stream-context"
         };
 
         var thread = this._agent.GetNewThread();
 
         // Act
-        await foreach (var update in this._agent.RunStreamingAsync(inputMessages, thread))
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
         {
             // Just iterate through to trigger the logic
         }
@@ -304,7 +302,7 @@ public sealed class A2AAgentTests : IDisposable
         a2aThread.ContextId = "existing-context-id";
 
         // Act
-        await foreach (var update in this._agent.RunStreamingAsync(inputMessages, thread))
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
         {
             // Just iterate through to trigger the logic
         }
@@ -332,7 +330,7 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Response" } },
+            Parts = [new TextPart { Text = "Response" }],
             ContextId = "different-context"
         };
 
@@ -369,11 +367,11 @@ public sealed class A2AAgentTests : IDisposable
         // Arrange
         var inputMessages = new List<ChatMessage>
         {
-            new(ChatRole.User, new List<AIContent>
-            {
+            new(ChatRole.User,
+            [
                 new TextContent("Check this file:"),
                 new HostedFileContent("https://example.com/file.pdf")
-            })
+            ])
         };
 
         // Act
@@ -416,7 +414,7 @@ public sealed class A2AAgentTests : IDisposable
             // Return the pre-configured non-streaming response
             if (this.ResponseToReturn is not null)
             {
-                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", this.ResponseToReturn);
+                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse("response-id", this.ResponseToReturn);
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -431,7 +429,7 @@ public sealed class A2AAgentTests : IDisposable
                 await SseFormatter.WriteAsync(
                     new SseItem<JsonRpcResponse>[]
                     {
-                        new(JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", this.StreamingResponseToReturn!))
+                        new(JsonRpcResponse.CreateJsonRpcResponse("response-id", this.StreamingResponseToReturn!))
                     }.ToAsyncEnumerable(),
                     stream,
                     (item, writer) =>

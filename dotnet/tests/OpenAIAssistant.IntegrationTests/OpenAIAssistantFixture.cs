@@ -67,10 +67,8 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
             });
     }
 
-    public Task DeleteAgentAsync(ChatClientAgent agent)
-    {
-        return this._assistantClient!.DeleteAssistantAsync(agent.Id);
-    }
+    public Task DeleteAgentAsync(ChatClientAgent agent) =>
+        this._assistantClient!.DeleteAssistantAsync(agent.Id);
 
     public Task DeleteThreadAsync(AgentThread thread)
     {

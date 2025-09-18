@@ -54,25 +54,17 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         }));
     }
 
-    public Task DeleteAgentAsync(ChatClientAgent agent)
-    {
+    public Task DeleteAgentAsync(ChatClientAgent agent) =>
         // Chat Completion does not require/support deleting agents, so this is a no-op.
-        return Task.CompletedTask;
-    }
+        Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread)
-    {
+    public Task DeleteThreadAsync(AgentThread thread) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
-        return Task.CompletedTask;
-    }
+        Task.CompletedTask;
 
-    public async Task InitializeAsync()
-    {
+    public async Task InitializeAsync() =>
         this._agent = await this.CreateChatClientAgentAsync();
-    }
 
-    public Task DisposeAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public Task DisposeAsync() =>
+        Task.CompletedTask;
 }

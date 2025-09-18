@@ -84,14 +84,12 @@ namespace SampleApp
         {
             this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
 
-            if (serializedStoreState.ValueKind == JsonValueKind.String)
+            if (serializedStoreState.ValueKind is JsonValueKind.String)
             {
                 // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
-                this._threadId = JsonSerializer.Deserialize<string>(serializedStoreState);
+                this._threadId = serializedStoreState.Deserialize<string>();
             }
         }
-
-        public string? ThreadId => this._threadId;
 
         public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
@@ -122,18 +120,15 @@ namespace SampleApp
                     cancellationToken)
                 .ToListAsync(cancellationToken);
 
-            var messages = records
-                .Select(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!)
-                .ToList();
+            var messages = records.ConvertAll(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!)
+;
             messages.Reverse();
             return messages;
         }
 
-        public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        {
+        public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
             // We have to serialize the thread id, so that on deserialization we can retrieve the messages using the same thread id.
-            return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this._threadId));
-        }
+            new(JsonSerializer.SerializeToElement(this._threadId));
 
         /// <summary>
         /// The data structure used to store chat history items in the vector store.

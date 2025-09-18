@@ -27,7 +27,7 @@ public class CopilotStudioAgent : AIAgent
     /// </summary>
     public CopilotClient Client { get; }
 
-    private readonly static AIAgentMetadata s_agentMetadata = new("copilot-studio");
+    private static readonly AIAgentMetadata s_agentMetadata = new("copilot-studio");
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CopilotStudioAgent"/> class.
@@ -150,7 +150,7 @@ public class CopilotStudioAgent : AIAgent
 
         if (string.IsNullOrEmpty(conversationId))
         {
-            throw new System.InvalidOperationException("Failed to start a new conversation.");
+            throw new InvalidOperationException("Failed to start a new conversation.");
         }
 
         return conversationId!;

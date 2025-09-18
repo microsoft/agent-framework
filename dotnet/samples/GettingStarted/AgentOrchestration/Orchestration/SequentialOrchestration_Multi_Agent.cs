@@ -63,14 +63,14 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
             new(analystAgent, writerAgent, editorAgent)
             {
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
-                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallback : null,
+                ResponseCallback = monitor.ResponseCallbackAsync,
+                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallbackAsync : null,
             };
 
         // Run the orchestration
-        string input = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours";
-        Console.WriteLine($"\n# INPUT: {input}\n");
-        AgentRunResponse result = await orchestration.RunAsync(input);
+        const string Input = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours";
+        Console.WriteLine($"\n# INPUT: {Input}\n");
+        AgentRunResponse result = await orchestration.RunAsync(Input);
         Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);

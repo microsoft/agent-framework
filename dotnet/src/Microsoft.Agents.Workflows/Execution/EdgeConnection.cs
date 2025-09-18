@@ -15,7 +15,7 @@ namespace Microsoft.Agents.Workflows.Execution;
 /// Ordering is relevant because in at least one case, the order of sinks is significant for the execution of
 /// the edge: <see cref="FanOutEdgeData"/>.
 /// </remarks>
-public class EdgeConnection : IEquatable<EdgeConnection>
+public sealed class EdgeConnection : IEquatable<EdgeConnection>
 {
     /// <summary>
     /// Create an <see cref="EdgeConnection"/> instance with the specified source and sink IDs.
@@ -65,7 +65,7 @@ public class EdgeConnection : IEquatable<EdgeConnection>
             return false;
         }
 
-        if (object.ReferenceEquals(this, other))
+        if (ReferenceEquals(this, other))
         {
             return true;
         }

@@ -32,13 +32,13 @@ public class ChatClientAgentThreadTests
     {
         // Arrange
         var thread = new ChatClientAgentThread();
-        var conversationId = "test-thread-id";
+        const string ConversationId = "test-thread-id";
 
         // Act
-        thread.ConversationId = conversationId;
+        thread.ConversationId = ConversationId;
 
         // Assert
-        Assert.Equal(conversationId, thread.ConversationId);
+        Assert.Equal(ConversationId, thread.ConversationId);
         Assert.Null(thread.MessageStore);
     }
 
@@ -229,7 +229,7 @@ public class ChatClientAgentThreadTests
         Assert.True(json.TryGetProperty("conversationId", out var idProperty));
         Assert.Equal("TestConvId", idProperty.GetString());
 
-        Assert.False(json.TryGetProperty("storeState", out var storeStateProperty));
+        Assert.False(json.TryGetProperty("storeState", out _));
     }
 
     /// <summary>
@@ -249,7 +249,7 @@ public class ChatClientAgentThreadTests
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.False(json.TryGetProperty("conversationId", out var idProperty));
+        Assert.False(json.TryGetProperty("conversationId", out _));
 
         Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
         Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
@@ -332,17 +332,6 @@ public class ChatClientAgentThreadTests
     }
 
     #endregion Serialize Tests
-
-    private static async Task<List<T>> ToListAsync<T>(IAsyncEnumerable<T> values)
-    {
-        var result = new List<T>();
-        await foreach (var v in values)
-        {
-            result.Add(v);
-        }
-
-        return result;
-    }
 
     private sealed class MessageSendingAgent : AIAgent
     {

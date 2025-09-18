@@ -107,8 +107,7 @@ public sealed class AgentProxy : AIAgent
                 yield break;
             }
 
-            var runResponseUpdate = (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
-            yield return runResponseUpdate;
+            yield return (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
         }
     }
 
@@ -142,7 +141,6 @@ public sealed class AgentProxy : AIAgent
             messageId,
             method: AgentActorConstants.RunMethodName,
             @params: JsonSerializer.SerializeToElement(runRequest, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunRequest))));
-        var handle = await this._client.SendRequestAsync(actorRequest, cancellationToken).ConfigureAwait(false);
-        return handle;
+        return await this._client.SendRequestAsync(actorRequest, cancellationToken).ConfigureAwait(false);
     }
 }

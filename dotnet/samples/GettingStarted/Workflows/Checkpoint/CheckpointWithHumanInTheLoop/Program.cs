@@ -57,7 +57,7 @@ public static class Program
                     // Checkpoints are automatically created at the end of each super step when a
                     // checkpoint manager is provided. You can store the checkpoint info for later use.
                     CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
-                    if (checkpoint != null)
+                    if (checkpoint is not null)
                     {
                         checkpoints.Add(checkpoint);
                         Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
@@ -76,9 +76,9 @@ public static class Program
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
         // Restoring from a checkpoint and resuming execution
-        var checkpointIndex = 1;
-        Console.WriteLine($"\n\nRestoring from the {checkpointIndex + 1}th checkpoint.");
-        CheckpointInfo savedCheckpoint = checkpoints[checkpointIndex];
+        const int CheckpointIndex = 1;
+        Console.WriteLine($"\n\nRestoring from the {CheckpointIndex + 1}th checkpoint.");
+        CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
         // Note that we are restoring the state directly to the same run instance.
         await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
@@ -109,13 +109,13 @@ public static class Program
             {
                 case NumberSignal.Init:
                     int initialGuess = ReadIntegerFromConsole("Please provide your initial guess: ");
-                    return request.CreateResponse<int>(initialGuess);
+                    return request.CreateResponse(initialGuess);
                 case NumberSignal.Above:
                     int lowerGuess = ReadIntegerFromConsole($"You previously guessed {signal.Number} too large. Please provide a new guess: ");
-                    return request.CreateResponse<int>(lowerGuess);
+                    return request.CreateResponse(lowerGuess);
                 case NumberSignal.Below:
                     int higherGuess = ReadIntegerFromConsole($"You previously guessed {signal.Number} too small. Please provide a new guess: ");
-                    return request.CreateResponse<int>(higherGuess);
+                    return request.CreateResponse(higherGuess);
             }
         }
 

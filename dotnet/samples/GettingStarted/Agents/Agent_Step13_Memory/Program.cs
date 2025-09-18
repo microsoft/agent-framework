@@ -102,7 +102,7 @@ namespace SampleApp
         public UserInfoMemory(IChatClient chatClient, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             this._chatClient = chatClient;
-            this.UserInfo = JsonSerializer.Deserialize<UserInfo>(serializedState, jsonSerializerOptions) ?? new UserInfo();
+            this.UserInfo = serializedState.Deserialize<UserInfo>(jsonSerializerOptions) ?? new UserInfo();
         }
 
         public UserInfo UserInfo { get; set; }
@@ -110,7 +110,7 @@ namespace SampleApp
         public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
-            if ((this.UserInfo.UserName == null || this.UserInfo.UserAge == null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
+            if ((this.UserInfo.UserName is null || this.UserInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
             {
                 var result = await this._chatClient.GetResponseAsync<UserInfo>(
                     context.RequestMessages,
@@ -130,15 +130,15 @@ namespace SampleApp
             StringBuilder instructions = new();
 
             // If we don't already know the user's name and age, add instructions to ask for them, otherwise just provide what we have to the context.
-            instructions.AppendLine(
-                this.UserInfo.UserName == null ?
-                "Ask the user for their name and politely decline to answer any questions until they provide it." :
-                $"The user's name is {this.UserInfo.UserName}.");
-
-            instructions.AppendLine(
-                this.UserInfo.UserAge == null ?
-                "Ask the user for their age and politely decline to answer any questions until they provide it." :
-                $"The user's age is {this.UserInfo.UserAge}.");
+            instructions
+                .AppendLine(
+                    this.UserInfo.UserName is null ?
+                        "Ask the user for their name and politely decline to answer any questions until they provide it." :
+                        $"The user's name is {this.UserInfo.UserName}.")
+                .AppendLine(
+                    this.UserInfo.UserAge is null ?
+                        "Ask the user for their age and politely decline to answer any questions until they provide it." :
+                        $"The user's age is {this.UserInfo.UserAge}.");
 
             return new ValueTask<AIContext>(new AIContext
             {
@@ -153,7 +153,7 @@ namespace SampleApp
 
         public override ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
-            this.UserInfo = JsonSerializer.Deserialize<UserInfo>(serializedState, jsonSerializerOptions) ?? new UserInfo();
+            this.UserInfo = serializedState.Deserialize<UserInfo>(jsonSerializerOptions) ?? new UserInfo();
             return default;
         }
     }

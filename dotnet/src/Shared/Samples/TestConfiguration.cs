@@ -60,10 +60,8 @@ public sealed class TestConfiguration
     /// Initializes the configuration system with the specified configuration root.
     /// </summary>
     /// <param name="configRoot">The root of the configuration hierarchy used to initialize the system. Must not be <see langword="null"/>.</param>
-    public static void Initialize(IConfigurationRoot configRoot)
-    {
+    public static void Initialize(IConfigurationRoot configRoot) =>
         s_instance = new TestConfiguration(configRoot);
-    }
 
     #region Private Members
 

@@ -22,13 +22,8 @@ public class WorkflowEvent(object? data = null)
     public object? Data => data;
 
     /// <inheritdoc/>
-    public override string ToString()
-    {
-        if (this.Data != null)
-        {
-            return $"{this.GetType().Name}(Data: {this.Data.GetType()} = {this.Data})";
-        }
-
-        return $"{this.GetType().Name}()";
-    }
+    public override string ToString() =>
+        this.Data is not null ?
+            $"{this.GetType().Name}(Data: {this.Data.GetType()} = {this.Data})" :
+            $"{this.GetType().Name}()";
 }
