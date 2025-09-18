@@ -28,9 +28,6 @@ var text =
     instructions: You write code to solve problems.
     tools:
       - type: code_interpreter
-        options:
-          container:
-            type: auto
     """;
 
 // Create the agent from the YAML definition.

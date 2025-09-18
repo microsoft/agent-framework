@@ -123,7 +123,7 @@ public static class GptComponentMetadataExtensions
             ResponseFormat = chatOptionsValue?.GetResponseFormat(),
             ModelId = chatOptionsValue?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model_id"))?.Value,
             StopSequences = chatOptionsValue?.GetStopSequences(),
-            AllowMultipleToolCalls = (bool?)chatOptionsValue?.GetPropertyOrNull<BooleanDataValue>(InitializablePropertyPath.Create("allow_multiple_tool_calls"))?.Value,
+            AllowMultipleToolCalls = chatOptionsValue?.GetPropertyOrNull<BooleanDataValue>(InitializablePropertyPath.Create("allow_multiple_tool_calls"))?.Value,
             ToolMode = chatOptionsValue?.GetChatToolMode(),
             Tools = tools,
             AdditionalProperties = chatOptionsValue?.GetAdditionalProperties(s_chatOptionProperties),

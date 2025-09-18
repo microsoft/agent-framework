@@ -9,19 +9,20 @@ using Microsoft.Agents.Declarative;
 var text =
     """
     kind: GptComponentMetadata
+    displayName: =Env.Foo
     type: chat_client_agent
     name: Assistant
     description: Helpful assistant
     instructions: You are a helpful assistant. You answer questions is the language specified by the user.
     model:
-      id: =Env:OPENAI_MODEL
+      id: =Env.OPENAI_MODEL
       options:
         temperature: 0.9
         top_p: 0.95
     connection:
       type: openai
       options:
-        api_key: =Env:OPENAI_APIKEY
+        api_key: =Env.OPENAI_APIKEY
     """;
 
 // Create the agent from the YAML definition.

@@ -66,6 +66,7 @@
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient_FunctionTools/DeclarativeAgent_ChatClient_FunctionTools.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient_CodeInterpreter/DeclarativeAgent_ChatClient_CodeInterpreter.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient_WebSearch/DeclarativeAgent_ChatClient_WebSearch.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient_Dependency_Injection/DeclarativeAgent_ChatClient_Dependency_Injection.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">

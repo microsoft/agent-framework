@@ -2,6 +2,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Bot.ObjectModel.Analysis;
@@ -28,13 +29,14 @@ internal static class AgentBotElementYaml
         var yamlReader = new StringReader(text);
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new InvalidDataException("Text does not contain a valid agent definition.");
 
-        SemanticModel semanticModel = rootElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
-        var environmentVariables = semanticModel.GetAllEnvironmentVariablesReferencedInTheBot();
-
         if (rootElement is not GptComponentMetadata agentDefinition)
         {
             throw new InvalidDataException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(GptComponentMetadata)}.");
         }
+
+        // Use PowerFx to evaluate the expressions in the agent definition.
+        SemanticModel semanticModel = agentDefinition.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
+        var environmentVariables = semanticModel.GetAllEnvironmentVariablesReferencedInTheBot();
 
         return agentDefinition;
     }
@@ -51,6 +53,24 @@ internal static class AgentBotElementYaml
         public bool IsEnvironmentFeatureEnabled(string featureName, bool defaultValue) => true;
 
         public bool IsTenantFeatureEnabled(string featureName, bool defaultValue) => defaultValue;
+    }
+
+    public static TDialog WrapWithBot<TDialog>(this TDialog dialog) where TDialog : DialogBase
+    {
+        BotDefinition bot
+            = new BotDefinition.Builder
+            {
+                Components =
+                    {
+                        new DialogComponent.Builder
+                        {
+                            SchemaName = dialog.HasSchemaName ? dialog.SchemaName : "default-schema",
+                            Dialog = dialog.ToBuilder(),
+                        }
+                    }
+            }.Build();
+
+        return bot.Descendants().OfType<TDialog>().First();
     }
     #endregion
 }
