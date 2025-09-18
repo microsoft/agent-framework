@@ -2,6 +2,7 @@
 
 using System;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -78,6 +79,7 @@ public abstract class ServiceIdAgentThread : AgentThread
 
     internal sealed class ServiceIdAgentThreadState
     {
+        [JsonPropertyName("serviceThreadId")]
         public string? ServiceThreadId { get; set; }
     }
 }
