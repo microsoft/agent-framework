@@ -14,5 +14,5 @@ internal partial class SetVariableTemplate
     }
 
     public SetVariable Model { get; }
-    internal PropertyPath Variable { get; }
+    public PropertyPath Variable { get; }
 }
