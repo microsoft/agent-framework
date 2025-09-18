@@ -647,9 +647,11 @@ void EvaluateEnumExpression<TWrapper, TValue>(
     string targetVariable,
     IDictionary<TWrapper, string> resultMap,
     string defaultValue = null,
-    bool qualifyResult = false)
+    bool qualifyResult = false,
+    bool isNullable = false)
         where TWrapper : EnumWrapper
 {
+    string resultType = $"{GetTypeAlias<TValue>()}{(isNullable ? "?" : "")}";
     if (expression is null)
     {
         
@@ -664,7 +666,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
@@ -725,7 +727,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
@@ -797,7 +799,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
@@ -856,7 +858,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
@@ -884,7 +886,7 @@ this.Write(" = await context.ReadStateAsync<");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
@@ -942,7 +944,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
@@ -970,7 +972,7 @@ this.Write(" = await context.EvaluateExpressionAsync");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default

@@ -65,32 +65,34 @@ void EvaluateEnumExpression<TWrapper, TValue>(
     string targetVariable,
     IDictionary<TWrapper, string> resultMap,
     string defaultValue = null,
-    bool qualifyResult = false)
+    bool qualifyResult = false,
+    bool isNullable = false)
         where TWrapper : EnumWrapper
 {
+    string resultType = $"{GetTypeAlias<TValue>()}{(isNullable ? "?" : "")}";
     if (expression is null)
     {#>
-        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = <#= Format<TValue>(defaultValue) #>;<#+ 
+        <#= resultType #> <#= targetVariable #> = <#= Format<TValue>(defaultValue) #>;<#+ 
     }
     else if (expression.IsLiteral)
     { 
         resultMap.TryGetValue(expression.LiteralValue, out string resultValue);
         if (qualifyResult)
         {#>
-        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = <#= typeof(TValue).Name #>.<#= resultValue #>;<#+ 
+        <#= resultType #> <#= targetVariable #> = <#= typeof(TValue).Name #>.<#= resultValue #>;<#+ 
         }
         else
         {#>
-        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = <#= Format<TValue>(resultValue) #>;<#+ 
+        <#= resultType #> <#= targetVariable #> = <#= Format<TValue>(resultValue) #>;<#+ 
         }
     }
     else if (expression.IsVariableReference)
     {#>
-        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = await context.ReadStateAsync<<#= typeof(TValue).Name #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+        <#= resultType #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultType #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
     {#>
-        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= typeof(TValue).Name #>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+        <#= resultType #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= resultType #>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else
     {

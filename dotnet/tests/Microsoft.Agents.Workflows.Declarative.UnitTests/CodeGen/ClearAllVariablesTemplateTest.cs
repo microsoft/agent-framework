@@ -9,23 +9,33 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 public class ClearAllVariablesTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public void InitializeLiteralValue()
+    public void LiteralEnum()
     {
         // Arrange
         EnumExpression<VariablesToClearWrapper>.Builder expressionBuilder = new(EnumExpression<VariablesToClearWrapper>.Literal(VariablesToClear.AllGlobalVariables));
 
         // Act, Assert
-        this.ExecuteTest(nameof(InitializeLiteralValue), expressionBuilder);
+        this.ExecuteTest(nameof(LiteralEnum), expressionBuilder);
     }
 
     [Fact]
-    public void InitializeVariable()
+    public void VariableEnum()
     {
         // Arrange
         EnumExpression<VariablesToClearWrapper>.Builder expressionBuilder = new(EnumExpression<VariablesToClearWrapper>.Variable(PropertyPath.TopicVariable("MyClearEnum")));
 
         // Act, Assert
-        this.ExecuteTest(nameof(InitializeVariable), expressionBuilder);
+        this.ExecuteTest(nameof(VariableEnum), expressionBuilder);
+    }
+
+    [Fact]
+    public void UnsupportedEnum()
+    {
+        // Arrange
+        EnumExpression<VariablesToClearWrapper>.Builder expressionBuilder = new(EnumExpression<VariablesToClearWrapper>.Literal(VariablesToClear.UserScopedVariables));
+
+        // Act, Assert
+        this.ExecuteTest(nameof(UnsupportedEnum), expressionBuilder);
     }
 
     private void ExecuteTest(
