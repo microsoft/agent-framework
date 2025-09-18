@@ -173,7 +173,6 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
 
     internal sealed class StoreState
     {
-        [JsonPropertyName("messages")]
         public List<ChatMessage> Messages { get; set; } = [];
     }
 

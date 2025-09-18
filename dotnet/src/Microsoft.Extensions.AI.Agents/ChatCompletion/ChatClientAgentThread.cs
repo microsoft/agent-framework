@@ -264,13 +264,10 @@ public class ChatClientAgentThread : AgentThread
 
     internal sealed class ThreadState
     {
-        [JsonPropertyName("conversationId")]
         public string? ConversationId { get; set; }
 
-        [JsonPropertyName("storeState")]
         public JsonElement? StoreState { get; set; }
 
-        [JsonPropertyName("aiContextProviderState")]
         public JsonElement? AIContextProviderState { get; set; }
     }
 }

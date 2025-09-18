@@ -79,7 +79,6 @@ public abstract class ServiceIdAgentThread : AgentThread
 
     internal sealed class ServiceIdAgentThreadState
     {
-        [JsonPropertyName("serviceThreadId")]
         public string? ServiceThreadId { get; set; }
     }
 }

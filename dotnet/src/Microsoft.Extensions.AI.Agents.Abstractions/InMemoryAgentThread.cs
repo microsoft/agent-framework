@@ -92,7 +92,6 @@ public abstract class InMemoryAgentThread : AgentThread
 
     internal sealed class InMemoryAgentThreadState
     {
-        [JsonPropertyName("storeState")]
         public JsonElement? StoreState { get; set; }
     }
 }
