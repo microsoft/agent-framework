@@ -17,7 +17,7 @@ namespace Microsoft.Agents.Workflows;
 /// </summary>
 public class StreamingRun
 {
-    private TaskCompletionSource<object>? _waitForResponseSource = null;
+    private TaskCompletionSource<object>? _waitForResponseSource;
     private readonly ISuperStepRunner _stepRunner;
 
     /// <summary>
@@ -86,7 +86,7 @@ public class StreamingRun
         bool blockOnPendingRequest,
         [EnumeratorCancellation] CancellationToken cancellation = default)
     {
-        List<WorkflowEvent> eventSink = new();
+        List<WorkflowEvent> eventSink = [];
 
         this._stepRunner.WorkflowEvent += OnWorkflowEvent;
 
@@ -102,8 +102,7 @@ public class StreamingRun
                 }
 
                 bool hadCompletionEvent = false;
-                List<WorkflowEvent> outputEvents = Interlocked.Exchange(ref eventSink, new());
-                foreach (WorkflowEvent raisedEvent in outputEvents)
+                foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
                 {
                     yield return raisedEvent;
 
@@ -132,15 +131,9 @@ public class StreamingRun
                     !this._stepRunner.HasUnprocessedMessages &&
                     this._stepRunner.HasUnservicedRequests)
                 {
-                    if (this._waitForResponseSource == null)
-                    {
-                        this._waitForResponseSource = new();
-                    }
+                    this._waitForResponseSource ??= new();
 
-                    using CancellationTokenRegistration registration = cancellation.Register(() =>
-                    {
-                        this._waitForResponseSource?.SetResult(new());
-                    });
+                    using CancellationTokenRegistration registration = cancellation.Register(() => this._waitForResponseSource?.SetResult(new()));
 
                     await this._waitForResponseSource.Task.ConfigureAwait(false);
                     this._waitForResponseSource = null;
@@ -203,7 +196,7 @@ public static class StreamingRunExtensions
         await foreach (WorkflowEvent @event in handle.WatchStreamAsync(cancellation).ConfigureAwait(false))
         {
             ExternalResponse? maybeResponse = eventCallback?.Invoke(@event);
-            if (maybeResponse != null)
+            if (maybeResponse is not null)
             {
                 await handle.SendResponseAsync(maybeResponse).ConfigureAwait(false);
             }

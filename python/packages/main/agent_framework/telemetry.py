@@ -22,6 +22,7 @@ from ._pydantic import AFBaseSettings
 from .exceptions import AgentInitializationError, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
+    from azure.core.credentials import TokenCredential
     from opentelemetry.metrics import Histogram
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
@@ -413,10 +414,13 @@ class OtelSettings(AFBaseSettings):
         """Check if the setup has been executed."""
         return self._executed_setup
 
-    def setup_telemetry(self) -> None:
+    def setup_telemetry(self, credential: "TokenCredential | None" = None) -> None:
         """Setup telemetry based on the settings.
 
         If both connection_string and otlp_endpoint both will be used.
+
+        Args:
+            credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
         """
         if not self.ENABLED or self._executed_setup:
             return
@@ -438,6 +442,7 @@ class OtelSettings(AFBaseSettings):
 
             configure_azure_monitor(
                 connection_string=self.application_insights_connection_string,
+                credential=credential,
                 logger_name="agent_framework",
                 resource=resource,
                 enable_live_metrics=self.application_insights_live_metrics,
@@ -458,6 +463,7 @@ def setup_telemetry(
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | None = None,
     application_insights_connection_string: str | None = None,
+    credential: "TokenCredential | None" = None,
     enable_live_metrics: bool | None = None,
 ) -> None:
     """Setup telemetry with optionally provided settings.
@@ -472,6 +478,8 @@ def setup_telemetry(
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
         application_insights_connection_string: The Azure Monitor connection string. Default is None.
+        credential: The credential to use for Azure Monitor Entra ID authentication.
+            Default is None.
         enable_live_metrics: Enable Azure Monitor live metrics. Default is False.
 
     """
@@ -486,7 +494,7 @@ def setup_telemetry(
         OTEL_SETTINGS.application_insights_connection_string = application_insights_connection_string
     if enable_live_metrics is not None:
         OTEL_SETTINGS.application_insights_live_metrics = enable_live_metrics
-    OTEL_SETTINGS.setup_telemetry()
+    OTEL_SETTINGS.setup_telemetry(credential=credential)
 
 
 # region Chat Client Telemetry

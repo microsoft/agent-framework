@@ -78,8 +78,7 @@ public class FormulaValueExtensionsTests
     {
         BlankValue formulaValue = FormulaValue.NewBlank();
         Assert.Equal(DataType.Blank, formulaValue.GetDataType());
-
-        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
+        Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
 
         Assert.Equal(string.Empty, formulaValue.Format());
     }
@@ -89,7 +88,7 @@ public class FormulaValueExtensionsTests
     {
         VoidValue formulaValue = FormulaValue.NewVoid();
         Assert.Equal(DataType.Unspecified, formulaValue.GetDataType());
-        BlankDataValue dataCopy = Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
+        Assert.IsType<BlankDataValue>(formulaValue.ToDataValue());
     }
 
     [Fact]
@@ -193,7 +192,7 @@ public class FormulaValueExtensionsTests
             new NamedValue("FieldA", FormulaValue.New("Value1")),
             new NamedValue("FieldB", FormulaValue.New("Value2")),
             new NamedValue("FieldC", FormulaValue.New("Value3")));
-        TableValue formulaValue = TableValue.NewTable(recordValue.Type, [recordValue]);
+        TableValue formulaValue = FormulaValue.NewTable(recordValue.Type, [recordValue]);
 
         TableDataValue dataValue = formulaValue.ToTable();
         Assert.Equal(formulaValue.Rows.Count(), dataValue.Values.Length);

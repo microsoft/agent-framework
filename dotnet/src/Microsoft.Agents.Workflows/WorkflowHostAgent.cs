@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -14,23 +15,23 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
 
-internal class WorkflowHostAgent : AIAgent
+internal sealed class WorkflowHostAgent : AIAgent
 {
     private readonly Workflow<List<ChatMessage>> _workflow;
-    private readonly string? _id, _name;
+    private readonly string? _id;
 
-    private readonly ConcurrentDictionary<string, string> _assignedRunIds = new();
-    private readonly Dictionary<string, StreamingRun> _runningWorkflows = new();
+    private readonly ConcurrentDictionary<string, string> _assignedRunIds = [];
+    private readonly Dictionary<string, StreamingRun> _runningWorkflows = [];
 
     public WorkflowHostAgent(Workflow<List<ChatMessage>> workflow, string? id = null, string? name = null)
     {
         this._workflow = Throw.IfNull(workflow, nameof(workflow));
 
         this._id = id;
-        this._name = name;
+        this.Name = name;
     }
 
-    public override string? Name => this._name;
+    public override string? Name { get; }
     public override string Id => this._id ?? base.Id;
 
     private string GenerateNewId()
@@ -47,6 +48,9 @@ internal class WorkflowHostAgent : AIAgent
 
     public override AgentThread GetNewThread() => new WorkflowThread(this.Id, this.Name, this.GenerateNewId());
 
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new WorkflowThread(serializedThread, jsonSerializerOptions);
+
     private async
     IAsyncEnumerable<AgentRunResponseUpdate> InvokeStageAsync(
         WorkflowThread conversation,
@@ -61,7 +65,7 @@ internal class WorkflowHostAgent : AIAgent
             // in the case of new threads.
             if (!this._runningWorkflows.TryGetValue(runId, out StreamingRun? run))
             {
-                run = await InProcessExecution.StreamAsync<List<ChatMessage>>(this._workflow, messages, cancellation)
+                run = await InProcessExecution.StreamAsync(this._workflow, messages, cancellation)
                                                        .ConfigureAwait(false);
                 this._runningWorkflows[runId] = run;
             }
@@ -98,10 +102,7 @@ internal class WorkflowHostAgent : AIAgent
 
     private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellation = default)
     {
-        if (thread is null)
-        {
-            thread = this.GetNewThread();
-        }
+        thread ??= this.GetNewThread();
 
         if (thread is not WorkflowThread workflowThread)
         {

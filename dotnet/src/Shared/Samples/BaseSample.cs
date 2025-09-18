@@ -40,7 +40,7 @@ public abstract class BaseSample : TextWriter
     public BaseSample Console => this;
 
     /// <inheritdoc />
-    public override Encoding Encoding => System.Text.Encoding.UTF8;
+    public override Encoding Encoding => Encoding.UTF8;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="BaseSample"/> class, setting up logging, configuration, and
@@ -79,10 +79,8 @@ public abstract class BaseSample : TextWriter
     /// Writes a user message to the console.
     /// </summary>
     /// <param name="message">The text of the message to be sent. Cannot be null or empty.</param>
-    protected void WriteUserMessage(string message)
-    {
+    protected void WriteUserMessage(string message) =>
         this.WriteMessageOutput(new ChatMessage(ChatRole.User, message));
-    }
 
     /// <summary>
     /// Processes and writes the latest agent chat response to the console, including metadata and content details.
@@ -124,9 +122,9 @@ public abstract class BaseSample : TextWriter
     {
         string authorExpression = message.Role == ChatRole.User ? string.Empty : FormatAuthor();
         string contentExpression = message.Text.Trim();
-        bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
-        string codeMarker = isCode ? "\n  [CODE]\n" : " ";
-        Console.WriteLine($"\n# {message.Role}{authorExpression}:{codeMarker}{contentExpression}");
+        const bool IsCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
+        const string CodeMarker = IsCode ? "\n  [CODE]\n" : " ";
+        Console.WriteLine($"\n# {message.Role}{authorExpression}:{CodeMarker}{contentExpression}");
 
         // Provide visibility for inner content (that isn't TextContent).
         foreach (AIContent item in message.Contents)
@@ -166,9 +164,9 @@ public abstract class BaseSample : TextWriter
 
         string authorExpression = update.Role == ChatRole.User ? string.Empty : FormatAuthor();
         string contentExpression = string.IsNullOrWhiteSpace(update.Text) ? string.Empty : update.Text;
-        bool isCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
-        string codeMarker = isCode ? "\n  [CODE]\n" : " ";
-        Console.WriteLine($"\n# {update.Role}{authorExpression}:{codeMarker}{contentExpression}");
+        const bool IsCode = false; //message.AdditionalProperties?.ContainsKey(OpenAIAssistantAgent.CodeInterpreterMetadataKey) ?? false;
+        const string CodeMarker = IsCode ? "\n  [CODE]\n" : " ";
+        Console.WriteLine($"\n# {update.Role}{authorExpression}:{CodeMarker}{contentExpression}");
 
         // Provide visibility for inner content (that isn't TextContent).
         foreach (AIContent item in update.Contents)

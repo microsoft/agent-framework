@@ -15,10 +15,19 @@ namespace Microsoft.Agents.Workflows.Execution;
 /// Ordering is relevant because in at least one case, the order of sinks is significant for the execution of
 /// the edge: <see cref="FanOutEdgeData"/>.
 /// </remarks>
-/// <param name="sourceIds">An ordered list of unique identifiers of the sources connected by this edge.</param>
-/// <param name="sinkIds">An ordered list of unique identifiers of the sinks connected by this edge.</param>
-public class EdgeConnection(List<string> sourceIds, List<string> sinkIds) : IEquatable<EdgeConnection>
+public sealed class EdgeConnection : IEquatable<EdgeConnection>
 {
+    /// <summary>
+    /// Create an <see cref="EdgeConnection"/> instance with the specified source and sink IDs.
+    /// </summary>
+    /// <param name="sourceIds">An ordered list of unique identifiers of the sources connected by this edge.</param>
+    /// <param name="sinkIds">An ordered list of unique identifiers of the sinks connected by this edge.</param>
+    public EdgeConnection(List<string> sourceIds, List<string> sinkIds)
+    {
+        this.SourceIds = Throw.IfNull(sourceIds);
+        this.SinkIds = Throw.IfNull(sinkIds);
+    }
+
     /// <summary>
     /// Creates a new <see cref="EdgeConnection"/> instance with the specified source and sink IDs, ensuring that all
     /// IDs are unique.
@@ -56,7 +65,7 @@ public class EdgeConnection(List<string> sourceIds, List<string> sinkIds) : IEqu
             return false;
         }
 
-        if (object.ReferenceEquals(this, other))
+        if (ReferenceEquals(this, other))
         {
             return true;
         }
@@ -82,13 +91,27 @@ public class EdgeConnection(List<string> sourceIds, List<string> sinkIds) : IEqu
         );
     }
 
+    /// <inheritdoc />
+    public static bool operator ==(EdgeConnection? left, EdgeConnection? right)
+    {
+        if (left is null)
+        {
+            return right is null;
+        }
+
+        return left.Equals(right);
+    }
+
+    /// <inheritdoc />
+    public static bool operator !=(EdgeConnection? left, EdgeConnection? right) => !(left == right);
+
     /// <summary>
     /// The unique identifiers of the sources connected by this edge.
     /// </summary>
-    public List<string> SourceIds { get; } = sourceIds;
+    public List<string> SourceIds { get; }
 
     /// <summary>
     /// The unique identifiers of the sinks connected by this edge.
     /// </summary>
-    public List<string> SinkIds { get; } = sinkIds;
+    public List<string> SinkIds { get; }
 }

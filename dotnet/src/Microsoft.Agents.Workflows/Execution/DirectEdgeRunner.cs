@@ -5,26 +5,23 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeData) :
+internal sealed class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeData) :
     EdgeRunner<DirectEdgeData>(runContext, edgeData)
 {
     public IWorkflowContext WorkflowContext { get; } = runContext.Bind(edgeData.SinkId);
 
-    private async ValueTask<Executor> FindRouterAsync(IStepTracer? tracer)
-    {
-        return await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
+    private async ValueTask<Executor> FindRouterAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
                                     .ConfigureAwait(false);
-    }
 
     public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope, IStepTracer? tracer)
     {
-        if (envelope.TargetId != null && this.EdgeData.SinkId != envelope.TargetId)
+        if (envelope.TargetId is not null && this.EdgeData.SinkId != envelope.TargetId)
         {
             return [];
         }
 
         object message = envelope.Message;
-        if (this.EdgeData.Condition != null && !this.EdgeData.Condition(message))
+        if (this.EdgeData.Condition is not null && !this.EdgeData.Condition(message))
         {
             return [];
         }

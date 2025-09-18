@@ -16,8 +16,6 @@ public static class ActorRuntimeHostingExtensions
     /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
     /// <returns>An <see cref="IActorRuntimeBuilder"/> that can be used to further configure the actor runtime.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
-    public static IActorRuntimeBuilder AddActorRuntime(this IHostApplicationBuilder builder)
-    {
-        return ActorRuntimeBuilder.GetOrAdd(builder);
-    }
+    public static IActorRuntimeBuilder AddActorRuntime(this IHostApplicationBuilder builder) =>
+        ActorRuntimeBuilder.GetOrAdd(builder);
 }

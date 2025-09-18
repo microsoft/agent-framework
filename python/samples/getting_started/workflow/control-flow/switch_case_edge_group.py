@@ -6,19 +6,20 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
-from agent_framework import ChatMessage, Role  # Core chat primitives used to form LLM requests
-from agent_framework.azure import AzureChatClient  # Thin client for Azure OpenAI chat models
-from agent_framework.workflow import (
+from agent_framework import (  # Core chat primitives used to form LLM requests
     AgentExecutor,  # Wraps an agent so it can run inside a workflow
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
     Case,  # Case entry for a switch-case edge group
+    ChatMessage,
     Default,  # Default branch when no cases match
+    Role,
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowCompletedEvent,  # Terminal event for successful completion
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
 )
+from agent_framework.azure import AzureChatClient  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs with validation
 

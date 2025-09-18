@@ -9,26 +9,16 @@ public partial class WorkflowBuilderSmokeTests
 {
     private sealed class NoOpExecutor(string? id = null) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-        {
-            return routeBuilder.AddHandler<object>(
-                (msg, ctx) =>
-                {
-                    return ctx.SendMessageAsync(msg);
-                });
-        }
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+            routeBuilder.AddHandler<object>(
+                (msg, ctx) => ctx.SendMessageAsync(msg));
     }
 
     private sealed class SomeOtherNoOpExecutor(string? id = null) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-        {
-            return routeBuilder.AddHandler<object>(
-                (msg, ctx) =>
-                {
-                    return ctx.SendMessageAsync(msg);
-                });
-        }
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+            routeBuilder.AddHandler<object>(
+                (msg, ctx) => ctx.SendMessageAsync(msg));
     }
 
     [Fact]
@@ -42,7 +32,7 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.Registrations.Should().HaveCount(1);
         workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be(typeof(NoOpExecutor));
+        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -57,7 +47,7 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.Registrations.Should().HaveCount(1);
         workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be(typeof(NoOpExecutor));
+        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -89,6 +79,6 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.Registrations.Should().HaveCount(1);
         workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be(typeof(NoOpExecutor));
+        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 }

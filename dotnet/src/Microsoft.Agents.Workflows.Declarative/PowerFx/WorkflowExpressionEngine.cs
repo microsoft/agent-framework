@@ -13,7 +13,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
-internal class WorkflowExpressionEngine
+internal sealed class WorkflowExpressionEngine
 {
     private readonly RecalcEngine _engine;
 
@@ -39,7 +39,7 @@ internal class WorkflowExpressionEngine
     public ImmutableArray<T> GetValue<T>(ArrayExpressionOnly<T> expression) => this.Evaluate(expression).Value;
 
     public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression) where TValue : EnumWrapper =>
-        this.Evaluate<TValue>(expression);
+        this.Evaluate(expression);
 
     private EvaluationResult<bool> Evaluate(BoolExpression expression)
     {
@@ -186,7 +186,7 @@ internal class WorkflowExpressionEngine
     {
         Throw.IfNull(expression, nameof(expression));
 
-        if (expression.LiteralValue != null)
+        if (expression.LiteralValue is not null)
         {
             return new EvaluationResult<TValue?>(expression.LiteralValue, SensitivityLevel.None);
         }
@@ -240,7 +240,7 @@ internal class WorkflowExpressionEngine
     {
         if (value is BlankValue)
         {
-            return ImmutableArray<TValue>.Empty;
+            return [];
         }
 
         if (value is not TableValue tableValue)
@@ -254,8 +254,7 @@ internal class WorkflowExpressionEngine
             List<TValue> list = [];
             foreach (RecordDataValue row in tableDataValue.Values)
             {
-                TValue? s = TableItemParser<TValue>.Parse(row);
-                if (s != null)
+                if (TableItemParser<TValue>.Parse(row) is TValue s)
                 {
                     list.Add(s);
                 }

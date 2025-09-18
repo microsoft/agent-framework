@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
 
@@ -15,12 +17,22 @@ public class Workflow
     /// <summary>
     /// A dictionary of executor providers, keyed by executor ID.
     /// </summary>
-    internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = new();
+    internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = [];
+
+    internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
 
     /// <summary>
     /// Gets the collection of edges grouped by their source node identifier.
     /// </summary>
-    public Dictionary<string, HashSet<Edge>> Edges { get; internal init; } = new();
+    public Dictionary<string, HashSet<EdgeInfo>> ReflectEdges()
+    {
+        return this.Edges.Keys.ToDictionary(
+            keySelector: key => key,
+            elementSelector: key => new HashSet<EdgeInfo>(this.Edges[key].Select(RepresentationExtensions.ToEdgeInfo))
+        );
+    }
+
+    internal Dictionary<string, InputPort> Ports { get; init; } = [];
 
     /// <summary>
     /// Gets the collection of external request ports, keyed by their ID.
@@ -28,7 +40,13 @@ public class Workflow
     /// <remarks>
     /// Each port has a corresponding entry in the <see cref="Registrations"/> dictionary.
     /// </remarks>
-    public Dictionary<string, InputPort> Ports { get; internal init; } = new();
+    public Dictionary<string, InputPortInfo> ReflectPorts()
+    {
+        return this.Ports.Keys.ToDictionary(
+            keySelector: key => key,
+            elementSelector: key => this.Ports[key].ToPortInfo()
+        );
+    }
 
     /// <summary>
     /// Gets the identifier of the starting executor of the workflow.

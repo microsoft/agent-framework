@@ -21,6 +21,63 @@ namespace OpenAI;
 public static class OpenAIAssistantClientExtensions
 {
     /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
+    /// </summary>
+    /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <param name="agentId">The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    public static ChatClientAgent GetAIAgent(
+        this AssistantClient assistantClient,
+        string agentId,
+        ChatOptions? chatOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (assistantClient is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClient));
+        }
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
+        }
+
+        var assistant = assistantClient.GetAssistant(agentId, cancellationToken);
+        return assistant.AsAIAgent(assistantClient, chatOptions);
+    }
+
+    /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
+    /// </summary>
+    /// <param name="assistantClient">The <see cref="AssistantClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
+    /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
+    /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    public static async Task<ChatClientAgent> GetAIAgentAsync(
+        this AssistantClient assistantClient,
+        string agentId,
+        ChatOptions? chatOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (assistantClient is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClient));
+        }
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
+        }
+
+        var assistanceResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
+
+        return assistanceResponse.AsAIAgent(assistantClient, chatOptions);
+    }
+
+    /// <summary>
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
     /// </summary>
     /// <param name="client">The OpenAI <see cref="AssistantClient" /> to use for the agent.</param>
@@ -33,9 +90,8 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
-    public static AIAgent CreateAIAgent(this AssistantClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
-    {
-        return client.CreateAIAgent(
+    public static AIAgent CreateAIAgent(this AssistantClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null) =>
+        client.CreateAIAgent(
             model,
             new ChatClientAgentOptions()
             {
@@ -48,7 +104,6 @@ public static class OpenAIAssistantClientExtensions
                 }
             },
             loggerFactory);
-    }
 
     /// <summary>
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
@@ -108,10 +163,7 @@ public static class OpenAIAssistantClientExtensions
             }
         };
 
-#pragma warning disable CA2000 // Dispose objects before losing scope
-        var chatClient = client.AsIChatClient(assistantId);
-#pragma warning restore CA2000 // Dispose objects before losing scope
-        return new ChatClientAgent(chatClient, agentOptions, loggerFactory);
+        return new ChatClientAgent(client.AsIChatClient(assistantId), agentOptions, loggerFactory);
     }
 
     /// <summary>
@@ -127,9 +179,8 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
-    public static async Task<AIAgent> CreateAIAgentAsync(this AssistantClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
-    {
-        return await client.CreateAIAgentAsync(
+    public static async Task<AIAgent> CreateAIAgentAsync(this AssistantClient client, string model, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null) =>
+        await client.CreateAIAgentAsync(
             model,
             new ChatClientAgentOptions()
             {
@@ -142,7 +193,6 @@ public static class OpenAIAssistantClientExtensions
                 }
             },
             loggerFactory).ConfigureAwait(false);
-    }
 
     /// <summary>
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.

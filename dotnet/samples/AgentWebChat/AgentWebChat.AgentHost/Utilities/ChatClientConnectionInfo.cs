@@ -52,7 +52,7 @@ public class ChatClientConnectionInfo
             Enum.TryParse(providerValue, ignoreCase: true, out provider);
         }
 
-        if (endpoint is null && provider != ClientChatProvider.OpenAI || model is null || provider == ClientChatProvider.Unknown)
+        if ((endpoint is null && provider != ClientChatProvider.OpenAI) || model is null || provider is ClientChatProvider.Unknown)
         {
             settings = null;
             return false;

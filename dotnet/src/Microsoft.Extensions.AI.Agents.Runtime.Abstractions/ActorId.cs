@@ -149,13 +149,11 @@ public readonly struct ActorId : IEquatable<ActorId>
             }
 
             string? actorIdString = reader.GetString() ?? throw new JsonException("ActorId cannot be null");
-            return ActorId.Parse(actorIdString);
+            return Parse(actorIdString);
         }
 
         /// <inheritdoc/>
-        public override void Write(Utf8JsonWriter writer, ActorId value, JsonSerializerOptions options)
-        {
+        public override void Write(Utf8JsonWriter writer, ActorId value, JsonSerializerOptions options) =>
             writer.WriteStringValue(value.ToString());
-        }
     }
 }
