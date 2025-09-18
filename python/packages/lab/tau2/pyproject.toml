@@ -85,3 +85,6 @@ markers = [
   "unit: marks tests as unit tests",
   "integration: marks tests as integration tests",
 ]
+env = [
+  "TAU2_DATA_DIR=data",
+]

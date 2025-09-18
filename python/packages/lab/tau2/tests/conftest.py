@@ -1,8 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Pytest configuration and fixtures for tau2 tests."""
-
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,9 +10,7 @@ def setup_tau2_data():
     """Set up tau2 data directory by cloning repository if needed."""
 
     # Get project directory (parent of tests directory)
-    tests_dir = Path(__file__).parent
-    project_dir = tests_dir.parent
-    data_dir = project_dir / "data"
+    data_dir = Path.cwd() / "data"
 
     print("Setting up tau2 data directory...")
 
@@ -24,10 +19,6 @@ def setup_tau2_data():
         print(f"Data directory already exists at {data_dir}")
     else:
         print("Data directory not found. Cloning tau2-bench repository...")
-
-        # Change to project directory
-        original_cwd = os.getcwd()
-        os.chdir(project_dir)
 
         try:
             # Clone the repository
@@ -41,7 +32,7 @@ def setup_tau2_data():
 
             # Move data directory
             print("Moving data directory...")
-            tau2_bench_dir = project_dir / "tau2-bench"
+            tau2_bench_dir = Path.cwd() / "tau2-bench"
             tau2_data_dir = tau2_bench_dir / "data"
 
             if tau2_data_dir.exists():
@@ -61,12 +52,8 @@ def setup_tau2_data():
         except Exception as e:
             print(f"ERROR: Failed to set up data directory: {e}")
             raise
-        finally:
-            os.chdir(original_cwd)
 
-    # Set TAU2_DATA_DIR environment variable
-    os.environ["TAU2_DATA_DIR"] = str(data_dir)
-    print(f"TAU2_DATA_DIR set to: {data_dir}")
+    print(f"TAU2_DATA_DIR should be set to: {data_dir}")
 
     return str(data_dir)
 

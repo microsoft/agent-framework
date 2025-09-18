@@ -140,7 +140,7 @@ def test_get_token_count_function_result():
 @patch("agent_framework_lab_tau2._sliding_window.logger")
 def test_truncate_messages_removes_old_messages(mock_logger):
     """Test that truncation removes old messages when token limit exceeded."""
-    sliding_window = SlidingWindowChatMessageList(max_tokens=50)  # Very small limit
+    sliding_window = SlidingWindowChatMessageList(max_tokens=20)  # Very small limit
 
     # Create messages that will exceed the limit
     messages = [
@@ -225,7 +225,7 @@ def test_estimate_any_object_token_count_non_serializable():
 async def test_real_world_scenario():
     """Test a realistic conversation scenario."""
     sliding_window = SlidingWindowChatMessageList(
-        max_tokens=200, system_message="You are a helpful assistant"  # Moderate limit
+        max_tokens=30, system_message="You are a helpful assistant"  # Moderate limit
     )
 
     # Simulate a conversation

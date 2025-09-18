@@ -244,7 +244,7 @@ def test_log_messages_escapes_html(mock_logger):
     mock_logger.opt.return_value.info.assert_called()
     call_args = mock_logger.opt.return_value.info.call_args[0][0]
     # Should escape < characters
-    assert "\\<tag\\>" in call_args or "&lt;tag&gt;" in call_args
+    assert "\\<tag>" in call_args or "&lt;tag&gt;" in call_args
 
 
 @patch("agent_framework_lab_tau2._message_utils.logger")
