@@ -75,6 +75,23 @@ Open the `python` folder in [VSCode](https://code.visualstudio.com/docs/editor/w
 Open any of the `.py` files in the project and run the `Python: Select Interpreter`
 command from the command palette. Make sure the virtual env (default path is `.venv`) created by `uv` is selected.
 
+### Configuring Unit Testing in VSCode
+
+- We have removed the strict dependency on forcing `pytest` usage via the `.vscode/settings.json` file.
+- Developers are free to set up unit tests using their preferred framework, whether it is `pytest` or `unittest`.
+- If needed, adjust VSCode's local `settings.json` (accessed via the Command Palette(`Ctrl+Shift+P`) and type `Preferences: Open User Settings (JSON)`) to configure the test framework. For example:
+
+  ```json
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  ```
+
+  Or, for `unittest`:
+
+  ```json
+  "python.testing.unittestEnabled": true,
+  "python.testing.pytestEnabled": false,
+
 ## LLM setup
 
 Make sure you have an
