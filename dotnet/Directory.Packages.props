@@ -83,7 +83,7 @@
     <PackageVersion Include="ModelContextProtocol" Version="0.3.0-preview.4" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.1" />
-    <PackageVersion Include="OllamaSharp" Version="5.3.6" />
+    <PackageVersion Include="OllamaSharp" Version="5.4.4" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.0" />
     <!-- Workflows -->
