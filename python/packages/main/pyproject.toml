@@ -60,7 +60,8 @@ all = [
     "agent-framework-azure",
     "agent-framework-foundry",
     "agent-framework-runtime",
-    "agent-framework-mem0"
+    "agent-framework-mem0",
+    "agent-framework-redis"
 ]
 
 [tool.uv]
