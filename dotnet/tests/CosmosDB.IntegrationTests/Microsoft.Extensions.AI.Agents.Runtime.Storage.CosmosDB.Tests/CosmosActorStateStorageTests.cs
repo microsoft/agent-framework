@@ -285,7 +285,6 @@ public class CosmosActorStateStorageTests
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
         // Create a complex object with various types
-#pragma warning disable CA1861 // Avoid constant arrays as arguments
         var complexObject = new
         {
             Id = 123,
@@ -295,7 +294,7 @@ public class CosmosActorStateStorageTests
                 { "StringProp", "value" },
                 { "NumberProp", 42.5 },
                 { "BoolProp", true },
-                { "ArrayProp", new[] { 1, 2, 3 } },
+                { "ArrayProp", (int[])[1, 2, 3] },
                 { "NestedProp", new { Inner = "nested value" } }
             },
             Tags = new[] { "tag1", "tag2", "tag3" },
@@ -305,7 +304,6 @@ public class CosmosActorStateStorageTests
                 { "author", "test" }
             }
         };
-#pragma warning restore CA1861 // Avoid constant arrays as arguments
 
         const string Key = "complexObject";
         var value = JsonSerializer.SerializeToElement(complexObject);

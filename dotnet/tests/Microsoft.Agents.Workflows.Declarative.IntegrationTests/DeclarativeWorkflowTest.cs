@@ -20,7 +20,7 @@ namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests;
 /// Tests execution of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
 /// </summary>
 [Collection("Global")]
-public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixture agentFixture) : WorkflowTest(output), IClassFixture<AgentFixture>
+public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
@@ -58,7 +58,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         AzureAIConfiguration? foundryConfig = configuration.GetSection("AzureAI").Get<AzureAIConfiguration>();
         Assert.NotNull(foundryConfig);
 
-        IReadOnlyDictionary<string, string?> agentMap = await agentFixture.GetAgentsAsync(foundryConfig);
+        IReadOnlyDictionary<string, string?> agentMap = await AgentFixture.GetAgentsAsync(foundryConfig);
 
         IConfiguration workflowConfig =
             new ConfigurationBuilder()

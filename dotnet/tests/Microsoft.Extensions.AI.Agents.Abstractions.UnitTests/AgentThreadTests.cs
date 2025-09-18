@@ -272,13 +272,15 @@ public class AgentThreadTests
     {
         // Arrange
         Mock<AIContextProvider> mockProvider = new();
-        var providerStateElement = JsonSerializer.SerializeToElement(new[] { "CP1" }, TestJsonSerializerContext.Default.StringArray);
+        var providerStateElement = JsonSerializer.SerializeToElement(["CP1"], TestJsonSerializerContext.Default.StringArray);
         mockProvider
             .Setup(m => m.SerializeAsync(It.IsAny<JsonSerializerOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(providerStateElement);
 
-        var thread = new AgentThread();
-        thread.AIContextProvider = mockProvider.Object;
+        var thread = new AgentThread
+        {
+            AIContextProvider = mockProvider.Object
+        };
 
         // Act
         var json = await thread.SerializeAsync();

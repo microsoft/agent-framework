@@ -477,9 +477,7 @@ public sealed class ChatClientAgent : AIAgent
         {
             // We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             // meaning the service doesn't support service managed threads, so the thread cannot be used with this service.
-#pragma warning disable S2302 // "nameof" should be used - False positive.
             throw new InvalidOperationException("Service did not return a valid conversation id when using a service managed thread.");
-#pragma warning restore S2302 // "nameof" should be used
         }
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
