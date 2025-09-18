@@ -46,6 +46,7 @@ def search_flights(origin_airport_code: str,
     by the Redis context provider. We later ask the agent to recall facts from
     these tool results to verify memory is working as expected.
     """
+    # Minimal static catalog used to simulate a tool's structured output
     flights = {
         ("JFK", "LAX"): {"airline": "SkyJet", "duration": "6h 15m", "price": 325, "cabin": "Economy", "baggage": "1 checked bag"},
         ("SFO", "SEA"): {"airline": "Pacific Air", "duration": "2h 5m", "price": 129, "cabin": "Economy", "baggage": "Carry-on only"},
@@ -84,11 +85,18 @@ async def main() -> None:
     # Please set the OPENAI_API_KEY and OPENAI_CHAT_MODEL_ID environment variables to use the OpenAI vectorizer
     # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
 
+    # We attach an embedding vectorizer so the provider can perform hybrid (text + vector)
+    # retrieval. If you prefer text-only retrieval, instantiate RedisProvider without the
+    # 'vectorizer' and vector_* parameters.
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
+    # The provider manages persistence and retrieval. application_id/agent_id/user_id
+    # scope data for multi-tenant separation; thread_id (set later) narrows to a
+    # specific conversation. overwrite_redis_index makes the example idempotent for
+    # repeated local runs.
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
@@ -106,24 +114,54 @@ async def main() -> None:
     
     # Build sample chat messages to persist to Redis
     messages = [
-        ChatMessage(role=Role.USER, text="A: User Message"),
-        ChatMessage(role=Role.ASSISTANT, text="B: Assistant Message"),
-        ChatMessage(role=Role.SYSTEM, text="C: System Message"),
+        ChatMessage(role=Role.USER, text="runA CONVO: User Message"),
+        ChatMessage(role=Role.ASSISTANT, text="runA CONVO: Assistant Message"),
+        ChatMessage(role=Role.SYSTEM, text="runA CONVO: System Message"),
     ]
 
-    # Write messages to Redis under a sample thread 'runA'
+    # Declare/start a conversation/thread and write messages under 'runA'.
+    # Threads are logical boundaries used by the provider to group and retrieve
+    # conversation-specific context.
+    await provider.thread_created(thread_id="runA")
     await provider.messages_adding(thread_id="runA", new_messages=messages)
 
-    # Retrieve relevant context for model invocation using current prompt as query
+    # Retrieve relevant memories for a hypothetical model call. The provider uses
+    # the current request messages as the retrieval query and returns context to
+    # be injected into the model's instructions.
     ctx = await provider.model_invoking([
         ChatMessage(role=Role.SYSTEM, text="B: Assistant Message")
     ])
 
-    # Inspect retrieved memories injected into instructions
-    # Debug Check to verify that context provider works as expected
+    # Inspect retrieved memories that would be injected into instructions
+    # (Debug-only output so you can verify retrieval works as expected.)
     print(ctx)
     print('\n')
 
+    # Verify stored conversation history retrieval for current scope
+    print("1a. Conversation history via provider.get_conversation_history():")
+    print("-" * 40)
+
+    # Start a new thread ('runB') to demonstrate isolated conversation histories
+    await provider.thread_created(thread_id="runB")
+    messages = [
+        ChatMessage(role=Role.USER, text="runB CONVO: FIRST MESSAGE"),
+        ChatMessage(role=Role.ASSISTANT, text="runB CONVO: FIRST RESPONSE"),
+        ChatMessage(role=Role.USER, text="runB CONVO: SECOND MESSAGE"),
+        ChatMessage(role=Role.ASSISTANT, text="runB CONVO: SECOND RESPONSE"),
+    ]
+    await provider.messages_adding(thread_id="runB", new_messages=messages)
+    # Retrieve a plain-text transcript of the current thread for debugging/inspection
+    runB_conversation_history = await provider.get_conversation_history(num_results=20)
+    print("Conversation History for runB:\n")
+    print(runB_conversation_history)
+    print('\n')
+
+    # Switch back to the 'runA' thread and retrieve its transcript
+    await provider.thread_created(thread_id="runA")
+    runA_conversation_history = await provider.get_conversation_history(num_results=20)
+    print("Conversation History for runA:\n")
+    print(runA_conversation_history)
+    print('\n')
 
     # --- Agent + provider: teach and recall a preference ---
 
@@ -135,6 +173,7 @@ async def main() -> None:
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
+    # Recreate a clean index so the next scenario starts fresh
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
@@ -152,7 +191,8 @@ async def main() -> None:
 
     # Create chat client for the agent
     client = OpenAIChatClient(ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
-    # Create agent wired to the Redis context provider
+    # Create agent wired to the Redis context provider. The provider automatically
+    # persists conversational details and surfaces relevant context on each turn.
     agent = client.create_agent(
             name="MemoryEnhancedAssistant",
             instructions=(
@@ -162,23 +202,24 @@ async def main() -> None:
             tools=[],
             context_providers=provider)
 
-    # Teach a user preference; it will be persisted
+    # Teach a user preference; the agent writes this to the provider's memory
     query = "Remember that I enjoy glugenflorgle"
-    print(f"User to Agent: {query}")
     result = await agent.run(query)
-    print(f"Agent: {result}\n")
+    print("User: ", query)
+    print("Agent: ", result)
 
-    # Ask the agent to recall the stored preference
+    # Ask the agent to recall the stored preference; it should retrieve from memory
     query = "What do I enjoy?"
-    print(f"User to Agent: {query}")
     result = await agent.run(query)
-    print(f"Agent: {result}\n")
+    print("User: ", query)
+    print("Agent: ", result)
+
 
     # --- Agent + provider + tool: store and recall tool-derived context ---
 
     print("3. Agent + provider + tool: store and recall tool-derived context")
     print("-" * 40)
-    # Text-only provider (full-text search only)
+    # Text-only provider (full-text search only). Omits vectorizer and related params.
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
@@ -189,7 +230,8 @@ async def main() -> None:
         user_id="kermit"
     )
 
-    # Create agent exposing the flight search tool
+    # Create agent exposing the flight search tool. Tool outputs are captured by the
+    # provider and become retrievable context for later turns.
     client = OpenAIChatClient(ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     agent = client.create_agent(
             name="MemoryEnhancedAssistant",
@@ -199,17 +241,16 @@ async def main() -> None:
             ),
             tools=search_flights,
             context_providers=provider)
-    # Invoke the tool; outputs become part of context
+    # Invoke the tool; outputs become part of memory/context
     query = "Are there any flights from new york city (jfk) to la? Give me details"
-    print(f"User to Agent: {query}")
     result = await agent.run(query)
-    print(f"Agent: {result}\n")
-
+    print("User: ", query)
+    print("Agent: ", result)
     # Verify the agent can recall tool-derived context
     query = "Which flight did I ask about?"
-    print(f"User to Agent: {query}")
     result = await agent.run(query)
-    print(f"Agent: {result}\n")
+    print("User: ", query)
+    print("Agent: ", result)
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import MutableSequence, Sequence
+from datetime import datetime, timezone
 from functools import reduce
 from operator import and_
 from typing import Any, Literal, cast
@@ -62,6 +63,8 @@ class RedisProvider(ContextProvider):
     drop_redis_index: bool = True
     _per_operation_thread_id: str | None = None
     token_escaper: Any | None = None
+    # Conversation tracking
+    _conversation_id: str | None = None
 
     def __init__(
         self,
@@ -209,6 +212,12 @@ class RedisProvider(ContextProvider):
             {"name": "role", "type": "tag"},
             {"name": "mime_type", "type": "tag"},
             {"name": "content", "type": "text"},
+            # Conversation tracking
+            {"name": "conversation_id", "type": "tag"},
+            {"name": "message_id", "type": "tag"},
+            {"name": "author_name", "type": "tag"},
+            {"name": "created_at_isoformat", "type": "text"},
+            {"name": "created_at_timestamp", "type": "numeric"},
             # Partition fields (TAG for fast filtering)
             {"name": "application_id", "type": "tag"},
             {"name": "agent_id", "type": "tag"},
@@ -284,6 +293,10 @@ class RedisProvider(ContextProvider):
             d.setdefault("agent_id", self.agent_id)
             d.setdefault("user_id", self.user_id)
             d.setdefault("thread_id", self._effective_thread_id)
+            # Conversation defaults
+            d.setdefault("conversation_id", self._conversation_id)
+            d.setdefault("created_at_isoformat", datetime.now(timezone.utc).isoformat())
+            d.setdefault("created_at_timestamp", datetime.now(timezone.utc).timestamp())
 
             # Logical requirement
             if "content" not in d:
@@ -364,6 +377,7 @@ class RedisProvider(ContextProvider):
             "agent_id": self.agent_id,
             "user_id": self.user_id,
             "thread_id": self._effective_thread_id,
+            "conversation_id": self._conversation_id,
         })
 
         if filter_expression is not None:
@@ -455,6 +469,8 @@ class RedisProvider(ContextProvider):
         """
         self._validate_per_operation_thread_id(thread_id)
         self._per_operation_thread_id = self._per_operation_thread_id or thread_id
+        # Track current conversation id (Agent passes conversation_id here)
+        self._conversation_id = thread_id or self._conversation_id
 
     async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
         """Called when a new message is being added to the thread.
@@ -471,15 +487,85 @@ class RedisProvider(ContextProvider):
 
         messages_list = [new_messages] if isinstance(new_messages, ChatMessage) else list(new_messages)
 
-        messages: list[dict[str, str]] = [
-            {"role": message.role.value, "content": message.text}
-            for message in messages_list
-            if message.role.value in {Role.USER.value, Role.ASSISTANT.value, Role.SYSTEM.value}
-            and message.text
-            and message.text.strip()
-        ]
+        messages: list[dict[str, Any]] = []
+        for message in messages_list:
+            if (
+                message.role.value in {Role.USER.value, Role.ASSISTANT.value, Role.SYSTEM.value}
+                and message.text
+                and message.text.strip()
+            ):
+                dt = datetime.now(timezone.utc)
+                shaped: dict[str, Any] = {
+                    "role": message.role.value,
+                    "content": message.text,
+                    "conversation_id": self._conversation_id,
+                    "message_id": message.message_id,
+                    "author_name": message.author_name,
+                    "created_at_isoformat": dt.isoformat(),
+                    "created_at_timestamp": dt.timestamp(),
+                }
+                messages.append(shaped)
         if messages:
             await self._add(data=messages)
+
+    async def get_conversation_history(
+        self,
+        *,
+        num_results: int = 20,
+        return_fields: list[str] | None = None,
+    ) -> Context:
+        """Fetch stored messages for the current scope and conversation.
+
+        Messages in the current conversation are returned in the order they were added.
+
+        Args:
+            num_results: Maximum number of results.
+            return_fields: Optional explicit fields to return.
+
+        Returns:
+            A list of message records.
+        """
+        await self._ensure_index()
+        self._validate_filters()
+
+        combined_filter = self._build_filter_from_dict({
+            "application_id": self.application_id,
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+            "thread_id": self._effective_thread_id,
+            "conversation_id": self._conversation_id,
+        })
+
+        query = FilterQuery(
+            combined_filter,
+            return_fields=(
+                return_fields
+                if return_fields is not None
+                else [
+                    "role",
+                    "content",
+                    "conversation_id",
+                    "message_id",
+                    "author_name",
+                    "created_at_timestamp",
+                    "application_id",
+                    "agent_id",
+                    "user_id",
+                    "thread_id",
+                ]
+            ),
+            num_results=num_results,
+            sort_by="created_at_timestamp",
+        )
+        results = await self.redis_index.query(query)
+        results = cast(list[dict[str, Any]], results)
+        conversation_history = "\n\n".join(
+            str(result.get("role", "")) + ": " + str(result.get("content", ""))
+            for result in results
+            if result.get("content") and result.get("role")
+        )
+        content = TextContent(f"Conversation History:\n{conversation_history}") if conversation_history else None
+        return Context(contents=[content] if content else None)
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called before invoking the model to provide scoped context.
