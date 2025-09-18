@@ -34,7 +34,7 @@ public static class Program
         var workflow = WorkflowHelper.GetWorkflow();
 
         // Create checkpoint manager
-        var checkpointManager = new CheckpointManager();
+        var checkpointManager = CheckpointManager.Default;
         var checkpoints = new List<CheckpointInfo>();
 
         // Execute the workflow and save checkpoints
@@ -102,9 +102,9 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        if (request.Port.Request == typeof(SignalWithNumber))
+        var signal = request.DataAs<SignalWithNumber>();
+        if (signal is not null)
         {
-            var signal = (SignalWithNumber)request.Data;
             switch (signal.Signal)
             {
                 case NumberSignal.Init:
@@ -119,7 +119,7 @@ public static class Program
             }
         }
 
-        throw new NotSupportedException($"Request {request.Port.Request} is not supported");
+        throw new NotSupportedException($"Request {request.PortInfo.RequestType} is not supported");
     }
 
     private static int ReadIntegerFromConsole(string prompt)

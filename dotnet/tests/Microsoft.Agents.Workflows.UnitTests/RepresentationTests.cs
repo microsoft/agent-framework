@@ -106,51 +106,53 @@ public class RepresentationTests
     [Fact]
     public void Test_EdgeInfos()
     {
+        int edgeId = 0;
+
         // Direct Edges
-        Edge directEdgeNoCondition = new(new DirectEdgeData(Source(1), Sink(2)));
+        Edge directEdgeNoCondition = new(new DirectEdgeData(Source(1), Sink(2), TakeEdgeId()));
         RunEdgeInfoMatchTest(directEdgeNoCondition);
 
-        Edge directEdgeNoCondition2 = new(new DirectEdgeData(Source(1), Sink(2)));
+        Edge directEdgeNoCondition2 = new(new DirectEdgeData(Source(1), Sink(2), TakeEdgeId()));
         RunEdgeInfoMatchTest(directEdgeNoCondition, directEdgeNoCondition2);
 
-        Edge directEdgeNoCondition3 = new(new DirectEdgeData(Source(3), Sink(4)));
+        Edge directEdgeNoCondition3 = new(new DirectEdgeData(Source(3), Sink(4), TakeEdgeId()));
         RunEdgeInfoMatchTest(directEdgeNoCondition, directEdgeNoCondition3, expect: false);
 
-        Edge directEdgeWithCondition = new(new DirectEdgeData(Source(3), Sink(4), Condition()));
+        Edge directEdgeWithCondition = new(new DirectEdgeData(Source(3), Sink(4), TakeEdgeId(), Condition()));
         RunEdgeInfoMatchTest(directEdgeWithCondition);
         RunEdgeInfoMatchTest(directEdgeNoCondition2, directEdgeWithCondition, expect: false);
         RunEdgeInfoMatchTest(directEdgeNoCondition3, directEdgeWithCondition, expect: false);
 
         // FanOut Edges
-        Edge fanOutEdgeNoAssigner = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)]));
+        Edge fanOutEdgeNoAssigner = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)], TakeEdgeId()));
         RunEdgeInfoMatchTest(fanOutEdgeNoAssigner);
 
-        Edge fanOutEdgeNoAssigner2 = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)]));
+        Edge fanOutEdgeNoAssigner2 = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)], TakeEdgeId()));
         RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner2);
 
-        Edge fanOutEdgeNoAssigner3 = new(new FanOutEdgeData(Source(1), [Sink(3), Sink(4), Sink(2)]));
+        Edge fanOutEdgeNoAssigner3 = new(new FanOutEdgeData(Source(1), [Sink(3), Sink(4), Sink(2)], TakeEdgeId()));
         RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner3, expect: false); // Order matters (though without Assigner maybe it shouldn't?)
 
-        Edge fanOutEdgeNoAssigner4 = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(5)]));
-        Edge fanOutEdgeNoAssigner5 = new(new FanOutEdgeData(Source(2), [Sink(2), Sink(3), Sink(4)]));
+        Edge fanOutEdgeNoAssigner4 = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(5)], TakeEdgeId()));
+        Edge fanOutEdgeNoAssigner5 = new(new FanOutEdgeData(Source(2), [Sink(2), Sink(3), Sink(4)], TakeEdgeId()));
         RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner4, expect: false); // Identity matters
         RunEdgeInfoMatchTest(fanOutEdgeNoAssigner, fanOutEdgeNoAssigner5, expect: false);
 
-        Edge fanOutEdgeWithAssigner = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)], EdgeAssigner()));
+        Edge fanOutEdgeWithAssigner = new(new FanOutEdgeData(Source(1), [Sink(2), Sink(3), Sink(4)], TakeEdgeId(), EdgeAssigner()));
         RunEdgeInfoMatchTest(fanOutEdgeWithAssigner);
 
         // FanIn Edges
-        Edge fanInEdge = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1)));
+        Edge fanInEdge = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId()));
         RunEdgeInfoMatchTest(fanInEdge);
 
-        Edge fanInEdge2 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1)));
+        Edge fanInEdge2 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId()));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge2);
 
-        Edge fanInEdge3 = new(new FanInEdgeData([Source(2), Source(3), Source(1)], Sink(1)));
+        Edge fanInEdge3 = new(new FanInEdgeData([Source(2), Source(3), Source(1)], Sink(1), TakeEdgeId()));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge3, expect: false); // Order matters (though for FanIn maybe it shouldn't?)
 
-        Edge fanInEdge4 = new(new FanInEdgeData([Source(1), Source(2), Source(4)], Sink(1)));
-        Edge fanInEdge5 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(2)));
+        Edge fanInEdge4 = new(new FanInEdgeData([Source(1), Source(2), Source(4)], Sink(1), TakeEdgeId()));
+        Edge fanInEdge5 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(2), TakeEdgeId()));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge4, expect: false); // Identity matters
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge5, expect: false);
 
@@ -161,6 +163,8 @@ public class RepresentationTests
             EdgeInfo info = edge.ToEdgeInfo();
             info.IsMatch(comparatorEdge).Should().Be(expect);
         }
+
+        EdgeId TakeEdgeId() => new(edgeId++);
     }
 
     [Fact]

@@ -109,12 +109,12 @@ internal class StateManager
             // What's the right thing to do when we have a state object, but it is the wrong type?
             if (result.IsDelete)
             {
-                return new ValueTask<T?>((T?)default);
+                return new((T?)default);
             }
 
             if (result.Value is T)
             {
-                return new ValueTask<T?>((T?)result.Value);
+                return new((T?)result.Value);
             }
 
             throw new InvalidOperationException($"State for key '{key}' in scope '{scopeId}' is not of type '{typeof(T).Name}'.");
@@ -124,17 +124,28 @@ internal class StateManager
         return scope.ReadStateAsync<T>(key);
     }
 
-    public ValueTask WriteStateAsync<T>(string executorId, string? scopeName, string key, T? value)
+    public ValueTask WriteStateAsync<T>(string executorId, string? scopeName, string key, T value)
         => this.WriteStateAsync<T>(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key, value);
 
-    public ValueTask WriteStateAsync<T>(ScopeId scopeId, string key, T? value)
+    public ValueTask WriteStateAsync<T>(ScopeId scopeId, string key, T value)
     {
         Throw.IfNullOrEmpty(key);
 
         UpdateKey stateKey = new(scopeId, key);
-        StateUpdate update = value == null ? StateUpdate.Delete(key) : StateUpdate.Update(key, value);
+        StateUpdate update = StateUpdate.Update(key, value);
         this._queuedUpdates[stateKey] = update;
 
+        return default;
+    }
+
+    public ValueTask ClearStateAsync(string executorId, string? scopeName, string key)
+        => this.ClearStateAsync(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key);
+
+    public ValueTask ClearStateAsync(ScopeId scopeId, string key)
+    {
+        Throw.IfNullOrEmpty(key);
+        UpdateKey stateKey = new(scopeId, key);
+        this._queuedUpdates[stateKey] = StateUpdate.Delete(key);
         return default;
     }
 
@@ -172,15 +183,15 @@ internal class StateManager
         this._queuedUpdates.Clear();
     }
 
-    private static IEnumerable<KeyValuePair<ScopeKey, ExportedState>> ExportScope(StateScope scope)
+    private static IEnumerable<KeyValuePair<ScopeKey, PortableValue>> ExportScope(StateScope scope)
     {
-        foreach (KeyValuePair<string, ExportedState> state in scope.ExportStates())
+        foreach (KeyValuePair<string, PortableValue> state in scope.ExportStates())
         {
             yield return new(new ScopeKey(scope.ScopeId, state.Key), state.Value);
         }
     }
 
-    internal async ValueTask<Dictionary<ScopeKey, ExportedState>> ExportStateAsync()
+    internal async ValueTask<Dictionary<ScopeKey, PortableValue>> ExportStateAsync()
     {
         if (this._queuedUpdates.Count != 0)
         {
@@ -201,7 +212,7 @@ internal class StateManager
         this._queuedUpdates.Clear();
         this._scopes.Clear();
 
-        Dictionary<ScopeKey, ExportedState> importedState = checkpoint.State;
+        Dictionary<ScopeKey, PortableValue> importedState = checkpoint.StateData;
 
         foreach (ScopeKey scopeKey in importedState.Keys)
         {
