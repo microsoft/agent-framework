@@ -1,5 +1,8 @@
 # Prerequisites
 
+WARNING: The Assistants API is deprecated and will be shut down.
+For more information see the OpenAI documentation: https://platform.openai.com/docs/assistants/migration
+
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 8.0 SDK or later
