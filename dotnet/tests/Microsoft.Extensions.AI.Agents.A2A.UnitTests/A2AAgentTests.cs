@@ -156,7 +156,11 @@ public sealed class A2AAgentTests : IDisposable
 
         // Assert
         Assert.IsType<A2AAgentThread>(thread);
+#if NET5_0_OR_GREATER
+        var a2aThread = thread;
+#else
         var a2aThread = (A2AAgentThread)thread;
+#endif
         Assert.Equal("new-context-id", a2aThread.ContextId);
     }
 
@@ -170,7 +174,11 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var thread = this._agent.GetNewThread();
+#if NET5_0_OR_GREATER
+        var a2aThread = thread;
+#else
         var a2aThread = (A2AAgentThread)thread;
+#endif
         a2aThread.ContextId = "existing-context-id";
 
         // Act
@@ -203,7 +211,11 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var thread = this._agent.GetNewThread();
+#if NET5_0_OR_GREATER
+        var a2aThread = thread;
+#else
         var a2aThread = (A2AAgentThread)thread;
+#endif
         a2aThread.ContextId = "existing-context-id";
 
         // Act & Assert
@@ -282,7 +294,11 @@ public sealed class A2AAgentTests : IDisposable
         }
 
         // Assert
+#if NET5_0_OR_GREATER
+        var a2aThread = thread;
+#else
         var a2aThread = (A2AAgentThread)thread;
+#endif
         Assert.Equal("new-stream-context", a2aThread.ContextId);
     }
 
@@ -298,7 +314,11 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.StreamingResponseToReturn = new Message();
 
         var thread = this._agent.GetNewThread();
+#if NET5_0_OR_GREATER
+        var a2aThread = thread;
+#else
         var a2aThread = (A2AAgentThread)thread;
+#endif
         a2aThread.ContextId = "existing-context-id";
 
         // Act
@@ -318,7 +338,11 @@ public sealed class A2AAgentTests : IDisposable
     {
         // Arrange
         var thread = this._agent.GetNewThread();
+#if NET5_0_OR_GREATER
+        var a2aThread = thread;
+#else
         var a2aThread = (A2AAgentThread)thread;
+#endif
         a2aThread.ContextId = "existing-context-id";
 
         var inputMessages = new List<ChatMessage>
