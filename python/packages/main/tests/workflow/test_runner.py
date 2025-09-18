@@ -174,4 +174,4 @@ async def test_runner_emits_runner_completion_for_agent_response_without_targets
     events: list[WorkflowEvent] = [event async for event in runner.run_until_convergence()]
     completions = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert completions
-    assert all(e.origin is WorkflowEventSource.RUNNER for e in completions)
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in completions)

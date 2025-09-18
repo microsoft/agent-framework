@@ -45,10 +45,10 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
     # Workflow-level failure and FAILED status should be surfaced
     failed_events = [e for e in events if isinstance(e, WorkflowFailedEvent)]
     assert failed_events
-    assert all(e.origin is WorkflowEventSource.RUNNER for e in failed_events)
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed_events)
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.FAILED
-    assert all(e.origin is WorkflowEventSource.RUNNER for e in status)
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
 
 
 async def test_executor_failed_event_emitted_on_direct_execute():
@@ -65,7 +65,7 @@ async def test_executor_failed_event_emitted_on_direct_execute():
     drained = await ctx.drain_events()
     failed = [e for e in drained if isinstance(e, ExecutorFailedEvent)]
     assert failed
-    assert all(e.origin is WorkflowEventSource.RUNNER for e in failed)
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed)
 
 
 class Requester(Executor):
@@ -106,7 +106,7 @@ async def test_completed_status_streaming():
     # Last status should be COMPLETED
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.COMPLETED
-    assert all(e.origin is WorkflowEventSource.RUNNER for e in status)
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
 
 
 async def test_started_and_completed_event_origins():
@@ -115,7 +115,7 @@ async def test_started_and_completed_event_origins():
     events = [ev async for ev in wf.run_stream("payload")]
 
     started = next(e for e in events if isinstance(e, WorkflowStartedEvent))
-    assert started.origin is WorkflowEventSource.RUNNER
+    assert started.origin is WorkflowEventSource.FRAMEWORK
 
     completed = next(e for e in events if isinstance(e, WorkflowCompletedEvent))
     assert completed.origin is WorkflowEventSource.EXECUTOR

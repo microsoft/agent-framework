@@ -275,15 +275,15 @@ async def main():
 
     Running workflow with initial message...
     UpperCaseExecutor: 'hello world' -> 'HELLO WORLD'
-    Event: ExecutorInvokeEvent(executor_id=upper_case_executor)
+    Event: ExecutorInvokedEvent(executor_id=upper_case_executor)
     Event: ExecutorCompletedEvent(executor_id=upper_case_executor)
     ReverseTextExecutor: 'HELLO WORLD' -> 'DLROW OLLEH'
-    Event: ExecutorInvokeEvent(executor_id=reverse_text_executor)
+    Event: ExecutorInvokedEvent(executor_id=reverse_text_executor)
     Event: ExecutorCompletedEvent(executor_id=reverse_text_executor)
     LowerAgent (shared_state): original_input='hello world', upper_output='HELLO WORLD'
-    Event: ExecutorInvokeEvent(executor_id=submit_lower)
-    Event: ExecutorInvokeEvent(executor_id=lower_agent)
-    Event: ExecutorInvokeEvent(executor_id=finalize)
+    Event: ExecutorInvokedEvent(executor_id=submit_lower)
+    Event: ExecutorInvokedEvent(executor_id=lower_agent)
+    Event: ExecutorInvokedEvent(executor_id=finalize)
     Event: WorkflowCompletedEvent(data=dlrow olleh)
 
     Checkpoint summary:
@@ -300,9 +300,9 @@ async def main():
 
     Resuming from checkpoint: a78c345a-e5d9-45ba-82c0-cb725452d91b
     LowerAgent (shared_state): original_input='hello world', upper_output='HELLO WORLD'
-    Resumed Event: ExecutorInvokeEvent(executor_id=submit_lower)
-    Resumed Event: ExecutorInvokeEvent(executor_id=lower_agent)
-    Resumed Event: ExecutorInvokeEvent(executor_id=finalize)
+    Resumed Event: ExecutorInvokedEvent(executor_id=submit_lower)
+    Resumed Event: ExecutorInvokedEvent(executor_id=lower_agent)
+    Resumed Event: ExecutorInvokedEvent(executor_id=finalize)
     Resumed Event: WorkflowCompletedEvent(data=dlrow olleh)
     """  # noqa: E501
 

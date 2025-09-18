@@ -15,10 +15,15 @@ if TYPE_CHECKING:
 
 
 class WorkflowEventSource(str, Enum):
-    """Identifies whether a workflow event came from the runner or an executor."""
+    """Identifies whether a workflow event came from the framework or an executor.
 
-    RUNNER = "RUNNER"
-    EXECUTOR = "EXECUTOR"
+    Use `FRAMEWORK` for events emitted by built-in orchestration paths—even when the
+    code that raises them lives in runner-related modules—and `EXECUTOR` for events
+    surfaced by developer-provided executor implementations.
+    """
+
+    FRAMEWORK = "FRAMEWORK"  # Framework-owned orchestration, regardless of module location
+    EXECUTOR = "EXECUTOR"  # User-supplied executor code and callbacks
 
 
 _event_origin_context: ContextVar[WorkflowEventSource] = ContextVar(
@@ -34,7 +39,7 @@ def _current_event_origin() -> WorkflowEventSource:
 @contextmanager
 def _runner_event_origin() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     """Temporarily mark subsequently created events as originating from the runner."""
-    token = _event_origin_context.set(WorkflowEventSource.RUNNER)
+    token = _event_origin_context.set(WorkflowEventSource.FRAMEWORK)
     try:
         yield
     finally:
@@ -62,7 +67,11 @@ class WorkflowStartedEvent(WorkflowEvent):
 
 
 class WorkflowCompletedEvent(WorkflowEvent):
-    """Built-in lifecycle event emitted when a workflow run completes successfully."""
+    """Built-in lifecycle event emitted when a workflow run completes successfully.
+
+    Unlike the framework-only `WorkflowLifecycleEvent` union, this event can be
+    emitted by developer-provided executors to return final workflow output.
+    """
 
     ...
 
@@ -254,7 +263,7 @@ class ExecutorEvent(WorkflowEvent):
         return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
 
 
-class ExecutorInvokeEvent(ExecutorEvent):
+class ExecutorInvokedEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
     def __repr__(self) -> str:
