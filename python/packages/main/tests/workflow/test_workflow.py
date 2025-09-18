@@ -231,7 +231,7 @@ async def test_fan_out():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
+    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
     # executor_b will also emit a WorkflowCompletedEvent
     assert len(events) == 7
 
@@ -251,7 +251,7 @@ async def test_fan_out_multiple_completed_events():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
+    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
     # executor_a and executor_b will also emit a WorkflowCompletedEvent
     assert len(events) == 8
 
@@ -276,7 +276,7 @@ async def test_fan_in():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
+    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
     # aggregator will also emit a WorkflowCompletedEvent
     assert len(events) == 9
 
@@ -667,10 +667,10 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
     )  # Should complete when executor_a reaches its limit
 
     # Verify cycling occurred (should have events from both executors)
-    # Check for ExecutorInvokeEvent and ExecutorCompletedEvent types that have executor_id
-    from agent_framework import ExecutorCompletedEvent, ExecutorInvokeEvent
+    # Check for ExecutorInvokedEvent and ExecutorCompletedEvent types that have executor_id
+    from agent_framework import ExecutorCompletedEvent, ExecutorInvokedEvent
 
-    executor_events = [e for e in events if isinstance(e, (ExecutorInvokeEvent, ExecutorCompletedEvent))]
+    executor_events = [e for e in events if isinstance(e, (ExecutorInvokedEvent, ExecutorCompletedEvent))]
     executor_ids = {e.executor_id for e in executor_events}
     assert "exec_a" in executor_ids, "Should have events from executor A"
     assert "exec_b" in executor_ids, "Should have events from executor B"
