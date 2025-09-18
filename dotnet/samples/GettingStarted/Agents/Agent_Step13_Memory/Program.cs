@@ -102,7 +102,10 @@ namespace SampleApp
         public UserInfoMemory(IChatClient chatClient, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             this._chatClient = chatClient;
-            this.UserInfo = serializedState.Deserialize<UserInfo>(jsonSerializerOptions) ?? new UserInfo();
+
+            this.UserInfo = serializedState.ValueKind == JsonValueKind.Object ?
+                serializedState.Deserialize<UserInfo>(jsonSerializerOptions)! :
+                new UserInfo();
         }
 
         public UserInfo UserInfo { get; set; }
