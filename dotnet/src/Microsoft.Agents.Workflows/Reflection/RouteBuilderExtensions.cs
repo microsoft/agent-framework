@@ -15,7 +15,7 @@ internal static class IMessageHandlerReflection
     internal static readonly MethodInfo HandleAsync_1 = typeof(IMessageHandler<>).GetMethod(Nameof_HandleAsync, BindingFlags.Public | BindingFlags.Instance)!;
     internal static readonly MethodInfo HandleAsync_2 = typeof(IMessageHandler<,>).GetMethod(Nameof_HandleAsync, BindingFlags.Public | BindingFlags.Instance)!;
 
-    internal static MethodInfo ReflectHandleAsync(this Type specializedType, int genericArgumentCount)
+    internal static MethodInfo ReflectHandle(this Type specializedType, int genericArgumentCount)
     {
         Debug.Assert(specializedType.IsGenericType &&
                      (specializedType.GetGenericTypeDefinition() == typeof(IMessageHandler<>) ||
@@ -60,16 +60,16 @@ internal static class RouteBuilderExtensions
 
             // Get the generic arguments of the interface.
             Type[] genericArguments = interfaceType.GetGenericArguments();
-            if (genericArguments.Length < 1 || genericArguments.Length > 2)
+            if (genericArguments.Length is < 1 or > 2)
             {
                 continue; // Invalid handler signature.
             }
             Type inType = genericArguments[0];
             Type? outType = genericArguments.Length == 2 ? genericArguments[1] : null;
 
-            MethodInfo? method = interfaceType.ReflectHandleAsync(genericArguments.Length);
+            MethodInfo? method = interfaceType.ReflectHandle(genericArguments.Length);
 
-            if (method != null)
+            if (method is not null)
             {
                 yield return new MessageHandlerInfo(method) { InType = inType, OutType = outType };
             }

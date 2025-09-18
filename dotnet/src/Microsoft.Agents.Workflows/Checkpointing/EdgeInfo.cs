@@ -1,21 +1,43 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Serialization;
 using Microsoft.Agents.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Checkpointing;
 
-internal abstract class EdgeInfo(Edge.Type edgeType, EdgeConnection connection)
+/// <summary>
+/// Base class representing information about an edge in a workflow.
+/// </summary>
+[JsonPolymorphic(UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
+[JsonDerivedType(typeof(DirectEdgeInfo), (int)EdgeKind.Direct)]
+[JsonDerivedType(typeof(FanOutEdgeInfo), (int)EdgeKind.FanOut)]
+[JsonDerivedType(typeof(FanInEdgeInfo), (int)EdgeKind.FanIn)]
+public class EdgeInfo
 {
-    public Edge.Type EdgeType => edgeType;
-    public EdgeConnection Connection { get; } = Throw.IfNull(connection);
+    /// <summary>
+    /// The kind of edge.
+    /// </summary>
+    public EdgeKind Kind { get; }
 
-    public bool IsMatch(Edge edge)
+    /// <summary>
+    /// Gets the connection information associated with the edge.
+    /// </summary>
+    public EdgeConnection Connection { get; }
+
+    [JsonConstructor]
+    internal EdgeInfo(EdgeKind kind, EdgeConnection connection)
     {
-        return this.EdgeType == edge.EdgeType
+        this.Kind = kind;
+        this.Connection = Throw.IfNull(connection);
+    }
+
+    internal bool IsMatch(Edge edge)
+    {
+        return this.Kind == edge.Kind
             && this.Connection.Equals(edge.Data.Connection)
             && this.IsMatchInternal(edge.Data);
     }
 
-    protected virtual bool IsMatchInternal(EdgeData edgeData) => true;
+    internal virtual bool IsMatchInternal(EdgeData edgeData) => true;
 }

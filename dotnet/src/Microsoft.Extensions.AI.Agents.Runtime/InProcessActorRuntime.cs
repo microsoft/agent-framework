@@ -17,19 +17,19 @@ internal sealed class InProcessActorRuntime(
     IReadOnlyDictionary<ActorType, Func<IServiceProvider, IActorRuntimeContext, IActor>> actorFactories,
     IActorStateStorage storage)
 {
-    private static readonly ActivitySource ActivitySource = new(ActorRuntimeOpenTelemetryConsts.InProcessSourceName);
-    private static readonly Meter Meter = new(ActorRuntimeOpenTelemetryConsts.InProcessSourceName);
+    private static readonly ActivitySource ActivitySource = new(Tel.InProcessSourceName);
+    private static readonly Meter Meter = new(Tel.InProcessSourceName);
 
     // Metrics following OpenTelemetry semantic conventions
     private static readonly Counter<long> ActorCreatedCounter = Meter.CreateCounter<long>(
-        ActorRuntimeOpenTelemetryConsts.Client.ActorCount.Name,
-        ActorRuntimeOpenTelemetryConsts.CountUnit,
-        ActorRuntimeOpenTelemetryConsts.Client.ActorCount.Description);
+        Tel.Client.ActorCount.Name,
+        Tel.CountUnit,
+        Tel.Client.ActorCount.Description);
 
     private static readonly Histogram<double> OperationDurationHistogram = Meter.CreateHistogram<double>(
-        ActorRuntimeOpenTelemetryConsts.Client.OperationDuration.Name,
+        Tel.Client.OperationDuration.Name,
         "s",
-        ActorRuntimeOpenTelemetryConsts.Client.OperationDuration.Description);
+        Tel.Client.OperationDuration.Description);
 
     private readonly object _createActorLock = new();
     private readonly IReadOnlyDictionary<ActorType, Func<IServiceProvider, IActorRuntimeContext, IActor>> _actorFactories = actorFactories;
@@ -44,7 +44,7 @@ internal sealed class InProcessActorRuntime(
 
         // Create span following OpenTelemetry conventions for RPC operations
         using var activity = ActivitySource.StartActivity(
-            ActorRuntimeOpenTelemetryConsts.SpanNames.FormatActorOperation(ActorRuntimeOpenTelemetryConsts.Operations.GetActor));
+            Tel.SpanNames.FormatActorOperation(Tel.Operations.GetActor));
 
         try
         {
@@ -61,7 +61,7 @@ internal sealed class InProcessActorRuntime(
                 var exception = new InvalidOperationException(errorMessage);
 
                 activity.SetupActorOperation(actorId, exists: false);
-                activity.RecordFailure(exception, ActorRuntimeOpenTelemetryConsts.ErrorInfo.Types.ActorNotFound);
+                activity.RecordFailure(exception, Tel.ErrorInfo.Types.ActorNotFound);
                 throw exception;
             }
 
@@ -103,8 +103,8 @@ internal sealed class InProcessActorRuntime(
             // Record operation duration metric
             var duration = stopwatch.Elapsed.TotalSeconds;
             OperationDurationHistogram.Record(duration,
-                new KeyValuePair<string, object?>(ActorRuntimeOpenTelemetryConsts.Actor.Operation, ActorRuntimeOpenTelemetryConsts.Operations.GetActor),
-                new KeyValuePair<string, object?>(ActorRuntimeOpenTelemetryConsts.Actor.Type, actorId.Type.Name));
+                new KeyValuePair<string, object?>(Tel.Actor.Operation, Tel.Operations.GetActor),
+                new KeyValuePair<string, object?>(Tel.Actor.Type, actorId.Type.Name));
         }
     }
 
@@ -114,7 +114,7 @@ internal sealed class InProcessActorRuntime(
         {
             // Create nested span for actor creation
             var createActivity = ActivitySource.StartActivity(
-                ActorRuntimeOpenTelemetryConsts.SpanNames.FormatActorOperation(ActorRuntimeOpenTelemetryConsts.Operations.CreateActor));
+                Tel.SpanNames.FormatActorOperation(Tel.Operations.CreateActor));
             InProcessActorContext? instance = null;
             try
             {
@@ -126,7 +126,7 @@ internal sealed class InProcessActorRuntime(
                 createActivity.Complete(ActorCreated, actorId, [(Tel.Actor.Started, true)]);
 
                 // Record metrics for successful actor creation
-                ActorCreatedCounter.Add(1, new KeyValuePair<string, object?>(ActorRuntimeOpenTelemetryConsts.Actor.Type, actorId.Type.Name));
+                ActorCreatedCounter.Add(1, new KeyValuePair<string, object?>(Tel.Actor.Type, actorId.Type.Name));
                 return instance;
             }
             catch (Exception ex)
@@ -141,16 +141,16 @@ internal sealed class InProcessActorRuntime(
 
 internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IActorClient
 {
-    private static readonly ActivitySource ActivitySource = new(ActorRuntimeOpenTelemetryConsts.InProcessSourceName);
-    private static readonly Meter ClientMeter = new(ActorRuntimeOpenTelemetryConsts.InProcessSourceName);
+    private static readonly ActivitySource ActivitySource = new(Tel.InProcessSourceName);
+    private static readonly Meter ClientMeter = new(Tel.InProcessSourceName);
     private static readonly Counter<long> RequestCounter = ClientMeter.CreateCounter<long>(
-        ActorRuntimeOpenTelemetryConsts.Client.RequestCount.Name,
-        ActorRuntimeOpenTelemetryConsts.CountUnit,
-        ActorRuntimeOpenTelemetryConsts.Client.RequestCount.Description);
+        Tel.Client.RequestCount.Name,
+        Tel.CountUnit,
+        Tel.Client.RequestCount.Description);
     private static readonly Histogram<double> ClientOperationDurationHistogram = ClientMeter.CreateHistogram<double>(
-        ActorRuntimeOpenTelemetryConsts.Client.OperationDuration.Name,
+        Tel.Client.OperationDuration.Name,
         "s",
-        ActorRuntimeOpenTelemetryConsts.Client.OperationDuration.Description);
+        Tel.Client.OperationDuration.Description);
 
     private readonly InProcessActorRuntime _runtime = runtime;
 
@@ -158,21 +158,17 @@ internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IAct
     {
         // Create span for get response operation
         using var activity = ActivitySource.StartActivity(
-            ActorRuntimeOpenTelemetryConsts.SpanNames.FormatRequestOperation(ActorRuntimeOpenTelemetryConsts.Operations.ReceiveResponse));
+            Tel.SpanNames.FormatRequestOperation(Tel.Operations.ReceiveResponse));
 
         activity.SetupRequestOperation(actorId, messageId, service: "ActorClient", rpcMethod: "GetResponse");
 
         var actorContext = this._runtime.GetOrCreateActor(actorId);
-#pragma warning disable CA2000 // Dispose objects before losing scope
         if (actorContext.TryGetResponseHandle(messageId, out var handle))
         {
             return new(handle);
         }
-#pragma warning restore CA2000 // Dispose objects before losing scope
 
-#pragma warning disable CA2000 // Dispose objects before losing scope
         return new(new NotFoundActorResponseHandle(actorId, messageId));
-#pragma warning restore CA2000 // Dispose objects before losing scope
     }
 
     public ValueTask<ActorResponseHandle> SendRequestAsync(ActorRequest request, CancellationToken cancellationToken)
@@ -181,7 +177,7 @@ internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IAct
 
         // Create span for send request operation following RPC client conventions
         using var activity = ActivitySource.StartActivity(
-            ActorRuntimeOpenTelemetryConsts.SpanNames.FormatRequestOperation(ActorRuntimeOpenTelemetryConsts.Operations.SendRequest));
+            Tel.SpanNames.FormatRequestOperation(Tel.Operations.SendRequest));
 
         try
         {
@@ -190,9 +186,7 @@ internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IAct
             // Ensure the message is enqueued on the actor's inbox, getting a response handle for it.
             var actorId = request.ActorId;
             var actorContext = this._runtime.GetOrCreateActor(actorId);
-#pragma warning disable CA2000 // Dispose objects before losing scope
             var response = actorContext.SendRequest(request);
-#pragma warning restore CA2000 // Dispose objects before losing scope
 
             activity.Complete(MessageSent, actorId, Sent, (Tel.Message.Id, request.MessageId));
 
@@ -205,7 +199,7 @@ internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IAct
         }
         catch (Exception ex)
         {
-            activity.RecordFailure(ex, null, (ActorRuntimeOpenTelemetryConsts.Request.Status, "failed"));
+            activity.RecordFailure(ex, null, (Tel.Request.Status, "failed"));
             throw;
         }
         finally
@@ -213,8 +207,8 @@ internal sealed class InProcessActorClient(InProcessActorRuntime runtime) : IAct
             // Record operation duration
             var duration = stopwatch.Elapsed.TotalSeconds;
             ClientOperationDurationHistogram.Record(duration,
-                new KeyValuePair<string, object?>(ActorRuntimeOpenTelemetryConsts.Actor.Operation, ActorRuntimeOpenTelemetryConsts.Operations.SendRequest),
-                new KeyValuePair<string, object?>(ActorRuntimeOpenTelemetryConsts.Actor.Type, request.ActorId.Type.Name));
+                new KeyValuePair<string, object?>(Tel.Actor.Operation, Tel.Operations.SendRequest),
+                new KeyValuePair<string, object?>(Tel.Actor.Type, request.ActorId.Type.Name));
         }
     }
 }

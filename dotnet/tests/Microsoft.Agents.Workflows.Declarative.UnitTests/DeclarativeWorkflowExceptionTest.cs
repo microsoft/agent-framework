@@ -28,25 +28,25 @@ public sealed class DeclarativeWorkflowExceptionTest(ITestOutputHelper output) :
 
     private static void AssertDefault<TException>(Action throwAction) where TException : Exception
     {
-        TException exception = Assert.Throws<TException>(() => throwAction.Invoke());
+        TException exception = Assert.Throws<TException>(throwAction.Invoke);
         Assert.NotEmpty(exception.Message);
         Assert.Null(exception.InnerException);
     }
 
     private static void AssertMessage<TException>(Action<string> throwAction) where TException : Exception
     {
-        const string message = "Test exception message";
-        TException exception = Assert.Throws<TException>(() => throwAction.Invoke(message));
-        Assert.Equal(message, exception.Message);
+        const string Message = "Test exception message";
+        TException exception = Assert.Throws<TException>(() => throwAction.Invoke(Message));
+        Assert.Equal(Message, exception.Message);
         Assert.Null(exception.InnerException);
     }
 
     private static void AssertInner<TException>(Action<string, Exception> throwAction) where TException : Exception
     {
-        const string message = "Test exception message";
+        const string Message = "Test exception message";
         NotSupportedException innerException = new("Inner exception message");
-        TException exception = Assert.Throws<TException>(() => throwAction.Invoke(message, innerException));
-        Assert.Equal(message, exception.Message);
+        TException exception = Assert.Throws<TException>(() => throwAction.Invoke(Message, innerException));
+        Assert.Equal(Message, exception.Message);
         Assert.Equal(innerException, exception.InnerException);
     }
 }

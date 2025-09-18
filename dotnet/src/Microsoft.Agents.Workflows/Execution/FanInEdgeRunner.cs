@@ -1,44 +1,55 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData) :
+internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData) :
     EdgeRunner<FanInEdgeData>(runContext, edgeData)
 {
     private IWorkflowContext BoundContext { get; } = runContext.Bind(edgeData.SinkId);
 
     public FanInEdgeState CreateState() => new(this.EdgeData);
 
-    public async ValueTask<IEnumerable<object?>> ChaseAsync(string sourceId, MessageEnvelope envelope, FanInEdgeState state, IStepTracer? tracer)
+    public ValueTask<IEnumerable<object?>> ChaseAsync(string sourceId, MessageEnvelope envelope, FanInEdgeState state, IStepTracer? tracer)
     {
-        if (envelope.TargetId != null && this.EdgeData.SinkId != envelope.TargetId)
+        if (envelope.TargetId is not null && this.EdgeData.SinkId != envelope.TargetId)
         {
             // This message is not for us.
-            return [];
+            return new([]);
         }
 
-        object message = envelope.Message;
-        IEnumerable<object>? releasedMessages = state.ProcessMessage(sourceId, message);
+        IEnumerable<MessageEnvelope>? releasedMessages = state.ProcessMessage(sourceId, envelope);
         if (releasedMessages is null)
         {
             // Not ready to process yet.
-            return [];
+            return new([]);
         }
 
+        return this.ForwardReleasedMessagesAsync(releasedMessages, tracer);
+    }
+
+    private async ValueTask<IEnumerable<object?>> ForwardReleasedMessagesAsync(IEnumerable<MessageEnvelope> releasedMessages, IStepTracer? tracer)
+    {
         Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
                                                .ConfigureAwait(false);
 
         List<Task<object?>> messageTasks = [];
 
-        foreach (var messageTask in releasedMessages)
+        foreach (MessageEnvelope releasedEnvelope in releasedMessages)
         {
-            if (target.CanHandle(messageTask.GetType()))
+            object message = releasedEnvelope.Message;
+            Debug.Assert(message is PortableValue, "It should not be possible to get messages released without roundtripping them through" +
+                "PortableValue via PortableMessageEnvelope.");
+
+            PortableValue portable = message as PortableValue ?? new PortableValue(releasedEnvelope.MessageType, message);
+
+            if (target.CanHandle(portable.TypeId))
             {
                 tracer?.TraceActivated(target.Id);
-                messageTasks.Add(target.ExecuteAsync(messageTask, envelope.MessageType, this.BoundContext).AsTask());
+                messageTasks.Add(target.ExecuteAsync(portable, releasedEnvelope.MessageType, this.BoundContext).AsTask());
             }
         }
 

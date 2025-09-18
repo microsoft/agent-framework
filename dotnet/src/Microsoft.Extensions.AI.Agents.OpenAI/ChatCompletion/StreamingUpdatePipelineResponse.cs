@@ -38,18 +38,14 @@ internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
     /// <summary>
     /// Buffering content is not supported for streaming responses.
     /// </summary>
-    public override BinaryData BufferContent(CancellationToken cancellationToken = default)
-    {
+    public override BinaryData BufferContent(CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("Buffering content is not supported for streaming responses.");
-    }
 
     /// <summary>
     /// Buffering content asynchronously is not supported for streaming responses.
     /// </summary>
-    public override ValueTask<BinaryData> BufferContentAsync(CancellationToken cancellationToken = default)
-    {
+    public override ValueTask<BinaryData> BufferContentAsync(CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("Buffering content asynchronously is not supported for streaming responses.");
-    }
 
     /// <summary>
     /// Disposes resources. No resources to dispose for streaming response.
@@ -61,10 +57,7 @@ internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
 
     internal StreamingUpdatePipelineResponse(IAsyncEnumerable<AgentRunResponseUpdate> updates)
     {
-        this._updates = updates;
     }
-
-    private readonly IAsyncEnumerable<AgentRunResponseUpdate> _updates;
 
     private sealed class EmptyPipelineResponseHeaders : PipelineResponseHeaders
     {

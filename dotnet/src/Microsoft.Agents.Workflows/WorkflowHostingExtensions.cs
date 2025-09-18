@@ -30,6 +30,6 @@ public static class WorkflowHostingExtensions
             { "data", request.Data}
         };
 
-        return new FunctionCallContent(request.RequestId, request.Port.Id, parameters);
+        return new FunctionCallContent(request.RequestId, request.PortInfo.PortId, parameters);
     }
 }
