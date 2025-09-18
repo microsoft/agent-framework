@@ -35,7 +35,7 @@ from ._events import (
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
-    _runner_event_origin,
+    _framework_event_origin,
 )
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
@@ -246,10 +246,10 @@ class Workflow(AFBaseModel):
                 # Add workflow started event (telemetry + surface state to consumers)
                 workflow_tracer.add_workflow_event("workflow.started")
                 # Emit explicit start/status events to the stream
-                with _runner_event_origin():
+                with _framework_event_origin():
                     started = WorkflowStartedEvent()
                 yield started
-                with _runner_event_origin():
+                with _framework_event_origin():
                     in_progress = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
                 yield in_progress
 
@@ -272,21 +272,21 @@ class Workflow(AFBaseModel):
 
                     if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending and not saw_completed:
                         emitted_in_progress_pending = True
-                        with _runner_event_origin():
+                        with _framework_event_origin():
                             pending_status = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
                         yield pending_status
 
                 # Success path: emit a final status based on observed terminal signals
                 if saw_completed:
-                    with _runner_event_origin():
+                    with _framework_event_origin():
                         terminal_status = WorkflowStatusEvent(WorkflowRunState.COMPLETED)
                     yield terminal_status
                 elif saw_request:
-                    with _runner_event_origin():
+                    with _framework_event_origin():
                         terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                     yield terminal_status
                 else:
-                    with _runner_event_origin():
+                    with _framework_event_origin():
                         terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE)
                     yield terminal_status
 
@@ -294,10 +294,10 @@ class Workflow(AFBaseModel):
             except Exception as e:
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(e)
-                with _runner_event_origin():
+                with _framework_event_origin():
                     failed_event = WorkflowFailedEvent(details)
                 yield failed_event
-                with _runner_event_origin():
+                with _framework_event_origin():
                     failed_status = WorkflowStatusEvent(WorkflowRunState.FAILED)
                 yield failed_status
                 workflow_tracer.add_workflow_error_event(e)

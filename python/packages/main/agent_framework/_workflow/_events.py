@@ -37,8 +37,8 @@ def _current_event_origin() -> WorkflowEventSource:
 
 
 @contextmanager
-def _runner_event_origin() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Temporarily mark subsequently created events as originating from the runner."""
+def _framework_event_origin() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Temporarily mark subsequently created events as originating from the framework (internal)."""
     token = _event_origin_context.set(WorkflowEventSource.FRAMEWORK)
     try:
         yield

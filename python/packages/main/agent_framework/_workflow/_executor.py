@@ -23,7 +23,7 @@ from ._events import (
     ExecutorCompletedEvent,
     ExecutorInvokedEvent,
     RequestInfoEvent,
-    _runner_event_origin,  # pyright: ignore[reportPrivateUsage]
+    _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
 )
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
@@ -103,7 +103,7 @@ class Executor(AFBaseModel):
             # Lazy registration for SubWorkflowRequestInfo if we have interceptors
             if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
                 # Directly handle SubWorkflowRequestInfo
-                with _runner_event_origin():
+                with _framework_event_origin():
                     invoke_event = ExecutorInvokedEvent(self.id)
                 await context.add_event(invoke_event)
                 try:
@@ -112,11 +112,11 @@ class Executor(AFBaseModel):
                     # Surface structured executor failure before propagating
                     from ._events import ExecutorFailedEvent, WorkflowErrorDetails
 
-                    with _runner_event_origin():
+                    with _framework_event_origin():
                         failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
                     await context.add_event(failure_event)
                     raise
-                with _runner_event_origin():
+                with _framework_event_origin():
                     completed_event = ExecutorCompletedEvent(self.id)
                 await context.add_event(completed_event)
                 return
@@ -129,7 +129,7 @@ class Executor(AFBaseModel):
 
             if handler is None:
                 raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
-            with _runner_event_origin():
+            with _framework_event_origin():
                 invoke_event = ExecutorInvokedEvent(self.id)
             await context.add_event(invoke_event)
             try:
@@ -138,11 +138,11 @@ class Executor(AFBaseModel):
                 # Surface structured executor failure before propagating
                 from ._events import ExecutorFailedEvent, WorkflowErrorDetails
 
-                with _runner_event_origin():
+                with _framework_event_origin():
                     failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
                 await context.add_event(failure_event)
                 raise
-            with _runner_event_origin():
+            with _framework_event_origin():
                 completed_event = ExecutorCompletedEvent(self.id)
             await context.add_event(completed_event)
 
