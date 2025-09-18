@@ -105,7 +105,7 @@ class SlidingWindowChatMessageList(ChatMessageList):
                         total_tokens += self.estimate_any_object_token_count(content)
             elif hasattr(msg, "text") and msg.text:
                 # Simple text message
-                return self.estimate_any_object_token_count(msg.text)
+                total_tokens += self.estimate_any_object_token_count(msg.text)
             else:
                 # Skip it
                 pass
