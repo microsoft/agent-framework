@@ -253,7 +253,7 @@ class RedisProvider(ContextProvider):
                 await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
         return
 
-    async def add(
+    async def _add(
         self,
         *,
         data: dict[str, Any] | list[dict[str, Any]],
@@ -308,7 +308,7 @@ class RedisProvider(ContextProvider):
         await self.redis_index.load(prepared)
         return
 
-    async def redis_search(
+    async def _redis_search(
         self,
         text: str,
         *,
@@ -479,7 +479,7 @@ class RedisProvider(ContextProvider):
             and message.text.strip()
         ]
         if messages:
-            await self.add(data=messages)
+            await self._add(data=messages)
 
     async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
         """Called before invoking the model to provide scoped context.
@@ -497,7 +497,7 @@ class RedisProvider(ContextProvider):
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
-        memories = await self.redis_search(text=input_text)
+        memories = await self._redis_search(text=input_text)
         line_separated_memories = "\n".join(
             str(memory.get("content", "")) for memory in memories if memory.get("content")
         )
