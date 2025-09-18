@@ -47,7 +47,7 @@ class Tau2TaskRunner:
     step_count: int
     full_conversation: list[ChatMessage]
     termination_reason: TerminationReason | None
-    reward_info: RewardInfo | None
+    full_reward_info: RewardInfo | None
 
     # Configurations
     max_steps: int
@@ -61,7 +61,7 @@ class Tau2TaskRunner:
         self.step_count = 0
         self.full_conversation = []
         self.termination_reason = None
-        self.reward_info = None
+        self.full_reward_info = None
         logger.info("ConversationOrchestrator has been re-initialized.")
         return self
 
@@ -69,7 +69,7 @@ class Tau2TaskRunner:
         return (
             f"Tau2TaskRunner(max_steps={self.max_steps}, step_count={self.step_count}, "
             f"full_conversation_length={len(self.full_conversation)}, "
-            f"termination_reason={self.termination_reason}, reward_info={self.reward_info})"
+            f"termination_reason={self.termination_reason}, full_reward_info={self.full_reward_info})"
         )
 
     def should_not_stop(self, response: AgentExecutorResponse) -> bool:
@@ -84,7 +84,7 @@ class Tau2TaskRunner:
         logger.opt(colors=True).info(
             f"<bold>[Step {self.step_count}] Received the following response from "
             f"{'<blue>assistant</blue>' if is_from_agent else '<green>user</green>'}</bold>, "
-            f"routing to {'<green>user</green>' if is_from_user else '<blue>assistant</blue>'}:"
+            f"routing to {'<green>user</green>' if is_from_agent else '<blue>assistant</blue>'}:"
         )
         log_messages(response.agent_run_response.messages)
 
@@ -121,7 +121,6 @@ class Tau2TaskRunner:
     ):
         """Flip the roles of messages and routes properly."""
         flipped = flip_messages(response.agent_run_response.messages)
-        logger.info("Orchestrator has flipped the roles and will route the agent response to user simulator")
         await ctx.send_message(
             AgentExecutorRequest(messages=flipped, should_respond=True),
         )
@@ -132,13 +131,13 @@ class Tau2TaskRunner:
         assistant_chat_client: OpenAIChatClient,
         user_simuator_chat_client: OpenAIChatClient,
         assistant_sampling_temperature: float = 0.0,
-        assistant_window_size: int = 4000,
+        assistant_window_size: int = 32768,
     ) -> list[ChatMessage]:
         """Complex workflow-based agent implementation."""
 
         logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")  # type: ignore
-        logger.info(f"Assistant config: {assistant_chat_client}")
-        logger.info(f"User config: {user_simuator_chat_client}")
+        logger.info(f"Assistant chat client: {assistant_chat_client}")
+        logger.info(f"User simulator chat client: {user_simuator_chat_client}")
 
         # Get environment and tools
         env = get_environment()
@@ -228,7 +227,7 @@ class Tau2TaskRunner:
 
         return full_conversation
 
-    def criteria(
+    def evaluate(
         self, task_input: Task, conversation: list[ChatMessage], termination_reason: TerminationReason | None
     ) -> float:
         """Evaluate the agent's performance using the existing evaluation system."""
@@ -252,7 +251,7 @@ class Tau2TaskRunner:
         )
 
         # Use the existing evaluation system
-        self.reward_info = evaluate_simulation(
+        self.full_reward_info = evaluate_simulation(
             simulation=simulation,
             task=task_input,
             evaluation_type=EvaluationType.ALL,
@@ -260,5 +259,5 @@ class Tau2TaskRunner:
             domain="airline",
         )
 
-        logger.info(f"Evaluation completed - Reward: {self.reward_info.reward}, Info: {self.reward_info}")
-        return self.reward_info.reward
+        logger.info(f"Evaluation completed - Reward: {self.full_reward_info.reward}, Info: {self.full_reward_info}")
+        return self.full_reward_info.reward
