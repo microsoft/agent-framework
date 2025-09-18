@@ -51,6 +51,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step14_Declarative/Agent_Step14_Declarative.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry/DeclarativeAgent_AzureAIFoundry.csproj" />
@@ -62,9 +63,10 @@
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_MCP/DeclarativeAgent_AzureAIFoundry_MCP.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_OpenAPI/DeclarativeAgent_AzureAIFoundry_OpenAPI.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureAIFoundry_OpenAPI_YAML/DeclarativeAgent_AzureAIFoundry_OpenAPI_YAML.csproj" />
-    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_AzureOpenAI/DeclarativeAgent_AzureOpenAI.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient/DeclarativeAgent_ChatClient.csproj" />
-    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_FunctionTools/DeclarativeAgent_FunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient_FunctionTools/DeclarativeAgent_ChatClient_FunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient_CodeInterpreter/DeclarativeAgent_ChatClient_CodeInterpreter.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/DeclarativeAgent_ChatClient_Dependency_Injection/DeclarativeAgent_ChatClient_Dependency_Injection.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />

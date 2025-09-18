@@ -103,29 +103,30 @@ public static class GptComponentMetadataExtensions
         Throw.IfNull(element);
 
         var chatOptionsValue = element.ExtensionData?.GetPropertyOrNull<RecordDataValue>(InitializablePropertyPath.Create("model.options"));
-        if (chatOptionsValue is null)
+        var tools = element.GetAITools();
+        if (chatOptionsValue is null && tools is null)
         {
             return null;
         }
 
         return new ChatOptions()
         {
-            ConversationId = chatOptionsValue.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("conversation_id"))?.Value,
-            Instructions = chatOptionsValue.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("instructions"))?.Value,
-            Temperature = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("temperature"))?.Value,
-            MaxOutputTokens = (int?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("max_output_tokens"))?.Value,
-            TopP = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("top_p"))?.Value,
-            TopK = (int?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("top_k"))?.Value,
-            FrequencyPenalty = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("frequency_penalty"))?.Value,
-            PresencePenalty = (float?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("presence_penalty"))?.Value,
-            Seed = (long?)chatOptionsValue.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("seed"))?.Value,
-            ResponseFormat = chatOptionsValue.GetResponseFormat(),
-            ModelId = chatOptionsValue.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model_id"))?.Value,
-            StopSequences = chatOptionsValue.GetStopSequences(),
-            AllowMultipleToolCalls = (bool?)chatOptionsValue.GetPropertyOrNull<BooleanDataValue>(InitializablePropertyPath.Create("allow_multiple_tool_calls"))?.Value,
-            ToolMode = chatOptionsValue.GetChatToolMode(),
-            Tools = element.GetAITools(),
-            AdditionalProperties = chatOptionsValue.GetAdditionalProperties(),
+            ConversationId = chatOptionsValue?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("conversation_id"))?.Value,
+            Instructions = chatOptionsValue?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("instructions"))?.Value,
+            Temperature = (float?)chatOptionsValue?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("temperature"))?.Value,
+            MaxOutputTokens = (int?)chatOptionsValue?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("max_output_tokens"))?.Value,
+            TopP = (float?)chatOptionsValue?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("top_p"))?.Value,
+            TopK = (int?)chatOptionsValue?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("top_k"))?.Value,
+            FrequencyPenalty = (float?)chatOptionsValue?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("frequency_penalty"))?.Value,
+            PresencePenalty = (float?)chatOptionsValue?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("presence_penalty"))?.Value,
+            Seed = (long?)chatOptionsValue?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("seed"))?.Value,
+            ResponseFormat = chatOptionsValue?.GetResponseFormat(),
+            ModelId = chatOptionsValue?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model_id"))?.Value,
+            StopSequences = chatOptionsValue?.GetStopSequences(),
+            AllowMultipleToolCalls = (bool?)chatOptionsValue?.GetPropertyOrNull<BooleanDataValue>(InitializablePropertyPath.Create("allow_multiple_tool_calls"))?.Value,
+            ToolMode = chatOptionsValue?.GetChatToolMode(),
+            Tools = tools,
+            AdditionalProperties = chatOptionsValue?.GetAdditionalProperties(s_chatOptionProperties),
         };
     }
 
@@ -214,5 +215,25 @@ public static class GptComponentMetadataExtensions
         WebSearchType,
         McpType
     ];
+
+    private static readonly string[] s_chatOptionProperties =
+[
+    "allow_multiple_tool_calls",
+        "conversation_id",
+        "frequency_penalty",
+        "instructions",
+        "max_output_tokens",
+        "model_id",
+        "presence_penalty",
+        "response_format",
+        "seed",
+        "stop_sequences",
+        "temperature",
+        "top_k",
+        "top_p",
+        "tool_mode",
+        "tools",
+    ];
+
     #endregion
 }

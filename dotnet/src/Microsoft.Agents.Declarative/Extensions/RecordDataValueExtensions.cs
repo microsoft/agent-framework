@@ -163,7 +163,8 @@ public static class RecordDataValueExtensions
     /// Retrieves the 'additional_properties' property from a <see cref="RecordDataValue"/>.
     /// </summary>
     /// <param name="recordData">Instance of <see cref="RecordDataValue"/></param>
-    public static AdditionalPropertiesDictionary? GetAdditionalProperties(this RecordDataValue recordData)
+    /// <param name="excludedProperties">List of properties which should not be included in additional properties.</param>
+    public static AdditionalPropertiesDictionary? GetAdditionalProperties(this RecordDataValue recordData, string[] excludedProperties)
     {
         Throw.IfNull(recordData);
 
@@ -174,7 +175,7 @@ public static class RecordDataValueExtensions
         }
 
         var additionalProperties = recordData.Properties
-            .Where(kvp => !s_chatOptionProperties.Contains(kvp.Key))
+            .Where(kvp => !excludedProperties.Contains(kvp.Key))
             .ToDictionary(
             kvp => kvp.Key,
             kvp => kvp.Value?.ToObject());
@@ -188,7 +189,7 @@ public static class RecordDataValueExtensions
     }
 
     /// <summary>
-    /// Retrieves the 'code-interpreter' tool from a <see cref="RecordDataValue"/>.
+    /// Retrieves the 'code_interpreter' tool from a <see cref="RecordDataValue"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="RecordDataValue"/></param>
     internal static HostedCodeInterpreterTool CreateCodeInterpreterTool(this RecordDataValue tool)
@@ -286,24 +287,5 @@ public static class RecordDataValueExtensions
             _ => throw new NotSupportedException($"Unsupported DataValue type: {value.GetType().FullName}"),
         };
     }
-
-    private static readonly string[] s_chatOptionProperties =
-    [
-        "allow_multiple_tool_calls",
-        "conversation_id",
-        "frequency_penalty",
-        "instructions",
-        "max_output_tokens",
-        "model_id",
-        "presence_penalty",
-        "response_format",
-        "seed",
-        "stop_sequences",
-        "temperature",
-        "top_k",
-        "top_p",
-        "tool_mode",
-        "tools",
-    ];
     #endregion
 }
