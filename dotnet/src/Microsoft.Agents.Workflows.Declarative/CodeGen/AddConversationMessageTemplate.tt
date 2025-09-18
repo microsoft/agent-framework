@@ -11,7 +11,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
         EvaluateStringExpression(this.Model.ConversationId, "conversationId");
-        EvaluateEnumExpression<AgentMessageRoleWrapper>(this.Model.Role, "role"); #> // %%% TODO: ChatRole
+        EvaluateEnumExpression<AgentMessageRoleWrapper, ChatRole>(this.Model.Role, "role", RoleMap, DefaultRole, qualifyResult: true); #>
         ChatMessage newMessage = new(role, [.. this.GetContent()]); //{ AdditionalProperties = this.GetMetadata() }; // %%% TODO: METADATA
         await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#
         AssignVariable(this.Message, "newMessage");

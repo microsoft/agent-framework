@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 public class AddConversationMessageTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public void AddConversationMessage()
+    public void NoRole()
     {
         // Act, Assert
         this.ExecuteTest(
@@ -27,7 +27,26 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
             ]);
     }
 
-    // %%% TODO: WITH METADATA, ROLE
+    [Fact]
+    public void WithRole()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(AddConversationMessage),
+            "TestVariable",
+            conversation: StringExpression.Literal("#rev_9"),
+            role: EnumExpression<AgentMessageRoleWrapper>.Literal(AgentMessageRole.Agent),
+            content:
+            [
+                new AddConversationMessageContent.Builder()
+                {
+                    Type = AgentMessageContentType.Text,
+                    Value = TemplateLine.Parse("Hello! How can I help you today?"),
+                },
+            ]);
+    }
+
+    // %%% TODO: WITH METADATA
 
     private void ExecuteTest(
         string displayName,

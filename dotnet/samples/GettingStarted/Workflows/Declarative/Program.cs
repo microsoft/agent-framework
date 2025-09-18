@@ -36,7 +36,7 @@ internal sealed class Program
         string? workflowFile = ParseWorkflowFile(args);
         if (workflowFile is null)
         {
-            Notify("\nUsage: DeclarativeWorkflow <workflow-file> [<input>]");
+            Notify("\nUsage: DeclarativeWorkflow <workflow-file> [<input>]\n");
             return;
         }
 

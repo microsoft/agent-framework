@@ -12,6 +12,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     using Microsoft.Agents.Workflows.Declarative.Extensions;
     using Microsoft.Bot.ObjectModel;
     using Microsoft.Extensions.AI;
+    using System.Collections.Generic;
     using System;
     
     /// <summary>
@@ -28,6 +29,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         /// </summary>
         public override string TransformText()
         {
+            this.Write("\n");
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
@@ -167,7 +169,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
@@ -225,7 +227,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
@@ -311,7 +313,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
@@ -376,7 +378,7 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write("\n            string ");
+this.Write("\n        string ");
 
         
         #line default
@@ -390,7 +392,7 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(" = \n                \"\"\"\n                ");
+this.Write(" = \n            \"\"\"\n            ");
 
         
         #line default
@@ -404,7 +406,7 @@ this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write("\n                \"\"\";");
+this.Write("\n            \"\"\";");
 
         
         #line default
@@ -420,7 +422,7 @@ this.Write("\n                \"\"\";");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write("\n            string ");
+this.Write("\n        string ");
 
         
         #line default
@@ -566,8 +568,12 @@ this.Write("\").ConfigureAwait(false);");
     }
 }
 
-// %%% TODO: Expose underlying enum and map to public one.
-void EvaluateEnumExpression<TEnum>(EnumExpression<TEnum> expression, string targetVariable) where TEnum : EnumWrapper
+void EvaluateEnumExpression<TWrapper, TValue>(
+    EnumExpression<TWrapper> expression, 
+    string targetVariable,
+    IDictionary<TWrapper, TValue> enumMap,
+    TValue defaultValue)
+        where TWrapper : EnumWrapper
 {
     if (expression is null)
     {
@@ -587,7 +593,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TEnum).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
@@ -615,7 +621,7 @@ this.Write(" = ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TEnum).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
 
         
         #line default
@@ -659,7 +665,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TEnum).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
@@ -687,7 +693,7 @@ this.Write(" = await context.ReadStateAsync<");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TEnum).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
 
         
         #line default
@@ -745,7 +751,7 @@ this.Write("\n        ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TEnum).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
@@ -773,7 +779,7 @@ this.Write(" = await context.EvaluateExpressionAsync");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TEnum).Name));
+this.Write(this.ToStringHelper.ToStringWithCulture(typeof(TValue).Name));
 
         
         #line default

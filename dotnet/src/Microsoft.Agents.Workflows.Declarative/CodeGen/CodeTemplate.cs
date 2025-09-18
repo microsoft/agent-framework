@@ -42,6 +42,26 @@ internal abstract class CodeTemplate
     public static string VariableName(PropertyPath path) => Throw.IfNull(path.VariableName);
     public static string VariableScope(PropertyPath path) => Throw.IfNull(path.VariableScopeName);
 
+    public static string Format<TValue>(string? value)
+    {
+        if (value is null)
+        {
+            return "null";
+        }
+
+        if (typeof(TValue) == typeof(string))
+        {
+            return @$"""{value}""";
+        }
+
+        if (typeof(TValue).IsEnum)
+        {
+            return $"{typeof(TValue).Name}.{value}";
+        }
+
+        return $"{value}";
+    }
+
     public static string Format(DataValue value) =>
         value switch
         {
@@ -57,6 +77,32 @@ internal abstract class CodeTemplate
             _ => $"[{value.GetType().Name}]",
         };
 
+    public static string GetTypeAlias<TValue>() => GetTypeAlias(typeof(TValue));
+
+    public static string GetTypeAlias(Type type)
+    {
+        return type switch
+        {
+            Type t when t == typeof(bool) => "bool",
+            Type t when t == typeof(byte) => "byte",
+            Type t when t == typeof(sbyte) => "sbyte",
+            Type t when t == typeof(char) => "char",
+            Type t when t == typeof(decimal) => "decimal",
+            Type t when t == typeof(double) => "double",
+            Type t when t == typeof(float) => "float",
+            Type t when t == typeof(int) => "int",
+            Type t when t == typeof(uint) => "uint",
+            Type t when t == typeof(long) => "long",
+            Type t when t == typeof(ulong) => "ulong",
+            Type t when t == typeof(nint) => "nint",
+            Type t when t == typeof(nuint) => "nuint",
+            Type t when t == typeof(short) => "short",
+            Type t when t == typeof(ushort) => "ushort",
+            Type t when t == typeof(string) => "string",
+            Type t when t == typeof(object) => "object",
+            _ => type.Name
+        };
+    }
     #endregion
 
     #region Properties

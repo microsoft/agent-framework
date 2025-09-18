@@ -10,15 +10,15 @@ void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVa
     }
     else if (expression.IsLiteral)
     { #>
-        <#= typeof(TValue).Name #>? <#= targetVariable #> = <#= Format(expression.LiteralValue) #>;<#+ 
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = <#= Format(expression.LiteralValue) #>;<#+ 
     }
     else if (expression.IsVariableReference)
-    { #>
-        <#= typeof(TValue).Name #>? <#= targetVariable #> = await context.ReadStateAsync<<#= typeof(TValue).Name #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.ReadStateAsync<<#= typeof(TValue).Name #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    { #>
-        <#= typeof(TValue).Name #>? <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else
     {
@@ -36,22 +36,22 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
     {
         if (expression.LiteralValue.Contains("\n"))
         {#>
-            string <#= targetVariable #> = 
-                """
-                <#= expression.LiteralValue #>
-                """;<#+ 
+        string <#= targetVariable #> = 
+            """
+            <#= expression.LiteralValue #>
+            """;<#+ 
         }
         else
         {#>
-            string <#= targetVariable #> = "<#= expression.LiteralValue #>";<#+ 
+        string <#= targetVariable #> = "<#= expression.LiteralValue #>";<#+ 
         }
     }
     else if (expression.IsVariableReference)
-    { #>
+    {#>
         string <#= targetVariable #> = await context.ReadStateAsync<object>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    { #>
+    {#>
         string <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else
@@ -60,24 +60,37 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
     }
 }
 
-// %%% TODO: Expose underlying enum and map to public one.
-void EvaluateEnumExpression<TEnum>(EnumExpression<TEnum> expression, string targetVariable) where TEnum : EnumWrapper
+void EvaluateEnumExpression<TWrapper, TValue>(
+    EnumExpression<TWrapper> expression, 
+    string targetVariable,
+    IDictionary<TWrapper, string> resultMap,
+    string defaultValue = null,
+    bool qualifyResult = false)
+        where TWrapper : EnumWrapper
 {
     if (expression is null)
-    {
-        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    {#>
+        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = <#= Format<TValue>(defaultValue) #>;<#+ 
     }
     else if (expression.IsLiteral)
-    { #>
-        <#= typeof(TEnum).Name #> <#= targetVariable #> = <#= typeof(TEnum).Name #>.<#= expression.LiteralValue #>;<#+ 
+    { 
+        resultMap.TryGetValue(expression.LiteralValue, out string resultValue);
+        if (qualifyResult)
+        {#>
+        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = <#= typeof(TValue).Name #>.<#= resultValue #>;<#+ 
+        }
+        else
+        {#>
+        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = <#= Format<TValue>(resultValue) #>;<#+ 
+        }
     }
     else if (expression.IsVariableReference)
-    { #>
-        <#= typeof(TEnum).Name #> <#= targetVariable #> = await context.ReadStateAsync<<#= typeof(TEnum).Name #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    {#>
+        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = await context.ReadStateAsync<<#= typeof(TValue).Name #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    { #>
-        <#= typeof(TEnum).Name #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= typeof(TEnum).Name #>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    {#>
+        <#= GetTypeAlias<TValue>() #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= typeof(TValue).Name #>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else
     {
