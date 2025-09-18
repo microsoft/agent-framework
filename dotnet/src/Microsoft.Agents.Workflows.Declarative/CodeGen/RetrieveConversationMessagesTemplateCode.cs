@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Frozen;
+using System.Collections.Generic;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 
@@ -18,4 +20,13 @@ internal partial class RetrieveConversationMessagesTemplate
 
     public string Id { get; }
     public string Name { get; }
+
+    public const string DefaultSort = "false";
+
+    public static readonly FrozenDictionary<AgentMessageSortOrderWrapper, string> SortMap =
+        new Dictionary<AgentMessageSortOrderWrapper, string>()
+        {
+            [AgentMessageSortOrderWrapper.Get(AgentMessageSortOrder.NewestFirst)] = "true",
+            [AgentMessageSortOrderWrapper.Get(AgentMessageSortOrder.OldestFirst)] = "false",
+        }.ToFrozenDictionary();
 }

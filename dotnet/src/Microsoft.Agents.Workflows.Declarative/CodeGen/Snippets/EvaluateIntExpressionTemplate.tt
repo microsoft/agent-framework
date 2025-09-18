@@ -1,24 +1,14 @@
 ﻿<#+
-void EvaluateStringExpression(StringExpression expression, string targetVariable, bool isNullable = false)
+void EvaluateIntExpression(IntExpression expression, string targetVariable, bool isNullable = false)
 {
-    string typeName = isNullable ? "string?" : "string";
+    string typeName = isNullable ? "int?" : "int";
     if (expression is null)
     {#>
-        <#= typeName #> <#= targetVariable #> = <#= isNullable ? "null" : "string.Empty" #>;<#+ 
+        <#= typeName #> <#= targetVariable #> = <#= isNullable ? "null" : "0" #>;<#+ 
     }
     else if (expression.IsLiteral)
-    {
-        if (expression.LiteralValue.Contains("\n"))
-        {#>
-        <#= typeName #> <#= targetVariable #> = 
-            """
-            <#= expression.LiteralValue #>
-            """;<#+ 
-        }
-        else
-        {#>
-        <#= typeName #> <#= targetVariable #> = "<#= expression.LiteralValue #>";<#+ 
-        }
+    {#>
+        <#= typeName #> <#= targetVariable #> = <#= expression.LiteralValue #>;<#+ 
     }
     else if (expression.IsVariableReference)
     {#>

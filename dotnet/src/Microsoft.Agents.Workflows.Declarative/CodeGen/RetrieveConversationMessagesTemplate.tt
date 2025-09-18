@@ -9,14 +9,19 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
 {
     // <inheritdoc />
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {
+    {<#
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId");
+        EvaluateIntExpression(this.Model.Limit, "limit");
+        EvaluateStringExpression(this.Model.MessageAfter, "after", isNullable: true);
+        EvaluateStringExpression(this.Model.MessageBefore, "before", isNullable: true);
+        EvaluateEnumExpression<AgentMessageSortOrderWrapper, bool>(this.Model.SortOrder, "newestFirst", SortMap, defaultValue: DefaultSort); #>
         ChatMessage messages = 
             await agentProvider.GetMessageAsync(
                 converationId, 
-                limit: null, 
-                after: null,
-                before: null,
-                newestFirst: null,
+                limit, 
+                after,
+                before,
+                newestFirst,
                 cancellationToken).ConfigureAwait(false);<#
         AssignVariable(this.Model.Messages, "messages");
         #>

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 
@@ -148,31 +149,35 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         //}
     }
 
-    protected override void Visit(BreakLoop item) // %%% TODO
+    protected override void Visit(BreakLoop item)
     {
         this.Trace(item);
 
         //ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
+        const string LoopId = "loop_action_id"; // %%% TODO
         //if (loopExecutor is not null)
         //{
-        //    string parentId = GetParentId(item);
-        //    this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
-        //    this._workflowModel.AddLink(item.Id.Value, PostId(loopExecutor.Id));
-        //    this.RestartAfter(item.Id.Value, parentId);
+        string ExecutorComment = @$"Break out of loop: ""{LoopId}""";
+
+        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", ForeachExecutor.Steps.End(LoopId)).TransformText()); // %%% CONTINUE WITH
         //}
     }
 
-    protected override void Visit(ContinueLoop item) // %%% TODO
+    protected override void Visit(ContinueLoop item)
     {
         this.Trace(item);
 
         //ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
+        const string LoopId = "loop_action_id"; // %%% TODO
         //if (loopExecutor is not null)
         //{
-        //    string parentId = GetParentId(item);
-        //    this.ContinueWith(this.CreateStep(item.Id.Value), parentId);
-        //    this._workflowModel.AddLink(item.Id.Value, ForeachExecutor.Steps.Next(loopExecutor.Id));
-        //    this.RestartAfter(item.Id.Value, parentId);
+        string ExecutorComment = @$"Continue with next value for loop: ""{LoopId}""";
+
+        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", ForeachExecutor.Steps.Start(LoopId)).TransformText()); // %%% CONTINUE WITH
         //}
     }
 
@@ -258,7 +263,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
-    protected override void Visit(InvokeAzureAgent item)
+    protected override void Visit(InvokeAzureAgent item) // %%% TODO
     {
         throw new System.NotImplementedException();
     }
@@ -283,17 +288,23 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     protected override void Visit(CopyConversationMessages item)
     {
-        throw new System.NotImplementedException();
+        this.Executors.Add(new CopyConversationMessagesTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(RetrieveConversationMessage item)
     {
-        throw new System.NotImplementedException();
+        this.Executors.Add(new RetrieveConversationMessageTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(RetrieveConversationMessages item)
     {
-        throw new System.NotImplementedException();
+        this.Executors.Add(new RetrieveConversationMessagesTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     #region Not supported
