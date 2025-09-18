@@ -5,9 +5,15 @@ from loguru import logger
 
 
 def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
-    """Flip the messages from assistant to user and vice versa."""
+    """Flip message roles between assistant and user for role-playing scenarios.
+
+    Used in agent simulations where the assistant's messages become user inputs
+    and vice versa. Function calls are filtered out when flipping assistant
+    messages to user messages (since users typically don't make function calls).
+    """
 
     def filter_out_function_calls(messages: list[Contents]) -> list[Contents]:
+        """Remove function call content from message contents."""
         return [content for content in messages if content.type != "function_call"]
 
     flipped_messages = []
@@ -40,7 +46,11 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
 
 
 def log_messages(messages: list[ChatMessage]) -> None:
-    """Log messages with colored output based on role and content type."""
+    """Log messages with colored output based on role and content type.
+
+    Provides visual debugging by color-coding different message roles and
+    content types. Escapes HTML-like characters to prevent log formatting issues.
+    """
     _logger = logger.opt(colors=True)
     for msg in messages:
         # Handle different content types

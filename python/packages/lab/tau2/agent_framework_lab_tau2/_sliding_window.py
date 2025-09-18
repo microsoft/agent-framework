@@ -11,9 +11,11 @@ from loguru import logger
 
 
 class SlidingWindowChatMessageList(ChatMessageList):
-    """A sliding window implementation of ChatMessageList
+    """A token-aware sliding window implementation of ChatMessageList.
 
-    The oldest messages are truncated when the token count exceeds the max tokens.
+    Maintains two message lists: complete history and truncated window.
+    Automatically removes oldest messages when token limit is exceeded.
+    Also removes leading tool messages to ensure valid conversation flow.
     """
 
     def __init__(
@@ -24,9 +26,9 @@ class SlidingWindowChatMessageList(ChatMessageList):
         tool_definitions: Any | None = None,
     ):
         super().__init__(messages)
-        self._truncated_messages = self._messages.copy()
+        self._truncated_messages = self._messages.copy()  # Separate truncated view
         self.max_tokens = max_tokens
-        self.system_message = system_message
+        self.system_message = system_message  # Included in token count
         self.tool_definitions = tool_definitions
         # An estimation based on a commonly used vocab table
         self.encoding = tiktoken.get_encoding("o200k_base")

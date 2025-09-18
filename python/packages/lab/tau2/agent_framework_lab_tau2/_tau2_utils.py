@@ -26,19 +26,21 @@ _original_set_state = Environment.set_state
 
 
 def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction:
-    """Convert a tau2 Tool to an AIFunction using its existing params BaseModel."""
+    """Convert a tau2 Tool to an AIFunction for agent framework compatibility.
 
-    # Create a wrapper function that calls the tau2 tool
+    Creates a wrapper that preserves the tool's interface while ensuring
+    results are deep-copied to prevent unintended mutations.
+    """
+
     def wrapped_func(**kwargs):
         result = tau2_tool(**kwargs)
-        # Sometimes the result is not copied and modified afterwards, so we need to copy it
+        # Deep copy to prevent mutations of returned data
         if isinstance(result, BaseModel):
             result = result.model_copy(deep=True)
         else:
             result = deepcopy(result)
         return result
 
-    # Use the existing params BaseModel from tau2 tool
     return AIFunction(
         name=tau2_tool.name,
         description=tau2_tool._get_description(),
@@ -48,26 +50,29 @@ def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction:
 
 
 def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage]) -> list[Message]:
-    """Convert agent framework ChatMessages to tau2 Messsage objects."""
+    """Convert agent framework ChatMessages to tau2 Message objects.
+
+    Handles role mapping, text extraction, function calls, and function results.
+    Function results are converted to separate ToolMessage instances.
+    """
 
     tau2_messages = []
 
     for msg in messages:
-        role_str = str(msg.role)  # Convert Role to string
+        role_str = str(msg.role)
 
-        # Extract text content
+        # Extract text content from all text-type contents
         text_content = None
         text_contents = [c for c in msg.contents if hasattr(c, "text") and hasattr(c, "type") and c.type == "text"]
         if text_contents:
             text_content = " ".join(c.text for c in text_contents)
 
-        # Extract function calls
+        # Extract function calls and convert to ToolCall objects
         function_calls = [c for c in msg.contents if hasattr(c, "type") and c.type == "function_call"]
         tool_calls = None
         if function_calls:
             tool_calls = []
             for fc in function_calls:
-                # Parse arguments
                 arguments = fc.parse_arguments() or {}
                 tool_call = ToolCall(
                     id=fc.call_id,
@@ -77,10 +82,10 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
                 )
                 tool_calls.append(tool_call)
 
-        # Extract function results - these become separate ToolMessage instances
+        # Extract function results for separate ToolMessage creation
         function_results = [c for c in msg.contents if hasattr(c, "type") and c.type == "function_result"]
 
-        # Create the main message (system, user, or assistant)
+        # Create main message based on role
         if role_str == "system":
             tau2_messages.append(SystemMessage(role="system", content=text_content))
         elif role_str == "user":
@@ -88,11 +93,10 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
         elif role_str == "assistant":
             tau2_messages.append(AssistantMessage(role="assistant", content=text_content, tool_calls=tool_calls))
         elif role_str == "tool":
-            # Tool role messages in agent framework should be handled as function results
-            # Skip creating a participant message for these, they'll be handled below
+            # Tool messages are handled as function results below
             pass
 
-        # Handle function results as separate ToolMessage instances
+        # Convert function results to separate ToolMessage instances
         for fr in function_results:
             dumpable_content = _dump_function_result(fr.result)
             content = dumpable_content if isinstance(dumpable_content, str) else json.dumps(dumpable_content)
@@ -100,7 +104,7 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
                 id=fr.call_id,
                 role="tool",
                 content=content,
-                requestor="assistant",  # Most tool calls come from assistant
+                requestor="assistant",  # Most tool calls originate from assistant
                 error=fr.exception is not None,
             )
             tau2_messages.append(tool_msg)
@@ -109,7 +113,12 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
 
 
 def patch_env_set_state() -> None:
-    """Patch the Environment.set_state method to allow for inconsistent tool call results from expected."""
+    """Patch Environment.set_state to allow inconsistent tool call results.
+
+    Modifies the original method to log warnings instead of raising errors
+    when actual tool results differ from expected results, enabling more
+    flexible testing and development workflows.
+    """
 
     def set_state(
         self,

@@ -16,6 +16,7 @@ from agent_framework_lab_tau2 import TaskRunner, patch_env_set_state
 
 
 def to_dumpable(result: dict[str, Any]) -> dict[str, Any]:
+    """Convert the result to a format dumpable to JSONL."""
     if "error" in result:
         return {
             "id": result["task"].id,

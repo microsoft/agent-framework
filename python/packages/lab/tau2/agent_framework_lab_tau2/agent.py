@@ -46,28 +46,34 @@ ORCHESTRATOR_ID = "orchestrator"
 
 
 class TaskRunner:
-    """Running tasks defined in tau-2."""
+    """Orchestrates task execution using agent framework workflows for tau2 benchmarks.
 
-    # State
+    Manages conversation flow between assistant agents and user simulators,
+    handles termination conditions, and evaluates performance using tau2 metrics.
+
+    Only "airline" domain is supported for now.
+    """
+
+    # State tracking
     step_count: int
     full_conversation: list[ChatMessage]
     termination_reason: TerminationReason | None
     full_reward_info: RewardInfo | None
 
-    # Configurations
+    # Configuration
     max_steps: int
 
     def __init__(self, max_steps: int):
         self.max_steps = max_steps
-
         self.reinit()
 
     def reinit(self):
+        """Reset all state for a new task run."""
         self.step_count = 0
         self.full_conversation = []
         self.termination_reason = None
         self.full_reward_info = None
-        logger.info("ConversationOrchestrator has been re-initialized.")
+        logger.info("TaskRunner has been re-initialized.")
         return self
 
     def __repr__(self) -> str:
@@ -124,13 +130,30 @@ class TaskRunner:
     async def conversation_orchestrator(
         self, response: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorRequest]
     ):
-        """Flip the roles of messages and routes properly."""
+        """Orchestrate conversation flow between assistant and user simulator.
+
+        This is the central routing hub that:
+
+        1. Receives responses from either the assistant agent or user simulator
+        2. Flips message roles to create proper conversation flow (assistant->user, user->assistant)
+        3. Routes the flipped messages to the appropriate target agent
+        4. Maintains the conversation loop until termination conditions are met
+
+        Args:
+            response: The response from either assistant or user simulator agent
+            ctx: Workflow context for sending messages to other executors
+        """
+        # Flip message roles for proper conversation flow
+        # Assistant messages become user messages and vice versa
         flipped = flip_messages(response.agent_run_response.messages)
+
+        # Determine source to route to correct target
         is_from_agent = response.executor_id == ASSISTANT_AGENT_ID
+
+        # Send flipped messages to the opposite agent
+        # Critical: Target ID must be specified to prevent broadcasting to both agents
         await ctx.send_message(
             AgentExecutorRequest(messages=flipped, should_respond=True),
-            # Target ID must be specified here because orchestrator is connected to both sides;
-            # otherwise, it will be broadcasted (wrong).
             target_id=USER_SIMULATOR_ID if is_from_agent else ASSISTANT_AGENT_ID,
         )
 
@@ -142,25 +165,47 @@ class TaskRunner:
         assistant_sampling_temperature: float = 0.0,
         assistant_window_size: int = 32768,
     ) -> list[ChatMessage]:
-        """Complex workflow-based agent implementation."""
+        """Run a tau2 task using workflow-based agent orchestration.
+
+        This method orchestrates a complex multi-agent simulation:
+
+        1. Sets up tau2 environment and converts tools for agent framework compatibility
+        2. Creates two agents: assistant (with tools) and user simulator (without tools)
+        3. Builds a workflow with orchestrated message routing between agents
+        4. Manages conversation flow until termination conditions are met
+        5. Returns complete conversation history for evaluation
+
+        Args:
+            task: Tau2 task containing scenario, policy, and evaluation criteria
+            assistant_chat_client: LLM client for the assistant agent
+            user_simuator_chat_client: LLM client for the user simulator
+            assistant_sampling_temperature: Temperature for assistant responses (0.0 = most deterministic)
+            assistant_window_size: Token limit for assistant's sliding window memory
+
+        Returns:
+            Complete conversation history as ChatMessage list for evaluation
+        """
 
         logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")  # type: ignore
         logger.info(f"Assistant chat client: {assistant_chat_client}")
         logger.info(f"User simulator chat client: {user_simuator_chat_client}")
 
-        # Get environment and tools
+        # Initialize tau2 environment and extract tools/policy
+        # This provides the domain-specific context (airline customer service in this case)
         env = get_environment()
-        tools = env.get_tools()
-        policy = env.get_policy()
+        tools = env.get_tools()  # Available actions the assistant can take
+        policy = env.get_policy()  # Guidelines the assistant must follow
 
         logger.info(
             f"Environment has {len(env.get_tools())} tools: {', '.join([tool.name for tool in env.get_tools()])}"
         )
 
-        # Convert tau2 tools to AIFunction format
+        # Convert tau2 tools to agent framework AIFunction format
+        # This bridges the gap between tau2's tool system and agent framework's expectations
         ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools]
 
-        # 1. Create assistant agent with proper system prompt
+        # STEP 1: Create assistant agent with domain-specific instructions
+        # Combines general customer service behavior with specific policy guidelines
         assistant_system_prompt = f"""<instructions>
 {ASSISTANT_AGENT_INSTRUCTION}
 </instructions>
@@ -168,6 +213,10 @@ class TaskRunner:
 {policy}
 </policy>"""
 
+        # Assistant agent has:
+        # - Access to all domain tools (booking, cancellation, etc.)
+        # - Sliding window memory to handle long conversations within token limits
+        # - Temperature-controlled response generation
         assistant = ChatAgent(
             chat_client=assistant_chat_client,
             instructions=assistant_system_prompt,
@@ -180,10 +229,12 @@ class TaskRunner:
             ),
         )
 
-        # 2. Create user simulator as another ChatAgent
-        # Get user simulator guidelines (without tools for now as requested)
+        # STEP 2: Create user simulator agent
+        # User simulator follows tau2's guidelines for realistic customer behavior
+        # No tools available - users typically don't have direct system access
         user_sim_guidelines = get_global_user_sim_guidelines(use_tools=False)
 
+        # User simulator prompt combines general guidelines with task-specific scenario
         user_sim_system_prompt = f"""{user_sim_guidelines}
 <scenario>
 {task.user_scenario.instructions}
@@ -193,27 +244,33 @@ class TaskRunner:
             chat_client=user_simuator_chat_client,
             instructions=user_sim_system_prompt,
             temperature=0.0,
-            # No sliding window for user simulator to keep full context
-            # TODO(yuge): support user tools in future
+            # No sliding window for user simulator to maintain full conversation context
+            # TODO(yuge): Consider adding user tools in future for more realistic scenarios
         )
 
-        # 3. Create standard AgentExecutors
+        # STEP 3: Create workflow executors
+        # Each executor wraps an agent or function for workflow orchestration
         assistant_executor = AgentExecutor(assistant, id=ASSISTANT_AGENT_ID)
         user_executor = AgentExecutor(user_simulator, id=USER_SIMULATOR_ID)
         orchestrator = FunctionExecutor(func=self.conversation_orchestrator, id=ORCHESTRATOR_ID)
 
-        # 4. Build workflow
+        # STEP 4: Build the conversation workflow
+        # Creates a cyclic workflow: Orchestrator -> Assistant -> Orchestrator -> User -> Orchestrator...
+        # The orchestrator acts as a message router that flips roles and routes to appropriate agent
         workflow = (
-            WorkflowBuilder(max_iterations=10000)  # Set to unlimited, because we are not relying on this
-            .set_start_executor(orchestrator)  # Start with orchestrator
-            .add_edge(orchestrator, assistant_executor)  # Orchestrator -> Assistant
-            .add_edge(assistant_executor, orchestrator, condition=self.should_not_stop)  # Assistant -> Orchestrator
-            .add_edge(orchestrator, user_executor)  # Orchestrator -> User
-            .add_edge(user_executor, orchestrator, condition=self.should_not_stop)  # User -> Orchestrator
+            WorkflowBuilder(max_iterations=10000)  # Unlimited - we control termination via should_not_stop
+            .set_start_executor(orchestrator)  # Orchestrator manages the conversation flow
+            .add_edge(orchestrator, assistant_executor)  # Route messages to assistant
+            .add_edge(
+                assistant_executor, orchestrator, condition=self.should_not_stop
+            )  # Check termination after assistant
+            .add_edge(orchestrator, user_executor)  # Route messages to user simulator
+            .add_edge(user_executor, orchestrator, condition=self.should_not_stop)  # Check termination after user
             .build()
         )
 
-        # 5. Start workflow with hardcoded greeting
+        # STEP 5: Initialize conversation with standard greeting
+        # Matches tau2's expected conversation start pattern
         logger.info(f"Starting workflow with hardcoded greeting: '{DEFAULT_FIRST_AGENT_MESSAGE}'")
 
         first_message = ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)
@@ -223,11 +280,15 @@ class TaskRunner:
             full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)],
         )
 
-        # 6. Run the workflow and gather the results
+        # STEP 6: Execute the workflow and collect results
+        # The workflow runs until termination conditions are met (max steps, stop signals, etc.)
         await workflow.run(initial_greeting)
 
+        # Extract complete conversation history from assistant's message store
+        # We use list_all_messages() to get the full conversation, not just the truncated window
         message_store = cast(SlidingWindowChatMessageList, assistant_executor._agent_thread.message_store)
         full_conversation = [first_message] + await message_store.list_all_messages()
+
         logger.opt(colors=True).info(
             f"<green>WORKFLOW COMPLETED WITH {len(full_conversation)} MESSAGES. "
             f"Termination reason: {self.termination_reason}.</green>"
@@ -239,27 +300,44 @@ class TaskRunner:
     def evaluate(
         self, task_input: Task, conversation: list[ChatMessage], termination_reason: TerminationReason | None
     ) -> float:
-        """Evaluate the agent's performance using the existing evaluation system."""
+        """Evaluate agent performance using tau2's comprehensive evaluation system.
 
+        Bridges agent framework conversation results with tau2's evaluation pipeline.
+        Considers task completion, policy adherence, conversation quality, and tool usage.
+
+        Args:
+            task_input: Original tau2 task containing evaluation criteria
+            conversation: Complete conversation history from workflow execution
+            termination_reason: How/why the conversation ended (affects scoring)
+
+        Returns:
+            Numeric reward score (0.0-1.0) representing overall performance
+
+        Side Effects:
+            Stores detailed evaluation results in self.full_reward_info
+        """
+
+        # Handle missing termination reason (can happen with unexpected workflow endings)
         if termination_reason is None:
-            # Set to "too many errors" if there is no explicit termination cause
             termination_reason = TerminationReason.TOO_MANY_ERRORS
 
-        # Convert Agent framework messages to tau2 Message objects
+        # Convert agent framework ChatMessages to tau2 Message format for evaluation
         tau2_messages = convert_agent_framework_messages_to_tau2_messages(conversation)
 
-        # Create a SimulationRun for evaluation
+        # Package conversation and metadata for tau2's evaluation system
         simulation = SimulationRun(
-            id=str(uuid.uuid4()),
-            task_id=task_input.id,
-            start_time=get_now(),
-            end_time=get_now(),
+            id=str(uuid.uuid4()),  # Unique identifier for this evaluation run
+            task_id=task_input.id,  # Links evaluation back to original task
+            start_time=get_now(),  # Timestamp for evaluation records
+            end_time=get_now(),  # Duration is 0 since this is post-hoc evaluation
             duration=0.0,
-            termination_reason=termination_reason,
-            messages=tau2_messages,
+            termination_reason=termination_reason,  # Context for how conversation ended
+            messages=tau2_messages,  # The actual conversation to evaluate
         )
 
-        # Use the existing evaluation system
+        # Run comprehensive multi-dimensional evaluation
+        # EvaluationType.ALL: evaluates task completion, policy adherence, conversation quality, ...
+        # solo_mode=False: indicates multi-agent conversation (assistant + user simulator)
         self.full_reward_info = evaluate_simulation(
             simulation=simulation,
             task=task_input,
