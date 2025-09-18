@@ -28,7 +28,7 @@ public static class ServiceCollectionExtensions
         string containerName = "ActorState")
     {
         // Register CosmosClient as singleton
-        services.AddSingleton<CosmosClient>(serviceProvider =>
+        services.AddSingleton(serviceProvider =>
         {
             var cosmosClientOptions = new CosmosClientOptions
             {
@@ -46,7 +46,7 @@ public static class ServiceCollectionExtensions
         });
 
         // Register LazyCosmosContainer as singleton
-        services.AddSingleton<LazyCosmosContainer>(serviceProvider =>
+        services.AddSingleton(serviceProvider =>
         {
             var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
             return new LazyCosmosContainer(cosmosClient, databaseName, containerName);
@@ -75,7 +75,7 @@ public static class ServiceCollectionExtensions
         string containerName = "ActorState")
     {
         // Register LazyCosmosContainer as singleton using existing CosmosClient
-        services.AddSingleton<LazyCosmosContainer>(serviceProvider =>
+        services.AddSingleton(serviceProvider =>
         {
             var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
             return new LazyCosmosContainer(cosmosClient, databaseName, containerName);

@@ -9,14 +9,14 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
 
-internal class MessageMerger
+internal sealed class MessageMerger
 {
-    private class ResponseMergeState(string? responseId)
+    private sealed class ResponseMergeState(string? responseId)
     {
         public string? ResponseId { get; } = responseId;
 
-        public Dictionary<string, List<AgentRunResponseUpdate>> UpdatesByMessageId { get; } = new();
-        public List<AgentRunResponseUpdate> DanglingUpdates { get; } = new();
+        public Dictionary<string, List<AgentRunResponseUpdate>> UpdatesByMessageId { get; } = [];
+        public List<AgentRunResponseUpdate> DanglingUpdates { get; } = [];
 
         public void AddUpdate(AgentRunResponseUpdate update)
         {
@@ -28,14 +28,12 @@ internal class MessageMerger
             {
                 if (!this.UpdatesByMessageId.TryGetValue(update.MessageId, out List<AgentRunResponseUpdate>? updates))
                 {
-                    this.UpdatesByMessageId[update.MessageId] = updates = new List<AgentRunResponseUpdate>();
+                    this.UpdatesByMessageId[update.MessageId] = updates = [];
                 }
 
                 updates.Add(update);
             }
         }
-
-        private AgentRunResponse ComputeResponse(List<AgentRunResponseUpdate> updates) => updates.ToAgentRunResponse();
 
         public AgentRunResponse ComputeMerged(string messageId)
         {
@@ -80,7 +78,7 @@ internal class MessageMerger
                 return updates.Aggregate(null,
                     (ChatMessage? previous, AgentRunResponseUpdate current) =>
                     {
-                        return previous == null
+                        return previous is null
                              ? current.ToChatMessage()
                              : previous.UpdateWith(current);
                     })!;
@@ -88,7 +86,7 @@ internal class MessageMerger
         }
     }
 
-    private readonly Dictionary<string, ResponseMergeState> _mergeStates = new();
+    private readonly Dictionary<string, ResponseMergeState> _mergeStates = [];
     private readonly ResponseMergeState _danglingState = new(null);
 
     public void AddUpdate(AgentRunResponseUpdate update)
@@ -133,8 +131,8 @@ internal class MessageMerger
     public AgentRunResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
     {
         List<ChatMessage> messages = [];
-        Dictionary<string, AgentRunResponse> responses = new();
-        HashSet<string> agentIds = new();
+        Dictionary<string, AgentRunResponse> responses = [];
+        HashSet<string> agentIds = [];
 
         foreach (string responseId in this._mergeStates.Keys)
         {
@@ -153,11 +151,11 @@ internal class MessageMerger
 
         UsageDetails? usage = null;
         AdditionalPropertiesDictionary? additionalProperties = null;
-        HashSet<DateTimeOffset> createdTimes = new();
+        HashSet<DateTimeOffset> createdTimes = [];
 
         foreach (AgentRunResponse response in responses.Values)
         {
-            if (response.AgentId != null)
+            if (response.AgentId is not null)
             {
                 agentIds.Add(response.AgentId);
             }
@@ -183,7 +181,7 @@ internal class MessageMerger
             AdditionalProperties = additionalProperties
         };
 
-        AgentRunResponse MergeResponses(AgentRunResponse? current, AgentRunResponse incoming)
+        static AgentRunResponse MergeResponses(AgentRunResponse? current, AgentRunResponse incoming)
         {
             if (current is null)
             {
@@ -237,12 +235,12 @@ internal class MessageMerger
 
         static AdditionalPropertiesDictionary? MergeProperties(AdditionalPropertiesDictionary? current, AdditionalPropertiesDictionary? incoming)
         {
-            if (current == null)
+            if (current is null)
             {
                 return incoming;
             }
 
-            if (incoming == null)
+            if (incoming is null)
             {
                 return current;
             }
@@ -258,22 +256,22 @@ internal class MessageMerger
 
         static UsageDetails? MergeUsage(UsageDetails? current, UsageDetails? incoming)
         {
-            if (current == null)
+            if (current is null)
             {
                 return incoming;
             }
 
             AdditionalPropertiesDictionary<long>? additionalCounts = current.AdditionalCounts;
-            if (incoming == null)
+            if (incoming is null)
             {
                 return current;
             }
 
-            if (additionalCounts == null)
+            if (additionalCounts is null)
             {
                 additionalCounts = incoming.AdditionalCounts;
             }
-            else if (incoming.AdditionalCounts != null)
+            else if (incoming.AdditionalCounts is not null)
             {
                 foreach (string key in incoming.AdditionalCounts.Keys)
                 {

@@ -11,7 +11,7 @@ public class ProviderTemplateTest(ITestOutputHelper output) : WorkflowActionTemp
     [Fact]
     public async Task WithNamespace()
     {
-        await this.ExecuteTest(
+        await this.ExecuteTestAsync(
             [
                 """
                 internal sealed class TestExecutor1() : ActionExecutor(id: "test_1")
@@ -40,7 +40,7 @@ public class ProviderTemplateTest(ITestOutputHelper output) : WorkflowActionTemp
     [Fact]
     public async Task WithoutNamespace()
     {
-        await this.ExecuteTest(
+        await this.ExecuteTestAsync(
             [
                 """
                 internal sealed class TestExecutor1() : ActionExecutor(id: "test_1")
@@ -76,7 +76,7 @@ public class ProviderTemplateTest(ITestOutputHelper output) : WorkflowActionTemp
             ]);
     }
 
-    private async Task ExecuteTest(
+    private async Task ExecuteTestAsync(
         string[] executors,
         string[] instances,
         string[] edges,

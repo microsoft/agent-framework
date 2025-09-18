@@ -23,7 +23,7 @@ internal sealed class JsonWireSerializedValue(JsonMarshaller serializer, JsonEle
 
     public override bool Equals(object? obj)
     {
-        if (obj == null)
+        if (obj is null)
         {
             return false;
         }

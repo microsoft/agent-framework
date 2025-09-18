@@ -15,7 +15,7 @@ public sealed class A2AMessageExtensionsTests
     public void ToChatMessage_WithMixedParts_ReturnsChatMessageWithMixedContents()
     {
         // Arrange
-        var uri = "https://example.com/image.jpg";
+        const string Uri = "https://example.com/image.jpg";
 
         var metadata = new Dictionary<string, JsonElement>
         {
@@ -26,12 +26,12 @@ public sealed class A2AMessageExtensionsTests
         {
             MessageId = "mixed-parts-id",
             Role = MessageRole.Agent,
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Here's an image:" },
-                new FilePart { File = new FileWithUri { Uri = uri } },
+                new FilePart { File = new FileWithUri { Uri = Uri } },
                 new TextPart { Text = "What do you think?" }
-            },
+            ],
             Metadata = metadata
         };
 
@@ -50,7 +50,7 @@ public sealed class A2AMessageExtensionsTests
         Assert.Equal("Here's an image:", firstContent.Text);
 
         var fileContent = Assert.IsType<HostedFileContent>(result.Contents[1]);
-        Assert.Equal(uri, fileContent.FileId);
+        Assert.Equal(Uri, fileContent.FileId);
 
         var lastContent = Assert.IsType<TextContent>(result.Contents[2]);
         Assert.Equal("What do you think?", lastContent.Text);

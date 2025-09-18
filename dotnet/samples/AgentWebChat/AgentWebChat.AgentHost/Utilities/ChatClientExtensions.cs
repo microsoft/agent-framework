@@ -36,19 +36,16 @@ public static class ChatClientExtensions
         return chatClientBuilder;
     }
 
-    private static ChatClientBuilder AddOpenAIClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo)
-    {
-        return builder.AddOpenAIClient(connectionName, settings =>
+    private static ChatClientBuilder AddOpenAIClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo) =>
+        builder.AddOpenAIClient(connectionName, settings =>
         {
             settings.Endpoint = connectionInfo.Endpoint;
             settings.Key = connectionInfo.AccessKey;
         })
         .AddChatClient(connectionInfo.SelectedModel);
-    }
 
-    private static ChatClientBuilder AddAzureInferenceClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo)
-    {
-        return builder.Services.AddChatClient(sp =>
+    private static ChatClientBuilder AddAzureInferenceClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo) =>
+        builder.Services.AddChatClient(sp =>
         {
             var credential = new AzureKeyCredential(connectionInfo.AccessKey!);
 
@@ -56,16 +53,12 @@ public static class ChatClientExtensions
 
             return client.AsIChatClient(connectionInfo.SelectedModel);
         });
-    }
 
     private static ChatClientBuilder AddOllamaClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo)
     {
         var httpKey = $"{connectionName}_http";
 
-        builder.Services.AddHttpClient(httpKey, c =>
-        {
-            c.BaseAddress = connectionInfo.Endpoint;
-        });
+        builder.Services.AddHttpClient(httpKey, c => c.BaseAddress = connectionInfo.Endpoint);
 
         return builder.Services.AddChatClient(sp =>
         {
@@ -102,19 +95,16 @@ public static class ChatClientExtensions
         return chatClientBuilder;
     }
 
-    private static ChatClientBuilder AddKeyedOpenAIClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo)
-    {
-        return builder.AddKeyedOpenAIClient(connectionName, settings =>
+    private static ChatClientBuilder AddKeyedOpenAIClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo) =>
+        builder.AddKeyedOpenAIClient(connectionName, settings =>
         {
             settings.Endpoint = connectionInfo.Endpoint;
             settings.Key = connectionInfo.AccessKey;
         })
         .AddKeyedChatClient(connectionName, connectionInfo.SelectedModel);
-    }
 
-    private static ChatClientBuilder AddKeyedAzureInferenceClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo)
-    {
-        return builder.Services.AddKeyedChatClient(connectionName, sp =>
+    private static ChatClientBuilder AddKeyedAzureInferenceClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo) =>
+        builder.Services.AddKeyedChatClient(connectionName, sp =>
         {
             var credential = new AzureKeyCredential(connectionInfo.AccessKey!);
 
@@ -122,16 +112,12 @@ public static class ChatClientExtensions
 
             return client.AsIChatClient(connectionInfo.SelectedModel);
         });
-    }
 
     private static ChatClientBuilder AddKeyedOllamaClient(this IHostApplicationBuilder builder, string connectionName, ChatClientConnectionInfo connectionInfo)
     {
         var httpKey = $"{connectionName}_http";
 
-        builder.Services.AddHttpClient(httpKey, c =>
-        {
-            c.BaseAddress = connectionInfo.Endpoint;
-        });
+        builder.Services.AddHttpClient(httpKey, c => c.BaseAddress = connectionInfo.Endpoint);
 
         return builder.Services.AddKeyedChatClient(connectionName, sp =>
         {

@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.UnitTests;
 
 internal sealed class InMemoryJsonStore : JsonCheckpointStore
 {
-    private readonly Dictionary<string, RunCheckpointCache<JsonElement>> _store = new();
+    private readonly Dictionary<string, RunCheckpointCache<JsonElement>> _store = [];
 
     private RunCheckpointCache<JsonElement> EnsureRunStore(string runId)
     {

@@ -42,9 +42,9 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
                 parsedResult =
                     this.Model.ValueType switch
                     {
-                        StringDataType => StringValue.New(stringValue.Value),
-                        NumberDataType => NumberValue.New(stringValue.Value),
-                        BooleanDataType => BooleanValue.New(stringValue.Value),
+                        StringDataType => FormulaValue.New(stringValue.Value),
+                        NumberDataType => FormulaValue.New(stringValue.Value),
+                        BooleanDataType => FormulaValue.New(stringValue.Value),
                         RecordDataType recordType => ParseRecord(recordType, stringValue.Value),
                         _ => null
                     };
@@ -63,11 +63,10 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
         RecordValue ParseRecord(RecordDataType recordType, string rawText)
         {
             string jsonText = rawText.TrimJsonDelimiter();
-            JsonDocument json = JsonDocument.Parse(jsonText);
-            JsonElement currentElement = json.RootElement;
+            using JsonDocument json = JsonDocument.Parse(jsonText);
             try
             {
-                return recordType.ParseRecord(currentElement);
+                return recordType.ParseRecord(json.RootElement);
             }
             catch (Exception exception)
             {

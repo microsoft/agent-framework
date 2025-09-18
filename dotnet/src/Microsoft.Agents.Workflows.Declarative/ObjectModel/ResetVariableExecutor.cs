@@ -16,8 +16,8 @@ internal sealed class ResetVariableExecutor(ResetVariable model, WorkflowFormula
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        PropertyPath variablePath = Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
-        await context.QueueStateResetAsync(variablePath).ConfigureAwait(false);
+        Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
+        await context.QueueStateResetAsync(this.Model.Variable).ConfigureAwait(false);
         Debug.WriteLine(
             $"""
             STATE: {this.GetType().Name} [{this.Id}]

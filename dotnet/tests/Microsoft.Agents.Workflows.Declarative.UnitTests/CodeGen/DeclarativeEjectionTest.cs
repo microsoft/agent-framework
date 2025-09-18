@@ -27,10 +27,10 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     [InlineData("SetTextVariable.yaml")]
     public async Task ExecuteAction(string workflowFile)
     {
-        await this.EjectWorkflow(workflowFile);
+        await this.EjectWorkflowAsync(workflowFile);
     }
 
-    private async Task EjectWorkflow(string workflowPath)
+    private async Task EjectWorkflowAsync(string workflowPath)
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
         string workflowCode = DeclarativeWorkflowBuilder.Eject(yamlReader, "Test.Workflow");

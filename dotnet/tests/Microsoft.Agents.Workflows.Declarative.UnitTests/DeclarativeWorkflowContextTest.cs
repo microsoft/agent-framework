@@ -29,23 +29,23 @@ public class DeclarativeWorkflowContextTests
     {
         // Arrange
         TokenCredential credentials = new DefaultAzureCredential();
-        int maxCallDepth = 10;
-        int maxExpressionLength = 100;
+        const int MaxCallDepth = 10;
+        const int MaxExpressionLength = 100;
         ILoggerFactory loggerFactory = LoggerFactory.Create(builder => { });
 
         // Act
         Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions context = new(mockProvider.Object)
         {
-            MaximumCallDepth = maxCallDepth,
-            MaximumExpressionLength = maxExpressionLength,
+            MaximumCallDepth = MaxCallDepth,
+            MaximumExpressionLength = MaxExpressionLength,
             LoggerFactory = loggerFactory
         };
 
         // Assert
         Assert.Equal(mockProvider.Object, context.AgentProvider);
-        Assert.Equal(maxCallDepth, context.MaximumCallDepth);
-        Assert.Equal(maxExpressionLength, context.MaximumExpressionLength);
+        Assert.Equal(MaxCallDepth, context.MaximumCallDepth);
+        Assert.Equal(MaxExpressionLength, context.MaximumExpressionLength);
         Assert.Same(loggerFactory, context.LoggerFactory);
     }
 }

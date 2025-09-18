@@ -62,7 +62,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
             await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
             {
-                await AssignConversationId(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
+                await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
 
                 if (autoSend)
                 {
@@ -73,7 +73,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             }
         }
 
-        async ValueTask AssignConversationId(string? assignValue)
+        async ValueTask AssignConversationIdAsync(string? assignValue)
         {
             if (assignValue is not null && conversationId is null)
             {
