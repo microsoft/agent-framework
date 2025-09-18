@@ -36,8 +36,8 @@ from redisvl.utils.vectorize import OpenAITextVectorizer
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 
 
-# Please set the OPENAI_API_KEY and OPENAI_MODEL_ID environment variables to use the OpenAI vectorizer
-# Recommend default for OPENAI_MODEL_ID is gpt-4o-mini
+# Please set the OPENAI_API_KEY and OPENAI_CHAT_MODEL_ID environment variables to use the OpenAI vectorizer
+# Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
 
 async def example_global_thread_scope() -> None:
     """Example 1: Global thread_id scope (memories shared across all operations)."""
