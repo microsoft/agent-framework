@@ -3,7 +3,7 @@
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
-/// %%% COMMENT
+/// Loops over a list assignign the loop variable to "<#= this.Model.Value #>" variable.
 /// </summary>
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {

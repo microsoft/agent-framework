@@ -19,9 +19,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class ForeachTemplate : ActionTemplate
+    internal partial class ConditionGroupTemplate : ActionTemplate
     {
 #line hidden
         /// <summary>
@@ -43,102 +43,24 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
-            this.Write("\n/// <summary>\n/// Loops over a list assignign the loop variable to \"");
+            this.Write("\n/// <summary>\n/// Conditional branching similar to an if / elseif / elseif / els" +
+                    "e chain.\n/// </summary>\ninternal sealed class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Value));
-            
-            #line default
-            #line hidden
-            this.Write("\" variable.\n/// </summary>\ninternal sealed class ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
             this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write(@""", session)
-{
-    private int _index;
-    private object[] _values;
-
-    public bool HasValue { get; private set; }
-
-    // <inheritdoc />
-    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {
-        this._index = 0;");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
-
-
-        EvaluateValueExpression(this.Model.Items, "evaluatedValue");
-            
-            #line default
-            #line hidden
-            this.Write(@"
-
-        if (evaluatedValue == null)
-        {
-            this._values = Array.Empty<object>();
-            this.HasValue = false;
-        }
-        else
-        if (evaluatedValue is IEnumerable evaluatedList)
-        {
-            this._values = [.. evaluatedList];
-        }
-        else
-        {
-            this._values = [evaluatedValue];
-        }
-
-        await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
-    }
-
-    public async ValueTask TakeNextAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
-    {
-        if (this.HasValue = this._index < this._values.Length)
-        {
-            object value = this._values[this._index];
-            ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
- 
-            AssignVariable(this.Value, "value");
-
-            if (this.Index is not null)
-            {
-                AssignVariable(this.Index, "this._index");
-            }
-            
-            
-            #line default
-            #line hidden
-            this.Write("\n\n            this._index++;\n        }\n    }\n\n    public async ValueTask ResetAsy" +
-                    "nc(IWorkflowContext context, object? _, CancellationToken cancellationToken)\n   " +
-                    " {");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ForeachTemplate.tt"
- 
-        AssignVariable(this.Value, "UnassignedValue.Instance");
-
-        if (this.Index is not null)
-        {
-            AssignVariable(this.Index, "UnassignedValue.Instance");
-        }
-      
-            
-            #line default
-            #line hidden
-            this.Write("\n    }\n}");
+            this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
+                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {\n    " +
+                    "}\n}");
             return this.GenerationEnvironment.ToString();
         }
         

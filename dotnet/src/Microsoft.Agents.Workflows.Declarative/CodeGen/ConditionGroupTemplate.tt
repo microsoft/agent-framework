@@ -1,0 +1,14 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Conditional branching similar to an if / elseif / elseif / else chain.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+    }
+}

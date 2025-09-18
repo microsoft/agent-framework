@@ -4,12 +4,12 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal partial class BlankTemplate
+internal partial class EditTableV2Template
 {
-    public BlankTemplate(DialogAction model)
+    public EditTableV2Template(EditTableV2 model)
     {
         this.Model = this.Initialize(model);
     }
 
-    public DialogAction Model { get; }
+    public EditTableV2 Model { get; }
 }

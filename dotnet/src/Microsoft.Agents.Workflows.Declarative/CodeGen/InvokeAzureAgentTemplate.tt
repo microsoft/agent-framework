@@ -3,7 +3,7 @@
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
-/// %%% COMMENT
+/// Invokes an agent to process messages and return a response within a conversation context.
 /// </summary>
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {

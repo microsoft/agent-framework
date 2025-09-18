@@ -127,26 +127,29 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate(item.ActionId.Value, item.GetId()).TransformText()); // %%% RESTART
     }
 
-    protected override void Visit(Foreach item) // %%% TODO
+    protected override void Visit(Foreach item)
     {
         this.Trace(item);
 
-        //ForeachExecutor action = new(item, this._workflowState);
-        //string loopId = ForeachExecutor.Steps.Next(action.Id);
-        //this.ContinueWith(action, condition: null, CompletionHandler); // Foreach
-        //this.ContinueWith(this.CreateStep(loopId, action.TakeNextAsync), action.Id); // Loop Increment
-        //string continuationId = this.ContinuationFor(action.Id, action.ParentId); // Action continuation
-        //this._workflowModel.AddLink(loopId, continuationId, (_) => !action.HasValue);
-        //DelegateActionExecutor startAction = this.CreateStep(ForeachExecutor.Steps.Start(action.Id)); // Action start
-        //this._workflowModel.AddNode(startAction, action.Id);
-        //this._workflowModel.AddLink(loopId, startAction.Id, (_) => action.HasValue);
+        string actionId = item.GetId();
+        string loopId = ForeachExecutor.Steps.Next(actionId);
+        string startId = ForeachExecutor.Steps.Next(actionId);
+        string endId = ForeachExecutor.Steps.End(actionId);
 
-        //void CompletionHandler()
-        //{
-        //    string endActionsId = ForeachExecutor.Steps.End(action.Id); // Loop continuation
-        //    this.ContinueWith(this.CreateStep(endActionsId, action.ResetAsync), action.Id);
-        //    this._workflowModel.AddLink(endActionsId, loopId);
-        //}
+        this.Executors.Add(new ForeachTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(actionId).TransformText());
+
+        this.Edges.Add(new EdgeTemplate("root", actionId).TransformText()); // %%% CONTINUE WITH
+        this.Edges.Add(new EdgeTemplate(actionId, loopId).TransformText()); // %%% CONTINUE WITH
+        this.Edges.Add(new EdgeTemplate(loopId, startId).TransformText()); // %%% CONDITION
+        this.Edges.Add(new EdgeTemplate(loopId, endId).TransformText()); // %%% CONDITION
+
+        CompletionHandler(); // %%% HAXX
+
+        void CompletionHandler()
+        {
+            this.Edges.Add(new EdgeTemplate(endId, loopId).TransformText()); // %%% CONTINUE WITH
+        }
     }
 
     protected override void Visit(BreakLoop item)
