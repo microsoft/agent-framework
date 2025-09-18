@@ -21,8 +21,8 @@ internal static class Step2EntryPoint
             RemoveSpamExecutor removeSpam = new();
 
             return new WorkflowBuilder(detectSpam)
-                .AddEdge(detectSpam, respondToMessage, isSpam => isSpam is false) // If not spam, respond
-                .AddEdge(detectSpam, removeSpam, isSpam => isSpam is true) // If spam, remove
+                .AddEdge(detectSpam, respondToMessage, (bool isSpam) => isSpam is false) // If not spam, respond
+                .AddEdge(detectSpam, removeSpam, (bool isSpam) => isSpam is true) // If spam, remove
                 .Build<string>();
         }
     }

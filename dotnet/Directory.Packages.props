@@ -85,7 +85,7 @@
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.1" />
     <PackageVersion Include="OllamaSharp" Version="5.3.6" />
     <!-- Identity -->
-    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.74.1" />
+    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.0" />
     <!-- Workflows -->
     <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.915-1" />
     <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.915-1" />

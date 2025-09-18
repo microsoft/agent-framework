@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json.Serialization;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
 
@@ -10,14 +12,29 @@ namespace Microsoft.Agents.Workflows;
 public class CheckpointInfo : IEquatable<CheckpointInfo>
 {
     /// <summary>
-    /// The unique identifier for the checkpoint.
+    /// Gets the unique identifier for the current run.
     /// </summary>
-    public string CheckpointId { get; } = Guid.NewGuid().ToString("N");
+    public string RunId { get; }
 
     /// <summary>
-    /// The date and time when the object was created, in Coordinated Universal Time (UTC).
+    /// The unique identifier for the checkpoint.
     /// </summary>
-    public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
+    public string CheckpointId { get; }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CheckpointInfo"/> class with a unique identifier and the current
+    /// UTC timestamp.
+    /// </summary>
+    /// <remarks>This constructor generates a new unique identifier using a GUID in a 32-character, lowercase,
+    /// hexadecimal format  and sets the timestamp to the current UTC time.</remarks>
+    internal CheckpointInfo(string runId) : this(runId, Guid.NewGuid().ToString("N")) { }
+
+    [JsonConstructor]
+    internal CheckpointInfo(string runId, string checkpointId)
+    {
+        this.RunId = Throw.IfNullOrEmpty(runId);
+        this.CheckpointId = Throw.IfNullOrEmpty(checkpointId);
+    }
 
     /// <inheritdoc/>
     public bool Equals(CheckpointInfo? other)
@@ -27,8 +44,7 @@ public class CheckpointInfo : IEquatable<CheckpointInfo>
             return false;
         }
 
-        return this.CheckpointId == other.CheckpointId &&
-               this.CreatedAt == other.CreatedAt;
+        return this.RunId == other.RunId && this.CheckpointId == other.CheckpointId;
     }
 
     /// <inheritdoc/>
@@ -40,9 +56,9 @@ public class CheckpointInfo : IEquatable<CheckpointInfo>
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        return HashCode.Combine(this.CheckpointId, this.CreatedAt);
+        return HashCode.Combine(this.RunId, this.CheckpointId);
     }
 
     /// <inheritdoc/>
-    public override string ToString() => $"CheckpointId: {this.CheckpointId}, CreatedAt: {this.CreatedAt:O}";
+    public override string ToString() => $"CheckpointInfo(RunId: {this.RunId}, CheckpointId: {this.CheckpointId})";
 }
