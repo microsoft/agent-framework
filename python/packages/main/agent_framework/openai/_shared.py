@@ -50,21 +50,28 @@ __all__ = [
 ]
 
 
+def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Contents | Any]) -> Any:
+    if isinstance(content, list):
+        # Particularly deal with lists of BaseModel
+        return [_prepare_function_call_results_as_dumpable(item) for item in content]
+    if isinstance(content, dict):
+        return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
+    if isinstance(content, BaseModel):
+        return content.model_dump(exclude={"raw_representation", "additional_properties"})
+    return content
+
+
 def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str | list[str]:
     """Prepare the values of the function call results."""
-    if isinstance(content, list):
-        results: list[str] = []
-        for item in content:
-            res = prepare_function_call_results(item)
-            if isinstance(res, list):
-                results.extend(res)
-            else:
-                results.append(res)
-        return results[0] if len(results) == 1 else json.dumps(results)
     if isinstance(content, BaseModel):
-        return content.model_dump_json(exclude_none=True, exclude={"raw_representation", "additional_properties"})
+        # BaseModel is already dumpable, shortcut for performance
+        return content.model_dump_json(exclude={"raw_representation", "additional_properties"})
+
+    dumpable = _prepare_function_call_results_as_dumpable(content)
+    if isinstance(dumpable, str):
+        return dumpable
     # fallback
-    return json.dumps(content)
+    return json.dumps(dumpable)
 
 
 class OpenAISettings(AFBaseSettings):
