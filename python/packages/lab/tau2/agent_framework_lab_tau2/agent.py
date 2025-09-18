@@ -39,6 +39,11 @@ Try to be helpful and always follow the policy. Always make sure you generate va
 # Default first message from agent (matching tau2)
 DEFAULT_FIRST_AGENT_MESSAGE = "Hi! How can I help you today?"
 
+# Constants of Agent executor IDs
+ASSISTANT_AGENT_ID = "assistant_agent"
+USER_SIMULATOR_ID = "user_simulator"
+ORCHESTRATOR_ID = "orchestrator"
+
 
 class Tau2TaskRunner:
     """Running tasks defined in tau-2."""
@@ -76,8 +81,8 @@ class Tau2TaskRunner:
         """Based on the response, check whether we should or not stop the conversation."""
 
         # Determine who sent this based on executor_id
-        is_from_agent = response.executor_id == "assistant_agent"
-        is_from_user = response.executor_id == "user_simulator"
+        is_from_agent = response.executor_id == ASSISTANT_AGENT_ID
+        is_from_user = response.executor_id == USER_SIMULATOR_ID
 
         self.step_count += 1
 
@@ -121,8 +126,12 @@ class Tau2TaskRunner:
     ):
         """Flip the roles of messages and routes properly."""
         flipped = flip_messages(response.agent_run_response.messages)
+        is_from_agent = response.executor_id == ASSISTANT_AGENT_ID
         await ctx.send_message(
             AgentExecutorRequest(messages=flipped, should_respond=True),
+            # Target ID must be specified here because orchestrator is connected to both sides;
+            # otherwise, it will be broadcasted (wrong).
+            target_id=USER_SIMULATOR_ID if is_from_agent else ASSISTANT_AGENT_ID,
         )
 
     async def run(
@@ -189,9 +198,9 @@ class Tau2TaskRunner:
         )
 
         # 3. Create standard AgentExecutors
-        assistant_executor = AgentExecutor(assistant, id="assistant_agent")
-        user_executor = AgentExecutor(user_simulator, id="user_simulator")
-        orchestrator = FunctionExecutor(func=self.conversation_orchestrator, id="orchestrator")
+        assistant_executor = AgentExecutor(assistant, id=ASSISTANT_AGENT_ID)
+        user_executor = AgentExecutor(user_simulator, id=USER_SIMULATOR_ID)
+        orchestrator = FunctionExecutor(func=self.conversation_orchestrator, id=ORCHESTRATOR_ID)
 
         # 4. Build workflow
         workflow = (
@@ -209,7 +218,7 @@ class Tau2TaskRunner:
 
         first_message = ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)
         initial_greeting = AgentExecutorResponse(
-            executor_id="assistant_agent",
+            executor_id=ASSISTANT_AGENT_ID,
             agent_run_response=AgentRunResponse(messages=[first_message]),
             full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)],
         )

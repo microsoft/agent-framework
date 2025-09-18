@@ -37,7 +37,7 @@ def to_dumpable(result: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: str | None):
+async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: str | None, max_steps: int):
     # Only create result file if not debugging a specific task
     result_fp = None
     if debug_task_id is None:
@@ -80,7 +80,7 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
 
     all_rewards: list[float] = []
 
-    task_runner = Tau2TaskRunner(max_steps=100)
+    task_runner = Tau2TaskRunner(max_steps=max_steps)
 
     # Iterate over the tasks
     for task in tasks:
@@ -139,6 +139,7 @@ if __name__ == "__main__":
         "--debug-task-id", type=str, default=None, help="Debug a specific task ID (disables result file creation)"
     )
     parser.add_argument("--disable-env-patch", action="store_true", help="Disable patching tau2-bench environment")
+    parser.add_argument("--max-steps", type=int, default=100, help="Maximum number of steps to run")
     args = parser.parse_args()
 
     if not args.disable_env_patch:
@@ -149,5 +150,6 @@ if __name__ == "__main__":
             assistant_model=args.assistant,
             user_model=args.user,
             debug_task_id=args.debug_task_id,
+            max_steps=args.max_steps,
         )
     )
