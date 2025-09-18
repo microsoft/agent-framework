@@ -48,20 +48,20 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
         AgentRunResponse? response = null;
         for (; i < this.Agents.Count; i++)
         {
-            this.LogOrchestrationSubagentRunning(context, this.Agents[i]);
+            LogOrchestrationSubagentRunning(context, this.Agents[i]);
 
             response = await RunAsync(this.Agents[i], context, input, options: null, cancellationToken).ConfigureAwait(false);
             input = response.Messages as IReadOnlyCollection<ChatMessage> ?? [.. response.Messages];
 
-            await this.CheckpointAsync(i + 1, input, context, cancellationToken).ConfigureAwait(false);
+            await CheckpointAsync(i + 1, input, context, cancellationToken).ConfigureAwait(false);
         }
 
         Debug.Assert(response is not null, "Response should not be null after processing a positive number of agents.");
         return response!;
     }
 
-    private Task CheckpointAsync(int index, IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
-        context.Runtime is not null ? base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(index, messages), OrchestrationJsonContext.Default.SequentialState), context, cancellationToken) :
+    private static Task CheckpointAsync(int index, IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        context.Runtime is not null ? WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(index, messages), OrchestrationJsonContext.Default.SequentialState), context, cancellationToken) :
         Task.CompletedTask;
 
     internal sealed record SequentialState(int Index, IReadOnlyCollection<ChatMessage> Messages);

@@ -29,18 +29,18 @@ public class CosmosActorStateStorageListKeysTests
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
-        var prefixKey1 = "prefix_key1";
-        var prefixKey2 = "prefix_key2";
-        var otherKey = "other_key";
+        const string PrefixKey1 = "prefix_key1";
+        const string PrefixKey2 = "prefix_key2";
+        const string OtherKey = "other_key";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
         var value3 = JsonSerializer.SerializeToElement("value3");
 
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(prefixKey1, value1),
-            new SetValueOperation(prefixKey2, value2),
-            new SetValueOperation(otherKey, value3)
+            new SetValueOperation(PrefixKey1, value1),
+            new SetValueOperation(PrefixKey2, value2),
+            new SetValueOperation(OtherKey, value3)
         };
 
         await storage.WriteStateAsync(testActorId, writeOperations, "0", cancellationToken);
@@ -57,9 +57,9 @@ public class CosmosActorStateStorageListKeysTests
         var listKeys = result.Results[0] as ListKeysResult;
         Assert.NotNull(listKeys);
         Assert.Equal(2, listKeys.Keys.Count);
-        Assert.Contains(prefixKey1, listKeys.Keys);
-        Assert.Contains(prefixKey2, listKeys.Keys);
-        Assert.DoesNotContain(otherKey, listKeys.Keys);
+        Assert.Contains(PrefixKey1, listKeys.Keys);
+        Assert.Contains(PrefixKey2, listKeys.Keys);
+        Assert.DoesNotContain(OtherKey, listKeys.Keys);
     }
 
     [Fact]
@@ -72,15 +72,15 @@ public class CosmosActorStateStorageListKeysTests
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
-        var key1 = "key1";
-        var key2 = "key2";
+        const string Key1 = "key1";
+        const string Key2 = "key2";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
 
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key1, value1),
-            new SetValueOperation(key2, value2)
+            new SetValueOperation(Key1, value1),
+            new SetValueOperation(Key2, value2)
         };
 
         await storage.WriteStateAsync(testActorId, writeOperations, "0", cancellationToken);
@@ -135,15 +135,15 @@ public class CosmosActorStateStorageListKeysTests
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
-        var key1 = "key1";
-        var key2 = "key2";
+        const string Key1 = "key1";
+        const string Key2 = "key2";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
 
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key1, value1),
-            new SetValueOperation(key2, value2)
+            new SetValueOperation(Key1, value1),
+            new SetValueOperation(Key2, value2)
         };
 
         // First write some data
@@ -162,8 +162,8 @@ public class CosmosActorStateStorageListKeysTests
         var listKeys = readResult.Results[0] as ListKeysResult;
         Assert.NotNull(listKeys);
         Assert.Equal(2, listKeys.Keys.Count);
-        Assert.Contains(key1, listKeys.Keys);
-        Assert.Contains(key2, listKeys.Keys);
+        Assert.Contains(Key1, listKeys.Keys);
+        Assert.Contains(Key2, listKeys.Keys);
     }
 
     [Fact]
@@ -176,9 +176,9 @@ public class CosmosActorStateStorageListKeysTests
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
         var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
-        var key1 = "key1";
-        var key2 = "key2";
-        var key3 = "key3";
+        const string Key1 = "key1";
+        const string Key2 = "key2";
+        const string Key3 = "key3";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
         var value3 = JsonSerializer.SerializeToElement("value3");
@@ -186,9 +186,9 @@ public class CosmosActorStateStorageListKeysTests
         // Setup initial state with 3 keys
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key1, value1),
-            new SetValueOperation(key2, value2),
-            new SetValueOperation(key3, value3)
+            new SetValueOperation(Key1, value1),
+            new SetValueOperation(Key2, value2),
+            new SetValueOperation(Key3, value3)
         };
         var writeResult = await storage.WriteStateAsync(testActorId, writeOperations, "0", cancellationToken);
         Assert.True(writeResult.Success);
@@ -196,7 +196,7 @@ public class CosmosActorStateStorageListKeysTests
         // Remove one key
         var removeOperations = new List<ActorStateWriteOperation>
         {
-            new RemoveKeyOperation(key2)
+            new RemoveKeyOperation(Key2)
         };
         var removeResult = await storage.WriteStateAsync(testActorId, removeOperations, writeResult.ETag, cancellationToken);
         Assert.True(removeResult.Success);
@@ -213,9 +213,9 @@ public class CosmosActorStateStorageListKeysTests
         var listKeys = readResult.Results[0] as ListKeysResult;
         Assert.NotNull(listKeys);
         Assert.Equal(2, listKeys.Keys.Count);
-        Assert.Contains(key1, listKeys.Keys);
-        Assert.Contains(key3, listKeys.Keys);
-        Assert.DoesNotContain(key2, listKeys.Keys);
+        Assert.Contains(Key1, listKeys.Keys);
+        Assert.Contains(Key3, listKeys.Keys);
+        Assert.DoesNotContain(Key2, listKeys.Keys);
     }
 
     [Fact]
@@ -235,9 +235,7 @@ public class CosmosActorStateStorageListKeysTests
         string[] miscKeys = ["config", "metadata"];
 
         var writeOperations = new List<ActorStateWriteOperation>();
-        var allKeys = userKeys.Concat(sessionKeys).Concat(cacheKeys).Concat(miscKeys);
-
-        foreach (var key in allKeys)
+        foreach (var key in userKeys.Concat(sessionKeys).Concat(cacheKeys).Concat(miscKeys))
         {
             writeOperations.Add(new SetValueOperation(key, JsonSerializer.SerializeToElement($"value_for_{key}")));
         }

@@ -18,7 +18,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
     {
         // Define the agents
         ChatClientAgent farmer =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Farmer",
                 description: "A rural farmer from Southeast Asia.",
                 instructions:
@@ -29,7 +29,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent developer =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Developer",
                 description: "An urban software developer from the United States.",
                 instructions:
@@ -40,7 +40,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent teacher =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Teacher",
                 description: "A retired history teacher from Eastern Europe",
                 instructions:
@@ -51,7 +51,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent activist =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Activist",
                 description: "A young activist from South America.",
                 instructions:
@@ -61,7 +61,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent spiritual =
-            this.CreateAgent(
+            CreateAgent(
                 name: "SpiritualLeader",
                 description: "A spiritual leader from the Middle East.",
                 instructions:
@@ -71,7 +71,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent artist =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Artist",
                 description: "An artist from Africa.",
                 instructions:
@@ -81,7 +81,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent immigrant =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Immigrant",
                 description: "An immigrant entrepreneur from Asia living in Canada.",
                 instructions:
@@ -92,7 +92,7 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 You are in a debate. Feel free to challenge the other participants with respect.
                 """);
         ChatClientAgent doctor =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Doctor",
                 description: "A doctor from Scandinavia.",
                 instructions:
@@ -108,12 +108,12 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
         OrchestrationMonitor monitor = new();
 
         // Define the orchestration
-        const string topic = "What does a good life mean to you personally?";
+        const string Topic = "What does a good life mean to you personally?";
         GroupChatOrchestration orchestration =
             new(
                 new AIGroupChatManager(
-                    topic,
-                    this.CreateChatClient())
+                    Topic,
+                    CreateChatClient())
                 {
                     MaximumInvocationCount = 5
                 },
@@ -127,12 +127,12 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
                 doctor)
             {
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
+                ResponseCallback = monitor.ResponseCallbackAsync,
             };
 
         // Run the orchestration
-        Console.WriteLine($"\n# INPUT: {topic}\n");
-        AgentRunResponse result = await orchestration.RunAsync(topic);
+        Console.WriteLine($"\n# INPUT: {Topic}\n");
+        AgentRunResponse result = await orchestration.RunAsync(Topic);
         Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);
@@ -167,21 +167,21 @@ public class GroupChatOrchestration_With_AIManager(ITestOutputHelper output) : O
         }
 
         /// <inheritdoc/>
-        protected override ValueTask<GroupChatManagerResult<string>> FilterResults(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<GroupChatManagerResult<string>> FilterResultsAsync(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
             this.GetResponseAsync<string>(history, Prompts.Filter(topic), cancellationToken);
 
         /// <inheritdoc/>
-        protected override ValueTask<GroupChatManagerResult<string>> SelectNextAgent(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<GroupChatManagerResult<string>> SelectNextAgentAsync(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default) =>
             this.GetResponseAsync<string>(history, Prompts.Selection(topic, team.FormatList()), cancellationToken);
 
         /// <inheritdoc/>
-        protected override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInputAsync(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default) =>
             new(new GroupChatManagerResult<bool>(false) { Reason = "The AI group chat manager does not request user input." });
 
         /// <inheritdoc/>
-        protected override async ValueTask<GroupChatManagerResult<bool>> ShouldTerminate(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
+        protected override async ValueTask<GroupChatManagerResult<bool>> ShouldTerminateAsync(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
         {
-            GroupChatManagerResult<bool> result = await base.ShouldTerminate(history, cancellationToken);
+            GroupChatManagerResult<bool> result = await base.ShouldTerminateAsync(history, cancellationToken);
             if (!result.Value)
             {
                 result = await this.GetResponseAsync<bool>(history, Prompts.Termination(topic), cancellationToken);

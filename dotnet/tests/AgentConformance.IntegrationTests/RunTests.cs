@@ -92,15 +92,15 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
     public virtual async Task ThreadMaintainsHistoryAsync()
     {
         // Arrange
-        var q1 = "What is the capital of France.";
-        var q2 = "And Austria?";
+        const string Q1 = "What is the capital of France.";
+        const string Q2 = "And Austria?";
         var agent = this.Fixture.Agent;
         var thread = agent.GetNewThread();
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var result1 = await agent.RunAsync(q1, thread);
-        var result2 = await agent.RunAsync(q2, thread);
+        var result1 = await agent.RunAsync(Q1, thread);
+        var result2 = await agent.RunAsync(Q2, thread);
 
         // Assert
         Assert.Contains("Paris", result1.Text);
@@ -110,8 +110,8 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         Assert.Equal(4, chatHistory.Count);
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.User));
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.Assistant));
-        Assert.Equal(q1, chatHistory[0].Text);
-        Assert.Equal(q2, chatHistory[2].Text);
+        Assert.Equal(Q1, chatHistory[0].Text);
+        Assert.Equal(Q2, chatHistory[2].Text);
         Assert.Contains("Paris", chatHistory[1].Text);
         Assert.Contains("Vienna", chatHistory[3].Text);
     }

@@ -17,10 +17,10 @@ var userInput = "Create a python code file using the code interpreter tool with 
 
 Console.WriteLine($"User Input: {userInput}");
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
@@ -65,7 +65,7 @@ async Task SKAgent()
     await azureAgentClient.Administration.DeleteAgentAsync(agent.Id);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 

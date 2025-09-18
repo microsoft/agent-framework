@@ -25,11 +25,13 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Contents,
+    DataContent,
     FinishReason,
     FunctionCallContent,
     FunctionResultContent,
     Role,
     TextContent,
+    UriContent,
     UsageContent,
     UsageDetails,
 )
@@ -378,6 +380,53 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     "tool_call_id": content.call_id,
                     "content": content.result,
                 }
+            case DataContent() | UriContent() if content.has_top_level_media_type("image"):
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": content.uri},
+                }
+            case DataContent() | UriContent() if content.has_top_level_media_type("audio"):
+                if content.media_type and "wav" in content.media_type:
+                    audio_format = "wav"
+                elif content.media_type and "mp3" in content.media_type:
+                    audio_format = "mp3"
+                else:
+                    # Fallback to default model_dump for unsupported audio formats
+                    return content.model_dump(exclude_none=True)
+
+                # Extract base64 data from data URI
+                audio_data = content.uri
+                if audio_data.startswith("data:"):
+                    # Extract just the base64 part after "data:audio/format;base64,"
+                    audio_data = audio_data.split(",", 1)[-1]
+
+                return {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": audio_data,
+                        "format": audio_format,
+                    },
+                }
+            case DataContent() | UriContent() if content.media_type and content.media_type.startswith("application/"):
+                if content.media_type == "application/pdf":
+                    if content.uri.startswith("data:"):
+                        filename = (
+                            getattr(content, "filename", None)
+                            or content.additional_properties.get("filename", "document.pdf")
+                            if hasattr(content, "additional_properties") and content.additional_properties
+                            else "document.pdf"
+                        )
+                        return {
+                            "type": "file",
+                            "file": {
+                                "file_data": content.uri,  # Send full data URI
+                                "filename": filename,
+                            },
+                        }
+
+                    return content.model_dump(exclude_none=True)
+
+                return content.model_dump(exclude_none=True)
             case _:
                 return content.model_dump(exclude_none=True)
 

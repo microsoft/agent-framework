@@ -32,13 +32,13 @@ public class AgentThreadTests
     {
         // Arrange
         var thread = new AgentThread();
-        var conversationid = "test-thread-id";
+        const string Conversationid = "test-thread-id";
 
         // Act
-        thread.ConversationId = conversationid;
+        thread.ConversationId = Conversationid;
 
         // Assert
-        Assert.Equal(conversationid, thread.ConversationId);
+        Assert.Equal(Conversationid, thread.ConversationId);
         Assert.Null(thread.MessageStore);
     }
 
@@ -226,7 +226,7 @@ public class AgentThreadTests
         Assert.True(json.TryGetProperty("conversationId", out var idProperty));
         Assert.Equal("TestConvId", idProperty.GetString());
 
-        Assert.False(json.TryGetProperty("storeState", out var storeStateProperty));
+        Assert.False(json.TryGetProperty("storeState", out _));
     }
 
     /// <summary>
@@ -236,8 +236,10 @@ public class AgentThreadTests
     public async Task VerifyThreadSerializationWithMessagesAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" });
+        var store = new InMemoryChatMessageStore
+        {
+            new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }
+        };
         var thread = new AgentThread { MessageStore = store };
 
         // Act
@@ -246,7 +248,7 @@ public class AgentThreadTests
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.False(json.TryGetProperty("conversationId", out var idProperty));
+        Assert.False(json.TryGetProperty("conversationId", out _));
 
         Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
         Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
@@ -329,15 +331,4 @@ public class AgentThreadTests
     }
 
     #endregion Serialize Tests
-
-    private static async Task<List<T>> ToListAsync<T>(IAsyncEnumerable<T> values)
-    {
-        var result = new List<T>();
-        await foreach (var v in values)
-        {
-            result.Add(v);
-        }
-
-        return result;
-    }
 }

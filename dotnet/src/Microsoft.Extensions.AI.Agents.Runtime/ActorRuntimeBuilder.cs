@@ -14,8 +14,6 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// </summary>
 internal sealed class ActorRuntimeBuilder : IActorRuntimeBuilder
 {
-    private readonly IHostApplicationBuilder _builder;
-
     /// <summary>
     /// Gets the collection of registered actor types and their corresponding factory methods.
     /// </summary>
@@ -23,7 +21,7 @@ internal sealed class ActorRuntimeBuilder : IActorRuntimeBuilder
     /// A dictionary where keys are <see cref="ActorType"/> instances and values are factory functions
     /// that create <see cref="IActor"/> instances given an <see cref="IServiceProvider"/> and <see cref="IActorRuntimeContext"/>.
     /// </value>
-    public Dictionary<ActorType, Func<IServiceProvider, IActorRuntimeContext, IActor>> ActorFactories { get; } = new();
+    public Dictionary<ActorType, Func<IServiceProvider, IActorRuntimeContext, IActor>> ActorFactories { get; } = [];
 
     /// <summary>
     /// Gets or creates an <see cref="ActorRuntimeBuilder"/> instance for the specified host application builder.
@@ -37,12 +35,12 @@ internal sealed class ActorRuntimeBuilder : IActorRuntimeBuilder
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
     public static ActorRuntimeBuilder GetOrAdd(IHostApplicationBuilder builder)
     {
-        Microsoft.Shared.Diagnostics.Throw.IfNull(builder);
+        Shared.Diagnostics.Throw.IfNull(builder);
         var services = builder.Services;
         var descriptor = services.FirstOrDefault(s => s.ImplementationInstance is ActorRuntimeBuilder);
         if (descriptor?.ImplementationInstance is not ActorRuntimeBuilder instance)
         {
-            instance = new ActorRuntimeBuilder(builder);
+            instance = new ActorRuntimeBuilder();
             services.Add(ServiceDescriptor.Singleton(instance));
             instance.ConfigureServices(services);
         }
@@ -53,10 +51,8 @@ internal sealed class ActorRuntimeBuilder : IActorRuntimeBuilder
     /// <summary>
     /// Initializes a new instance of the <see cref="ActorRuntimeBuilder"/> class.
     /// </summary>
-    /// <param name="builder">The host application builder to associate with this actor runtime builder.</param>
-    private ActorRuntimeBuilder(IHostApplicationBuilder builder)
+    private ActorRuntimeBuilder()
     {
-        this._builder = builder;
     }
 
     /// <summary>
@@ -75,17 +71,15 @@ internal sealed class ActorRuntimeBuilder : IActorRuntimeBuilder
     /// Each actor type can only be registered once. Attempting to register the same actor type
     /// multiple times will result in an exception being thrown by the underlying dictionary.
     /// </remarks>
-    public void AddActorType(ActorType type, Func<IServiceProvider, IActorRuntimeContext, IActor> activator)
-    {
+    public void AddActorType(ActorType type, Func<IServiceProvider, IActorRuntimeContext, IActor> activator) =>
         this.ActorFactories.Add(type, activator);
-    }
 
     private void ConfigureServices(IServiceCollection services)
     {
         services.AddSingleton<IActorRuntimeBuilder>(this);
         services.AddSingleton<IActorStateStorage, InMemoryActorStateStorage>();
         services.AddSingleton<IActorClient, InProcessActorClient>();
-        services.AddSingleton<InProcessActorRuntime>(sp =>
+        services.AddSingleton(sp =>
         {
             var actorStateStorage = sp.GetRequiredService<IActorStateStorage>();
             return new InProcessActorRuntime(sp, this.ActorFactories, actorStateStorage);

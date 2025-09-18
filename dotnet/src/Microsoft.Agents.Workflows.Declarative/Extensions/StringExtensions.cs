@@ -5,19 +5,24 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
-internal static class StringExtensions
+internal static partial class StringExtensions
 {
-    private static readonly Regex s_regex = new(@"^```(?:\w*)\s*([\s\S]*?)\s*```$", RegexOptions.Compiled | RegexOptions.Multiline);
+#if NET
+    [GeneratedRegex(@"^```(?:\w*)\s*([\s\S]*?)\s*```$", RegexOptions.Multiline)]
+    private static partial Regex TrimJsonDelimiterRegex();
+#else
+    private static Regex TrimJsonDelimiterRegex() => s_trimJsonDelimiterRegex;
+    private static readonly Regex s_trimJsonDelimiterRegex = new(@"^```(?:\w*)\s*([\s\S]*?)\s*```$", RegexOptions.Compiled | RegexOptions.Multiline);
+#endif
 
     public static string TrimJsonDelimiter(this string value)
     {
-        Match match = s_regex.Match(value.Trim());
-        if (match.Success)
-        {
-            return match.Groups[1].Value.Trim();
-        }
+        value = value.Trim();
 
-        return value.Trim();
+        Match match = TrimJsonDelimiterRegex().Match(value);
+        return match.Success ?
+            match.Groups[1].Value.Trim() :
+            value;
     }
 
     public static FormulaValue ToFormula(this string? value) =>

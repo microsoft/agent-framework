@@ -10,19 +10,12 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
 
-internal class WorkflowThread : AgentThread
+internal sealed class WorkflowThread : AgentThread
 {
-    private readonly string _workflowId;
-    private readonly string? _workflowName;
-    private readonly WorkflowMessageStore _messageStore;
-
     public WorkflowThread(string workflowId, string? workflowName, string runId)
     {
-        base.MessageStore = this._messageStore = new();
+        base.MessageStore = this.MessageStore = new();
         this.RunId = Throw.IfNullOrEmpty(runId, nameof(runId));
-
-        this._workflowId = Throw.IfNullOrEmpty(workflowId);
-        this._workflowName = workflowName;
     }
 
     public WorkflowThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
@@ -31,14 +24,11 @@ internal class WorkflowThread : AgentThread
     }
 
     public string RunId { get; }
-    public int Halts { get; } = 0;
+    public int Halts { get; }
 
     public string ResponseId => $"{this.RunId}@{this.Halts}";
 
-    public override Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        throw new NotImplementedException("Pending Checkpointing work.");
-    }
+    public override Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => throw new NotImplementedException("Pending Checkpointing work.");
 
     public AgentRunResponseUpdate CreateUpdate(params AIContent[] parts)
     {
@@ -56,5 +46,5 @@ internal class WorkflowThread : AgentThread
     }
 
     /// <inheritdoc/>
-    public new WorkflowMessageStore MessageStore => this._messageStore;
+    public new WorkflowMessageStore MessageStore { get; }
 }

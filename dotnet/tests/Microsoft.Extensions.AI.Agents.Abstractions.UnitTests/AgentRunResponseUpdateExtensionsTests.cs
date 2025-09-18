@@ -31,10 +31,8 @@ public class AgentRunResponseUpdateExtensionsTests
     }
 
     [Fact]
-    public void ToAgentRunResponseWithInvalidArgsThrows()
-    {
+    public void ToAgentRunResponseWithInvalidArgsThrows() =>
         Assert.Throws<ArgumentNullException>("updates", () => ((List<AgentRunResponseUpdate>)null!).ToAgentRunResponse());
-    }
 
     [Theory]
     [InlineData(false)]
@@ -129,7 +127,7 @@ public class AgentRunResponseUpdateExtensionsTests
         ChatMessage message = response.Messages.Single();
         Assert.NotNull(message);
 
-        Assert.Equal(expected.Count + (gapLength * ((numSequences - 1) + (gapBeginningEnd ? 2 : 0))), message.Contents.Count);
+        Assert.Equal(expected.Count + (gapLength * (numSequences - 1 + (gapBeginningEnd ? 2 : 0))), message.Contents.Count);
 
         TextContent[] contents = message.Contents.OfType<TextContent>().ToArray();
         Assert.Equal(expected.Count, contents.Length);

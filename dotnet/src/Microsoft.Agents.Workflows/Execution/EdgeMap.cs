@@ -8,10 +8,10 @@ using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class EdgeMap
+internal sealed class EdgeMap
 {
-    private readonly Dictionary<EdgeId, object> _edgeRunners = new();
-    private readonly Dictionary<EdgeId, FanInEdgeState> _fanInState = new();
+    private readonly Dictionary<EdgeId, object> _edgeRunners = [];
+    private readonly Dictionary<EdgeId, FanInEdgeState> _fanInState = [];
     private readonly Dictionary<string, InputEdgeRunner> _portEdgeRunners;
     private readonly InputEdgeRunner _inputRunner;
     private readonly IStepTracer? _stepTracer;
@@ -68,14 +68,14 @@ internal class EdgeMap
             // between the Runners, we can normalize it behind an IFace.
             case EdgeKind.Direct:
             {
-                DirectEdgeRunner runner = (DirectEdgeRunner)this._edgeRunners[id];
+                DirectEdgeRunner runner = (DirectEdgeRunner)edgeRunner;
                 edgeResults = await runner.ChaseAsync(message, this._stepTracer).ConfigureAwait(false);
                 break;
             }
 
             case EdgeKind.FanOut:
             {
-                FanOutEdgeRunner runner = (FanOutEdgeRunner)this._edgeRunners[id];
+                FanOutEdgeRunner runner = (FanOutEdgeRunner)edgeRunner;
                 edgeResults = await runner.ChaseAsync(message, this._stepTracer).ConfigureAwait(false);
                 break;
             }
@@ -83,7 +83,7 @@ internal class EdgeMap
             case EdgeKind.FanIn:
             {
                 FanInEdgeState state = this._fanInState[id];
-                FanInEdgeRunner runner = (FanInEdgeRunner)this._edgeRunners[id];
+                FanInEdgeRunner runner = (FanInEdgeRunner)edgeRunner;
                 edgeResults = [await runner.ChaseAsync(sourceId, message, state, this._stepTracer).ConfigureAwait(false)];
                 break;
             }
@@ -114,7 +114,7 @@ internal class EdgeMap
 
     internal ValueTask<Dictionary<EdgeId, PortableValue>> ExportStateAsync()
     {
-        Dictionary<EdgeId, PortableValue> exportedStates = new();
+        Dictionary<EdgeId, PortableValue> exportedStates = [];
 
         // Right now there is only fan-in state
         foreach (EdgeId id in this._fanInState.Keys)

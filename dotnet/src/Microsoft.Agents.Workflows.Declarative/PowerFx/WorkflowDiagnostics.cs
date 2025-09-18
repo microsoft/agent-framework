@@ -53,19 +53,17 @@ internal static class WorkflowDiagnostics
     {
         foreach (VariableInformationDiagnostic variableDiagnostic in semanticModel.GetVariables(schemaName).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()))
         {
-            if (variableDiagnostic is null || variableDiagnostic?.Path?.VariableName is null)
+            if (variableDiagnostic?.Path?.VariableName is null)
             {
                 continue;
             }
 
             FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormula() ?? variableDiagnostic.Type.NewBlank();
 
-            if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) ?? false)
+            if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) is true &&
+                !SystemScope.AllNames.Contains(variableDiagnostic.Path.VariableName))
             {
-                if (!SystemScope.AllNames.Contains(variableDiagnostic.Path.VariableName))
-                {
-                    throw new DeclarativeModelException($"Variable '{variableDiagnostic.Path.VariableName}' is not a supported system variable.");
-                }
+                throw new DeclarativeModelException($"Variable '{variableDiagnostic.Path.VariableName}' is not a supported system variable.");
             }
 
             scopes.Set(variableDiagnostic.Path.VariableName, defaultValue, variableDiagnostic.Path.VariableScopeName ?? WorkflowFormulaState.DefaultScopeName);

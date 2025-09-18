@@ -28,7 +28,7 @@ public class JsonSerializationTests
         }
     }
 
-    private static int s_nextEdgeId = 0;
+    private static int s_nextEdgeId;
 
     private static EdgeId TakeEdgeId() => new(Interlocked.Increment(ref s_nextEdgeId));
 
@@ -36,14 +36,14 @@ public class JsonSerializationTests
     {
         JsonMarshaller marshaller = new(externalOptions);
 
-        JsonElement element = marshaller.Marshal<T>(value);
+        JsonElement element = marshaller.Marshal(value);
         T deserialized = marshaller.Marshal<T>(element);
 
-        if (deserialized != null)
+        if (deserialized is not null)
         {
-            if (predicate != null)
+            if (predicate is not null)
             {
-                deserialized.Should().Match<T>(predicate);
+                deserialized.Should().Match(predicate);
             }
 
             return deserialized;
@@ -56,7 +56,7 @@ public class JsonSerializationTests
     [Fact]
     public void Test_EdgeConnection_JsonRoundtrip()
     {
-        EdgeConnection connection = new(new List<string> { "Source1", "Source2" }, new List<string> { "Sink1", "Sink2" });
+        EdgeConnection connection = new(["Source1", "Source2"], ["Sink1", "Sink2"]);
         RunJsonRoundtrip(connection, predicate: connection.CreateValidator());
     }
 
@@ -167,11 +167,9 @@ public class JsonSerializationTests
                .AddEdge(stringToInt, forwardInt)
                .AddEdge(forwardInt, intToString);
 
-        Workflow<string, int> workflow = builder.BuildWithOutput<string, int, int>(
+        return builder.BuildWithOutput<string, int, int>(
             intToString,
             StreamingAggregators.Last<int>(), (int _, int __) => true);
-
-        return workflow;
     }
 
     private static WorkflowInfo TestWorkflowInfo => CreateTestWorkflow().ToWorkflowInfo();
@@ -181,10 +179,10 @@ public class JsonSerializationTests
         ValidateExecutorDictionary(prototype.Executors, prototype.Edges, actual.Executors, actual.Edges);
         ValidateInputPorts(prototype.InputPorts, actual.InputPorts);
 
-        actual.InputType.Should().Match<TypeId>(prototype.InputType.CreateValidator());
+        actual.InputType.Should().Match(prototype.InputType.CreateValidator());
         actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
 
-        actual.OutputType.Should().NotBeNull().And.Match<TypeId>(prototype.OutputType!.CreateValidator());
+        actual.OutputType.Should().NotBeNull().And.Match(prototype.OutputType!.CreateValidator());
         actual.OutputCollectorId.Should().NotBeNull().And.Be(prototype.OutputCollectorId);
 
         void ValidateExecutorDictionary(Dictionary<string, ExecutorInfo> expected,
@@ -202,7 +200,7 @@ public class JsonSerializationTests
                 ExecutorInfo actualValue = actual[key];
                 ExecutorInfo expectedValue = expected[key];
 
-                actualValue.Should().Match<ExecutorInfo>(expectedValue.CreateValidator());
+                actualValue.Should().Match(expectedValue.CreateValidator());
 
                 if (expectedEdges.TryGetValue(key, out List<EdgeInfo>? expectedEdgeList))
                 {
@@ -374,9 +372,9 @@ public class JsonSerializationTests
     [Fact]
     public void Test_PortableMessageEnvelope_JsonRoundtrip_BuiltInType()
     {
-        string message = "TestMessage";
+        const string Message = "TestMessage";
 
-        MessageEnvelope envelope = new(message, new TypeId(typeof(object)), targetId: "Target1");
+        MessageEnvelope envelope = new(Message, new TypeId(typeof(object)), targetId: "Target1");
         PortableMessageEnvelope value = new(envelope);
         PortableMessageEnvelope result = RunJsonRoundtrip(value);
 
@@ -460,9 +458,9 @@ public class JsonSerializationTests
                 outstandingRequests: [TestExternalRequest]
             );
 
-            Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> CreateQueuedMessages()
+            static Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> CreateQueuedMessages()
             {
-                Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> result = new();
+                Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> result = [];
 
                 MessageEnvelope externalEnvelope = new(TestExternalResponse);
                 result.Add(ExecutorIdentity.None, [new(externalEnvelope)]);

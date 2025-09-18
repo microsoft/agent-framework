@@ -18,11 +18,11 @@ public class ConcurrentOrchestration_Intro(ITestOutputHelper output) : Orchestra
     {
         // Define the agents
         ChatClientAgent physicist =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "You are an expert in physics. You answer questions from a physics perspective.",
                 description: "An expert in physics");
         ChatClientAgent chemist =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective.",
                 description: "An expert in chemistry");
 
@@ -36,14 +36,14 @@ public class ConcurrentOrchestration_Intro(ITestOutputHelper output) : Orchestra
             new(physicist, chemist)
             {
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
-                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallback : null,
+                ResponseCallback = monitor.ResponseCallbackAsync,
+                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallbackAsync : null,
             };
 
         // Run the orchestration
-        string input = "What is temperature?";
-        Console.WriteLine($"\n# INPUT: {input}\n");
-        AgentRunResponse result = await orchestration.RunAsync(input);
+        const string Input = "What is temperature?";
+        Console.WriteLine($"\n# INPUT: {Input}\n");
+        AgentRunResponse result = await orchestration.RunAsync(Input);
 
         Console.WriteLine($"\n# RESULT:\n{string.Join("\n\n", result.Messages.Select(r => $"{r.Text}"))}");
 
