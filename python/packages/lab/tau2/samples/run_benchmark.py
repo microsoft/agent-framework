@@ -12,7 +12,7 @@ from agent_framework.openai import OpenAIChatClient
 from loguru import logger
 from tau2.domains.airline.environment import get_tasks
 
-from agent_framework.lab.tau2 import Tau2TaskRunner, patch_env_set_state
+from agent_framework_lab_tau2 import TaskRunner, patch_env_set_state
 
 
 def to_dumpable(result: dict[str, Any]) -> dict[str, Any]:
@@ -80,7 +80,7 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
 
     all_rewards: list[float] = []
 
-    task_runner = Tau2TaskRunner(max_steps=max_steps)
+    task_runner = TaskRunner(max_steps=max_steps)
 
     # Iterate over the tasks
     for task in tasks:

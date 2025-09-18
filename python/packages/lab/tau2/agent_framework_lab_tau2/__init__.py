@@ -5,10 +5,10 @@ Tau2 Benchmark for Agent Framework.
 """
 
 from ._tau2_utils import patch_env_set_state, unpatch_env_set_state
-from .agent import Tau2TaskRunner
+from .agent import TaskRunner
 
 __all__ = [
-    "Tau2TaskRunner",
+    "TaskRunner",
     "patch_env_set_state",
     "unpatch_env_set_state",
 ]

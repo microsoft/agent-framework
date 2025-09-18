@@ -45,7 +45,7 @@ USER_SIMULATOR_ID = "user_simulator"
 ORCHESTRATOR_ID = "orchestrator"
 
 
-class Tau2TaskRunner:
+class TaskRunner:
     """Running tasks defined in tau-2."""
 
     # State
@@ -72,7 +72,7 @@ class Tau2TaskRunner:
 
     def __repr__(self) -> str:
         return (
-            f"Tau2TaskRunner(max_steps={self.max_steps}, step_count={self.step_count}, "
+            f"TaskRunner(max_steps={self.max_steps}, step_count={self.step_count}, "
             f"full_conversation_length={len(self.full_conversation)}, "
             f"termination_reason={self.termination_reason}, full_reward_info={self.full_reward_info})"
         )
