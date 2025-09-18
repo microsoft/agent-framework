@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-import pytest
 from pydantic import Field
 
 from agent_framework import (
@@ -120,7 +119,6 @@ class ParentOrchestrator(Executor):
         self.results.append(result)
 
 
-@pytest.mark.asyncio
 async def test_basic_sub_workflow() -> None:
     """Test basic sub-workflow execution without interception."""
     # Create sub-workflow
@@ -185,7 +183,6 @@ async def test_basic_sub_workflow() -> None:
     assert parent.result.is_valid is True
 
 
-@pytest.mark.asyncio
 async def test_sub_workflow_with_interception():
     """Test sub-workflow with parent interception of requests."""
     # Create sub-workflow
@@ -248,7 +245,6 @@ async def test_sub_workflow_with_interception():
     assert parent.results[0].reason == "Domain not approved"
 
 
-@pytest.mark.asyncio
 async def test_conditional_forwarding() -> None:
     """Test conditional forwarding with RequestResponse.forward()."""
 
@@ -326,7 +322,6 @@ async def test_conditional_forwarding() -> None:
     assert parent.result.is_valid is True
 
 
-@pytest.mark.asyncio
 async def test_workflow_scoped_interception() -> None:
     """Test interception scoped to specific sub-workflows."""
 

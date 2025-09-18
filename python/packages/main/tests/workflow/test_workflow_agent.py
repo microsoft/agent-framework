@@ -76,7 +76,6 @@ class RequestingExecutor(Executor):
 class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
 
-    @pytest.mark.asyncio
     async def test_end_to_end_basic_workflow(self):
         """Test basic end-to-end workflow execution with 2 executors emitting AgentRunEvent."""
         # Create workflow with two executors
@@ -117,7 +116,6 @@ class TestWorkflowAgent:
         assert "Step1: Hello World" in step1_text
         assert "Step2: Step1: Hello World" in step2_text
 
-    @pytest.mark.asyncio
     async def test_end_to_end_basic_workflow_streaming(self):
         """Test end-to-end workflow with streaming executor that emits AgentRunStreamingEvent."""
         # Create a single streaming executor
@@ -146,7 +144,6 @@ class TestWorkflowAgent:
         assert isinstance(second_content, TextContent)
         assert "Streaming2: Streaming1: Test input" in second_content.text
 
-    @pytest.mark.asyncio
     async def test_end_to_end_request_info_handling(self):
         """Test end-to-end workflow with RequestInfoEvent handling."""
         # Create workflow with requesting executor -> request info executor (no cycle)
