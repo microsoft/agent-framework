@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 public class ProviderTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public async Task WithNamespace()
+    public async Task WithNamespaceAsync()
     {
         await this.ExecuteTestAsync(
             [
@@ -38,7 +38,7 @@ public class ProviderTemplateTest(ITestOutputHelper output) : WorkflowActionTemp
     }
 
     [Fact]
-    public async Task WithoutNamespace()
+    public async Task WithoutNamespaceAsync()
     {
         await this.ExecuteTestAsync(
             [

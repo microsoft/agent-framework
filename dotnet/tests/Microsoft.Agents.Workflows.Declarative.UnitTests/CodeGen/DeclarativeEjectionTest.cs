@@ -25,10 +25,8 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     [InlineData("SendActivity.yaml")]
     [InlineData("SetVariable.yaml")]
     [InlineData("SetTextVariable.yaml")]
-    public async Task ExecuteAction(string workflowFile)
-    {
-        await this.EjectWorkflowAsync(workflowFile);
-    }
+    public Task ExecuteActionAsync(string workflowFile) =>
+        this.EjectWorkflowAsync(workflowFile);
 
     private async Task EjectWorkflowAsync(string workflowPath)
     {
