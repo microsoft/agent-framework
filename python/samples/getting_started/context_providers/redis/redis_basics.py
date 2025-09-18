@@ -27,6 +27,7 @@ Run:
   python redis_basics.py
 """
 
+import os
 import asyncio
 
 from agent_framework import ChatMessage, Role
@@ -76,16 +77,16 @@ async def main() -> None:
       - print(await provider.search_all())
     """
 
-    # Configure API keys and model IDs (replace placeholders)
-    OPENAI_API_KEY = "<API KEY HERE>"
-    OPENAI_MODEL_ID = "gpt-4o-mini"
-
     print("1. Standalone provider usage:")
     print("-" * 40)
     # Create a provider with partition scope and OpenAI embeddings
+
+    # Please set the OPENAI_API_KEY and OPENAI_MODEL_ID environment variables to use the OpenAI vectorizer
+    # Recommend default for OPENAI_MODEL_ID is gpt-4o-mini
+
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
-        api_config={"api_key": OPENAI_API_KEY},
+        api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
     provider = RedisProvider(
@@ -131,7 +132,7 @@ async def main() -> None:
     # Fresh provider for the agent demo (recreates index)
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
-        api_config={"api_key": OPENAI_API_KEY},
+        api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
     provider = RedisProvider(
@@ -150,7 +151,7 @@ async def main() -> None:
     )
 
     # Create chat client for the agent
-    client = OpenAIChatClient(ai_model_id=OPENAI_MODEL_ID, api_key=OPENAI_API_KEY)
+    client = OpenAIChatClient(ai_model_id=os.getenv("OPENAI_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     # Create agent wired to the Redis context provider
     agent = client.create_agent(
             name="MemoryEnhancedAssistant",
@@ -189,7 +190,7 @@ async def main() -> None:
     )
 
     # Create agent exposing the flight search tool
-    client = OpenAIChatClient(ai_model_id=OPENAI_MODEL_ID, api_key=OPENAI_API_KEY)
+    client = OpenAIChatClient(ai_model_id=os.getenv("OPENAI_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     agent = client.create_agent(
             name="MemoryEnhancedAssistant",
             instructions=(
