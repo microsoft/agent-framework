@@ -11,7 +11,6 @@ from agent_framework._types import ChatMessage
 from loguru import logger
 from pydantic import BaseModel
 from tau2.data_model.message import (
-    APICompatibleMessage,
     AssistantMessage,
     Message,
     SystemMessage,
@@ -48,8 +47,8 @@ def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction:
     )
 
 
-def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage]) -> list[APICompatibleMessage]:
-    """Convert agent framework ChatMessages to tau2 APICompatibleMessage objects."""
+def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage]) -> list[Message]:
+    """Convert agent framework ChatMessages to tau2 Messsage objects."""
 
     tau2_messages = []
 

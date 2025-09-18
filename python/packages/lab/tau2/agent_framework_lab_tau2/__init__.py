@@ -4,13 +4,13 @@
 Tau2 Benchmark for Agent Framework.
 """
 
-# Import your main exports here
-# from .main_module import MainClass, main_function
+from ._tau2_utils import patch_env_set_state, unpatch_env_set_state
+from .agent import Tau2TaskRunner
 
 __all__ = [
-    # List your exports here
-    # "MainClass",
-    # "main_function",
+    "Tau2TaskRunner",
+    "patch_env_set_state",
+    "unpatch_env_set_state",
 ]
 
 __version__ = "0.1.0b1"

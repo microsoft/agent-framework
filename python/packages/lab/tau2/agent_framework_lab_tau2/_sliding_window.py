@@ -24,21 +24,33 @@ class SlidingWindowChatMessageList(ChatMessageList):
         tool_definitions: Any | None = None,
     ):
         super().__init__(messages)
+        self._truncated_messages = self._messages.copy()
         self.max_tokens = max_tokens
         self.system_message = system_message
         self.tool_definitions = tool_definitions
-        self.encoding = tiktoken.get_encoding("o200k_base")  # An estimation
+        # An estimation based on a commonly used vocab table
+        self.encoding = tiktoken.get_encoding("o200k_base")
 
     async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
         await super().add_messages(messages)
+
+        self._truncated_messages = self._messages.copy()
         self.truncate_messages()
 
+    async def list_messages(self) -> list[ChatMessage]:
+        """Get the current list of messages, which may be truncated."""
+        return self._truncated_messages
+
+    async def list_all_messages(self) -> list[ChatMessage]:
+        """Get all messages from the store including the truncated ones."""
+        return self._messages
+
     def truncate_messages(self) -> None:
-        while len(self._messages) > 0 and self.get_token_count() > self.max_tokens:
+        while len(self._truncated_messages) > 0 and self.get_token_count() > self.max_tokens:
             logger.warning("Messages exceed max tokens. Truncating oldest message.")
             self.pop(0)
         # Remove leading tool messages
-        while len(self._messages) > 0 and self._messages[0].role == Role.TOOL:
+        while len(self._truncated_messages) > 0 and self._truncated_messages[0].role == Role.TOOL:
             logger.warning("Removing leading tool message because tool result cannot be the first message.")
             self.pop(0)
 
@@ -50,8 +62,6 @@ class SlidingWindowChatMessageList(ChatMessageList):
         Returns:
             Estimated token count
         """
-        # Use cl100k_base encoding (GPT-4, GPT-3.5-turbo)
-
         total_tokens = 0
 
         # Add system message tokens if provided
@@ -59,7 +69,7 @@ class SlidingWindowChatMessageList(ChatMessageList):
             total_tokens += len(self.encoding.encode(self.system_message))
             total_tokens += 4  # Extra tokens for system message formatting
 
-        for msg in self._messages:
+        for msg in self._truncated_messages:
             # Add 4 tokens per message for role, formatting, etc.
             total_tokens += 4
 
