@@ -19,14 +19,14 @@ public sealed class InMemoryActorStateStorageTests
     private readonly ActorId _anotherActorId = new("AnotherActor", "another-instance");
 
     [Fact]
-    public async Task WriteStateAsync_WithSetValueOperation_ShouldStoreValue()
+    public async Task WriteStateAsync_WithSetValueOperation_ShouldStoreValueAsync()
     {
         // Arrange
-        var key = "testKey";
+        const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
         var operations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key, value)
+            new SetValueOperation(Key, value)
         };
 
         // Act
@@ -39,23 +39,23 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task WriteStateAsync_WithRemoveKeyOperation_ShouldRemoveValue()
+    public async Task WriteStateAsync_WithRemoveKeyOperation_ShouldRemoveValueAsync()
     {
         // Arrange
-        var key = "testKey";
+        const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
 
         // First set a value
         var setOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key, value)
+            new SetValueOperation(Key, value)
         };
         var setResult = await this._storage.WriteStateAsync(this._testActorId, setOperations, "0", CancellationToken.None);
 
         // Now remove the value
         var removeOperations = new List<ActorStateWriteOperation>
         {
-            new RemoveKeyOperation(key)
+            new RemoveKeyOperation(Key)
         };
 
         // Act
@@ -68,14 +68,14 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task WriteStateAsync_WithIncorrectETag_ShouldReturnFailure()
+    public async Task WriteStateAsync_WithIncorrectETag_ShouldReturnFailureAsync()
     {
         // Arrange
-        var key = "testKey";
+        const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
         var operations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key, value)
+            new SetValueOperation(Key, value)
         };
 
         // Act
@@ -88,20 +88,20 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithGetValueOperation_ShouldReturnValue()
+    public async Task ReadStateAsync_WithGetValueOperation_ShouldReturnValueAsync()
     {
         // Arrange
-        var key = "testKey";
+        const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key, value)
+            new SetValueOperation(Key, value)
         };
         await this._storage.WriteStateAsync(this._testActorId, writeOperations, "0", CancellationToken.None);
 
         var readOperations = new List<ActorStateReadOperation>
         {
-            new GetValueOperation(key)
+            new GetValueOperation(Key)
         };
 
         // Act
@@ -116,7 +116,7 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithGetValueOperationForNonExistentKey_ShouldReturnNull()
+    public async Task ReadStateAsync_WithGetValueOperationForNonExistentKey_ShouldReturnNullAsync()
     {
         // Arrange
         var readOperations = new List<ActorStateReadOperation>
@@ -135,18 +135,18 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithListKeysOperation_ShouldReturnAllKeys()
+    public async Task ReadStateAsync_WithListKeysOperation_ShouldReturnAllKeysAsync()
     {
         // Arrange
-        var key1 = "key1";
-        var key2 = "key2";
+        const string Key1 = "key1";
+        const string Key2 = "key2";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
 
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key1, value1),
-            new SetValueOperation(key2, value2)
+            new SetValueOperation(Key1, value1),
+            new SetValueOperation(Key2, value2)
         };
         await this._storage.WriteStateAsync(this._testActorId, writeOperations, "0", CancellationToken.None);
 
@@ -163,13 +163,13 @@ public sealed class InMemoryActorStateStorageTests
         var listKeys = result.Results[0] as ListKeysResult;
         Assert.NotNull(listKeys);
         Assert.Equal(2, listKeys.Keys.Count);
-        Assert.Contains(key1, listKeys.Keys);
-        Assert.Contains(key2, listKeys.Keys);
+        Assert.Contains(Key1, listKeys.Keys);
+        Assert.Contains(Key2, listKeys.Keys);
         Assert.Null(listKeys.ContinuationToken);
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithListKeysOperationForEmptyActor_ShouldReturnEmptyList()
+    public async Task ReadStateAsync_WithListKeysOperationForEmptyActor_ShouldReturnEmptyListAsync()
     {
         // Arrange
         var readOperations = new List<ActorStateReadOperation>
@@ -189,21 +189,21 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithListKeysOperationAndKeyPrefix_ShouldReturnFilteredKeys()
+    public async Task ReadStateAsync_WithListKeysOperationAndKeyPrefix_ShouldReturnFilteredKeysAsync()
     {
         // Arrange
-        var prefixKey1 = "prefix_key1";
-        var prefixKey2 = "prefix_key2";
-        var otherKey = "other_key";
+        const string PrefixKey1 = "prefix_key1";
+        const string PrefixKey2 = "prefix_key2";
+        const string OtherKey = "other_key";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
         var value3 = JsonSerializer.SerializeToElement("value3");
 
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(prefixKey1, value1),
-            new SetValueOperation(prefixKey2, value2),
-            new SetValueOperation(otherKey, value3)
+            new SetValueOperation(PrefixKey1, value1),
+            new SetValueOperation(PrefixKey2, value2),
+            new SetValueOperation(OtherKey, value3)
         };
         await this._storage.WriteStateAsync(this._testActorId, writeOperations, "0", CancellationToken.None);
 
@@ -220,25 +220,25 @@ public sealed class InMemoryActorStateStorageTests
         var listKeys = result.Results[0] as ListKeysResult;
         Assert.NotNull(listKeys);
         Assert.Equal(2, listKeys.Keys.Count);
-        Assert.Contains(prefixKey1, listKeys.Keys);
-        Assert.Contains(prefixKey2, listKeys.Keys);
-        Assert.DoesNotContain(otherKey, listKeys.Keys);
+        Assert.Contains(PrefixKey1, listKeys.Keys);
+        Assert.Contains(PrefixKey2, listKeys.Keys);
+        Assert.DoesNotContain(OtherKey, listKeys.Keys);
         Assert.Null(listKeys.ContinuationToken);
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithListKeysOperationAndNonMatchingKeyPrefix_ShouldReturnEmptyList()
+    public async Task ReadStateAsync_WithListKeysOperationAndNonMatchingKeyPrefix_ShouldReturnEmptyListAsync()
     {
         // Arrange
-        var key1 = "key1";
-        var key2 = "key2";
+        const string Key1 = "key1";
+        const string Key2 = "key2";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
 
         var writeOperations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key1, value1),
-            new SetValueOperation(key2, value2)
+            new SetValueOperation(Key1, value1),
+            new SetValueOperation(Key2, value2)
         };
         await this._storage.WriteStateAsync(this._testActorId, writeOperations, "0", CancellationToken.None);
 
@@ -259,19 +259,19 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task MultipleOperations_ShouldBeProcessedInOrder()
+    public async Task MultipleOperations_ShouldBeProcessedInOrderAsync()
     {
         // Arrange
-        var key1 = "key1";
-        var key2 = "key2";
+        const string Key1 = "key1";
+        const string Key2 = "key2";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
 
         var operations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key1, value1),
-            new SetValueOperation(key2, value2),
-            new RemoveKeyOperation(key1)
+            new SetValueOperation(Key1, value1),
+            new SetValueOperation(Key2, value2),
+            new RemoveKeyOperation(Key1)
         };
 
         // Act
@@ -284,7 +284,7 @@ public sealed class InMemoryActorStateStorageTests
         // Verify remaining key
         var readOperations = new List<ActorStateReadOperation>
         {
-            new GetValueOperation(key2)
+            new GetValueOperation(Key2)
         };
         var readResult = await this._storage.ReadStateAsync(this._testActorId, readOperations, CancellationToken.None);
         var getValue = readResult.Results[0] as GetValueResult;
@@ -293,20 +293,20 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task DifferentActors_ShouldHaveIsolatedState()
+    public async Task DifferentActors_ShouldHaveIsolatedStateAsync()
     {
         // Arrange
-        var key = "sharedKey";
+        const string Key = "sharedKey";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
 
         var operations1 = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key, value1)
+            new SetValueOperation(Key, value1)
         };
         var operations2 = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key, value2)
+            new SetValueOperation(Key, value2)
         };
 
         // Act
@@ -321,7 +321,7 @@ public sealed class InMemoryActorStateStorageTests
         // Verify values are different
         var readOperations = new List<ActorStateReadOperation>
         {
-            new GetValueOperation(key)
+            new GetValueOperation(Key)
         };
 
         var result1 = await this._storage.ReadStateAsync(this._testActorId, readOperations, CancellationToken.None);
@@ -337,14 +337,14 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ConcurrentOperations_ShouldBeThreadSafe()
+    public async Task ConcurrentOperations_ShouldBeThreadSafeAsync()
     {
         // Arrange
-        const int operationCount = 100;
+        const int OperationCount = 100;
         var tasks = new List<Task>();
 
         // Act
-        for (int i = 0; i < operationCount; i++)
+        for (int i = 0; i < OperationCount; i++)
         {
             var key = $"key{i}";
             var value = JsonSerializer.SerializeToElement($"value{i}");
@@ -359,9 +359,9 @@ public sealed class InMemoryActorStateStorageTests
                 // Retry logic to handle concurrent updates
                 var success = false;
                 var retryCount = 0;
-                const int maxRetries = 10;
+                const int MaxRetries = 10;
 
-                while (!success && retryCount < maxRetries)
+                while (!success && retryCount < MaxRetries)
                 {
                     var currentETag = this._storage.GetETag(actorId);
                     var result = await this._storage.WriteStateAsync(actorId, operations, currentETag, CancellationToken.None);
@@ -385,14 +385,14 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task Clear_ShouldRemoveAllState()
+    public async Task Clear_ShouldRemoveAllStateAsync()
     {
         // Arrange
-        var key = "testKey";
+        const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
         var operations = new List<ActorStateWriteOperation>
         {
-            new SetValueOperation(key, value)
+            new SetValueOperation(Key, value)
         };
 
         await this._storage.WriteStateAsync(this._testActorId, operations, "0", CancellationToken.None);
@@ -418,15 +418,13 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task WriteStateAsync_WithNullOperations_ShouldThrowArgumentNullException()
-    {
+    public async Task WriteStateAsync_WithNullOperations_ShouldThrowArgumentNullExceptionAsync() =>
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
             this._storage.WriteStateAsync(this._testActorId, null!, "0", CancellationToken.None).AsTask());
-    }
 
     [Fact]
-    public async Task WriteStateAsync_WithNullETag_ShouldThrowArgumentNullException()
+    public async Task WriteStateAsync_WithNullETag_ShouldThrowArgumentNullExceptionAsync()
     {
         // Arrange
         var operations = new List<ActorStateWriteOperation>();
@@ -437,15 +435,13 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithNullOperations_ShouldThrowArgumentNullException()
-    {
+    public async Task ReadStateAsync_WithNullOperations_ShouldThrowArgumentNullExceptionAsync() =>
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
             this._storage.ReadStateAsync(this._testActorId, null!, CancellationToken.None).AsTask());
-    }
 
     [Fact]
-    public async Task WriteStateAsync_WithCancelledToken_ShouldThrowOperationCanceledException()
+    public async Task WriteStateAsync_WithCancelledToken_ShouldThrowOperationCanceledExceptionAsync()
     {
         // Arrange
         var operations = new List<ActorStateWriteOperation>();
@@ -457,7 +453,7 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithCancelledToken_ShouldThrowOperationCanceledException()
+    public async Task ReadStateAsync_WithCancelledToken_ShouldThrowOperationCanceledExceptionAsync()
     {
         // Arrange
         var operations = new List<ActorStateReadOperation>();
@@ -469,18 +465,18 @@ public sealed class InMemoryActorStateStorageTests
     }
 
     [Fact]
-    public async Task ETagProgression_ShouldIncrementMonotonically()
+    public async Task ETagProgression_ShouldIncrementMonotonicallyAsync()
     {
         // Arrange
-        var key = "testKey";
+        const string Key = "testKey";
         var value1 = JsonSerializer.SerializeToElement("value1");
         var value2 = JsonSerializer.SerializeToElement("value2");
 
         // Act
-        var operations1 = new List<ActorStateWriteOperation> { new SetValueOperation(key, value1) };
+        var operations1 = new List<ActorStateWriteOperation> { new SetValueOperation(Key, value1) };
         var result1 = await this._storage.WriteStateAsync(this._testActorId, operations1, "0", CancellationToken.None);
 
-        var operations2 = new List<ActorStateWriteOperation> { new SetValueOperation(key, value2) };
+        var operations2 = new List<ActorStateWriteOperation> { new SetValueOperation(Key, value2) };
         var result2 = await this._storage.WriteStateAsync(this._testActorId, operations2, result1.ETag, CancellationToken.None);
 
         // Assert

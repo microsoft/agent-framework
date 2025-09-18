@@ -23,16 +23,12 @@ internal sealed class NotFoundActorResponseHandle : ActorResponseHandle
         };
     }
 
-    public override ValueTask CancelAsync(CancellationToken cancellationToken)
-    {
+    public override ValueTask CancelAsync(CancellationToken cancellationToken) =>
         throw new InvalidOperationException(
             $"Failed to cancel request for actor '{this._response.ActorId}' with message ID '{this._response.MessageId}'. The request was not found.");
-    }
 
-    public override ValueTask<ActorResponse> GetResponseAsync(CancellationToken cancellationToken)
-    {
-        return new ValueTask<ActorResponse>(this._response);
-    }
+    public override ValueTask<ActorResponse> GetResponseAsync(CancellationToken cancellationToken) =>
+        new(this._response);
 
     public override bool TryGetResponse([NotNullWhen(true)] out ActorResponse? response)
     {

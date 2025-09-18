@@ -219,11 +219,9 @@ public class CosmosIdSanitizerTests
     }
 
     [Fact]
-    public void SeparatorChar_HasCorrectValue()
-    {
+    public void SeparatorChar_HasCorrectValue() =>
         // Assert
         Assert.Equal('_', CosmosIdSanitizer.SeparatorChar);
-    }
 
     [Fact]
     public void Sanitize_WithOnlySeparatorChar_EscapesCorrectly()

@@ -16,16 +16,12 @@ internal static partial class WorkflowJsonUtilities
     [JsonSerializable(typeof(List<ChatMessage>))]
     internal sealed partial class WorkflowJsonContext : JsonSerializerContext;
 
-    public static JsonElement SerializeToJson(this List<ChatMessage> messages)
-    {
-        return JsonSerializer.SerializeToElement(messages, Default.ListChatMessage);
-    }
+    public static JsonElement SerializeToJson(this List<ChatMessage> messages) =>
+        JsonSerializer.SerializeToElement(messages, Default.ListChatMessage);
 
     public static JsonElement SerializeToJson(this IEnumerable<ChatMessage> messages)
         => messages.ToList().SerializeToJson();
 
-    public static List<ChatMessage> DeserializeMessageList(this JsonElement element)
-    {
-        return element.Deserialize<List<ChatMessage>>(Default.ListChatMessage) ?? [];
-    }
+    public static List<ChatMessage> DeserializeMessageList(this JsonElement element) =>
+        element.Deserialize(Default.ListChatMessage) ?? [];
 }

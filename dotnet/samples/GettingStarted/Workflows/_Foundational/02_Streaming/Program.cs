@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
@@ -53,13 +54,8 @@ internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor
     /// <param name="message">The input text to convert</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
     /// <returns>The input text converted to uppercase</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
-    {
-        string result = message.ToUpperInvariant();
-
-        // The return value will be sent as a message along an edge to subsequent executors
-        return result;
-    }
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context) =>
+        message.ToUpperInvariant(); // The return value will be sent as a message along an edge to subsequent executors
 }
 
 /// <summary>
@@ -75,9 +71,7 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     /// <returns>The input text reversed</returns>
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
-        char[] charArray = message.ToCharArray();
-        System.Array.Reverse(charArray);
-        string result = new(charArray);
+        string result = string.Concat(message.Reverse());
 
         // Signal that the workflow is complete
         await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);

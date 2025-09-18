@@ -13,8 +13,6 @@ namespace AgentConformance.IntegrationTests.Support;
 /// <param name="fixture">The fixture that provides agent specific capabilities.</param>
 internal sealed class ThreadCleanup(AgentThread thread, IAgentFixture fixture) : IAsyncDisposable
 {
-    public async ValueTask DisposeAsync()
-    {
+    public async ValueTask DisposeAsync() =>
         await fixture.DeleteThreadAsync(thread);
-    }
 }

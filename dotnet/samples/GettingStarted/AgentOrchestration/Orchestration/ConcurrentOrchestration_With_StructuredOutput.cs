@@ -19,15 +19,15 @@ public class ConcurrentOrchestration_With_StructuredOutput(ITestOutputHelper out
     {
         // Define the agents
         ChatClientAgent agent1 =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "You are an expert in identifying themes in articles. Given an article, identify the main themes.",
                 description: "An expert in identifying themes in articles");
         ChatClientAgent agent2 =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "You are an expert in sentiment analysis. Given an article, identify the sentiment.",
                 description: "An expert in sentiment analysis");
         ChatClientAgent agent3 =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "You are an expert in entity recognition. Given an article, extract the entities.",
                 description: "An expert in entity recognition");
 
@@ -35,11 +35,11 @@ public class ConcurrentOrchestration_With_StructuredOutput(ITestOutputHelper out
         ConcurrentOrchestration orchestration = new(agent1, agent2, agent3) { LoggerFactory = this.LoggerFactory };
 
         // Run the orchestration
-        const string resourceId = "Hamlet_full_play_summary.txt";
-        string input = Resources.Read(resourceId);
-        Console.WriteLine($"\n# INPUT: @{resourceId}\n");
+        const string ResourceId = "Hamlet_full_play_summary.txt";
+        string input = Resources.Read(ResourceId);
+        Console.WriteLine($"\n# INPUT: @{ResourceId}\n");
 
-        var output = await orchestration.RunAsync<Analysis>(this.CreateChatClient(), input);
+        var output = await orchestration.RunAsync<Analysis>(CreateChatClient(), input);
         Console.WriteLine($"\n# RESULT:\n{JsonSerializer.Serialize(output, s_options)}");
     }
 
@@ -50,5 +50,5 @@ public class ConcurrentOrchestration_With_StructuredOutput(ITestOutputHelper out
         public IList<string> Sentiments { get; set; } = [];
         public IList<string> Entities { get; set; } = [];
     }
-#pragma warning restore CA1812 // Avoid uninstantiated internal classes
+#pragma warning restore CA1812
 }

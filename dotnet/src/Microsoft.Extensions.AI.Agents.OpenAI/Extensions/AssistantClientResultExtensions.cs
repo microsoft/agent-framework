@@ -25,7 +25,7 @@ public static class AssistantExtensions
             throw new ArgumentNullException(nameof(assistantClientResult));
         }
 
-        return AssistantExtensions.AsAIAgent(assistantClientResult, assistantClient, chatOptions);
+        return AsAIAgent(assistantClientResult, assistantClient, chatOptions);
     }
 
     /// <summary>

@@ -104,7 +104,7 @@ public static class StreamingAggregators
 
         IEnumerable<TResult> Aggregate(TInput input, IEnumerable<TResult>? runningResult)
         {
-            return runningResult != null ? runningResult.Append(conversion(input)) : [conversion(input)];
+            return runningResult is not null ? runningResult.Append(conversion(input)) : [conversion(input)];
         }
     }
 
@@ -120,9 +120,9 @@ public static class StreamingAggregators
     {
         return Aggregate;
 
-        IEnumerable<TInput> Aggregate(TInput input, IEnumerable<TInput>? runningResult)
+        static IEnumerable<TInput> Aggregate(TInput input, IEnumerable<TInput>? runningResult)
         {
-            return runningResult != null ? runningResult.Append(input) : new[] { input };
+            return runningResult is not null ? runningResult.Append(input) : [input];
         }
     }
 }

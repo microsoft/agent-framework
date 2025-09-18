@@ -37,7 +37,6 @@ public class AgentExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Assert.True(result is AIFunction);
         Assert.Equal("TestAgent", result.Name);
         Assert.Equal("Test agent description", result.Description);
     }
@@ -301,7 +300,7 @@ public class AgentExtensionsTests
         public override string? Name { get; }
         public override string? Description { get; }
 
-        public List<ChatMessage> ReceivedMessages { get; } = new();
+        public List<ChatMessage> ReceivedMessages { get; } = [];
         public CancellationToken LastCancellationToken { get; private set; }
         public int RunAsyncCallCount { get; private set; }
 
@@ -315,7 +314,7 @@ public class AgentExtensionsTests
             this.LastCancellationToken = cancellationToken;
             this.ReceivedMessages.AddRange(messages);
 
-            if (this._exceptionToThrow != null)
+            if (this._exceptionToThrow is not null)
             {
                 throw this._exceptionToThrow;
             }

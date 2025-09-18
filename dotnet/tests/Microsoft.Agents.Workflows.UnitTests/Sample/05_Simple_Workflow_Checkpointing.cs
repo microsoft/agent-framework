@@ -11,16 +11,16 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step5EntryPoint
 {
-    private static CheckpointManager CheckpointManager { get; } = new();
-
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, bool rehydrateToRestore = false)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
     {
+        checkpointManager ??= CheckpointManager.Default;
+
         Workflow<NumberSignal, string> workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
         Checkpointed<StreamingRun<string>> checkpointed =
-            await InProcessExecution.StreamAsync(workflow, NumberSignal.Init, CheckpointManager)
+            await InProcessExecution.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
                                     .ConfigureAwait(false);
 
-        List<CheckpointInfo> checkpoints = new();
+        List<CheckpointInfo> checkpoints = [];
         CancellationTokenSource cancellationSource = new();
 
         StreamingRun<string> handle = checkpointed.Run;
@@ -34,7 +34,7 @@ internal static class Step5EntryPoint
 
         if (rehydrateToRestore)
         {
-            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, CheckpointManager, CancellationToken.None)
+            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, CancellationToken.None)
                                                    .ConfigureAwait(false);
             handle = checkpointed.Run;
         }
@@ -66,7 +66,7 @@ internal static class Step5EntryPoint
                 {
                     case SuperStepCompletedEvent stepCompletedEvt:
                         CheckpointInfo? checkpoint = stepCompletedEvt.CompletionInfo!.Checkpoint;
-                        if (checkpoint != null)
+                        if (checkpoint is not null)
                         {
                             checkpoints.Add(checkpoint);
                         }
@@ -105,37 +105,12 @@ internal static class Step5EntryPoint
         Func<string, int> userGuessCallback,
         string? runningState)
     {
-        object result = request.Port.Id switch
+        object result = request.PortInfo.PortId switch
         {
             "GuessNumber" => userGuessCallback(runningState ?? "Guess the number."),
-            _ => throw new NotSupportedException($"Request {request.Port.Id} is not supported")
+            _ => throw new NotSupportedException($"Request {request.PortInfo.PortId} is not supported")
         };
 
         return request.CreateResponse(result);
-    }
-
-    /// <summary>
-    /// This converts the incoming <see cref="NumberSignal"/> from the judge to a status text that can be displayed
-    /// to the user.
-    /// </summary>
-    /// <remarks>
-    /// This works correctly timing-wise because both the <see cref="StreamingAggregator{TInput, TOutput}"/> and the
-    /// <see cref="InputPort"/> are one edge from the <see cref="JudgeExecutor"/> (see the workflow definition in the
-    /// <see cref="RunAsync"/> method). That means they will get the <see cref="NumberSignal"/> at the same time (one
-    /// SuperStep after the Judge has generated it.)
-    /// </remarks>
-    /// <param name="signal"></param>
-    /// <param name="runningResult"></param>
-    /// <returns></returns>
-    private static string ComputeStreamingOutput(NumberSignal signal, string? runningResult)
-    {
-        return signal switch
-        {
-            NumberSignal.Matched => "You guessed correctly! You Win!",
-            NumberSignal.Above => "Your guess was too high. Try again.",
-            NumberSignal.Below => "Your guess was too low. Try again.",
-
-            _ => runningResult ?? string.Empty
-        };
     }
 }

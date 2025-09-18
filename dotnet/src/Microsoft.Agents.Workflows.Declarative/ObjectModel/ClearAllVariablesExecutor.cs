@@ -15,7 +15,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.Evaluator.GetValue<VariablesToClearWrapper>(this.Model.Variables);
+        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.Evaluator.GetValue(this.Model.Variables);
 
         variablesResult.Value.Handle(new ScopeHandler(this.Id, this.State));
 
@@ -24,20 +24,16 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
 
     private sealed class ScopeHandler(string executorId, WorkflowFormulaState state) : IEnumVariablesToClearHandler
     {
-        public void HandleAllGlobalVariables()
-        {
+        public void HandleAllGlobalVariables() =>
             this.ClearAll(VariableScopeNames.Global);
-        }
 
         public void HandleConversationHistory()
         {
             // Not supported....
         }
 
-        public void HandleConversationScopedVariables()
-        {
+        public void HandleConversationScopedVariables() =>
             this.ClearAll(WorkflowFormulaState.DefaultScopeName);
-        }
 
         public void HandleUnknownValue()
         {
