@@ -18,7 +18,6 @@ TAgent = TypeVar("TAgent", bound="AgentProtocol")
 __all__ = [
     "AgentMiddleware",
     "AgentRunContext",
-    "BaseMiddlewarePipeline",
     "FunctionInvocationContext",
     "FunctionMiddleware",
     "Middleware",
