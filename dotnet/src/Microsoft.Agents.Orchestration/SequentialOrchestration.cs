@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -46,23 +47,41 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
     private async Task<AgentRunResponse> ResumeAsync(int i, IReadOnlyCollection<ChatMessage> input, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         AgentRunResponse? response = null;
-        for (; i < this.Agents.Count; i++)
+        ContinuationToken? continuationToken = null;
+
+        for (; i < this.Agents.Count;)
         {
             this.LogOrchestrationSubagentRunning(context, this.Agents[i]);
 
-            response = await RunAsync(this.Agents[i], context, input, options: null, cancellationToken).ConfigureAwait(false);
+            AgentRunOptions? options = continuationToken is not null
+                ? new() { ContinuationToken = continuationToken }
+                : null;
+
+            response = await RunAsync(this.Agents[i], context, input, options: options, cancellationToken).ConfigureAwait(false);
+
             input = response.Messages as IReadOnlyCollection<ChatMessage> ?? [.. response.Messages];
 
-            await this.CheckpointAsync(i + 1, input, context, cancellationToken).ConfigureAwait(false);
+            continuationToken = response.ContinuationToken;
+
+            // If there is a continuation token, it indicates a long-running operation
+            // that requires further processing to complete. For now, until an alternative
+            // approach is implemented, we will do polling until the long-running operation
+            // result is available.
+            i = response.ContinuationToken is null ? i + 1 : i;
+
+            await this.CheckpointAsync(i, input, context, response.ContinuationToken, cancellationToken).ConfigureAwait(false);
         }
 
         Debug.Assert(response is not null, "Response should not be null after processing a positive number of agents.");
         return response!;
     }
 
-    private Task CheckpointAsync(int index, IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
-        context.Runtime is not null ? base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(index, messages), OrchestrationJsonContext.Default.SequentialState), context, cancellationToken) :
-        Task.CompletedTask;
+    private Task CheckpointAsync(int index, IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, ContinuationToken? continuationToken, CancellationToken cancellationToken)
+    {
+        return context.Runtime is not null
+            ? base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(index, messages, continuationToken), OrchestrationJsonContext.Default.SequentialState), context, cancellationToken)
+            : Task.CompletedTask;
+    }
 
-    internal sealed record SequentialState(int Index, IReadOnlyCollection<ChatMessage> Messages);
+    internal sealed record SequentialState(int Index, IReadOnlyCollection<ChatMessage> Messages, ContinuationToken? ContinuationToken);
 }
