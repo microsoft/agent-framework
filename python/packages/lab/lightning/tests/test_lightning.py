@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for lighting module."""
+"""Tests for lightning module."""
 
 import pytest
-from agent_framework_lab_lighting import __version__
+from agent_framework_lab_lightning import __version__
 
 
-class TestLighting:
-    """Test the lighting module."""
+class TestLightning:
+    """Test the lightning module."""
     
     def test_version(self):
         """Test package version is defined."""
