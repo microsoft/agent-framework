@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
@@ -19,9 +20,9 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
 /// </summary>
 public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
-    private ImmutableList<WorkflowEvent> WorkflowEvents { get; set; } = ImmutableList<WorkflowEvent>.Empty;
+    private ImmutableList<WorkflowEvent> WorkflowEvents { get; set; } = [];
 
-    private ImmutableDictionary<Type, int> WorkflowEventCounts { get; set; } = ImmutableDictionary<Type, int>.Empty;
+    private Dictionary<Type, int> WorkflowEventCounts { get; set; } = [];
 
     [Theory]
     [InlineData("BadEmpty.yaml")]
@@ -257,7 +258,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
-        this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToImmutableList();
+        this.WorkflowEvents = [.. run.WatchStreamAsync().ToEnumerable()];
         foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
         {
             if (workflowEvent is ExecutorInvokedEvent invokeEvent)
@@ -278,7 +279,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
             }
         }
-        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToImmutableDictionary(e => e.Key, e => e.Count());
+        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
     }
 
     private sealed class RootExecutor() :

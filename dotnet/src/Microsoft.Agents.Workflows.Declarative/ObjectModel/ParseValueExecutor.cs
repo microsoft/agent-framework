@@ -23,7 +23,7 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
-        EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(valueExpression);
+        EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(valueExpression);
 
         FormulaValue? parsedResult = null;
 

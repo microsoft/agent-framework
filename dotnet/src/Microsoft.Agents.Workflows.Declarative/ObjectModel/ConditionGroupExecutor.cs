@@ -59,7 +59,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
                 continue; // Skip if no condition is defined
             }
 
-            EvaluationResult<bool> expressionResult = this.State.Evaluator.GetValue(conditionItem.Condition);
+            EvaluationResult<bool> expressionResult = this.Evaluator.GetValue(conditionItem.Condition);
             if (expressionResult.Value)
             {
                 return Steps.Item(this.Model, conditionItem);

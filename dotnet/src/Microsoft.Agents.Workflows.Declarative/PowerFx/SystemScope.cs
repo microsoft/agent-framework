@@ -96,17 +96,6 @@ internal static class SystemScope
         }
     }
 
-    public static FormulaValue GetConversationId(this WorkflowFormulaState state) =>
-        state.Get(Names.ConversationId, VariableScopeNames.System);
-
-    public static void SetConversationId(this WorkflowFormulaState state, string conversationId)
-    {
-        RecordValue conversation = (RecordValue)state.Get(Names.Conversation, VariableScopeNames.System);
-        conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        state.Set(Names.Conversation, conversation, VariableScopeNames.System);
-        state.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
-    }
-
     public static void SetLastMessage(this WorkflowFormulaState state, ChatMessage message)
     {
         state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);

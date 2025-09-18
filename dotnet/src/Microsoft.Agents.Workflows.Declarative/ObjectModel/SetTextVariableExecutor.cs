@@ -21,7 +21,7 @@ internal sealed class SetTextVariableExecutor(SetTextVariable model, WorkflowFor
         }
         else
         {
-            FormulaValue expressionResult = FormulaValue.New(this.State.Engine.Format(this.Model.Value));
+            FormulaValue expressionResult = FormulaValue.New(this.Engine.Format(this.Model.Value));
 
             await this.AssignAsync(this.Model.Variable?.Path, expressionResult, context).ConfigureAwait(false);
         }
