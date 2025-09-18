@@ -24,13 +24,12 @@ namespace Microsoft.Extensions.AI.Agents;
 /// This class provides telemetry instrumentation for agent operations including activities, metrics, and logging.
 /// The telemetry output follows OpenTelemetry semantic conventions in <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/"/> and is subject to change as the conventions evolve.
 /// </remarks>
-public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
+public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 {
     private const LogLevel EventLogLevel = LogLevel.Information;
     private JsonSerializerOptions _jsonSerializerOptions;
     private readonly OpenTelemetryChatClient? _openTelemetryChatClient;
     private readonly string? _system;
-    private readonly AIAgent _innerAgent;
     private readonly ActivitySource _activitySource;
     private readonly Meter _meter;
     private readonly Histogram<double> _operationDurationHistogram;
@@ -44,9 +43,8 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     /// <param name="logger">The <see cref="ILogger"/> to use for emitting events.</param>
     /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
     public OpenTelemetryAgent(AIAgent innerAgent, ILogger? logger = null, string? sourceName = null)
+        : base(innerAgent)
     {
-        this._innerAgent = Throw.IfNull(innerAgent);
-
         string name = string.IsNullOrEmpty(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!;
         this._activitySource = new(name);
         this._meter = new(name);
@@ -54,7 +52,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         this._system = this.GetService<AIAgentMetadata>()?.ProviderName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents;
 
         // Attempt to get the open telemetry chat client if the inner agent is a ChatClientAgent.
-        this._openTelemetryChatClient = (innerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
+        this._openTelemetryChatClient = (this.InnerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();
 
         // Inherit by default the EnableSensitiveData setting from the TelemetryChatClient if available.
         this.EnableSensitiveData = this._openTelemetryChatClient?.EnableSensitiveData ?? false;
@@ -112,41 +110,36 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
-        => base.GetService(serviceType, serviceKey)
-            ?? (serviceType == typeof(ActivitySource) ? this._activitySource
-            : this._innerAgent.GetService(serviceType, serviceKey));
+    {
+        // Handle ActivitySource requests directly - always return our own ActivitySource
+        if (serviceType == typeof(ActivitySource))
+        {
+            return this._activitySource;
+        }
 
-    /// <inheritdoc/>
-    public override string Id => this._innerAgent.Id;
-
-    /// <inheritdoc/>
-    public override string? Name => this._innerAgent.Name;
-
-    /// <inheritdoc/>
-    public override string? Description => this._innerAgent.Description;
-
-    /// <inheritdoc/>
-    public override AgentThread GetNewThread() => this._innerAgent.GetNewThread();
+        // For other service types, use the base delegation logic
+        return base.GetService(serviceType, serviceKey);
+    }
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
-        this.LogChatMessages(messages);
+        this.LogChatMessages(inputMessages);
 
         AgentRunResponse? response = null;
         Exception? error = null;
         try
         {
-            response = await this._innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            response = await base.RunAsync(inputMessages, thread, options, cancellationToken).ConfigureAwait(false);
             return response;
         }
         catch (Exception ex)
@@ -156,30 +149,30 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, response, error, stopwatch, messages.Count, isStreaming: false);
+            this.TraceResponse(activity, response, error, stopwatch);
         }
     }
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
         try
         {
-            updates = this._innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+            updates = base.RunStreamingAsync(inputMessages, thread, options, cancellationToken);
         }
         catch (Exception ex)
         {
-            this.TraceResponse(activity, response: null, ex, stopwatch, messages.Count, isStreaming: true);
+            this.TraceResponse(activity, response: null, ex, stopwatch);
             throw;
         }
 
@@ -213,7 +206,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch, messages.Count, isStreaming: true);
+            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch);
             await responseEnumerator.DisposeAsync().ConfigureAwait(false);
         }
     }
@@ -221,10 +214,10 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
     /// <summary>
     /// Creates an activity for an agent request, or returns null if not enabled.
     /// </summary>
-    private Activity? CreateAndConfigureActivity(string operationName, IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
+    private Activity? CreateAndConfigureActivity(string operationName, AgentThread? thread)
     {
         // Get the GenAI system name for telemetry
-        var chatClientAgent = this._innerAgent as ChatClientAgent;
+        var chatClientAgent = this.InnerAgent as ChatClientAgent;
         Activity? activity = null;
         if (this._activitySource.HasListeners())
         {
@@ -287,9 +280,7 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
         Activity? activity,
         AgentRunResponse? response,
         Exception? error,
-        Stopwatch? stopwatch,
-        int inputMessageCount,
-        bool isStreaming)
+        Stopwatch? stopwatch)
     {
         // Record operation duration metric
         if (this._operationDurationHistogram.Enabled && stopwatch is not null)
@@ -418,22 +409,6 @@ public sealed partial class OpenTelemetryAgent : AIAgent, IDisposable
                     }, OtelContext.Default.SystemOrUserEvent));
             }
         }
-    }
-
-    private void LogChatResponse(ChatResponse response)
-    {
-        if (!this._logger.IsEnabled(EventLogLevel))
-        {
-            return;
-        }
-
-        EventId id = new(1, OpenTelemetryConsts.GenAI.Choice);
-        this.Log(id, JsonSerializer.Serialize(new ChoiceEvent()
-        {
-            FinishReason = response.FinishReason?.Value ?? "error",
-            Index = 0,
-            Message = this.CreateAssistantEvent(response.Messages is { Count: 1 } ? response.Messages[0].Contents : response.Messages.SelectMany(m => m.Contents)),
-        }, OtelContext.Default.ChoiceEvent));
     }
 
     private void LogAgentResponse(AgentRunResponse response)

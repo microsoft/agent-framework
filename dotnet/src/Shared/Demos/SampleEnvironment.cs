@@ -11,7 +11,7 @@ namespace SampleHelpers;
 internal static class SampleEnvironment
 {
     public static string? GetEnvironmentVariable(string key)
-        => SampleEnvironment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process);
+        => GetEnvironmentVariable(key, EnvironmentVariableTarget.Process);
 
     public static string? GetEnvironmentVariable(string key, EnvironmentVariableTarget target)
     {
@@ -70,73 +70,73 @@ internal static class SampleEnvironment
     // Methods that directly call System.Environment
 
     public static IDictionary GetEnvironmentVariables()
-        => System.Environment.GetEnvironmentVariables();
+        => SystemEnvironment.GetEnvironmentVariables();
 
     public static IDictionary GetEnvironmentVariables(EnvironmentVariableTarget target)
-        => System.Environment.GetEnvironmentVariables(target);
+        => SystemEnvironment.GetEnvironmentVariables(target);
 
     public static void SetEnvironmentVariable(string variable, string? value)
-        => System.Environment.SetEnvironmentVariable(variable, value);
+        => SystemEnvironment.SetEnvironmentVariable(variable, value);
 
     public static void SetEnvironmentVariable(string variable, string? value, EnvironmentVariableTarget target)
-        => System.Environment.SetEnvironmentVariable(variable, value, target);
+        => SystemEnvironment.SetEnvironmentVariable(variable, value, target);
 
     public static string[] GetCommandLineArgs()
-        => System.Environment.GetCommandLineArgs();
+        => SystemEnvironment.GetCommandLineArgs();
 
     public static string CommandLine
-        => System.Environment.CommandLine;
+        => SystemEnvironment.CommandLine;
 
     public static string CurrentDirectory
     {
-        get => System.Environment.CurrentDirectory;
-        set => System.Environment.CurrentDirectory = value;
+        get => SystemEnvironment.CurrentDirectory;
+        set => SystemEnvironment.CurrentDirectory = value;
     }
 
     public static string ExpandEnvironmentVariables(string name)
-        => System.Environment.ExpandEnvironmentVariables(name);
+        => SystemEnvironment.ExpandEnvironmentVariables(name);
 
-    public static string GetFolderPath(System.Environment.SpecialFolder folder)
-        => System.Environment.GetFolderPath(folder);
+    public static string GetFolderPath(SystemEnvironment.SpecialFolder folder)
+        => SystemEnvironment.GetFolderPath(folder);
 
-    public static string GetFolderPath(System.Environment.SpecialFolder folder, System.Environment.SpecialFolderOption option)
-        => System.Environment.GetFolderPath(folder, option);
+    public static string GetFolderPath(SystemEnvironment.SpecialFolder folder, SystemEnvironment.SpecialFolderOption option)
+        => SystemEnvironment.GetFolderPath(folder, option);
 
     public static int ProcessorCount
-        => System.Environment.ProcessorCount;
+        => SystemEnvironment.ProcessorCount;
 
     public static bool Is64BitProcess
-        => System.Environment.Is64BitProcess;
+        => SystemEnvironment.Is64BitProcess;
 
     public static bool Is64BitOperatingSystem
-        => System.Environment.Is64BitOperatingSystem;
+        => SystemEnvironment.Is64BitOperatingSystem;
 
     public static string MachineName
-        => System.Environment.MachineName;
+        => SystemEnvironment.MachineName;
 
     public static string NewLine
-        => System.Environment.NewLine;
+        => SystemEnvironment.NewLine;
 
     public static OperatingSystem OSVersion
-        => System.Environment.OSVersion;
+        => SystemEnvironment.OSVersion;
 
     public static string StackTrace
-        => System.Environment.StackTrace;
+        => SystemEnvironment.StackTrace;
 
     public static int SystemPageSize
-        => System.Environment.SystemPageSize;
+        => SystemEnvironment.SystemPageSize;
 
     public static bool HasShutdownStarted
-        => System.Environment.HasShutdownStarted;
+        => SystemEnvironment.HasShutdownStarted;
 
 #if NET9_0_OR_GREATER
     public static int ProcessId
-        => System.Environment.ProcessId;
+        => SystemEnvironment.ProcessId;
 
     public static string? ProcessPath
-        => System.Environment.ProcessPath;
+        => SystemEnvironment.ProcessPath;
 
     public static bool IsPrivilegedProcess
-        => System.Environment.IsPrivilegedProcess;
+        => SystemEnvironment.IsPrivilegedProcess;
 #endif
 }

@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -14,7 +15,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowState state) :
+internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<ParseValue>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -22,13 +23,13 @@ internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowSt
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
-        EvaluationResult<DataValue> expressionResult = this.State.ExpressionEngine.GetValue(valueExpression);
+        EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(valueExpression);
 
         FormulaValue? parsedResult = null;
 
         if (expressionResult.Value is RecordDataValue recordValue)
         {
-            parsedResult = recordValue.ToFormulaValue();
+            parsedResult = recordValue.ToFormula();
         }
         else if (expressionResult.Value is StringDataValue stringValue)
         {
@@ -41,9 +42,9 @@ internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowSt
                 parsedResult =
                     this.Model.ValueType switch
                     {
-                        StringDataType => StringValue.New(stringValue.Value),
-                        NumberDataType => NumberValue.New(stringValue.Value),
-                        BooleanDataType => BooleanValue.New(stringValue.Value),
+                        StringDataType => FormulaValue.New(stringValue.Value),
+                        NumberDataType => FormulaValue.New(stringValue.Value),
+                        BooleanDataType => FormulaValue.New(stringValue.Value),
                         RecordDataType recordType => ParseRecord(recordType, stringValue.Value),
                         _ => null
                     };
@@ -62,11 +63,10 @@ internal sealed class ParseValueExecutor(ParseValue model, DeclarativeWorkflowSt
         RecordValue ParseRecord(RecordDataType recordType, string rawText)
         {
             string jsonText = rawText.TrimJsonDelimiter();
-            JsonDocument json = JsonDocument.Parse(jsonText);
-            JsonElement currentElement = json.RootElement;
+            using JsonDocument json = JsonDocument.Parse(jsonText);
             try
             {
-                return recordType.ParseRecord(currentElement);
+                return recordType.ParseRecord(json.RootElement);
             }
             catch (Exception exception)
             {

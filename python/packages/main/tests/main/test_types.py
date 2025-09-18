@@ -21,6 +21,8 @@ from agent_framework import (
     DataContent,
     ErrorContent,
     FinishReason,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     GeneratedEmbeddings,
@@ -38,6 +40,7 @@ from agent_framework import (
     UsageDetails,
     ai_function,
 )
+from agent_framework.exceptions import AdditionItemMismatch
 
 
 @fixture
@@ -296,9 +299,8 @@ def test_function_call_content_add_merging_and_errors():
     # incompatible call ids
     a = FunctionCallContent(call_id="1", name="f", arguments="abc")
     b = FunctionCallContent(call_id="2", name="f", arguments="def")
-    from agent_framework.exceptions import AgentFrameworkException
 
-    with raises(AgentFrameworkException):
+    with raises(AdditionItemMismatch):
         _ = a + b
 
 
@@ -377,6 +379,42 @@ def test_usage_details_add_with_none_and_type_errors():
         _ = u + 42  # type: ignore[arg-type]
     with raises(ValueError):
         u += 42  # type: ignore[arg-type]
+
+
+# region UserInputRequest and Response
+
+
+def test_function_approval_request_and_response_creation():
+    """Test creating a FunctionApprovalRequestContent and producing a response."""
+    fc = FunctionCallContent(call_id="call-1", name="do_something", arguments={"a": 1})
+    req = FunctionApprovalRequestContent(id="req-1", function_call=fc)
+
+    assert req.type == "function_approval_request"
+    assert req.function_call == fc
+    assert req.id == "req-1"
+    assert isinstance(req, BaseContent)
+
+    resp = req.create_response(True)
+
+    assert isinstance(resp, FunctionApprovalResponseContent)
+    assert resp.approved is True
+    assert resp.function_call == fc
+    assert resp.id == "req-1"
+
+
+def test_function_approval_serialization_roundtrip():
+    fc = FunctionCallContent(call_id="c2", name="f", arguments='{"x":1}')
+    req = FunctionApprovalRequestContent(id="id-2", function_call=fc, additional_properties={"meta": 1})
+
+    dumped = req.model_dump()
+    loaded = FunctionApprovalRequestContent.model_validate(dumped)
+    assert loaded == req
+
+    class TestModel(BaseModel):
+        content: Contents
+
+    test_item = TestModel.model_validate({"content": dumped})
+    assert isinstance(test_item.content, FunctionApprovalRequestContent)
 
 
 # region BaseContent Serialization
@@ -1098,6 +1136,59 @@ def test_chat_options_tool_choice_dict_mapping(ai_tool):
     # provider settings serialize to just the mode
     settings = opts.to_provider_settings()
     assert settings["tool_choice"] == "required"
+
+
+def test_chat_options_to_provider_settings_with_falsy_values():
+    """Test that falsy values (except None) are included in provider settings."""
+    options = ChatOptions(
+        temperature=0.0,  # falsy but not None
+        top_p=0.0,  # falsy but not None
+        presence_penalty=False,  # falsy but not None
+        frequency_penalty=None,  # None - should be excluded
+        additional_properties={"empty_string": "", "zero": 0, "false_flag": False, "none_value": None},
+    )
+
+    settings = options.to_provider_settings()
+
+    # Falsy values that are not None should be included
+    assert "temperature" in settings
+    assert isinstance(settings["temperature"], float)
+    assert settings["temperature"] == 0.0
+    assert "top_p" in settings
+    assert isinstance(settings["top_p"], float)
+    assert settings["top_p"] == 0.0
+    assert "presence_penalty" in settings
+    assert isinstance(settings["presence_penalty"], float)  # converted to float
+    assert settings["presence_penalty"] == 0.0
+
+    # None values should be excluded
+    assert "frequency_penalty" not in settings
+
+    # Additional properties - falsy values should always be included
+    assert "empty_string" in settings
+    assert settings["empty_string"] == ""
+    assert "zero" in settings
+    assert settings["zero"] == 0
+    assert "false_flag" in settings
+    assert settings["false_flag"] is False
+    assert "none_value" in settings
+    assert settings["none_value"] is None
+
+
+def test_chat_options_empty_logit_bias_and_metadata_excluded():
+    """Test that empty logit_bias and metadata are excluded from provider settings."""
+    options = ChatOptions(
+        ai_model_id="gpt-4o",
+        logit_bias={},  # empty dict should be excluded
+        metadata={},  # empty dict should be excluded
+    )
+
+    settings = options.to_provider_settings()
+
+    # Empty logit_bias and metadata should be excluded
+    assert "logit_bias" not in settings
+    assert "metadata" not in settings
+    assert settings["model"] == "gpt-4o"
 
 
 # region AgentRunResponse

@@ -1,0 +1,25 @@
+name: Reusable Setup UV
+description: Reusable workflow to setup uv environment
+
+inputs:
+    python-version:
+      description: The Python version to set up
+      required: true
+    os:
+      description: The operating system to set up
+      required: true
+
+runs:
+    using: "composite"
+    steps:
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+            version-file: "python/pyproject.toml"
+            enable-cache: true
+            cache-suffix: ${{ inputs.os }}-${{ inputs.python-version }}
+            cache-dependency-glob: "**/uv.lock"
+      - name: Install the project
+        shell: bash
+        run: |
+          cd python && uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit

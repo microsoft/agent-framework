@@ -24,7 +24,7 @@ public class GroupChatOrchestration_Intro(ITestOutputHelper output) : Orchestrat
     {
         // Define the agents
         ChatClientAgent writer =
-            this.CreateAgent(
+            CreateAgent(
                 name: "CopyWriter",
                 description: "A copy writer",
                 instructions:
@@ -37,7 +37,7 @@ public class GroupChatOrchestration_Intro(ITestOutputHelper output) : Orchestrat
                 Consider suggestions when refining an idea.
                 """);
         ChatClientAgent editor =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Reviewer",
                 description: "An editor.",
                 instructions:
@@ -62,13 +62,13 @@ public class GroupChatOrchestration_Intro(ITestOutputHelper output) : Orchestrat
             editor)
             {
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
-                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallback : null,
+                ResponseCallback = monitor.ResponseCallbackAsync,
+                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallbackAsync : null,
             };
 
-        string input = "Create a slogon for a new eletric SUV that is affordable and fun to drive.";
-        Console.WriteLine($"\n# INPUT: {input}\n");
-        AgentRunResponse result = await orchestration.RunAsync(input);
+        const string Input = "Create a slogon for a new eletric SUV that is affordable and fun to drive.";
+        Console.WriteLine($"\n# INPUT: {Input}\n");
+        AgentRunResponse result = await orchestration.RunAsync(Input);
         Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);

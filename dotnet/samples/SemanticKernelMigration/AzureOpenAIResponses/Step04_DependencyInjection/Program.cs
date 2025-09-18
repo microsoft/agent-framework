@@ -16,10 +16,10 @@ var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
@@ -39,13 +39,13 @@ async Task SKAgent()
     Console.WriteLine(result.Message);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddTransient((sp) => new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-        .GetChatClient(deploymentName)
+        .GetOpenAIResponseClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();

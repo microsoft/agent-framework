@@ -57,11 +57,11 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
     }
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
-        this.ResumeAsync(messages, new AgentRunResponse?[this.Agents.Count], context, cancellationToken);
+    protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        this.ResumeAsync(messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), new AgentRunResponse?[this.Agents.Count], context, cancellationToken);
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IReadOnlyCollection<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected override Task<AgentRunResponse> ResumeCoreAsync(JsonElement checkpointState, IEnumerable<ChatMessage> newMessages, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         var state = checkpointState.Deserialize(OrchestrationJsonContext.Default.ConcurrentState) ?? throw new InvalidOperationException("The checkpoint state is invalid.");
 
@@ -83,12 +83,12 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
                 tasks.Add(Task.Run(async () =>
                 {
                     AIAgent agent = this.Agents[localI];
-                    this.LogOrchestrationSubagentRunning(context, agent);
+                    LogOrchestrationSubagentRunning(context, agent);
 
                     completed[localI] = await RunAsync(agent, context, input, options: null, cancellationToken).ConfigureAwait(false);
 
-                    this.LogOrchestrationSubagentCompleted(context, agent);
-                    await this.CheckpointAsync(input, completed, context, cancellationToken).ConfigureAwait(false);
+                    LogOrchestrationSubagentCompleted(context, agent);
+                    await CheckpointAsync(input, completed, context, cancellationToken).ConfigureAwait(false);
                 }, cancellationToken));
             }
         }
@@ -103,8 +103,8 @@ public partial class ConcurrentOrchestration : OrchestratingAgent
         return await this.AggregationFunc(completed!, cancellationToken).ConfigureAwait(false);
     }
 
-    private Task CheckpointAsync(IReadOnlyCollection<ChatMessage> messages, AgentRunResponse?[] completed, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
-        context.Runtime is not null ? base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(messages, completed), OrchestrationJsonContext.Default.ConcurrentState), context, cancellationToken) :
+    private static Task CheckpointAsync(IReadOnlyCollection<ChatMessage> messages, AgentRunResponse?[] completed, OrchestratingAgentContext context, CancellationToken cancellationToken) =>
+        context.Runtime is not null ? WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(messages, completed), OrchestrationJsonContext.Default.ConcurrentState), context, cancellationToken) :
         Task.CompletedTask;
 
     internal sealed record ConcurrentState(IReadOnlyCollection<ChatMessage> Messages, AgentRunResponse?[] Completed);

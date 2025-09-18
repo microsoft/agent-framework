@@ -52,7 +52,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         ValidateInputMessages(messages);
 
@@ -98,7 +98,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ValidateInputMessages(messages);
 
@@ -147,7 +147,7 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override string? Description => this._description ?? base.Description;
 
-    private static void ValidateInputMessages(IReadOnlyCollection<ChatMessage> messages)
+    private static void ValidateInputMessages(IEnumerable<ChatMessage> messages)
     {
         _ = Throw.IfNull(messages);
 

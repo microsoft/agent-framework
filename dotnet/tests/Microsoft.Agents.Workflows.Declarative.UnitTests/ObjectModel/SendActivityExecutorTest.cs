@@ -13,21 +13,21 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class SendActivityExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public async Task CaptureActivity()
+    public async Task CaptureActivityAsync()
     {
         // Arrange
         SendActivity model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(CaptureActivity)),
+                this.FormatDisplayName(nameof(CaptureActivityAsync)),
                 "Test activity message");
 
         // Act
-        SendActivityExecutor action = new(model, this.GetState());
-        WorkflowEvent[] events = await this.Execute(action);
+        SendActivityExecutor action = new(model, this.State);
+        WorkflowEvent[] events = await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
-        Assert.Contains(events, e => e is AgentRunResponseEvent);
+        VerifyModel(model, action);
+        Assert.Contains(events, e => e is MessageActivityEvent);
     }
 
     private SendActivity CreateModel(string displayName, string activityMessage, string? summary = null)
@@ -46,8 +46,6 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
                 Activity = activityBuilder.Build(),
             };
 
-        SendActivity model = this.AssignParent<SendActivity>(actionBuilder);
-
-        return model;
+        return AssignParent<SendActivity>(actionBuilder);
     }
 }

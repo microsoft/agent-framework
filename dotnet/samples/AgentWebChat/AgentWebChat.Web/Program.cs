@@ -24,10 +24,7 @@ Uri a2aAddress = new("http://localhost:5390/a2a");
 
 builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = baseAddress);
 builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
-builder.Services.AddSingleton<A2AActorClient>(sp =>
-{
-    return new A2AActorClient(sp.GetRequiredService<ILogger<A2AActorClient>>(), a2aAddress);
-});
+builder.Services.AddSingleton(sp => new A2AActorClient(sp.GetRequiredService<ILogger<A2AActorClient>>(), a2aAddress));
 
 var app = builder.Build();
 

@@ -11,11 +11,9 @@ internal static class ActorEntitiesConverter
 {
     public static Message ToMessage(this ActorResponse response)
     {
-        var agentRunResponse = response.Data.Deserialize(AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse))) as AgentRunResponse;
-        if (agentRunResponse is null)
-        {
+        var agentRunResponse =
+            response.Data.Deserialize(AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse))) as AgentRunResponse ??
             throw new ArgumentException("The ActorResponse data could not be deserialized to an AgentRunResponse.", nameof(response));
-        }
 
         var contextId = response.ActorId.Key;
         var parts = agentRunResponse.Messages.ToParts();
@@ -32,11 +30,9 @@ internal static class ActorEntitiesConverter
     public static ActorRequestUpdate ToActorRequestUpdate(this Message message, RequestStatus status = RequestStatus.Completed)
     {
         // maybe we need to split to chatmessage-per-part, but the idea to map is clear
-        var chatMessage = message.ToChatMessage();
-        if (chatMessage is null)
-        {
+        var chatMessage =
+            message.ToChatMessage() ??
             throw new ArgumentException("The Message could not be converted to a ChatMessage.", nameof(message));
-        }
 
         var agentRunResponseUpdate = new AgentRunResponseUpdate(ChatRole.Assistant, chatMessage.Contents);
         var updateTypeInfo = AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponseUpdate));
@@ -47,11 +43,9 @@ internal static class ActorEntitiesConverter
     public static AgentRunResponse ToAgentRunResponse(this Message message)
     {
         // maybe we need to split to chatmessage-per-part, but the idea to map is clear
-        var chatMessage = message.ToChatMessage();
-        if (chatMessage is null)
-        {
+        var chatMessage =
+            message.ToChatMessage() ??
             throw new ArgumentException("The Message could not be converted to a ChatMessage.", nameof(message));
-        }
 
         return new AgentRunResponse(chatMessage);
     }

@@ -56,10 +56,10 @@ public static class Program
         var aggregationExecutor = new ConcurrentAggregationExecutor();
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(startExecutor);
-        builder.AddFanOutEdge(startExecutor, targets: [physicist, chemist]);
-        builder.AddFanInEdge(aggregationExecutor, sources: [physicist, chemist]);
-        var workflow = builder.Build<string>();
+        var workflow = new WorkflowBuilder(startExecutor)
+            .AddFanOutEdge(startExecutor, targets: [physicist, chemist])
+            .AddFanInEdge(aggregationExecutor, sources: [physicist, chemist])
+            .Build<string>();
 
         // Execute the workflow in streaming mode
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is temperature?");
@@ -85,7 +85,7 @@ internal sealed class ConcurrentStartExecutor() :
     /// </summary>
     /// <param name="message">The user message to process</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
-    /// <returns></returns>
+    /// <returns>A task representing the asynchronous operation</returns>
     public async ValueTask HandleAsync(string message, IWorkflowContext context)
     {
         // Broadcast the message to all connected agents. Receiving agents will queue
@@ -110,7 +110,7 @@ internal sealed class ConcurrentAggregationExecutor() :
     /// </summary>
     /// <param name="message">The message from the agent</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
-    /// <returns></returns>
+    /// <returns>A task representing the asynchronous operation</returns>
     public async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context)
     {
         this._messages.Add(message);

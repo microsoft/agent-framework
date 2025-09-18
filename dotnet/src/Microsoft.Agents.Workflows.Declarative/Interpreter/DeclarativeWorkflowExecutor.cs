@@ -3,7 +3,6 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -11,16 +10,21 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 /// <summary>
 /// The root executor for a declarative workflow.
 /// </summary>
-internal sealed class DeclarativeWorkflowExecutor<TInput>(string workflowId, DeclarativeWorkflowState state, Func<TInput, ChatMessage> inputTransform) :
-    ReflectingExecutor<DeclarativeWorkflowExecutor<TInput>>(workflowId),
-    IMessageHandler<TInput>
+internal sealed class DeclarativeWorkflowExecutor<TInput>(
+    string workflowId,
+    WorkflowFormulaState state,
+    Func<TInput, ChatMessage> inputTransform) :
+    Executor<TInput>(workflowId)
     where TInput : notnull
 {
-    public async ValueTask HandleAsync(TInput message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        ChatMessage input = inputTransform.Invoke(message);
-        await state.SetLastMessageAsync(context, input).ConfigureAwait(false);
+        // No state to restore if we're starting from the beginning.
+        state.SetInitialized();
 
-        await context.SendMessageAsync(new DeclarativeExecutorResult(this.Id)).ConfigureAwait(false);
+        ChatMessage input = inputTransform.Invoke(message);
+        state.SetLastMessage(input);
+
+        await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
     }
 }

@@ -31,8 +31,8 @@ public sealed class AIContentExtensionsTests
     public void ToA2APart_WithHostedFileContent_ReturnsFilePart()
     {
         // Arrange
-        var uri = "https://example.com/file.txt";
-        var hostedFileContent = new HostedFileContent(uri);
+        const string Uri = "https://example.com/file.txt";
+        var hostedFileContent = new HostedFileContent(Uri);
 
         // Act
         var result = hostedFileContent.ToA2APart();
@@ -44,7 +44,7 @@ public sealed class AIContentExtensionsTests
         Assert.NotNull(filePart.File);
 
         var fileWithUri = Assert.IsType<FileWithUri>(filePart.File);
-        Assert.Equal(uri, fileWithUri.Uri);
+        Assert.Equal(Uri, fileWithUri.Uri);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class AIContentExtensionsTests
         var unsupportedContent = new MockAIContent();
 
         // Act & Assert
-        var exception = Assert.Throws<NotSupportedException>(() => unsupportedContent.ToA2APart());
+        var exception = Assert.Throws<NotSupportedException>(unsupportedContent.ToA2APart);
         Assert.Equal("Unsupported content type: MockAIContent.", exception.Message);
     }
 
@@ -106,7 +106,5 @@ public sealed class AIContentExtensionsTests
     }
 
     // Mock class for testing unsupported scenarios
-    private sealed class MockAIContent : AIContent
-    {
-    }
+    private sealed class MockAIContent : AIContent;
 }

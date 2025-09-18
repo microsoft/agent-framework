@@ -28,7 +28,7 @@ jobs:
     outputs:
       pythonChanges: ${{ steps.filter.outputs.python}}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -66,23 +66,24 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v5
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
         with:
-          version-file: "python/pyproject.toml"
-          enable-cache: true
-          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
-          cache-dependency-glob: "**/uv.lock"
-      - name: Install the project
-        run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          # Configure a constant location for the uv cache
+          UV_CACHE_DIR: /tmp/.uv-cache
       - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        timeout-minutes: 10
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
-      - name: Test openai samples
+      - name: Test main samples
+        timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "openai" --junitxml=coverage_samples_main.xml
+        run: uv run pytest tests/samples/ -m "openai"
         working-directory: ./python
       - name: Move coverage file
         run: |
@@ -125,17 +126,16 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v5
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
         with:
-          version-file: "python/pyproject.toml"
-          enable-cache: true
-          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
-          cache-dependency-glob: "**/uv.lock"
-      - name: Install the project
-        run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          # Configure a constant location for the uv cache
+          UV_CACHE_DIR: /tmp/.uv-cache
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
@@ -144,15 +144,17 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        timeout-minutes: 10
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Test azure samples
+        timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure" --junitxml=coverage_samples_azure.xml
+        run: uv run pytest tests/samples/ -m "azure"
         working-directory: ./python
       - name: Move coverage file
         run: |
-          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml ./coverage_${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -190,17 +192,16 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v5
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
         with:
-          version-file: "python/pyproject.toml"
-          enable-cache: true
-          cache-suffix: ${{ runner.os }}-${{ matrix.python-version }}
-          cache-dependency-glob: "**/uv.lock"
-      - name: Install the project
-        run: |
-          uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          # Configure a constant location for the uv cache
+          UV_CACHE_DIR: /tmp/.uv-cache
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
@@ -209,11 +210,13 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test --junitxml=coverage.xml
+        timeout-minutes: 10
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
         working-directory: ./python
       - name: Test foundry samples
+        timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "foundry" --junitxml=coverage_samples_foundry.xml
+        run: uv run pytest tests/samples/ -m "foundry"
         working-directory: ./python
       - name: Move coverage file
         run: |
@@ -248,13 +251,13 @@ jobs:
       - name: Fail workflow if tests failed
         id: check_tests_failed
         if: contains(join(needs.*.result, ','), 'failure')
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: core.setFailed('Integration Tests Failed!')
 
       - name: Fail workflow if tests cancelled
         id: check_tests_cancelled
         if: contains(join(needs.*.result, ','), 'cancelled')
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: core.setFailed('Integration Tests Cancelled!')

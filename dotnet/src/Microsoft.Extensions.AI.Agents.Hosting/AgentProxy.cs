@@ -36,6 +36,10 @@ public sealed class AgentProxy : AIAgent
     /// <inheritdoc/>
     public override AgentThread GetNewThread() => new AgentProxyThread();
 
+    /// <inheritdoc/>
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new AgentProxyThread(serializedThread, jsonSerializerOptions);
+
     /// <summary>
     /// Gets a thread by its <see cref="AgentThread.ConversationId"/>.
     /// </summary>
@@ -45,7 +49,7 @@ public sealed class AgentProxy : AIAgent
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -57,7 +61,7 @@ public sealed class AgentProxy : AIAgent
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -70,7 +74,7 @@ public sealed class AgentProxy : AIAgent
         }
     }
 
-    private async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
+    private async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
     {
         var handle = await this.RunCoreAsync(messages, threadId, cancellationToken).ConfigureAwait(false);
         var response = await handle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
@@ -85,7 +89,7 @@ public sealed class AgentProxy : AIAgent
     }
 
     private async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         string threadId,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -103,8 +107,7 @@ public sealed class AgentProxy : AIAgent
                 yield break;
             }
 
-            var runResponseUpdate = (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
-            yield return runResponseUpdate;
+            yield return (AgentRunResponseUpdate)update.Data.Deserialize(updateTypeInfo)!;
         }
     }
 
@@ -123,7 +126,7 @@ public sealed class AgentProxy : AIAgent
         return agentProxyThread.ConversationId!;
     }
 
-    private async Task<ActorResponseHandle> RunCoreAsync(IReadOnlyCollection<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
+    private async Task<ActorResponseHandle> RunCoreAsync(IEnumerable<ChatMessage> messages, string threadId, CancellationToken cancellationToken)
     {
         List<ChatMessage> newMessages = [.. messages];
 
@@ -138,7 +141,6 @@ public sealed class AgentProxy : AIAgent
             messageId,
             method: AgentActorConstants.RunMethodName,
             @params: JsonSerializer.SerializeToElement(runRequest, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunRequest))));
-        var handle = await this._client.SendRequestAsync(actorRequest, cancellationToken).ConfigureAwait(false);
-        return handle;
+        return await this._client.SendRequestAsync(actorRequest, cancellationToken).ConfigureAwait(false);
     }
 }

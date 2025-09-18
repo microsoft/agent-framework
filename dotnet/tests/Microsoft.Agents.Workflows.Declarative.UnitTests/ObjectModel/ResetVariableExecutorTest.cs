@@ -14,44 +14,44 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public async Task ResetDefinedValue()
+    public async Task ResetDefinedValueAsync()
     {
         // Arrange
-        this.Scopes.Set("MyVar1", FormulaValue.New("Value #1"));
-        this.Scopes.Set("MyVar2", FormulaValue.New("Value #2"));
+        this.State.Set("MyVar1", FormulaValue.New("Value #1"));
+        this.State.Set("MyVar2", FormulaValue.New("Value #2"));
 
         ResetVariable model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ResetDefinedValue)),
+                this.FormatDisplayName(nameof(ResetDefinedValueAsync)),
                 FormatVariablePath("MyVar1"));
 
         // Act
-        ResetVariableExecutor action = new(model, this.GetState());
-        await this.Execute(action);
+        ResetVariableExecutor action = new(model, this.State);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyUndefined("MyVar1");
         this.VerifyState("MyVar2", FormulaValue.New("Value #2"));
     }
 
     [Fact]
-    public async Task ResetUndefinedValue()
+    public async Task ResetUndefinedValueAsync()
     {
         // Arrange
-        this.Scopes.Set("MyVar1", FormulaValue.New("Value #1"));
+        this.State.Set("MyVar1", FormulaValue.New("Value #1"));
 
         ResetVariable model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ResetUndefinedValue)),
+                this.FormatDisplayName(nameof(ResetUndefinedValueAsync)),
                 FormatVariablePath("NoVar"));
 
         // Act
-        ResetVariableExecutor action = new(model, this.GetState());
-        await this.Execute(action);
+        ResetVariableExecutor action = new(model, this.State);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyUndefined("NoVar");
         this.VerifyState("MyVar1", FormulaValue.New("Value #1"));
     }
@@ -66,8 +66,6 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
                 Variable = InitializablePropertyPath.Create(variablePath),
             };
 
-        ResetVariable model = this.AssignParent<ResetVariable>(actionBuilder);
-
-        return model;
+        return AssignParent<ResetVariable>(actionBuilder);
     }
 }

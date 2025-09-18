@@ -37,8 +37,8 @@ internal static class Step3EntryPoint
                     string workflowResult = workflowCompleteEvt.Data!.ToString()!;
                     writer.WriteLine($"Result: {workflowResult}");
                     return workflowResult;
-                case ExecutorCompleteEvent executorCompleteEvt:
-                    writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
+                case ExecutorCompletedEvent executorCompletedEvt:
+                    writer.WriteLine($"'{executorCompletedEvt.ExecutorId}: {executorCompletedEvt.Data}");
                     break;
             }
         }
@@ -137,6 +137,6 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
     {
-        this.Tries = await context.ReadStateAsync<int>("TryCount").ConfigureAwait(false);
+        this.Tries = await context.ReadStateAsync<int?>("TryCount").ConfigureAwait(false) ?? 0;
     }
 }

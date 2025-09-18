@@ -65,7 +65,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         this._handler.ResponsesToReturn.Enqueue(new Message
         {
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Response" } },
+            Parts = [new TextPart { Text = "Response" }],
         });
 
         var agent = await this._resolver.GetAIAgentAsync(this._httpClient);
