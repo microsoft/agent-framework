@@ -79,7 +79,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         {
             null => QueueEmptyStateAsync(),
             UnassignedValue => QueueEmptyStateAsync(),
-            BlankValue formulaValue => QueueEmptyStateAsync(),
+            BlankValue => QueueEmptyStateAsync(),
             FormulaValue formulaValue => QueueFormulaStateAsync(formulaValue),
             DataValue dataValue => QueueDataValueStateAsync(dataValue),
             _ => QueueNativeStateAsync(value),

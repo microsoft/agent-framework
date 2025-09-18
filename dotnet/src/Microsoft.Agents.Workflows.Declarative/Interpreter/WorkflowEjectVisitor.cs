@@ -57,7 +57,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     public override void VisitConditionItem(ConditionItem item) // %%% TODO
     {
-        this.Trace(item);
+        Trace(item);
 
         //ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(item.GetParentId());
         //if (conditionGroup is not null)
@@ -511,7 +511,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.HasUnsupportedActions = true;
     }
 
-    private void Trace(BotElement item)
+    private static void Trace(BotElement item)
     {
         Debug.WriteLine($"> VISIT: {FormatItem(item)} => {FormatParent(item)}");
     }
@@ -521,7 +521,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         string? parentId = item.GetParentId();
         if (item.Id.Equals(parentId ?? string.Empty))
         {
-            parentId = WorkflowActionVisitor.Steps.Root(parentId);
+            WorkflowActionVisitor.Steps.Root(parentId);
         }
         Debug.WriteLine($"> VISIT: {FormatItem(item)} => {FormatParent(item)}");
     }

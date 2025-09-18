@@ -15,7 +15,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> variablesResult = this.Evaluator.GetValue<VariablesToClearWrapper>(this.Model.Variables);
+        EvaluationResult<VariablesToClearWrapper> variablesResult = this.Evaluator.GetValue(this.Model.Variables);
 
         string? scope = variablesResult.Value.Value switch
         {

@@ -16,8 +16,9 @@ internal abstract class CodeTemplate
     private StringBuilder? _generationEnvironmentField;
     private CompilerErrorCollection? _errorsField;
     private List<int>? _indentLengthsField;
-    private string _currentIndentField = string.Empty;
     private bool _endsWithNewline;
+
+    private string CurrentIndentField { get; } = string.Empty;
 
     /// <summary>
     /// Create the template output
@@ -44,15 +45,15 @@ internal abstract class CodeTemplate
     public static string Format(DataValue value) =>
         value switch
         {
-            BlankDataValue blankValue => "null",
+            BlankDataValue => "null",
             BooleanDataValue booleanValue => $"{booleanValue.Value}",
             FloatDataValue decimalValue => $"{decimalValue.Value}",
             NumberDataValue numberValue => $"{numberValue.Value}",
             DateDataValue dateValue => $"new DateTime({dateValue.Value.Ticks}, DateTimeKind.{dateValue.Value.Kind})",
             DateTimeDataValue datetimeValue => $"new DateTimeOffset({datetimeValue.Value.Ticks}, TimeSpan.FromTicks({datetimeValue.Value.Offset}))",
             TimeDataValue timeValue => $"TimeSpan.FromTicks({timeValue.Value.Ticks})",
-            StringDataValue stringValue => @"""{stringValue.Value}""", // %%% INCOMPLETE: MULTILINE
-            OptionDataValue optionValue => @"""{optionValue.Value}""",
+            StringDataValue stringValue => @$"""{stringValue.Value}""", // %%% INCOMPLETE: MULTILINE
+            OptionDataValue optionValue => @$"""{optionValue.Value}""",
             _ => $"[{value.GetType().Name}]",
         };
 
@@ -90,7 +91,7 @@ internal abstract class CodeTemplate
     {
         get
         {
-            return this._currentIndentField;
+            return this.CurrentIndentField;
         }
     }
     /// <summary>
@@ -116,7 +117,7 @@ internal abstract class CodeTemplate
         if ((this.GenerationEnvironment.Length == 0)
                     || this._endsWithNewline)
         {
-            this.GenerationEnvironment.Append(this._currentIndentField);
+            this.GenerationEnvironment.Append(this.CurrentIndentField);
             this._endsWithNewline = false;
         }
         // Check if the current text ends with a newline
@@ -126,18 +127,18 @@ internal abstract class CodeTemplate
         }
         // This is an optimization. If the current indent is "", then we don't have to do any
         // of the more complex stuff further down.
-        if (this._currentIndentField.Length == 0)
+        if (this.CurrentIndentField.Length == 0)
         {
             this.GenerationEnvironment.Append(textToAppend);
             return;
         }
         // Everywhere there is a newline in the text, add an indent after it
-        textToAppend = textToAppend.Replace(Environment.NewLine, (Environment.NewLine + this._currentIndentField));
+        textToAppend = textToAppend.Replace(Environment.NewLine, Environment.NewLine + this.CurrentIndentField);
         // If the text ends with a newline, then we should strip off the indent added at the very end
         // because the appropriate indent will be added when the next time Write() is called
         if (this._endsWithNewline)
         {
-            this.GenerationEnvironment.Append(textToAppend, 0, (textToAppend.Length - this._currentIndentField.Length));
+            this.GenerationEnvironment.Append(textToAppend, 0, textToAppend.Length - this.CurrentIndentField.Length);
         }
         else
         {
@@ -223,8 +224,8 @@ internal abstract class CodeTemplate
             this.indentLengths.RemoveAt(this.indentLengths.Count - 1);
             if (indentLength > 0)
             {
-                returnValue = this._currentIndentField.Substring(this._currentIndentField.Length - indentLength);
-                this._currentIndentField = this._currentIndentField.Remove(this._currentIndentField.Length - indentLength);
+                returnValue = this.CurrentIndentField.Substring(this.CurrentIndentField.Length - indentLength);
+                this._currentIndentField = this.CurrentIndentField.Remove(this.CurrentIndentField.Length - indentLength);
             }
         }
         return returnValue;
