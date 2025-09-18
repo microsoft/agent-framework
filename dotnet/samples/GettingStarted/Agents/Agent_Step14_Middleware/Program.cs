@@ -35,7 +35,7 @@ var originalAgent = new ChatClientAgent(client.AsIChatClient(), new ChatClientAg
 
 var middlewareEnabledAgent = originalAgent.AsBuilder()
     .Use(FunctionCallMiddleware1)
-    .Use(FunctionCallMiddleware2)
+    .Use(FunctionCallOverrideWeather)
     .Use(PIIMiddleware)
     .Use(GuardrailMiddleware)
     .Build();
@@ -84,10 +84,16 @@ async Task FunctionCallMiddleware1(AgentFunctionInvocationContext context, Func<
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Post-Invoke");
 }
 
-async Task FunctionCallMiddleware2(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
+async Task FunctionCallOverrideWeather(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Pre-Invoke");
     await next(context);
+
+    if (context.Function.Name == nameof(GetWeather))
+    {
+        // Override the result of the GetWeather function
+        context.FunctionResult = "The weather is sunny with a high of 25°C.";
+    }
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Post-Invoke");
 }
 
