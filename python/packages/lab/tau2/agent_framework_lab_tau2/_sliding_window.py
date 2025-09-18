@@ -11,7 +11,10 @@ from loguru import logger
 
 
 class SlidingWindowChatMessageList(ChatMessageList):
-    """A sliding window implementation of ChatMessageList."""
+    """A sliding window implementation of ChatMessageList
+
+    The oldest messages are truncated when the token count exceeds the max tokens.
+    """
 
     def __init__(
         self,

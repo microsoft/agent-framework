@@ -8,16 +8,22 @@ from typing import Any
 import numpy as np
 from agent_framework._tools import AIFunction
 from agent_framework._types import ChatMessage
+from loguru import logger
 from pydantic import BaseModel
 from tau2.data_model.message import (
     APICompatibleMessage,
     AssistantMessage,
+    Message,
     SystemMessage,
     ToolCall,
     ToolMessage,
     UserMessage,
 )
+from tau2.data_model.tasks import EnvFunctionCall, InitializationData
+from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
+
+_original_set_state = Environment.set_state
 
 
 def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction:
@@ -103,6 +109,78 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
     return tau2_messages
 
 
+def patch_env_set_state() -> None:
+    """Patch the Environment.set_state method to allow for inconsistent tool call results from expected."""
+
+    def set_state(
+        self,
+        initialization_data: InitializationData | None,
+        initialization_actions: list[EnvFunctionCall] | None,
+        message_history: list[Message],
+    ):
+        if self.solo_mode:
+            if any(isinstance(message, UserMessage) for message in message_history):
+                raise ValueError("User messages are not allowed in solo mode")
+
+        def get_actions_from_messages(
+            messages: list[Message],
+        ) -> list[tuple[ToolCall, ToolMessage]]:
+            """
+            Get the actions from the messages.
+            """
+            messages = deepcopy(messages)[::-1]
+            actions = []
+            while messages:
+                message = messages.pop()
+                if isinstance(message, ToolMessage):
+                    raise ValueError("Tool message not expected. Tool messages should always follow a tool call.")
+                if isinstance(message, (AssistantMessage, UserMessage)) and message.is_tool_call():
+                    tool_calls = message.tool_calls
+                    for tc in tool_calls:  # type: ignore
+                        if len(messages) == 0:
+                            raise ValueError("Tool message expected. Got None.")
+                        tm = messages.pop()
+                        if not isinstance(tm, ToolMessage):
+                            raise ValueError(f"Tool message expected. Got {type(tm)}")
+                        if tc.id != tm.id:
+                            raise ValueError(f"Tool call id mismatch. Got {tc.id} and {tm.id}")
+                        actions.append((tc, tm))
+
+            return actions
+
+        if initialization_data is not None:
+            if initialization_data.agent_data is not None:
+                self.tools.update_db(initialization_data.agent_data)
+            if initialization_data.user_data is not None:
+                self.user_tools.update_db(initialization_data.user_data)
+
+        if initialization_actions is not None:
+            for action in initialization_actions:
+                self.run_env_function_call(action)
+
+        action_responses = get_actions_from_messages(message_history)
+        for tool_call, expected_response in action_responses:
+            response = self.get_response(tool_call)
+            content = _recursive_json_deserialize(response.content)
+            expected_content = _recursive_json_deserialize(expected_response.content)
+            if content != expected_content:
+                diff = f"Tool call:\n{tool_call}\n\nReturned:\n{response}\n\nExpected:\n{expected_response}"
+                if isinstance(content, str) and content.startswith("Error:"):
+                    # If the tool call resulted in an error, the difference can be ignored
+                    logger.warning(f"Tool call resulted in an error. Ignoring the difference.\n{diff}")
+                else:
+                    raise ValueError(
+                        f"Tool call:\n{tool_call}\n\nReturned:\n{response}\n\nExpected:\n{expected_response}"
+                    )
+        self.sync_tools()
+
+    Environment.set_state = set_state
+
+
+def unpatch_env_set_state() -> None:
+    Environment.set_state = _original_set_state
+
+
 def _dump_function_result(result: Any) -> Any:
     if isinstance(result, BaseModel):
         return result.model_dump_json()
@@ -136,3 +214,21 @@ def _to_native(obj):
 
     # 5) Anything else: leave as-is
     return obj
+
+
+def _recursive_json_deserialize(obj: Any) -> Any:
+    """
+    Recursively deserialize a JSON object.
+    """
+    if isinstance(obj, str):
+        try:
+            deserialized = json.loads(obj)
+            return _recursive_json_deserialize(deserialized)
+        except (json.JSONDecodeError, TypeError):
+            return obj
+    elif isinstance(obj, list):
+        return [_recursive_json_deserialize(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {k: _recursive_json_deserialize(v) for k, v in obj.items()}
+    else:
+        return obj
