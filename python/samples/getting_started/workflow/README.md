@@ -111,39 +111,40 @@ When using the Azure AI Foundry extension in VS Code, you can visualize workflow
    - Click "Install" on the Azure AI Foundry extension by Microsoft
 
 2. **Add trace exporter to your sample code** (if not already included):
-   ```python
-  import os
-  from opentelemetry.sdk.resources import Resource
-  from opentelemetry.sdk.trace import TracerProvider
-  from opentelemetry.sdk.trace.export import BatchSpanProcessor
-  from opentelemetry.semconv.attributes import service_attributes
-  from opentelemetry.trace import set_tracer_provider
-   
-  try:
-      from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-  except ImportError:
-      OTLPSpanExporter = None
-   
-  # Configure tracing to capture telemetry spans for visualization.
-  def set_up_tracing():
-      if not OTLPSpanExporter:
-          print("Tracing disabled: OTLP exporter not available")
-          return
 
-      try:
-          otlp_port = int(os.getenv("FOUNDRY_OTLP_PORT", "4317"))
-          otlp_endpoint = f"http://localhost:{otlp_port}"
-          exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
-          resource = Resource.create(
-              {service_attributes.SERVICE_NAME: "your-workflow-sample-name"}
-          )
-          tracer_provider = TracerProvider(resource=resource)
-          tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-          set_tracer_provider(tracer_provider)
-          print(f"Tracing enabled with endpoint: {otlp_endpoint}")
-      except Exception as e:
-          print(f"Failed to setup tracing: {e}")
-   ```
+```python
+import os
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.semconv.attributes import service_attributes
+from opentelemetry.trace import set_tracer_provider
+
+try:
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+except ImportError:
+    OTLPSpanExporter = None
+
+# Configure tracing to capture telemetry spans for visualization.
+def set_up_tracing():
+    if not OTLPSpanExporter:
+        print("Tracing disabled: OTLP exporter not available")
+        return
+
+    try:
+        otlp_port = int(os.getenv("FOUNDRY_OTLP_PORT", "4317"))
+        otlp_endpoint = f"http://localhost:{otlp_port}"
+        exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+        resource = Resource.create(
+            {service_attributes.SERVICE_NAME: "your-workflow-sample-name"}
+        )
+        tracer_provider = TracerProvider(resource=resource)
+        tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+        set_tracer_provider(tracer_provider)
+        print(f"Tracing enabled with endpoint: {otlp_endpoint}")
+    except Exception as e:
+        print(f"Failed to setup tracing: {e}")
+```
 
 3. **Set up environment variables**:
    - **Required**: Set `AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL=true` to enable OpenTelemetry tracing
