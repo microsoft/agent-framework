@@ -3,14 +3,17 @@
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
-/// Resets the value of the "<#= this.Model.Variable #>" variable, potentially causing re-evaluation 
-/// of the default value, question or action that provides the value to this variable.
+/// Reset all the state for the targeted variable scope.
 /// </summary>
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {
+    // <inheritdoc />
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {<# 
-        AssignVariable(this.Variable, "UnassignedValue.Instance");
-      #>
+    {
+        string targetScopeName = "Topic";
+        await context.QueueClearScopeAsync(targetScopeName).ConfigureAwait(false);
     }
 }
+<#+
+
+#>

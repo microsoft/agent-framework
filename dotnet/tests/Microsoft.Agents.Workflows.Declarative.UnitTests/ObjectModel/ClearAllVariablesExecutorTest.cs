@@ -18,6 +18,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
     {
         // Arrange
         this.State.Set("NoVar", FormulaValue.New("Old value"));
+        this.State.Bind();
 
         ClearAllVariables model =
             this.CreateModel(

@@ -3,7 +3,7 @@
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
-/// %%% COMMENT
+/// Adds a new message to the specified agent conversation
 /// </summary>
 internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
 {
@@ -11,7 +11,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
     protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
         EvaluateStringExpression(this.Model.ConversationId, "conversationId");
-        EvaluateEnumExpression<AgentMessageRoleWrapper>(this.Model.Role, "role"); #> // %%% TODO: RAW ENUM
+        EvaluateEnumExpression<AgentMessageRoleWrapper>(this.Model.Role, "role"); #> // %%% TODO: ChatRole
         ChatMessage newMessage = new(role, [.. this.GetContent()]); //{ AdditionalProperties = this.GetMetadata() }; // %%% TODO: METADATA
         await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#
         AssignVariable(this.Message, "newMessage");

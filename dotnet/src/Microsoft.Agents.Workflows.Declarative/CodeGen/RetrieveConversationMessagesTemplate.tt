@@ -1,9 +1,9 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
+<#@ include file="Snippets/Index.tt" once="true" #>f
 /// <summary>
-/// %%% COMMENT
+/// Retrieves a specific message from an agent conversation.
 /// </summary>
 internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
 {

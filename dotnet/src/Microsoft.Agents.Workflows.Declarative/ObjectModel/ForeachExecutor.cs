@@ -83,10 +83,10 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     {
         try
         {
-            this.State.Reset(Throw.IfNull(this.Model.Value));
+            await context.QueueStateResetAsync(Throw.IfNull(this.Model.Value)).ConfigureAwait(false);
             if (this.Model.Index is not null)
             {
-                this.State.Reset(this.Model.Index);
+                await context.QueueStateResetAsync(this.Model.Index).ConfigureAwait(false);
             }
         }
         finally

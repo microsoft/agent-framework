@@ -40,7 +40,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
 
         InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
-        bool hasValue = this.State.Get(variable.Path) is BlankValue;
+        bool hasValue = context.ReadState(variable.Path) is BlankValue;
         bool alwaysPrompt = this.State.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
 
         bool proceed = !alwaysPrompt || hasValue;

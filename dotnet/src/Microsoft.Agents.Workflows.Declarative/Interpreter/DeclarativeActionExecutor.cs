@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,7 +10,6 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx.Types;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -24,12 +22,6 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 
 internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
 {
-    private static readonly FrozenSet<string> s_mutableScopes =
-        [
-            VariableScopeNames.Topic,
-            VariableScopeNames.Global
-        ];
-
     private string? _parentId;
 
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
@@ -111,11 +103,6 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
         if (targetPath is null)
         {
             return;
-        }
-
-        if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
-        {
-            throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");
         }
 
         await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);

@@ -33,8 +33,18 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
         throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
     }
     else if (expression.IsLiteral)
-    { // %%% INCOMPLETE: MULTILINE #>
-        string <#= targetVariable #> = "<#= expression.LiteralValue #>";<#+ 
+    {
+        if (expression.LiteralValue.Contains("\n"))
+        {#>
+            string <#= targetVariable #> = 
+                """
+                <#= expression.LiteralValue #>
+                """;<#+ 
+        }
+        else
+        {#>
+            string <#= targetVariable #> = "<#= expression.LiteralValue #>";<#+ 
+        }
     }
     else if (expression.IsVariableReference)
     { #>

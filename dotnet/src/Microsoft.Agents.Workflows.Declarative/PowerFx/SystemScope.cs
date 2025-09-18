@@ -48,16 +48,16 @@ internal static class SystemScope
         yield return Names.UserLanguage;
     }
 
-    public static void InitializeSystem(this WorkflowFormulaState scopes)
+    public static void InitializeSystem(this WorkflowFormulaState state)
     {
-        scopes.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
-        scopes.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
+        state.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
+        state.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
 
-        scopes.Set(Names.LastMessage, s_emptyMessage, VariableScopeNames.System);
+        state.Set(Names.LastMessage, s_emptyMessage, VariableScopeNames.System);
         Set(Names.LastMessageId);
         Set(Names.LastMessageText);
 
-        scopes.Set(
+        state.Set(
             Names.Conversation,
             RecordValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
@@ -65,32 +65,33 @@ internal static class SystemScope
                 new NamedValue("LocalTimeZoneOffset", FormulaValue.New(TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow))),
                 new NamedValue("InTestMode", FormulaValue.New(false))),
             VariableScopeNames.System);
-        scopes.Set(Names.ConversationId, FormulaType.String.NewBlank(), VariableScopeNames.System);
-        scopes.Set(Names.InternalId, FormulaType.String.NewBlank(), VariableScopeNames.System);
+        state.Set(Names.ConversationId, FormulaType.String.NewBlank(), VariableScopeNames.System);
+        state.Set(Names.InternalId, FormulaType.String.NewBlank(), VariableScopeNames.System);
 
-        scopes.Set(
+        state.Set(
             Names.Recognizer,
             RecordValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
                 new NamedValue("Text", FormulaType.String.NewBlank())),
             VariableScopeNames.System);
 
-        scopes.Set(
+        state.Set(
             Names.User,
             RecordValue.NewRecordFromFields(
                 new NamedValue("Language", StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))),
             VariableScopeNames.System);
-        scopes.Set(Names.UserLanguage, StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName), VariableScopeNames.System);
+        state.Set(Names.UserLanguage, StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName), VariableScopeNames.System);
+        state.Bind();
 
         void Set(string key, string? value = null)
         {
             if (string.IsNullOrEmpty(value))
             {
-                scopes.Set(key, FormulaType.String.NewBlank(), VariableScopeNames.System);
+                state.Set(key, FormulaType.String.NewBlank(), VariableScopeNames.System);
             }
             else
             {
-                scopes.Set(key, FormulaValue.New(value), VariableScopeNames.System);
+                state.Set(key, FormulaValue.New(value), VariableScopeNames.System);
             }
         }
     }

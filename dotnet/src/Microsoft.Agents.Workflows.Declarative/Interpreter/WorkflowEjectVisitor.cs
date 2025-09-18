@@ -187,13 +187,6 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH AND RESTART
     }
 
-    protected override void Visit(AnswerQuestionWithAI item) // %%% TODO
-    {
-        this.Trace(item);
-
-        //this.ContinueWith(new AnswerQuestionWithAIExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
-    }
-
     protected override void Visit(SetVariable item)
     {
         this.Trace(item);
@@ -208,7 +201,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         throw new System.NotImplementedException();
     }
 
-    protected override void Visit(SetTextVariable item) // %%% TODO
+    protected override void Visit(SetTextVariable item)
     {
         this.Trace(item);
 
@@ -217,11 +210,13 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
-    protected override void Visit(ClearAllVariables item) // %%% TODO
+    protected override void Visit(ClearAllVariables item)
     {
         this.Trace(item);
 
-        //this.ContinueWith(new ClearAllVariablesExecutor(item, this._workflowState));
+        this.Executors.Add(new ClearAllVariablesTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
+        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
     }
 
     protected override void Visit(ResetVariable item)
@@ -302,6 +297,11 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     }
 
     #region Not supported
+
+    protected override void Visit(AnswerQuestionWithAI item)
+    {
+        this.NotSupported(item);
+    }
 
     protected override void Visit(DeleteActivity item)
     {

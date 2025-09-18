@@ -20,7 +20,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
-        FormulaValue table = this.State.Get(variablePath);
+        FormulaValue table = context.ReadState(variablePath);
         if (table is not TableValue tableValue)
         {
             throw this.Exception($"Require '{variablePath}' to be a table, not: '{table.GetType().Name}'.");

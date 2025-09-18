@@ -18,9 +18,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ClearAllVariablesTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class SetVariableTemplate : CodeTemplate
+    internal partial class ClearAllVariablesTemplate : CodeTemplate
     {
 #line hidden
         /// <summary>
@@ -37,42 +37,41 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
-            this.Write("\n/// <summary>\n/// Assigns an evaluated expression, other variable, or literal va" +
-                    "lue to the  \"");
+            this.Write("\n/// <summary>\n/// Reset all the state for the targeted variable scope.\n/// </sum" +
+                    "mary>\ninternal sealed class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Variable));
-            
-            #line default
-            #line hidden
-            this.Write("\" variable.\n/// </summary>\ninternal sealed class ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ClearAllVariablesTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
             this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ClearAllVariablesTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
-                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\SetVariableTemplate.tt"
- 
-        EvaluateValueExpression(this.Model.Value, "evaluatedValue");
-        AssignVariable(this.Variable, "evaluatedValue");
-     
-            
-            #line default
-            #line hidden
-            this.Write("\n    }\n}\n");
+            this.Write(@""", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        string targetScopeName = ""Topic"";
+        await context.QueueClearScopeAsync(targetScopeName).ConfigureAwait(false);
+    }
+}
+");
             return this.GenerationEnvironment.ToString();
         }
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ClearAllVariablesTemplate.tt"
+
+
+
+        
+        #line default
+        #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 

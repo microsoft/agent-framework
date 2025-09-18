@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -7,11 +8,19 @@ using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 {
+    public static readonly FrozenSet<string> ManagedScopes = // %%% SYSTEM SCOPE ???
+        [
+            VariableScopeNames.Topic,
+            VariableScopeNames.Global,
+            VariableScopeNames.System,
+        ];
+
     public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state)
     {
         this.Source = source;
@@ -25,50 +34,31 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => this.Source.AddEventAsync(workflowEvent);
 
     /// <inheritdoc/>
-    public ValueTask QueueClearScopeAsync(string? scopeName = null)
+    public async ValueTask QueueClearScopeAsync(string? scopeName = null)
     {
-        this.State.ResetAll(scopeName);
-        return this.Source.QueueClearScopeAsync(scopeName);
+        if (scopeName is not null)
+        {
+            if (ManagedScopes.Contains(Throw.IfNull(scopeName)))
+            {
+                foreach (string key in this.State.Keys(scopeName))
+                {
+                    await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                await this.Source.QueueClearScopeAsync(scopeName).ConfigureAwait(false);
+            }
+        }
+
+        this.State.Bind();
     }
 
     /// <inheritdoc/>
     public async ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null)
     {
-        ValueTask task = value switch
-        {
-            null => QueueEmptyStateAsync(),
-            FormulaValue formulaValue => QueueFormulaStateAsync(formulaValue),
-            DataValue dataValue => QueueDataValueStateAsync(dataValue),
-            _ => QueueNativeStateAsync(value),
-        };
-
-        await task.ConfigureAwait(false);
-
-        ValueTask QueueEmptyStateAsync()
-        {
-            this.State.Set(key, FormulaValue.NewBlank(), scopeName);
-            return this.Source.QueueStateUpdateAsync(key, UnassignedValue.Instance, scopeName);
-        }
-
-        ValueTask QueueFormulaStateAsync(FormulaValue formulaValue)
-        {
-            this.State.Set(key, formulaValue, scopeName);
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
-        }
-
-        ValueTask QueueDataValueStateAsync(DataValue dataValue)
-        {
-            FormulaValue formulaValue = dataValue.ToFormula();
-            this.State.Set(key, formulaValue, scopeName);
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
-        }
-
-        ValueTask QueueNativeStateAsync(object? rawValue)
-        {
-            FormulaValue formulaValue = rawValue.ToFormula();
-            this.State.Set(key, formulaValue, scopeName);
-            return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName);
-        }
+        await this.UpdateStateAsync(key, value, scopeName).ConfigureAwait(false);
+        this.State.Bind();
     }
 
     /// <inheritdoc/>
@@ -79,4 +69,60 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     /// <inheritdoc/>
     public ValueTask SendMessageAsync(object message, string? targetId = null) => this.Source.SendMessageAsync(message, targetId);
+
+    private async ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName)
+    {
+        bool isManagedScope = ManagedScopes.Contains(Throw.IfNull(scopeName));
+
+        // %%% TODO: Only update WorkflowFormulaState when scopeName is known.
+        ValueTask task = value switch
+        {
+            null => QueueEmptyStateAsync(),
+            UnassignedValue => QueueEmptyStateAsync(),
+            BlankValue formulaValue => QueueEmptyStateAsync(),
+            FormulaValue formulaValue => QueueFormulaStateAsync(formulaValue),
+            DataValue dataValue => QueueDataValueStateAsync(dataValue),
+            _ => QueueNativeStateAsync(value),
+        };
+
+        await task.ConfigureAwait(false);
+
+        ValueTask QueueEmptyStateAsync()
+        {
+            if (isManagedScope)
+            {
+                this.State.Set(key, FormulaValue.NewBlank(), scopeName);
+            }
+            return this.Source.QueueStateUpdateAsync(key, UnassignedValue.Instance, scopeName);
+        }
+
+        ValueTask QueueFormulaStateAsync(FormulaValue formulaValue)
+        {
+            if (isManagedScope)
+            {
+                this.State.Set(key, formulaValue, scopeName);
+            }
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
+        }
+
+        ValueTask QueueDataValueStateAsync(DataValue dataValue)
+        {
+            FormulaValue formulaValue = dataValue.ToFormula();
+            if (isManagedScope)
+            {
+                this.State.Set(key, formulaValue, scopeName);
+            }
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
+        }
+
+        ValueTask QueueNativeStateAsync(object? rawValue)
+        {
+            FormulaValue formulaValue = rawValue.ToFormula();
+            if (isManagedScope)
+            {
+                this.State.Set(key, formulaValue, scopeName);
+            }
+            return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName);
+        }
+    }
 }
