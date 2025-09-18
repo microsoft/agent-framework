@@ -1,12 +1,43 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Redis Context Provider: Thread scoping examples
+
+This sample demonstrates how conversational memory can be scoped when using the
+Redis context provider. It covers three scenarios:
+
+1) Global thread scope
+   - Provide a fixed thread_id to share memories across operations/threads.
+
+2) Per-operation thread scope
+   - Enable scope_to_per_operation_thread_id to bind the provider to a single
+     thread for the lifetime of that provider instance. Use the same thread
+     object for reads/writes with that provider.
+
+3) Multiple agents with isolated memory
+   - Use different agent_id values to keep memories separated for different
+     agent personas, even when the user_id is the same.
+
+Requirements:
+  - A Redis instance with RediSearch enabled (e.g., Redis Stack)
+  - agent-framework with the Redis extra installed: pip install "agent-framework[redis]"
+  - Optionally an OpenAI API key for the chat client in this demo
+
+Run:
+  python redis_threads.py
+"""
+
 import asyncio
 import os
 import uuid
 
 from agent_framework_redis._provider import RedisProvider
 from agent_framework.openai import OpenAIChatClient
+from redisvl.utils.vectorize import OpenAITextVectorizer
+from redisvl.extensions.cache.embeddings import EmbeddingsCache
 
 
-OPENAI_API_KEY = "<API KEY>"
+# Configure your OpenAI credentials for the chat client used in this sample
+OPENAI_API_KEY = "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"
 OPENAI_MODEL_ID = "gpt-4o-mini"
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
@@ -73,6 +104,11 @@ async def example_per_operation_thread_scope() -> None:
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
+    vectorizer = OpenAITextVectorizer(
+        model="text-embedding-ada-002",
+        api_config={"api_key": os.getenv("OPENAI_API_KEY")},
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+    )
     agent = client.create_agent(
         name="ScopedMemoryAssistant",
         instructions="You are an assistant with thread-scoped memory.",
@@ -85,6 +121,11 @@ async def example_per_operation_thread_scope() -> None:
             agent_id="threads_demo_agent",
             user_id="threads_demo_user",
             scope_to_per_operation_thread_id=True,  # Isolate memories per thread
+            vectorizer=vectorizer,
+            vector_field_name="vector",
+            vector_datatype="float32",
+            vector_algorithm="hnsw",
+            vector_distance_metric="cosine",
         ),
     )
 
@@ -126,6 +167,11 @@ async def example_multiple_agents() -> None:
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
+    vectorizer = OpenAITextVectorizer(
+        model="text-embedding-ada-002",
+        api_config={"api_key": os.getenv("OPENAI_API_KEY")},
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+    )
     personal_agent = client.create_agent(
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
@@ -137,7 +183,18 @@ async def example_multiple_agents() -> None:
             application_id="threads_demo_app",
             agent_id="agent_personal",
             user_id="threads_demo_user",
+            vectorizer=vectorizer,
+            vector_field_name="vector",
+            vector_datatype="float32",
+            vector_algorithm="hnsw",
+            vector_distance_metric="cosine",
         ),
+    )
+    # Separate vectorizer for the work agent is optional; sharing is fine too
+    vectorizer_work = OpenAITextVectorizer(
+        model="text-embedding-ada-002",
+        api_config={"api_key": os.getenv("OPENAI_API_KEY")},
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
     work_agent = client.create_agent(
         name="WorkAssistant",
@@ -150,6 +207,11 @@ async def example_multiple_agents() -> None:
             application_id="threads_demo_app",
             agent_id="agent_work",
             user_id="threads_demo_user",
+            vectorizer=vectorizer_work,
+            vector_field_name="vector",
+            vector_datatype="float32",
+            vector_algorithm="hnsw",
+            vector_distance_metric="cosine",
         ),
     )
 

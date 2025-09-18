@@ -1,16 +1,49 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Redis Context Provider: Basic usage and agent integration
+
+This example demonstrates how to use the Redis context provider to persist and
+retrieve conversational memory for agents. It covers three progressively more
+realistic scenarios:
+
+1) Standalone provider usage ("basic cache")
+   - Write messages to Redis and retrieve relevant context using full-text or
+     hybrid vector search.
+
+2) Agent + provider
+   - Connect the provider to an agent so the agent can store user preferences
+     and recall them across turns.
+
+3) Agent + provider + tool memory
+   - Expose a simple tool to the agent, then verify that details from the tool
+     outputs are captured and retrievable as part of the agent's memory.
+
+Requirements:
+  - A Redis instance with RediSearch enabled (e.g., Redis Stack)
+  - agent-framework with the Redis extra installed: pip install "agent-framework[redis]"
+  - Optionally an OpenAI API key if enabling embeddings for hybrid search
+
+Run:
+  python redis_basics.py
+"""
+
 import asyncio
 
 from agent_framework import ChatMessage, Role
 from agent_framework_redis._provider import RedisProvider
 from agent_framework.openai import OpenAIChatClient
+from redisvl.utils.vectorize import OpenAITextVectorizer
+from redisvl.extensions.cache.embeddings import EmbeddingsCache
 
 
-# Simulated flight-search tool used to demonstrate tool memory
-def search_flights(origin_airport_code: str, 
-                destination_airport_code: str, 
+def search_flights(origin_airport_code: str,
+                destination_airport_code: str,
                 detailed: bool = False) -> str:
-    """
-    Simulated agentic tool masquerading as an airline search interface.
+    """Simulated flight-search tool to demonstrate tool memory.
+
+    The agent can call this function, and the returned details can be stored
+    by the Redis context provider. We later ask the agent to recall facts from
+    these tool results to verify memory is working as expected.
     """
     flights = {
         ("JFK", "LAX"): {"airline": "SkyJet", "duration": "6h 15m", "price": 325, "cabin": "Economy", "baggage": "1 checked bag"},
@@ -36,24 +69,25 @@ def search_flights(origin_airport_code: str,
 
 
 async def main() -> None:
-    """Redis context provider standalone basic usage. 
-    
-    Initialize the provider with OpenAI vectorizer and API key.
-    
-    Useful Debug Commands:
+    """Walk through provider-only, agent integration, and tool-memory scenarios.
 
-    # Print index info
-    print(await provider.redis_index.info())
-
-    # Print all data stored in the index 
-    print(await provider.search_all())
+    Helpful debugging (uncomment when iterating):
+      - print(await provider.redis_index.info())
+      - print(await provider.search_all())
     """
 
     # Configure API keys and model IDs (replace placeholders)
-    OPENAI_API_KEY = "<API KEY HERE>"
+    OPENAI_API_KEY = "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"
     OPENAI_MODEL_ID = "gpt-4o-mini"
 
-    # Create provider with partition scope and OpenAI embeddings
+    print("1. Standalone provider usage:")
+    print("-" * 40)
+    # Create a provider with partition scope and OpenAI embeddings
+    vectorizer = OpenAITextVectorizer(
+        model="text-embedding-ada-002",
+        api_config={"api_key": OPENAI_API_KEY},
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+    )
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
@@ -62,9 +96,11 @@ async def main() -> None:
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
         user_id="kermit",
-        vectorizer_choice="openai",
+        vectorizer=vectorizer,
         vector_field_name="vector",
-        vectorizer_api_key=OPENAI_API_KEY
+        vector_datatype="float32",
+        vector_algorithm="hnsw",
+        vector_distance_metric="cosine",
     )
     
     # Build sample chat messages to persist to Redis
@@ -74,23 +110,29 @@ async def main() -> None:
         ChatMessage(role=Role.SYSTEM, text="C: System Message"),
     ]
 
-    # Write messages to Redis under thread 'runA'
+    # Write messages to Redis under a sample thread 'runA'
     await provider.messages_adding(thread_id="runA", new_messages=messages)
 
-    # Retrieve context for model invocation
+    # Retrieve relevant context for model invocation using current prompt as query
     ctx = await provider.model_invoking([
         ChatMessage(role=Role.SYSTEM, text="B: Assistant Message")
     ])
 
     # Inspect retrieved memories injected into instructions
+    # Debug Check to verify that context provider works as expected
     print(ctx)
 
-    """Redis context provider agent usage. 
-    
-    Test that agent can store and retrieve context.
-    """
 
-    # Fresh provider for agent demo (recreates index)
+    # --- Agent + provider: teach and recall a preference ---
+
+    print("2. Agent + provider: teach and recall a preference")
+    print("-" * 40)
+    # Fresh provider for the agent demo (recreates index)
+    vectorizer = OpenAITextVectorizer(
+        model="text-embedding-ada-002",
+        api_config={"api_key": OPENAI_API_KEY},
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+    )
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
@@ -99,9 +141,11 @@ async def main() -> None:
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
         user_id="kermit",
-        vectorizer_choice="openai",
+        vectorizer=vectorizer,
         vector_field_name="vector",
-        vectorizer_api_key=OPENAI_API_KEY
+        vector_datatype="float32",
+        vector_algorithm="hnsw",
+        vector_distance_metric="cosine",
     )
 
     # Create chat client for the agent
@@ -128,12 +172,10 @@ async def main() -> None:
     result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    """Redis context provider agent usage with tool. 
-    
-    Test that agent can store and retrieve context,
-    including context from tool calls.
-    """
+    # --- Agent + provider + tool: store and recall tool-derived context ---
 
+    print("3. Agent + provider + tool: store and recall tool-derived context")
+    print("-" * 40)
     # Text-only provider (full-text search only)
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
@@ -155,7 +197,7 @@ async def main() -> None:
             ),
             tools=search_flights,
             context_providers=provider)
-    # Invoke tool; outputs become part of context
+    # Invoke the tool; outputs become part of context
     query = "Are there any flights from new york city (jfk) to la? Give me details"
     print(f"User to Agent: {query}")
     result = await agent.run(query)
@@ -166,56 +208,6 @@ async def main() -> None:
     print(f"User to Agent: {query}")
     result = await agent.run(query)
     print(f"Agent: {result}\n")
-
-
-    """AI Derived Context Scoping demo."""
-    # --- Scoping demo: static thread_id vs per-operation thread id ---
-    # Static scope: uses provider.thread_id regardless of runtime thread
-    provider_static = RedisProvider(
-        redis_url="redis://localhost:6379",
-        index_name="redis_scope_demo",
-        overwrite_redis_index=True,
-        drop_redis_index=True,
-        application_id="scope_demo_app",
-        agent_id="scope_demo_agent",
-        user_id="scope_demo_user",
-        thread_id="T_STATIC",
-        scope_to_per_operation_thread_id=False
-    )
-    await provider_static.messages_adding(
-        thread_id="T_DYNAMIC_A",
-        new_messages=ChatMessage(role=Role.USER, text="STATIC_SCOPE_MSG")
-    )
-    static_seen = await provider_static.redis_search("STATIC_SCOPE_MSG")
-    print("Static-scope found:", len(static_seen))  # expect 1
-
-    # Per-operation scope: uses the runtime-provided thread_id captured per run
-    provider_dynamic = RedisProvider(
-        redis_url="redis://localhost:6379",
-        index_name="redis_scope_demo",
-        overwrite_redis_index=True,
-        drop_redis_index=False,
-        application_id="scope_demo_app",
-        agent_id="scope_demo_agent",
-        user_id="scope_demo_user",
-        scope_to_per_operation_thread_id=True
-    )
-    await provider_dynamic.messages_adding(
-        thread_id="T_DYNAMIC_B",
-        new_messages=ChatMessage(role=Role.USER, text="PER_OP_SCOPE_MSG")
-    )
-
-    # Static provider should not see per-op message (thread filter differs)
-    static_view_of_dynamic = await provider_static.redis_search("PER_OP_SCOPE_MSG")
-    print("Static-scope sees per-op message:", len(static_view_of_dynamic))  # expect 0
-
-    # Dynamic provider should see its own per-op message
-    dynamic_view_of_dynamic = await provider_dynamic.redis_search("PER_OP_SCOPE_MSG")
-    print("Per-op scope sees per-op message:", len(dynamic_view_of_dynamic))  # expect 1
-
-    # Dynamic provider should not see static-thread message
-    dynamic_view_of_static = await provider_dynamic.redis_search("STATIC_SCOPE_MSG")
-    print("Per-op scope sees static message:", len(dynamic_view_of_static))  # expect 0
 
 if __name__ == "__main__":
     asyncio.run(main())

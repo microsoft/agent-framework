@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from collections.abc import MutableSequence, Sequence
 from functools import reduce
@@ -22,12 +21,10 @@ else:
 
 
 import numpy as np
-from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import FilterQuery, HybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
-from redisvl.utils.vectorize import HFTextVectorizer, OpenAITextVectorizer
 
 DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
 
@@ -45,10 +42,9 @@ class RedisProvider(ContextProvider):
     prefix: str = "memory"
     fresh_initialization: bool = False
 
-    # Vector configuration (optional)
-    vectorizer_api_key: str | None = None
-    vectorizer_choice: Literal["openai", "hf"] | None = None
+    # Vector configuration (optional, injected by caller)
     vectorizer: Any | None = None
+    vector_dims: int | None = None
     vector_field_name: str | None = None
     vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None
     vector_algorithm: Literal["flat", "hnsw"] | None = None
@@ -76,9 +72,9 @@ class RedisProvider(ContextProvider):
         index_name: str = "af_memory",
         prefix: str = "memory",
         fresh_initialization: bool = False,
-        # Vector: all optional; omit to disable KNN
-        vectorizer_api_key: str | None = None,
-        vectorizer_choice: Literal["openai", "hf"] | None = None,
+        # Vector: optional; pass a vectorizer instance to enable hybrid search
+        vectorizer: Any | None = None,
+        vector_dims: int | None = None,
         vector_field_name: str | None = None,
         vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None,
         vector_algorithm: Literal["flat", "hnsw"] | None = None,
@@ -95,7 +91,7 @@ class RedisProvider(ContextProvider):
     ):
         """Initializes a new instance of the RedisProvider class.
 
-        Builds the index schema and optional vectorizer.
+        Builds the index schema and wires optional, caller-provided vectorizer.
         Wires default partition filters used to scope reads and writes.
 
         Args:
@@ -103,8 +99,8 @@ class RedisProvider(ContextProvider):
             index_name: RediSearch index name.
             prefix: Key prefix for stored documents.
             fresh_initialization: Whether this is a fresh setup run.
-            vectorizer_api_key: API key for the chosen vectorizer or None.
-            vectorizer_choice: Vectorizer backend to use ("openai" or "hf") or None.
+            vectorizer: A text embedding vectorizer implementing aembed_many, or None.
+            vector_dims: Vector dimensionality; inferred from vectorizer.dims if not provided.
             vector_field_name: Name of the vector field in the schema or None.
             vector_datatype: Vector datatype if vectors are enabled.
             vector_algorithm: Vector index algorithm if vectors are enabled.
@@ -118,39 +114,26 @@ class RedisProvider(ContextProvider):
             overwrite_redis_index: Whether to overwrite the index on create.
             drop_redis_index: Whether to drop the index before create.
         """
-        # Avoid mypy inferring unfollowed-import types for local variables
-        vectorizer: Any | None = None
-        if vectorizer_choice == "openai":
-            # Will try to retrieve from environment variable if not provided
-            if vectorizer_api_key is None:
-                vectorizer_api_key = os.getenv("OPENAI_API_KEY")
-                if vectorizer_api_key is None:
+        # Resolve vector dimensionality when a vectorizer is provided
+        resolved_vector_dims: int | None
+        if vectorizer is not None:
+            if vector_dims is not None:
+                resolved_vector_dims = int(vector_dims)
+            else:
+                dims = getattr(vectorizer, "dims", None)
+                if dims is None:
                     raise ServiceInvalidRequestError(
-                        "OpenAI API key is required."
-                        "Set 'vectorizer_api_key' parameter"
-                        "Or 'OPENAI_API_KEY' environment variable."
+                        "vector_dims must be provided when the vectorizer does not expose a 'dims' attribute."
                     )
-            vectorizer = OpenAITextVectorizer(
-                model="text-embedding-ada-002",
-                api_config={"api_key": vectorizer_api_key},
-                cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=redis_url),
-            )
-            vector_dims = vectorizer.dims
-        elif vectorizer_choice == "hf":
-            vectorizer = HFTextVectorizer(
-                model="sentence-transformers/all-MiniLM-L6-v2",
-                cache=EmbeddingsCache(name="hf_embeddings_cache", redis_url=redis_url),
-            )
-            vector_dims = vectorizer.dims
+                resolved_vector_dims = int(dims)
         else:
-            vectorizer = None
-            vector_dims = None
+            resolved_vector_dims = None
 
         schema_dict = self._build_schema_dict(
             index_name=index_name,
             prefix=prefix,
             vector_field_name=vector_field_name,
-            vector_dims=vector_dims,
+            vector_dims=resolved_vector_dims,
             vector_datatype=vector_datatype,
             vector_algorithm=vector_algorithm,
             vector_distance_metric=vector_distance_metric,
@@ -165,11 +148,9 @@ class RedisProvider(ContextProvider):
             index_name=index_name,  # type: ignore[reportCallIssue]
             prefix=prefix,  # type: ignore[reportCallIssue]
             fresh_initialization=fresh_initialization,  # type: ignore[reportCallIssue]
-            vectorizer_api_key=vectorizer_api_key,  # type: ignore[reportCallIssue]
-            vectorizer_choice=vectorizer_choice,  # type: ignore[reportCallIssue]
             vectorizer=vectorizer,  # type: ignore[reportCallIssue]
             vector_field_name=vector_field_name,  # type: ignore[reportCallIssue]
-            vector_dims=vector_dims,  # type: ignore[reportCallIssue]
+            vector_dims=resolved_vector_dims,  # type: ignore[reportCallIssue]
             vector_datatype=vector_datatype,  # type: ignore[reportCallIssue]
             vector_algorithm=vector_algorithm,  # type: ignore[reportCallIssue]
             vector_distance_metric=vector_distance_metric,  # type: ignore[reportCallIssue]
