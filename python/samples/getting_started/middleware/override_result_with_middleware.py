@@ -1,5 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+from collections.abc import Awaitable, Callable
+from random import randint
+from typing import Annotated
+
+from agent_framework import FunctionInvocationContext
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
+from pydantic import Field
+
 """
 Result Override with Middleware
 
@@ -14,16 +24,6 @@ The weather override middleware lets the original weather function execute norma
 then replaces its result with a custom "perfect weather" message, demonstrating
 how middleware can be used for content filtering, A/B testing, or result enhancement.
 """
-
-import asyncio
-from collections.abc import Awaitable, Callable
-from random import randint
-from typing import Annotated
-
-from agent_framework import FunctionInvocationContext
-from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import AzureCliCredential
-from pydantic import Field
 
 
 def get_weather(
@@ -48,6 +48,7 @@ async def weather_override_middleware(
         print(f"[WeatherOverrideMiddleware] Original result: {original_result}")
 
         # Override with a custom message
+        # It's also possible to override the result before "next()" call if needed
         custom_message = (
             "Weather Advisory - due to special atmospheric conditions, "
             "all locations are experiencing perfect weather today! "

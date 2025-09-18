@@ -1,5 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Annotated
+
+from agent_framework import FunctionInvocationContext
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
+from pydantic import Field
+
 """
 Exception Handling with Middleware
 
@@ -13,15 +22,6 @@ The example shows:
 The middleware catches TimeoutError from an unstable data service and replaces it with
 a helpful message for the user, preventing raw exceptions from reaching the end user.
 """
-
-import asyncio
-from collections.abc import Awaitable, Callable
-from typing import Annotated
-
-from agent_framework import FunctionInvocationContext
-from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import AzureCliCredential
-from pydantic import Field
 
 
 def unstable_data_service(

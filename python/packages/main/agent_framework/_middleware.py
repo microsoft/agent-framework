@@ -18,6 +18,7 @@ TAgent = TypeVar("TAgent", bound="AgentProtocol")
 __all__ = [
     "AgentMiddleware",
     "AgentRunContext",
+    "BaseMiddlewarePipeline",
     "FunctionInvocationContext",
     "FunctionMiddleware",
     "Middleware",
@@ -159,7 +160,65 @@ class FunctionMiddlewareWrapper(FunctionMiddleware):
         await self.func(context, next)
 
 
-class AgentMiddlewarePipeline:
+class BaseMiddlewarePipeline(ABC):
+    """Base class for middleware pipeline execution."""
+
+    def __init__(self) -> None:
+        """Initialize the base middleware pipeline."""
+        self._middlewares: list[Any] = []
+
+    @abstractmethod
+    def _register_middleware(self, middleware: Any) -> None:
+        """Register a middleware item. Must be implemented by subclasses."""
+        ...
+
+    @property
+    def has_middlewares(self) -> bool:
+        """Check if there are any middlewares registered."""
+        return bool(self._middlewares)
+
+    def _create_handler_chain(
+        self,
+        context: Any,
+        final_handler: Callable[[Any], Awaitable[Any]],
+        result_container: dict[str, Any],
+        result_key: str = "result",
+    ) -> Callable[[Any], Awaitable[None]]:
+        """Create a chain of middleware handlers.
+
+        Args:
+            context: The execution context
+            final_handler: The final handler to execute
+            result_container: Container to store the result
+            result_key: Key to use in the result container
+
+        Returns:
+            The first handler in the chain
+        """
+
+        def create_next_handler(index: int) -> Callable[[Any], Awaitable[None]]:
+            if index >= len(self._middlewares):
+
+                async def final_wrapper(c: Any) -> None:
+                    # Execute actual handler and populate context for observability
+                    result = await final_handler(c)
+                    result_container[result_key] = result
+                    c.result = result
+
+                return final_wrapper
+
+            middleware = self._middlewares[index]
+            next_handler = create_next_handler(index + 1)
+
+            async def current_handler(c: Any) -> None:
+                await middleware.process(c, next_handler)
+
+            return current_handler
+
+        return create_next_handler(0)
+
+
+class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes agent middleware in a chain."""
 
     def __init__(self, middlewares: list[AgentMiddleware | AgentMiddlewareCallable] | None = None):
@@ -168,6 +227,7 @@ class AgentMiddlewarePipeline:
         Args:
             middlewares: List of agent middleware to include in the pipeline.
         """
+        super().__init__()
         self._middlewares: list[AgentMiddleware] = []
 
         if middlewares:
@@ -312,13 +372,8 @@ class AgentMiddlewarePipeline:
         async for update in result_stream:
             yield update
 
-    @property
-    def has_middlewares(self) -> bool:
-        """Check if there are any middlewares registered."""
-        return bool(self._middlewares)
 
-
-class FunctionMiddlewarePipeline:
+class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes function middleware in a chain."""
 
     def __init__(self, middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] | None = None):
@@ -327,6 +382,7 @@ class FunctionMiddlewarePipeline:
         Args:
             middlewares: List of function middleware to include in the pipeline.
         """
+        super().__init__()
         self._middlewares: list[FunctionMiddleware] = []
 
         if middlewares:
@@ -369,42 +425,21 @@ class FunctionMiddlewarePipeline:
         # Store the final result
         result_container: dict[str, Any] = {"result": None}
 
-        def create_next_handler(index: int) -> Callable[[FunctionInvocationContext], Awaitable[None]]:
-            if index >= len(self._middlewares):
+        # Custom final handler that handles pre-existing results
+        async def function_final_handler(c: FunctionInvocationContext) -> Any:
+            # If result was set before calling next(), skip execution
+            if c.result is not None:
+                return c.result
+            # Execute actual handler and populate context for observability
+            return await final_handler(c)
 
-                async def final_wrapper(c: FunctionInvocationContext) -> None:
-                    # If result was set before calling next(), skip execution
-                    if c.result is not None:
-                        result_container["result"] = c.result
-                        return
-
-                    # Execute actual handler and populate context for observability
-                    result = await final_handler(c)
-                    result_container["result"] = result
-                    c.result = result
-
-                return final_wrapper
-
-            middleware = self._middlewares[index]
-            next_handler = create_next_handler(index + 1)
-
-            async def current_handler(c: FunctionInvocationContext) -> None:
-                await middleware.process(c, next_handler)
-
-            return current_handler
-
-        first_handler = create_next_handler(0)
+        first_handler = self._create_handler_chain(context, function_final_handler, result_container, "result")
         await first_handler(context)
 
         # Return the result from result container or overridden result
         if context.result is not None:
             return context.result
         return result_container["result"]
-
-    @property
-    def has_middlewares(self) -> bool:
-        """Check if there are any middlewares registered."""
-        return bool(self._middlewares)
 
 
 # Decorator for adding middleware support to agent classes

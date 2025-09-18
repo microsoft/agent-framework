@@ -1,5 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+import time
+from collections.abc import Awaitable, Callable
+from random import randint
+from typing import Annotated
+
+from agent_framework import (
+    AgentMiddleware,
+    AgentRunContext,
+    AgentRunResponse,
+    ChatMessage,
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    Role,
+)
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
+from pydantic import Field
+
 """
 Class-based Middleware Example
 
@@ -13,17 +32,6 @@ from AgentMiddleware and FunctionMiddleware base classes. The example includes:
 This approach is useful when you need stateful middleware or complex logic that benefits
 from object-oriented design patterns.
 """
-
-import asyncio
-import time
-from collections.abc import Awaitable, Callable
-from random import randint
-from typing import Annotated
-
-from agent_framework import AgentMiddleware, AgentRunContext, FunctionInvocationContext, FunctionMiddleware
-from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import AzureCliCredential
-from pydantic import Field
 
 
 def get_weather(
@@ -49,6 +57,12 @@ class SecurityAgentMiddleware(AgentMiddleware):
             query = last_message.text
             if "password" in query.lower() or "secret" in query.lower():
                 print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
+                # Override the result with warning message
+                context.result = AgentRunResponse(
+                    messages=[
+                        ChatMessage(role=Role.ASSISTANT, text="Detected sensitive information, the request is blocked.")
+                    ]
+                )
                 # Simply don't call next() to prevent execution
                 return
 
@@ -97,14 +111,14 @@ async def main() -> None:
         query = "What's the weather like in Seattle?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'No response'}\n")
+        print(f"Agent: {result.text}\n")
 
         # Test with security-related query
         print("--- Security Test ---")
         query = "What's the password for the weather service?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'No response'}\n")
+        print(f"Agent: {result.text}\n")
 
 
 if __name__ == "__main__":

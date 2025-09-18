@@ -1,5 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+import time
+from collections.abc import Awaitable, Callable
+from random import randint
+from typing import Annotated
+
+from agent_framework import (
+    AgentRunContext,
+    FunctionInvocationContext,
+)
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
+from pydantic import Field
+
 """
 Function-based Middleware Example
 
@@ -14,20 +28,6 @@ Function-based middleware is ideal for simple, stateless operations and provides
 lightweight approach compared to class-based middleware. Both agent and function middleware
 can be implemented as async functions that accept context and next parameters.
 """
-
-import asyncio
-import time
-from collections.abc import Awaitable, Callable
-from random import randint
-from typing import Annotated
-
-from agent_framework import (
-    AgentRunContext,
-    FunctionInvocationContext,
-)
-from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import AzureCliCredential
-from pydantic import Field
 
 
 def get_weather(
