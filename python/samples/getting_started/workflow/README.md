@@ -104,11 +104,11 @@ When using the Azure AI Foundry extension in VS Code, you can visualize workflow
 
 #### Setup Steps
 
-1. **Install the Azure AI Foundry extension**:
+1. **Install the Azure AI Foundry extension (pre-release)**:
    - Open VS Code
    - Go to the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X`)
    - Search for "Azure AI Foundry"
-   - Click "Install" on the Azure AI Foundry extension by Microsoft
+   - Install the pre-release version of the Azure AI Foundry extension by Microsoft
 
 2. **Add trace exporter to your sample code** (if not already included):
 
@@ -132,9 +132,7 @@ def set_up_tracing():
         return
 
     try:
-        otlp_port = int(os.getenv("FOUNDRY_OTLP_PORT", "4317"))
-        otlp_endpoint = f"http://localhost:{otlp_port}"
-        exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+        exporter = OTLPSpanExporter(endpoint=os.getenv("OTLP_ENDPOINT"))
         resource = Resource.create(
             {service_attributes.SERVICE_NAME: "your-workflow-sample-name"}
         )
@@ -144,11 +142,14 @@ def set_up_tracing():
         print(f"Tracing enabled with endpoint: {otlp_endpoint}")
     except Exception as e:
         print(f"Failed to setup tracing: {e}")
+
+# Call the setup function in your main script before running workflows
+set_up_tracing()
 ```
 
 3. **Set up environment variables**:
    - **Required**: Set `AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL=true` to enable OpenTelemetry tracing
-   - **Optional**: Set `FOUNDRY_OTLP_PORT` (defaults to 4317 if not specified) to customize the OTLP endpoint port
+   - **Required**: Set `OTLP_ENDPOINT="http://localhost:4317"` to customize the OTLP endpoint
 
 4. **Open the visualizer in VS Code**:
    - Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`)
