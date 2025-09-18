@@ -33,7 +33,16 @@ internal sealed class Program
 {
     public static async Task Main(string[] args)
     {
-        Program program = new(args);
+        string? workflowFile = ParseWorkflowFile(args);
+        if (workflowFile is null)
+        {
+            Notify("\nUsage: DeclarativeWorkflow <workflow-file> [<input>]");
+            return;
+        }
+
+        string? workflowInput = ParseWorkflowInput(args);
+
+        Program program = new(workflowFile, workflowInput);
         await program.ExecuteAsync();
     }
 
@@ -103,7 +112,6 @@ internal sealed class Program
         return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
     }
 
-    private const string DefaultWorkflow = "HelloWorld.yaml";
     private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
 
     private static Dictionary<string, string> NameCache { get; } = [];
@@ -116,10 +124,10 @@ internal sealed class Program
     private IConfiguration Configuration { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
 
-    private Program(string[] args)
+    private Program(string workflowFile, string? workflowInput)
     {
-        this.WorkflowFile = ParseWorkflowFile(args);
-        this.WorkflowInput = ParseWorkflowInput(args);
+        this.WorkflowFile = workflowFile;
+        this.WorkflowInput = workflowInput;
 
         this.Configuration = InitializeConfig();
 
@@ -270,9 +278,13 @@ internal sealed class Program
         return new InputResponse(userInput);
     }
 
-    private static string ParseWorkflowFile(string[] args)
+    private static string? ParseWorkflowFile(string[] args)
     {
-        string workflowFile = args.FirstOrDefault() ?? DefaultWorkflow;
+        string? workflowFile = args.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(workflowFile))
+        {
+            return null;
+        }
 
         if (!File.Exists(workflowFile) && !Path.IsPathFullyQualified(workflowFile))
         {
