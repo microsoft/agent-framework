@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -21,7 +20,7 @@ internal static class ChatClientExtensions
 
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {
-            _ = chatBuilder.Use((IChatClient innerClient, IServiceProvider services) =>
+            _ = chatBuilder.Use((innerClient, services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 

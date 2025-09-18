@@ -182,7 +182,7 @@ public class SampleSmokeTest
 internal sealed class VerifyingPlaybackResponder<TInput, TResponse>
 {
     public (TInput input, TResponse response)[] Responses { get; }
-    private int _position = 0;
+    private int _position;
 
     public VerifyingPlaybackResponder(params (TInput input, TResponse response)[] responses)
     {

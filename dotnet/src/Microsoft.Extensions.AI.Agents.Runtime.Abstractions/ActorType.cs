@@ -101,9 +101,7 @@ public readonly partial struct ActorType : IEquatable<ActorType>
         }
 
         /// <inheritdoc/>
-        public override void Write(Utf8JsonWriter writer, ActorType value, JsonSerializerOptions options)
-        {
+        public override void Write(Utf8JsonWriter writer, ActorType value, JsonSerializerOptions options) =>
             writer.WriteStringValue(value.Name);
-        }
     }
 }

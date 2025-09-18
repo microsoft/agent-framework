@@ -99,8 +99,8 @@ internal sealed class Program
             {
                 Configuration = this.Configuration
             };
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
-        return workflow;
+
+        return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
     }
 
     private const string DefaultWorkflow = "HelloWorld.yaml";
@@ -164,7 +164,7 @@ internal sealed class Program
                     Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
                     if (response is not null)
                     {
-                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse<InputResponse>(response);
+                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse(response);
                         await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
                         response = null;
                     }
@@ -257,7 +257,7 @@ internal sealed class Program
     private static InputResponse HandleExternalRequest(ExternalRequest request)
     {
         InputRequest? message = request.Data.As<InputRequest>();
-        string? userInput = null;
+        string? userInput;
         do
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;

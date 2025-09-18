@@ -39,12 +39,12 @@ internal sealed class ScopeKeyConverter : JsonConverterDictionarySupportBase<Sco
     [return: NotNull]
     private static string Escape(string? value, bool allowNullAndPad = false, [CallerArgumentExpression("value")] string componentName = "ScopeKey")
     {
-        if (!allowNullAndPad && value == null)
+        if (!allowNullAndPad && value is null)
         {
             throw new JsonException($"Invalid {componentName} '{value}'. Expecting non-null string.");
         }
 
-        if (value == null)
+        if (value is null)
         {
             return string.Empty;
         }

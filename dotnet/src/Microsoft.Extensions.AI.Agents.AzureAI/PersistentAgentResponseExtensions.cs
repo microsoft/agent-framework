@@ -46,9 +46,7 @@ internal static class PersistentAgentResponseExtensions
             throw new ArgumentNullException(nameof(persistentAgentsClient));
         }
 
-#pragma warning disable CA2000 // Dispose objects before losing scope
         var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentMetadata.Id);
-#pragma warning restore CA2000 // Dispose objects before losing scope
 
         return new ChatClientAgent(chatClient, options: new()
         {

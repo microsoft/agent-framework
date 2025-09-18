@@ -13,7 +13,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 internal static class ChatMessageExtensions
 {
     public static RecordValue ToRecord(this ChatMessage message) =>
-        RecordValue.NewRecordFromFields(message.GetMessageFields());
+        FormulaValue.NewRecordFromFields(message.GetMessageFields());
 
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
         FormulaValue.NewTable(s_messageRecordType, messages.Select(message => message.ToRecord()));

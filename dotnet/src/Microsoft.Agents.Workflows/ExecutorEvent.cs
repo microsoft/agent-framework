@@ -18,13 +18,8 @@ public class ExecutorEvent(string executorId, object? data) : WorkflowEvent(data
     public string ExecutorId => executorId;
 
     /// <inheritdoc/>
-    public override string ToString()
-    {
-        if (this.Data != null)
-        {
-            return $"{this.GetType().Name}(Executor = {this.ExecutorId}, Data: {this.Data.GetType()} = {this.Data})";
-        }
-
-        return $"{this.GetType().Name}(Executor = {this.ExecutorId})";
-    }
+    public override string ToString() =>
+        this.Data is not null ?
+            $"{this.GetType().Name}(Executor = {this.ExecutorId}, Data: {this.Data.GetType()} = {this.Data})" :
+            $"{this.GetType().Name}(Executor = {this.ExecutorId})";
 }

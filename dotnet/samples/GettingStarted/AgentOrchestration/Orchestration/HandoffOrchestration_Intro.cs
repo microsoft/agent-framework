@@ -20,24 +20,24 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
     {
         // Define the agents & tools
         ChatClientAgent triageAgent =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "A customer support agent that triages issues.",
                 name: "TriageAgent",
                 description: "Handle customer requests.");
         ChatClientAgent statusAgent =
-            this.CreateAgent(
+            CreateAgent(
                 name: "OrderStatusAgent",
                 instructions: "Handle order status requests.",
                 description: "A customer support agent that checks order status.",
                 functions: AIFunctionFactory.Create(OrderFunctions.CheckOrderStatus));
         ChatClientAgent returnAgent =
-            this.CreateAgent(
+            CreateAgent(
                 name: "OrderReturnAgent",
                 instructions: "Handle order return requests.",
                 description: "A customer support agent that handles order returns.",
                 functions: AIFunctionFactory.Create(OrderFunctions.ProcessReturn));
         ChatClientAgent refundAgent =
-            this.CreateAgent(
+            CreateAgent(
                 name: "OrderRefundAgent",
                 instructions: "Handle order refund requests.",
                 description: "A customer support agent that handles order refund.",
@@ -49,7 +49,7 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
         OrchestrationMonitor monitor = new();
         // Define user responses for InteractiveCallback (since sample is not interactive)
         Queue<string> responses = new();
-        string task = "I am a customer that needs help with my orders";
+        const string Task = "I am a customer that needs help with my orders";
         responses.Enqueue("I'd like to track the status of my order");
         responses.Enqueue("My order ID is 123");
         responses.Enqueue("I want to return another order of mine");
@@ -75,13 +75,13 @@ public class HandoffOrchestration_Intro(ITestOutputHelper output) : Orchestratio
                     return new(input);
                 },
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
-                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallback : null,
+                ResponseCallback = monitor.ResponseCallbackAsync,
+                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallbackAsync : null,
             };
 
         // Run the orchestration
-        Console.WriteLine($"\n# INPUT:\n{task}\n");
-        AgentRunResponse result = await orchestration.RunAsync(task);
+        Console.WriteLine($"\n# INPUT:\n{Task}\n");
+        AgentRunResponse result = await orchestration.RunAsync(Task);
 
         Console.WriteLine($"\n# RESULT: {result}");
 

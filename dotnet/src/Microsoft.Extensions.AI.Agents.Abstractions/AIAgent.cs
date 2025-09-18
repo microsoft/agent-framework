@@ -106,10 +106,8 @@ public abstract class AIAgent
     public Task<AgentRunResponse> RunAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        return this.RunAsync((IEnumerable<ChatMessage>)[], thread, options, cancellationToken);
-    }
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync([], thread, options, cancellationToken);
 
     /// <summary>
     /// Run the agent with the provided message and arguments.
@@ -188,10 +186,8 @@ public abstract class AIAgent
     public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        return this.RunStreamingAsync((IEnumerable<ChatMessage>)[], thread, options, cancellationToken);
-    }
+        CancellationToken cancellationToken = default) =>
+        this.RunStreamingAsync([], thread, options, cancellationToken);
 
     /// <summary>
     /// Run the agent with the provided message and arguments.

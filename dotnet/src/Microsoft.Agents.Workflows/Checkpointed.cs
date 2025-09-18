@@ -11,20 +11,20 @@ namespace Microsoft.Agents.Workflows;
 /// <summary>
 /// Represents a workflow run that supports checkpointing.
 /// </summary>
-/// <typeparam name="TRun">The type of the underlying workflow run handle</typeparam>
+/// <typeparam name="TRun">The type of the underlying workflow run handle.</typeparam>
 /// <seealso cref="Run"/>
 /// <seealso cref="Run{TResult}"/>
 /// <seealso cref="StreamingRun"/>
 /// <seealso cref="StreamingRun{TResult}"/>
 public class Checkpointed<TRun>
 {
+    private readonly ICheckpointingRunner _runner;
+
     internal Checkpointed(TRun run, ICheckpointingRunner runner)
     {
         this.Run = Throw.IfNull(run);
         this._runner = Throw.IfNull(runner);
     }
-
-    private readonly ICheckpointingRunner _runner;
 
     /// <summary>
     /// Gets the workflow run associated with this <see cref="Checkpointed{TRun}"/> instance.
@@ -41,7 +41,14 @@ public class Checkpointed<TRun>
     /// <summary>
     /// Gets the most recent checkpoint information.
     /// </summary>
-    public CheckpointInfo? LastCheckpoint => this.Checkpoints.Count > 0 ? this.Checkpoints[this.Checkpoints.Count - 1] : null;
+    public CheckpointInfo? LastCheckpoint
+    {
+        get
+        {
+            var checkpoints = this.Checkpoints;
+            return checkpoints.Count > 0 ? checkpoints[checkpoints.Count - 1] : null;
+        }
+    }
 
     /// <inheritdoc cref="ICheckpointingRunner.RestoreCheckpointAsync"/>
     public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default)

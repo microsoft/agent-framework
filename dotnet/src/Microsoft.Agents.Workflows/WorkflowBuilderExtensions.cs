@@ -35,15 +35,11 @@ public static class WorkflowBuilderExtensions
             return builder.AddEdge(source, executors[0], predicate);
         }
 
-        return builder.AddSwitch(source,
-            (switch_) =>
-            {
-                switch_.AddCase(predicate, executors);
-            });
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
 
         // The reason we can check for "not null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
-        bool IsAllowedType(object? message) => message is not null;
+        static bool IsAllowedType(object? message) => message is not null;
     }
 
     /// <summary>
@@ -65,15 +61,11 @@ public static class WorkflowBuilderExtensions
             return builder.AddEdge(source, executors[0], predicate);
         }
 
-        return builder.AddSwitch(source,
-            (switch_) =>
-            {
-                switch_.AddCase(predicate, executors);
-            });
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
 
         // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
-        bool IsAllowedType(object? message) => message is null;
+        static bool IsAllowedType(object? message) => message is null;
     }
 
     /// <summary>
@@ -92,8 +84,7 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(builder);
         Throw.IfNull(source);
 
-        HashSet<string> seenExecutors = new();
-        seenExecutors.Add(source.Id);
+        HashSet<string> seenExecutors = [source.Id];
 
         for (int i = 0; i < executors.Length; i++)
         {

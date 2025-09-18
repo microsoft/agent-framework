@@ -34,13 +34,11 @@ internal static class ActivityProcessor
         }
     }
 
-    private static ChatMessage CreateChatMessageFromActivity(IActivity activity, IEnumerable<AIContent> messageContent)
-    {
-        return new ChatMessage(ChatRole.Assistant, [.. messageContent])
+    private static ChatMessage CreateChatMessageFromActivity(IActivity activity, IEnumerable<AIContent> messageContent) =>
+        new(ChatRole.Assistant, [.. messageContent])
         {
             AuthorName = activity.From?.Name,
             MessageId = activity.Id,
             RawRepresentation = activity
         };
-    }
 }

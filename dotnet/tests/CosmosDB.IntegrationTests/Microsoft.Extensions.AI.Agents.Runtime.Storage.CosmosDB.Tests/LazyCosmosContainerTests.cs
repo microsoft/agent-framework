@@ -77,11 +77,11 @@ public class LazyCosmosContainerTests
             var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
             await using var storage = new CosmosActorStateStorage(lazyContainer);
 
-            var key = "testKey";
+            const string Key = "testKey";
             var value = JsonSerializer.SerializeToElement("testValue");
             var operations = new List<ActorStateWriteOperation>
             {
-                new SetValueOperation(key, value)
+                new SetValueOperation(Key, value)
             };
 
             // This should work if the container was properly initialized
@@ -185,32 +185,24 @@ public class LazyCosmosContainerTests
     }
 
     [Fact]
-    public void Constructor_WithNullContainer_ShouldThrowArgumentNullException()
-    {
+    public void Constructor_WithNullContainer_ShouldThrowArgumentNullException() =>
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new LazyCosmosContainer((Container)null!));
-    }
+        Assert.Throws<ArgumentNullException>(() => new LazyCosmosContainer(null!));
 
     [Fact]
-    public void Constructor_WithNullCosmosClient_ShouldThrowArgumentNullException()
-    {
+    public void Constructor_WithNullCosmosClient_ShouldThrowArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new LazyCosmosContainer(null!, "test-db", "test-container"));
-    }
 
     [Fact]
-    public void Constructor_WithNullDatabaseName_ShouldThrowArgumentNullException()
-    {
+    public void Constructor_WithNullDatabaseName_ShouldThrowArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new LazyCosmosContainer(this._fixture.CosmosClient, null!, "test-container"));
-    }
 
     [Fact]
-    public void Constructor_WithNullContainerName_ShouldThrowArgumentNullException()
-    {
+    public void Constructor_WithNullContainerName_ShouldThrowArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new LazyCosmosContainer(this._fixture.CosmosClient, "test-db", null!));
-    }
 
     [SkipOnEmulatorFact]
     public async Task LazyCosmosContainer_WithInternalConstructor_ShouldWorkWithCosmosActorStateStorageAsync()
@@ -229,11 +221,11 @@ public class LazyCosmosContainerTests
             await using var storage = new CosmosActorStateStorage(lazyContainer);
             var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
 
-            var key = "testKey";
+            const string Key = "testKey";
             var value = JsonSerializer.SerializeToElement("testValue");
             var operations = new List<ActorStateWriteOperation>
             {
-                new SetValueOperation(key, value)
+                new SetValueOperation(Key, value)
             };
 
             // This should work - container should be initialized on first storage operation
@@ -246,7 +238,7 @@ public class LazyCosmosContainerTests
             // Verify we can read back the value
             var readOperations = new List<ActorStateReadOperation>
             {
-                new GetValueOperation(key)
+                new GetValueOperation(Key)
             };
             var readResult = await storage.ReadStateAsync(testActorId, readOperations, cancellationToken);
 
@@ -281,6 +273,6 @@ public class LazyCosmosContainerTests
         await using var lazyContainer = new LazyCosmosContainer(this._fixture.CosmosClient, invalidDatabaseName, "test-container");
 
         // Act & Assert
-        await Assert.ThrowsAsync<CosmosException>(async () => await lazyContainer.GetContainerAsync());
+        await Assert.ThrowsAsync<CosmosException>(lazyContainer.GetContainerAsync);
     }
 }

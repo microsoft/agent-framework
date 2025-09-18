@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests;
 
 [CollectionDefinition("Cosmos Test Collection")]
-public class CosmosTests : ICollectionFixture<CosmosTestFixture> { }
+public class CosmosTests : ICollectionFixture<CosmosTestFixture>;
 
 /// <summary>
 /// Shared test fixture for CosmosDB integration tests.
@@ -41,9 +41,7 @@ public class CosmosTestFixture : IAsyncLifetime
         });
 
         appHost.Services.ConfigureHttpClientDefaults(clientBuilder =>
-        {
-            clientBuilder.AddStandardResilienceHandler();
-        });
+            clientBuilder.AddStandardResilienceHandler());
 
         this.App = await appHost.BuildAsync(cancellationToken).WaitAsync(cancellationToken);
         await this.App.StartAsync(cancellationToken).WaitAsync(cancellationToken);

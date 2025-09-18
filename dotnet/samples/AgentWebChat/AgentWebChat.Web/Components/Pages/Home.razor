@@ -907,7 +907,7 @@
 		A2A // Agent-to-Agent protocol
 	}
 
-	private class Conversation
+	private sealed class Conversation
 	{
 		public string SessionId { get; set; } = Guid.NewGuid().ToString();
 		public string AgentName { get; set; } = "";
@@ -944,32 +944,23 @@
 		// Conversations start fresh on page load
 	}
 
-	private string GetAgentIcon(string agentName)
-	{
-		return agentName?.ToLower() switch
-		{
-			"pirate" => "🏴‍☠️",
-			"knights-and-knaves" => "⚔️",
-			_ => "🤖"
-		};
-	}
+        private string GetAgentIcon(string agentName) => agentName?.ToLower() switch
+        {
+            "pirate" => "🏴‍☠️",
+            "knights-and-knaves" => "⚔️",
+            _ => "🤖"
+        };
 
-	private string GetAgentDisplayName(string agentName)
-	{
-		return agentName?.ToLower() switch
-		{
-			"pirate" => "Pirate",
-			"knights-and-knaves" => "Knights & Knaves",
-			_ => agentName ?? "Agent"
-		};
-	}
+        private string GetAgentDisplayName(string agentName) => agentName?.ToLower() switch
+        {
+            "pirate" => "Pirate",
+            "knights-and-knaves" => "Knights & Knaves",
+            _ => agentName ?? "Agent"
+        };
 
-	private void ToggleA2AExpanded()
-	{
-		isA2AExpanded = !isA2AExpanded;
-	}
+        private void ToggleA2AExpanded() => isA2AExpanded = !isA2AExpanded;
 
-	private async Task DiscoverAgentCard()
+        private async Task DiscoverAgentCard()
 	{
 		if (string.IsNullOrEmpty(selectedAgentName) || isDiscoveringCard)
 			return;

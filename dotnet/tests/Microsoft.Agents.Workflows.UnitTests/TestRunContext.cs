@@ -30,7 +30,7 @@ public class TestRunContext : IRunnerContext
             => runnerContext.SendMessageAsync(executorId, message, targetId);
     }
 
-    public List<WorkflowEvent> Events { get; } = new();
+    public List<WorkflowEvent> Events { get; } = [];
 
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent)
     {
@@ -38,39 +38,32 @@ public class TestRunContext : IRunnerContext
         return default;
     }
 
-    public IWorkflowContext Bind(string executorId)
-    {
-        return new BoundContext(executorId, this);
-    }
+    public IWorkflowContext Bind(string executorId) => new BoundContext(executorId, this);
 
-    public List<ExternalRequest> ExternalRequests { get; } = new();
+    public List<ExternalRequest> ExternalRequests { get; } = [];
     public ValueTask PostAsync(ExternalRequest request)
     {
         this.ExternalRequests.Add(request);
         return default;
     }
 
-    internal Dictionary<string, List<MessageEnvelope>> QueuedMessages { get; } = new();
+    internal Dictionary<string, List<MessageEnvelope>> QueuedMessages { get; } = [];
     public ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null)
     {
         if (!this.QueuedMessages.TryGetValue(sourceId, out List<MessageEnvelope>? deliveryQueue))
         {
-            this.QueuedMessages[sourceId] = deliveryQueue = new();
+            this.QueuedMessages[sourceId] = deliveryQueue = [];
         }
 
         deliveryQueue.Add(new(message, targetId: targetId));
         return default;
     }
 
-    StepContext IRunnerContext.Advance()
-    {
+    StepContext IRunnerContext.Advance() =>
         throw new NotImplementedException();
-    }
 
-    public Dictionary<string, Executor> Executors { get; } = new();
+    public Dictionary<string, Executor> Executors { get; } = [];
 
-    ValueTask<Executor> IRunnerContext.EnsureExecutorAsync(string executorId, IStepTracer? tracer)
-    {
-        return new(this.Executors[executorId]);
-    }
+    ValueTask<Executor> IRunnerContext.EnsureExecutorAsync(string executorId, IStepTracer? tracer) =>
+        new(this.Executors[executorId]);
 }
