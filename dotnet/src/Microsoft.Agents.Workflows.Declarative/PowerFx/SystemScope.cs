@@ -101,5 +101,6 @@ internal static class SystemScope
         state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
         state.Set(Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), VariableScopeNames.System);
         state.Set(Names.LastMessageText, FormulaValue.New(message.Text), VariableScopeNames.System);
+        state.Bind();
     }
 }
