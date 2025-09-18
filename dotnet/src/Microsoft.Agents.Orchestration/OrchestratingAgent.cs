@@ -64,22 +64,12 @@ public abstract partial class OrchestratingAgent : AIAgent
     public Func<AgentRunResponseUpdate, ValueTask>? StreamingResponseCallback { get; set; }
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override OrchestratingAgentThread GetNewThread()
-        => new();
-#else
     public override AgentThread GetNewThread()
         => new OrchestratingAgentThread();
-#endif
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override OrchestratingAgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new(serializedThread, jsonSerializerOptions);
-#else
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new OrchestratingAgentThread(serializedThread, jsonSerializerOptions);
-#endif
 
     /// <inheritdoc />
     public sealed override async Task<AgentRunResponse> RunAsync(

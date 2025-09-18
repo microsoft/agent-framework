@@ -109,10 +109,10 @@ namespace SampleApp
         /// </summary>
         internal sealed class CustomAgentThread : InMemoryAgentThread
         {
-            public CustomAgentThread()
+            internal CustomAgentThread()
                 : base() { }
 
-            public CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+            internal CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
                 : base(serializedThreadState, jsonSerializerOptions) { }
         }
     }

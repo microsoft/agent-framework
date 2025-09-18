@@ -38,7 +38,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     Instructions = "You are a friendly assistant. Always address the user by their name.",
-    AIContextProviderFactory = (ctx) => new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions)
+    AIContextProviderFactory = ctx => new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions)
 });
 
 // Create a new thread for the conversation.

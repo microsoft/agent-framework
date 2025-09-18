@@ -41,22 +41,12 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override CopilotStudioAgentThread GetNewThread()
-        => new();
-#else
     public override sealed AgentThread GetNewThread()
         => new CopilotStudioAgentThread();
-#endif
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override CopilotStudioAgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new(serializedThread, jsonSerializerOptions);
-#else
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);
-#endif
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(

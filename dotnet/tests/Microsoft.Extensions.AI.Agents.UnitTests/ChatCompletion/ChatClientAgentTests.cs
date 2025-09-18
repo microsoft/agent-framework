@@ -8,8 +8,6 @@ using Moq;
 
 namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
 
-#pragma warning disable IDE0004 // Cast is redundant. - False positive due to conditional compilation with covariant return types.
-
 public class ChatClientAgentTests
 {
     #region Constructor Tests
@@ -463,7 +461,7 @@ public class ChatClientAgentTests
             .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
             .Returns(new ValueTask());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = (_) => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = _ => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
         await agent.RunAsync(requestMessages);
@@ -508,7 +506,7 @@ public class ChatClientAgentTests
             .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
             .Returns(new ValueTask());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = (_) => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = _ => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync(requestMessages));
@@ -550,7 +548,7 @@ public class ChatClientAgentTests
             .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AIContext());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = (_) => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = _ => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "user message")]);
@@ -1146,11 +1144,11 @@ public class ChatClientAgentTests
         // Arrange
         var agentChatOptions = new ChatOptions
         {
-            RawRepresentationFactory = (_) => agentSetting
+            RawRepresentationFactory = _ => agentSetting
         };
         var requestChatOptions = new ChatOptions
         {
-            RawRepresentationFactory = (_) => requestSetting
+            RawRepresentationFactory = _ => requestSetting
         };
 
         Mock<IChatClient> mockService = new();
@@ -1715,7 +1713,7 @@ public class ChatClientAgentTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             Instructions = "Test instructions",
-            ChatMessageStoreFactory = (_) =>
+            ChatMessageStoreFactory = _ =>
             {
                 factoryCalled = true;
                 return mockStore.Object;
@@ -1728,11 +1726,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
         Assert.IsType<ChatClientAgentThread>(thread);
-#if NET5_0_OR_GREATER
-        var typedThread = thread;
-#else
         var typedThread = (ChatClientAgentThread)thread;
-#endif
         Assert.Same(mockStore.Object, typedThread.MessageStore);
     }
 
@@ -1746,7 +1740,7 @@ public class ChatClientAgentTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             Instructions = "Test instructions",
-            AIContextProviderFactory = (_) =>
+            AIContextProviderFactory = _ =>
             {
                 factoryCalled = true;
                 return mockContextProvider.Object;
@@ -1759,11 +1753,7 @@ public class ChatClientAgentTests
         // Assert
         Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
         Assert.IsType<ChatClientAgentThread>(thread);
-#if NET5_0_OR_GREATER
-        var typedThread = thread;
-#else
         var typedThread = (ChatClientAgentThread)thread;
-#endif
         Assert.Same(mockContextProvider.Object, typedThread.AIContextProvider);
     }
 

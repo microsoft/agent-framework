@@ -79,7 +79,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
                     ChatOptions = new ChatOptions
                     {
                         Tools = aiTools,
-                        RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
+                        RawRepresentationFactory = new Func<IChatClient, object>(_ => new ResponseCreationOptions() { StoredOutputEnabled = store })
                     },
                 });
 

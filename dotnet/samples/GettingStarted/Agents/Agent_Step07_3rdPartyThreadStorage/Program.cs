@@ -38,7 +38,7 @@ AIAgent agent = new AzureOpenAIClient(
      {
          Name = JokerName,
          Instructions = JokerInstructions,
-         ChatMessageStoreFactory = (ctx) =>
+         ChatMessageStoreFactory = ctx =>
          {
              // Create a new chat message store for this agent that stores the messages in a vector store.
              // Each thread must get its own copy of the VectorChatMessageStore, since the store

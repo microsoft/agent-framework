@@ -236,24 +236,15 @@ public sealed class ChatClientAgent : AIAgent
         : this.ChatClient.GetService(serviceType, serviceKey));
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override ChatClientAgentThread GetNewThread()
-        => new()
-#else
     public override AgentThread GetNewThread()
         => new ChatClientAgentThread
-#endif
         {
             MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null }),
             AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
         };
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override ChatClientAgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-#else
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-#endif
     {
         Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
             null :
@@ -263,11 +254,7 @@ public sealed class ChatClientAgent : AIAgent
             null :
             (jse, jso) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
 
-#if NET5_0_OR_GREATER
-        return new(
-#else
         return new ChatClientAgentThread(
-#endif
             serializedThread,
             jsonSerializerOptions,
             chatMessageStoreFactory,

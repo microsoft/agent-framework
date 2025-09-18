@@ -53,22 +53,12 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override A2AAgentThread GetNewThread()
-        => new();
-#else
     public override sealed AgentThread GetNewThread()
         => new A2AAgentThread();
-#endif
 
     /// <inheritdoc/>
-#if NET5_0_OR_GREATER
-    public override A2AAgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new(serializedThread, jsonSerializerOptions);
-#else
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new A2AAgentThread(serializedThread, jsonSerializerOptions);
-#endif
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
