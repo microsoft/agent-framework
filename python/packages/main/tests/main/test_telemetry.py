@@ -22,7 +22,7 @@ from agent_framework import (
     UsageDetails,
 )
 from agent_framework.exceptions import AgentInitializationError, ChatClientInitializationError
-from agent_framework.telemetry import (
+from agent_framework.observability import (
     AGENT_FRAMEWORK_USER_AGENT,
     OPEN_TELEMETRY_AGENT_MARKER,
     OPEN_TELEMETRY_CHAT_CLIENT_MARKER,
@@ -59,13 +59,13 @@ def test_agent_framework_user_agent_format():
 
 def test_app_info_when_telemetry_enabled():
     """Test that APP_INFO is set when telemetry is enabled."""
-    with patch("agent_framework.telemetry.IS_TELEMETRY_ENABLED", True):
+    with patch("agent_framework.observability.IS_TELEMETRY_ENABLED", True):
         import importlib
 
-        import agent_framework.telemetry
+        import agent_framework.observability
 
-        importlib.reload(agent_framework.telemetry)
-        from agent_framework.telemetry import APP_INFO
+        importlib.reload(agent_framework.observability)
+        from agent_framework.observability import APP_INFO
 
         assert APP_INFO is not None
         assert "agent-framework-version" in APP_INFO
@@ -75,7 +75,7 @@ def test_app_info_when_telemetry_enabled():
 def test_app_info_when_telemetry_disabled():
     """Test that APP_INFO is None when telemetry is disabled."""
     # Test the logic directly since APP_INFO is set at module import time
-    with patch("agent_framework.telemetry.IS_TELEMETRY_ENABLED", False):
+    with patch("agent_framework.observability.IS_TELEMETRY_ENABLED", False):
         # Simulate the module's logic for APP_INFO
         test_app_info = (
             {
@@ -192,7 +192,7 @@ def test_index_key_constant():
 def test_start_span_basic():
     """Test starting a span with basic function info."""
     mock_tracer = Mock()
-    with patch("agent_framework.telemetry.tracer", mock_tracer):
+    with patch("agent_framework.observability.tracer", mock_tracer):
         mock_span = Mock()
         mock_tracer.start_as_current_span.return_value = mock_span
 
@@ -224,7 +224,7 @@ def test_start_span_basic():
 def test_start_span_with_tool_call_id():
     """Test starting a span with tool_call_id."""
     mock_tracer = Mock()
-    with patch("agent_framework.telemetry.tracer", mock_tracer):
+    with patch("agent_framework.observability.tracer", mock_tracer):
         mock_span = CopyingMock()
         mock_tracer.start_as_current_span.return_value = mock_span
 
@@ -332,8 +332,8 @@ async def test_instrumentation_enabled(mock_chat_client, otel_settings):
     chat_options = ChatOptions()
 
     with (
-        patch("agent_framework.telemetry._get_span") as mock_response_span,
-        patch("agent_framework.telemetry._capture_messages") as mock_log_messages,
+        patch("agent_framework.observability._get_span") as mock_response_span,
+        patch("agent_framework.observability._capture_messages") as mock_log_messages,
     ):
         response = await client.get_response(messages=messages, chat_options=chat_options)
         assert response is not None
@@ -351,9 +351,9 @@ async def test_streaming_response_with_otel(mock_chat_client, otel_settings):
     chat_options = ChatOptions()
 
     with (
-        patch("agent_framework.telemetry._get_span") as mock_response_span,
-        patch("agent_framework.telemetry._capture_messages") as mock_log_messages,
-        patch("agent_framework.telemetry._capture_response") as mock_set_output,
+        patch("agent_framework.observability._get_span") as mock_response_span,
+        patch("agent_framework.observability._capture_messages") as mock_log_messages,
+        patch("agent_framework.observability._capture_response") as mock_set_output,
     ):
         # Collect all yielded updates
         updates = []
@@ -431,7 +431,7 @@ def test_agent_decorator_with_missing_methods():
 
 def test_agent_decorator_with_partial_methods():
     """Test agent decorator when only one method is present."""
-    from agent_framework.telemetry import use_agent_telemetry
+    from agent_framework.observability import use_agent_telemetry
 
     class MockAgent:
         AGENT_SYSTEM_NAME = "test_agent_system"
@@ -488,8 +488,8 @@ async def test_agent_instrumentation_enabled(mock_chat_client_agent: AgentProtoc
     agent = use_agent_telemetry(mock_chat_client_agent)()
 
     with (
-        patch("agent_framework.telemetry.use_span") as mock_use_span,
-        patch("agent_framework.telemetry.logger") as mock_logger,
+        patch("agent_framework.observability.use_span") as mock_use_span,
+        patch("agent_framework.observability.logger") as mock_logger,
     ):
         response = await agent.run("Test message")
         assert response is not None
@@ -506,9 +506,9 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     agent = use_agent_telemetry(mock_chat_client_agent)()
 
     with (
-        patch("agent_framework.telemetry._get_span") as mock_get_span,
-        patch("agent_framework.telemetry._capture_messages") as mock_capture_messages,
-        patch("agent_framework.telemetry._capture_response") as mock_capture_response,
+        patch("agent_framework.observability._get_span") as mock_get_span,
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         # Collect all yielded updates
         updates = []
@@ -540,7 +540,7 @@ async def test_agent_run_with_exception_handling(mock_chat_client_agent: AgentPr
     from opentelemetry.trace import Span
 
     with (
-        patch("agent_framework.telemetry._get_span") as mock_get_span,
+        patch("agent_framework.observability._get_span") as mock_get_span,
     ):
         mock_span = MagicMock(spec=Span)
         # Ensure the patched context manager returns mock_span when entered

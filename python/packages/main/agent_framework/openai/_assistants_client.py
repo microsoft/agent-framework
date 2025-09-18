@@ -38,7 +38,7 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import ServiceInitializationError
-from ..telemetry import use_telemetry
+from ..observability import use_telemetry
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 11):

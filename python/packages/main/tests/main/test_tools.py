@@ -15,7 +15,7 @@ from agent_framework import (
 )
 from agent_framework._tools import _parse_inputs
 from agent_framework.exceptions import ToolException
-from agent_framework.telemetry import OtelAttr
+from agent_framework.observability import OtelAttr
 
 from .utils import CopyingMock
 
@@ -99,7 +99,7 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
 
     # Mock the tracer and span
     with (
-        patch("agent_framework.telemetry.tracer"),
+        patch("agent_framework.observability.tracer"),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
@@ -157,7 +157,7 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
     args_model = pydantic_test_tool.input_model(x=5, y=10)
 
     with (
-        patch("agent_framework.telemetry.tracer"),
+        patch("agent_framework.observability.tracer"),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
@@ -203,7 +203,7 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
         raise ValueError("Test exception for telemetry")
 
     with (
-        patch("agent_framework.telemetry.tracer"),
+        patch("agent_framework.observability.tracer"),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
@@ -248,7 +248,7 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
         return x * y
 
     with (
-        patch("agent_framework.telemetry.tracer"),
+        patch("agent_framework.observability.tracer"),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):

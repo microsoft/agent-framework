@@ -6,11 +6,10 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import HostedCodeInterpreterTool
-from agent_framework.telemetry import setup_telemetry
-from agent_framework_foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.observability import tracer
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
-from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -65,10 +64,7 @@ async def main() -> None:
     ):
         if use_foundry_telemetry:
             await client.setup_foundry_telemetry(enable_live_metrics=True)
-        else:
-            setup_telemetry()
 
-        tracer = trace.get_tracer("agent_framework")
         with tracer.start_as_current_span(name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT) as span:
             for question in questions:
                 print(f"{BLUE}User: {question}{RESET}")

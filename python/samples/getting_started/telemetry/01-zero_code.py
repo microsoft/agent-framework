@@ -20,10 +20,10 @@ the SDK will automatically initialize telemetry and collect traces and logs.
 """
 
 
-if "AGENT_FRAMEWORK_ENABLE_OTEL" not in os.environ:
-    print("Set AGENT_FRAMEWORK_ENABLE_OTEL to enable telemetry with a OTLP endpoint.")
-if "AGENT_FRAMEWORK_OTLP_ENDPOINT" not in os.environ and "AGENT_FRAMEWORK_MONITOR_CONNECTION_STRING" not in os.environ:
-    print("Set AGENT_FRAMEWORK_OTLP_ENDPOINT or AGENT_FRAMEWORK_MONITOR_CONNECTION_STRING to enable telemetry.")
+if "ENABLE_OTEL" not in os.environ:
+    print("Set ENABLE_OTEL to enable telemetry with a OTLP endpoint.")
+if "OTLP_ENDPOINT" not in os.environ and "APPLICATION_INSIGHTS_CONNECTION_STRING" not in os.environ:
+    print("Set OTLP_ENDPOINT or APPLICATION_INSIGHTS_CONNECTION_STRING to enable telemetry.")
 
 
 async def get_weather(

@@ -7,9 +7,8 @@ from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from agent_framework import __version__, ai_function
+from agent_framework.observability import get_tracer, tracer
 from agent_framework.openai import OpenAIResponsesClient
-from agent_framework.telemetry import setup_telemetry
-from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -19,8 +18,8 @@ if TYPE_CHECKING:
 
 """
 This sample, show how you can get telemetry from a chat client and tool.
-it explicitly calls the `setup_telemetry` function to set up telemetry in order to include the overall spans,
-those are defined in the main and run_* functions.
+it uses the `tracer` that is configured by agent framework,
+which also sets up the traces with the configured environment.
 """
 
 
@@ -60,8 +59,6 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
 
     """
     scenario_name = "Chat Client Stream" if stream else "Chat Client"
-
-    tracer = trace.get_tracer("agent_framework", __version__)
     with tracer.start_as_current_span(name=f"Scenario: {scenario_name}", kind=SpanKind.CLIENT):
         print("Running scenario:", scenario_name)
         message = "What's the weather in Amsterdam and in Paris?"
@@ -87,8 +84,6 @@ async def run_ai_function() -> None:
     The telemetry will include information about the AI function execution
     and the AI service execution.
     """
-
-    tracer = trace.get_tracer("agent_framework", __version__)
     with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT):
         print("Running scenario: AI Function")
         func = ai_function(get_weather)
@@ -99,9 +94,7 @@ async def run_ai_function() -> None:
 async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
     """Run the selected scenario(s)."""
 
-    setup_telemetry()
-
-    tracer = trace.get_tracer("My application", __version__)
+    tracer = get_tracer("My application", __version__)
     with tracer.start_as_current_span("Sample Scenario's", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 

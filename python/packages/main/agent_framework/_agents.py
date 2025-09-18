@@ -28,7 +28,7 @@ from ._types import (
     Role,
 )
 from .exceptions import AgentExecutionException
-from .telemetry import use_agent_telemetry
+from .observability import use_agent_telemetry
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover

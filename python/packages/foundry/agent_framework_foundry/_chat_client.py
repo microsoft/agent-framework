@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
     AIFunction,
     BaseChatClient,
     ChatMessage,
@@ -27,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.telemetry import AGENT_FRAMEWORK_USER_AGENT, use_telemetry
+from agent_framework.observability import use_telemetry
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -197,7 +198,7 @@ class FoundryChatClient(BaseChatClient):
         It will override any connection string that is set in the environment variables.
         It will disable any OTLP endpoint that might have been set.
         """
-        from agent_framework.telemetry import setup_telemetry
+        from agent_framework.observability import setup_telemetry
 
         setup_telemetry(
             application_insights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501

@@ -27,10 +27,10 @@ from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, ValidationError, cre
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from .exceptions import ChatClientInitializationError, ToolException
-from .telemetry import (
+from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
-    _capture_exception,  # type: ignore
+    capture_exception,  # type: ignore
     get_function_span,
     get_function_span_attributes,
     meter,
@@ -398,7 +398,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
         """
         global OTEL_SETTINGS
-        from .telemetry import OTEL_SETTINGS, setup_telemetry
+        from .observability import OTEL_SETTINGS
 
         tool_call_id = kwargs.pop("tool_call_id", None)
         if arguments is not None:
@@ -414,7 +414,6 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             logger.debug(f"Function result: {result or 'None'}")
             return result  # type: ignore[reportReturnType]
 
-        setup_telemetry()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
         if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({
@@ -438,7 +437,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             except Exception as exception:
                 end_time_stamp = perf_counter()
                 attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
-                _capture_exception(span=span, exception=exception, timestamp=time_ns())
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:

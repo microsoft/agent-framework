@@ -60,7 +60,7 @@ class GAIATelemetryConfig:
         if not self.enable_tracing:
             return
 
-        from agent_framework.telemetry import setup_telemetry
+        from agent_framework.observability import setup_telemetry
 
         setup_telemetry(
             enable_otel=True,

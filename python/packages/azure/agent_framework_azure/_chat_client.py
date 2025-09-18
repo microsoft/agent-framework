@@ -14,8 +14,8 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.observability import use_telemetry
 from agent_framework.openai._chat_client import OpenAIBaseChatClient
-from agent_framework.telemetry import use_telemetry
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
