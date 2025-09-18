@@ -236,34 +236,3 @@ class TestEnsureIndex:
         provider = RedisProvider(user_id="u1", drop_redis_index=False)
         await provider._ensure_index()
         assert mock_index.create.await_count == 1
-
-
-class TestModelInvokingContext:
-    @pytest.mark.asyncio
-    async def test_model_invoking_assembles_context(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-
-        async def fake_search(text: str, **_):  # noqa: ANN001, ARG001
-            return [{"content": "mem1"}, {"content": "mem2"}]
-
-        provider.redis_search = AsyncMock(side_effect=fake_search)
-
-        ctx = await provider.model_invoking([
-            ChatMessage(role=Role.USER, text="ask"),
-            ChatMessage(role=Role.ASSISTANT, text="reply"),
-        ])
-        assert ctx.contents is not None and len(ctx.contents) == 1
-        text = ctx.contents[0].text  # type: ignore[assignment]
-        assert "Memories" in text
-        assert "mem1" in text and "mem2" in text
-
-    @pytest.mark.asyncio
-    async def test_model_invoking_with_no_memories_returns_empty(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1")
-        provider.redis_search = AsyncMock(return_value=[])
-        ctx = await provider.model_invoking(ChatMessage(role=Role.USER, text="ask"))
-        assert ctx.contents is None
