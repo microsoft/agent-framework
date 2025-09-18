@@ -68,7 +68,7 @@ public static class IWorkflowContextExtensions
     /// Evaluate an expression using the workflow's declarative state.
     /// </summary>
     /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
-    /// <param name="expression"></param>
+    /// <param name="expression">The expression to evaluate.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The evaluated expression value</returns>
     public static async ValueTask<object?> EvaluateExpressionAsync(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)

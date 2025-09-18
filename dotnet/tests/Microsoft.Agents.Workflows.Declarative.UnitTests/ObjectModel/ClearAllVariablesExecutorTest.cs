@@ -38,6 +38,10 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
     public async Task ClearUndefinedScopeAsync()
     {
         // Arrange
+        this.State.Set("NoVar", FormulaValue.New("Old value"));
+        this.State.Bind();
+
+        // Arrange
         ClearAllVariables model =
             this.CreateModel(
                 this.FormatDisplayName(nameof(ClearUndefinedScopeAsync)),
@@ -49,7 +53,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
 
         // Assert
         VerifyModel(model, action);
-        this.VerifyUndefined("NoVar");
+        this.VerifyState("NoVar", FormulaValue.New("Old value"));
     }
 
     private ClearAllVariables CreateModel(string displayName, VariablesToClear variableTarget)

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Kit;
@@ -40,7 +41,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         {
             if (ManagedScopes.Contains(Throw.IfNull(scopeName)))
             {
-                foreach (string key in this.State.Keys(scopeName))
+                // Copy keys to array to avoid modifying collection during enumeration.
+                foreach (string key in this.State.Keys(scopeName).ToArray())
                 {
                     await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName).ConfigureAwait(false);
                 }
