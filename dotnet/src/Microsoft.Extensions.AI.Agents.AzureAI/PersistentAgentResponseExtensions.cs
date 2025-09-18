@@ -16,15 +16,16 @@ internal static class PersistentAgentResponseExtensions
     /// <param name="persistentAgentResponse">The response containing the persistent agent to be converted. Cannot be <see langword="null"/>.</param>
     /// <param name="persistentAgentsClient">The client used to interact with persistent agents. Cannot be <see langword="null"/>.</param>
     /// <param name="chatOptions">The default <see cref="ChatOptions"/> to use when interacting with the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
-    public static ChatClientAgent AsAIAgent(this Response<PersistentAgent> persistentAgentResponse, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null)
+    public static ChatClientAgent AsAIAgent(this Response<PersistentAgent> persistentAgentResponse, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null, Func<IChatClient, IChatClient>? clientFactory = null)
     {
         if (persistentAgentResponse is null)
         {
             throw new ArgumentNullException(nameof(persistentAgentResponse));
         }
 
-        return AsAIAgent(persistentAgentResponse.Value, persistentAgentsClient, chatOptions);
+        return AsAIAgent(persistentAgentResponse.Value, persistentAgentsClient, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -33,8 +34,9 @@ internal static class PersistentAgentResponseExtensions
     /// <param name="persistentAgentMetadata">The persistent agent metadata to be converted. Cannot be <see langword="null"/>.</param>
     /// <param name="persistentAgentsClient">The client used to interact with persistent agents. Cannot be <see langword="null"/>.</param>
     /// <param name="chatOptions">The default <see cref="ChatOptions"/> to use when interacting with the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
-    public static ChatClientAgent AsAIAgent(this PersistentAgent persistentAgentMetadata, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null)
+    public static ChatClientAgent AsAIAgent(this PersistentAgent persistentAgentMetadata, PersistentAgentsClient persistentAgentsClient, ChatOptions? chatOptions = null, Func<IChatClient, IChatClient>? clientFactory = null)
     {
         if (persistentAgentMetadata is null)
         {
@@ -47,6 +49,11 @@ internal static class PersistentAgentResponseExtensions
         }
 
         var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentMetadata.Id);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
 
         return new ChatClientAgent(chatClient, options: new()
         {

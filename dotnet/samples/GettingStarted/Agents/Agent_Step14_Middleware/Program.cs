@@ -5,7 +5,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Agents.Persistent;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
@@ -15,10 +17,30 @@ using Microsoft.Extensions.AI.Agents;
 
 // Get Azure AI Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var persistentEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
+var persistentClient = new PersistentAgentsClient(persistentEndpoint, new AzureCliCredential());
+
+var agent = persistentClient.CreateAIAgent(
+    deploymentName,
+    // Adding middleware to the chat client level
+    clientFactory: (chatClient) => chatClient
+        .AsBuilder()
+        .Use(ChatClientMiddleware)
+        .Build())
+.AsBuilder()
+    // Adding middleware to the agent level
+    .Use(FunctionCallMiddleware1)
+    .Use(FunctionCallOverrideWeather)
+    .Use(PIIMiddleware)
+    .Use(GuardrailMiddleware)
+.Build();
+
+await persistentClient.Administration.DeleteAgentAsync(agent.Id);
+
 // Get a client to create/retrieve server side agents with
-var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName);
+var azureOpenAIClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName);
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
@@ -28,11 +50,18 @@ static string GetWeather([Description("The location to get the weather for.")] s
 static string GetDateTime()
     => DateTimeOffset.Now.ToString();
 
-var originalAgent = new ChatClientAgent(client.AsIChatClient(), new ChatClientAgentOptions(
+// Adding middleware to the chat client level
+var chatClient = azureOpenAIClient.AsIChatClient()
+    .AsBuilder()
+    .Use(ChatClientMiddleware)
+    .Build();
+
+var originalAgent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(
         instructions: "You are an AI assistant that helps people find information.",
         // Agent level tools
         tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]));
 
+// Adding middleware to the agent level
 var middlewareEnabledAgent = originalAgent.AsBuilder()
     .Use(FunctionCallMiddleware1)
     .Use(FunctionCallOverrideWeather)
@@ -198,4 +227,11 @@ async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<Agen
 
         userInputRequests = context.RunResponse!.UserInputRequests.ToList();
     }
+}
+
+async Task ChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task> next, CancellationToken cancellationToken)
+{
+    Console.WriteLine("Chat Client Middleware - Pre-Chat");
+    await next(message, options, cancellationToken);
+    Console.WriteLine("Chat Client Middleware - Post-Chat");
 }

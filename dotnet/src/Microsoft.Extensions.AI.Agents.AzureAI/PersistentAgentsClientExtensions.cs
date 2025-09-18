@@ -17,12 +17,14 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> for the persistent agent.</returns>
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     public static ChatClientAgent GetAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         string agentId,
         ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -36,7 +38,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = persistentAgentsClient.Administration.GetAgent(agentId, cancellationToken);
-        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions);
+        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -46,12 +48,14 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> for the persistent agent.</returns>
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this PersistentAgentsClient persistentAgentsClient,
         string agentId,
         ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -65,7 +69,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions);
+        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -82,6 +86,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="topP">The top-p setting for the agent.</param>
     /// <param name="responseFormat">The response format for the agent.</param>
     /// <param name="metadata">The metadata for the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
@@ -96,6 +101,7 @@ public static class PersistentAgentsClientExtensions
         float? topP = null,
         BinaryData? responseFormat = null,
         IReadOnlyDictionary<string, string>? metadata = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -116,7 +122,7 @@ public static class PersistentAgentsClientExtensions
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
         // Get a local proxy for the agent to work with.
-        return await persistentAgentsClient.GetAIAgentAsync(createPersistentAgentResponse.Value.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await persistentAgentsClient.GetAIAgentAsync(createPersistentAgentResponse.Value.Id, clientFactory: clientFactory, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -133,6 +139,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="topP">The top-p setting for the agent.</param>
     /// <param name="responseFormat">The response format for the agent.</param>
     /// <param name="metadata">The metadata for the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     public static ChatClientAgent CreateAIAgent(
@@ -147,6 +154,7 @@ public static class PersistentAgentsClientExtensions
         float? topP = null,
         BinaryData? responseFormat = null,
         IReadOnlyDictionary<string, string>? metadata = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -167,7 +175,7 @@ public static class PersistentAgentsClientExtensions
             cancellationToken: cancellationToken);
 
         // Get a local proxy for the agent to work with.
-        return persistentAgentsClient.GetAIAgent(createPersistentAgentResponse.Value.Id, cancellationToken: cancellationToken);
+        return persistentAgentsClient.GetAIAgent(createPersistentAgentResponse.Value.Id, clientFactory: clientFactory, cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -179,125 +187,4 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A new <see cref="IChatClient"/> instance configured with the specified assistant and optional default thread.</returns>
     public static IChatClient AsNewIChatClient(this PersistentAgentsClient client, string assistantId, string? defaultThreadId = null)
         => new NewPersistentAgentsChatClient(Argument.CheckNotNull(client, nameof(client)), Argument.CheckNotNullOrEmpty(assistantId, nameof(assistantId)), defaultThreadId);
-
-    /// <summary>
-    /// Creates a new server side agent using the provided <see cref="PersistentAgentsClient"/>.
-    /// </summary>
-    /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> to create the agent with.</param>
-    /// <param name="model">The model to be used by the agent.</param>
-    /// <param name="middlewareConfig">A list of middleware functions to be used by the agent.</param>
-    /// <param name="name">The name of the agent.</param>
-    /// <param name="description">The description of the agent.</param>
-    /// <param name="instructions">The instructions for the agent.</param>
-    /// <param name="tools">The tools to be used by the agent.</param>
-    /// <param name="toolResources">The resources for the tools.</param>
-    /// <param name="temperature">The temperature setting for the agent.</param>
-    /// <param name="topP">The top-p setting for the agent.</param>
-    /// <param name="responseFormat">The response format for the agent.</param>
-    /// <param name="metadata">The metadata for the agent.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
-    public static AIAgent CreateAIAgent(
-        this PersistentAgentsClient persistentAgentsClient,
-        string model,
-        Action<MiddlewareConfig> middlewareConfig,
-        string? name = null,
-        string? description = null,
-        string? instructions = null,
-        IEnumerable<ToolDefinition>? tools = null,
-        ToolResources? toolResources = null,
-        float? temperature = null,
-        float? topP = null,
-        BinaryData? responseFormat = null,
-        IReadOnlyDictionary<string, string>? metadata = null,
-        CancellationToken cancellationToken = default)
-    {
-        if (middlewareConfig is null)
-        {
-            throw new ArgumentNullException(nameof(middlewareConfig));
-        }
-
-        var middlewareConfigResult = new MiddlewareConfig();
-        middlewareConfig(middlewareConfigResult);
-
-        if (persistentAgentsClient is null)
-        {
-            throw new ArgumentNullException(nameof(persistentAgentsClient));
-        }
-
-        var createPersistentAgentResponse = persistentAgentsClient.Administration.CreateAgent(
-            model,
-            name,
-            instructions,
-            tools: tools,
-            toolResources: toolResources,
-            temperature: temperature,
-            topP: topP,
-            responseFormat: responseFormat,
-            metadata: metadata,
-            cancellationToken: cancellationToken);
-
-        var agentBuilder = persistentAgentsClient.GetAIAgent(createPersistentAgentResponse.Value.Id, cancellationToken: cancellationToken)
-            .AsBuilder();
-
-        // Get a local proxy for the agent to work with.
-        foreach (var middlewareFunction in middlewareConfigResult.AddedMiddleware)
-        {
-            if (middlewareFunction is null)
-            {
-                throw new ArgumentException("Middleware function cannot be null.", nameof(middlewareConfig));
-            }
-
-            switch (middlewareFunction)
-            {
-                case Func<AgentRunContext, Func<AgentRunContext, Task>, Task> runMiddleware:
-                    agentBuilder.UseRunningContext(runMiddleware);
-                    break;
-                case Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> functionMiddleware:
-                    agentBuilder.UseFunctionInvocationContext(functionMiddleware);
-                    break;
-                default:
-                    throw new ArgumentException($"Unsupported middleware function type: {middlewareFunction.GetType().FullName}.", nameof(middlewareConfig));
-            }
-        }
-
-        return agentBuilder.Build();
-    }
-
-    /// <summary>
-    /// Provides a configuration mechanism for adding middleware components during agent creation
-    /// </summary>
-    /// <remarks>Middleware components are executed in the order they are added.</remarks>
-    public sealed class MiddlewareConfig
-    {
-        internal IList<object> AddedMiddleware { get; } = [];
-
-        internal MiddlewareConfig()
-        {
-        }
-
-        /// <summary>
-        /// Add a middleware function to be executed during agent runs.
-        /// </summary>
-        /// <param name="middlewareFunction">The delegate representing the middleware logic.</param>
-        /// <returns>The current <see cref="MiddlewareConfig"/> instance for chaining.</returns>
-        public MiddlewareConfig AddRunningMiddleware(Func<AgentRunContext, Func<AgentRunContext, Task>, Task> middlewareFunction)
-        {
-            AddedMiddleware.Add(middlewareFunction);
-
-            return this;
-        }
-
-        /// <summary>
-        /// Add a middleware function to be executed during function invocations.
-        /// </summary>
-        /// <param name="middlewareFunction">The delegate representing the middleware logic.</param>
-        /// <returns>The current <see cref="MiddlewareConfig"/> instance for chaining.</returns>
-        public MiddlewareConfig AddFunctionInvocationMiddleware(Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> middlewareFunction)
-        {
-            AddedMiddleware.Add(middlewareFunction);
-
-            return this;
-        }
-    }
 }

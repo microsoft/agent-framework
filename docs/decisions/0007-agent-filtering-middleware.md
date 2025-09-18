@@ -34,8 +34,9 @@ This section provides an analysis of how other major AI agent frameworks handle 
 
 | Provider                  | Language | Supports (Y/N) | Naming                          | TL;DR Observation |
 |---------------------------|----------|----------------|---------------------------------|------------------------|
-| LangChain (Python)       | Python  | Y (read/write) | Callbacks (BaseCallbackHandler) | Uses observer pattern with event methods for interception (e.g., on_chain_start); supports agent actions and errors; handlers can read inputs/outputs and modify metadata or raise exceptions to influence flow. [Details](#langchain) |
+| LangChain (Python)       | Python  | Y (read) | Callbacks (BaseCallbackHandler) | Uses observer pattern with event methods for interception (e.g., on_chain_start); supports agent actions and errors; handlers can read inputs/outputs and modification is limited to the parameters or by raising exceptions to influence flow. [Details](#langchain) |
 | LangChain (JS)           | JS      | Y (read/write) | Callbacks (BaseCallbackHandler) | Similar observer pattern to Python, with event methods adapted for JS async handling; supports chain/agent interception; handlers can read inputs/outputs and modify metadata or raise exceptions to influence flow. [Details](#langchain) |
+| LangChain            | JS/Python/TS      | Y (read/write) | Middleware | Middleware concept was recently introduced in LangChain 1.0 alpha; [Details](https://blog.langchain.com/agent-middleware/) |
 | LangGraph                | Python  | Y (read/write) | Hooks/Callbacks (inherited from LangChain) | Event-driven with runtime handlers; integrates callbacks for observability in graphs; inherits LangChain's ability to read/modify metadata or interrupt execution. [Details](#langgraph) |
 | AutoGen (Python)         | Python  | Y (read/write) | Reply Functions (register_reply) | Reply functions intercept and process messages; middleware-like for agent replies; can directly modify messages or replies before continuing. [Details](#autogen) |
 | AutoGen (C#)             | C#      | Y (read/write) | Middleware (MiddlewareAgent)   | Decorator/wrapper with middleware delegates for message modification; delegates can read and alter message content or options. [Details](#autogen) |
@@ -732,29 +733,20 @@ class MyMultipleFilterImplementation : IAgentFilter<AgentRunContext>, IAgentFilt
 
 ## Decision Outcome
 
-**Current Status**: POC Implementation Complete - Both Option 2 (Decorator Pattern) and Option 3 (Processor Pattern) have been implemented and demonstrated in the current branch.
-
-**POC Findings**:
-- **Option 2 (Decorator Pattern)** is implemented through:
-  - Direct decorator classes inheriting from `DelegatingAIAgent` (e.g., `GuardrailCallbackAgent`)
-  - Context-based middleware using `RunningCallbackHandlerAgent` with `AgentInvokeCallbackContext`
-  - Builder pattern integration with `.Use()` method for fluent configuration
-
-- **Option 3 (Processor Pattern)** is implemented through:
-  - `CallbackMiddlewareProcessor` managing collections of `ICallbackMiddleware` instances
-  - `CallbackEnabledAgent` as a decorator that integrates with the processor
-  - `CallbackMiddleware<TContext>` base class for type-safe middleware implementation
-  - Builder pattern integration with `.UseCallbacks()` method
+- **Option 2 (Decorator Pattern)** is the preferred approach for the following reasons:
+  - Adding a processor pattern seems an overkill as we can achieve same results without introducing new abstractions and complexity.
+  - Direct decorator on agents and tools for agent and function invocation middleware.
+  - Support for Context-based middleware also leveraging closer patterns to Semantic Kernel filters.
+  - Agent Builder pattern integration with `.Use()` method for fluent configuration
 
 **Key POC Insights**:
 1. Both patterns actually work
-2. The processor pattern provides better extensibility and type safety
-3. The decorator pattern offers more direct control and simpler implementation for specific use cases
+2. The decorator pattern offers more direct control and simpler and more flexible implementation
+2. The processor seems an overkill compared to decorator as it adds more extra abstractions and complexity
 4. Function invocation filtering is supported in both patterns
 5. Streaming scenarios are well-supported in both approaches
-6. Builder pattern integration makes both approaches developer-friendly
-
-**Next Steps**: Further evaluation needed to determine which of the patterns should be preferred for the final implementation.
+6. Function approval request filtering is supported in both patterns
+7. Builder pattern added as part of the POC is a must-have and mades both approaches developer-friendly
 
 ## Appendix: Other AI Agent Framework Analysis Details
 
