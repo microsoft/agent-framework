@@ -1175,6 +1175,22 @@ def test_chat_options_to_provider_settings_with_falsy_values():
     assert settings["none_value"] is None
 
 
+def test_chat_options_empty_logit_bias_and_metadata_excluded():
+    """Test that empty logit_bias and metadata are excluded from provider settings."""
+    options = ChatOptions(
+        ai_model_id="gpt-4o",
+        logit_bias={},  # empty dict should be excluded
+        metadata={},  # empty dict should be excluded
+    )
+
+    settings = options.to_provider_settings()
+
+    # Empty logit_bias and metadata should be excluded
+    assert "logit_bias" not in settings
+    assert "metadata" not in settings
+    assert settings["model"] == "gpt-4o"
+
+
 # region AgentRunResponse
 
 
