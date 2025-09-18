@@ -1,10 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable RCS1110 // Declare type inside namespace
-#pragma warning disable CA1812 // Declare type inside namespace
-#pragma warning disable CS8321
-#pragma warning disable VSTHRD200 // Use "Async" suffix for async methods
-
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -15,11 +10,8 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.Logging;
 
-// Create a logger factory for the sample
-using var loggerFactory = LoggerFactory.Create(builder =>
-    builder.AddConsole().SetMinimumLevel(LogLevel.Information));
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 // Get Azure AI Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -42,10 +34,10 @@ var originalAgent = new ChatClientAgent(client.AsIChatClient(), new ChatClientAg
         tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]));
 
 var middlewareEnabledAgent = originalAgent.AsBuilder()
-    .UseFunctionInvocationContext(FunctionCallMiddleware1)
-    .UseFunctionInvocationContext(FunctionCallMiddleware2)
-    .UseRunningContext(PIIMiddleware)
-    .UseRunningContext(GuardrailMiddleware)
+    .Use(FunctionCallMiddleware1)
+    .Use(FunctionCallMiddleware2)
+    .Use(PIIMiddleware)
+    .Use(GuardrailMiddleware)
     .Build();
 
 var thread = middlewareEnabledAgent.GetNewThread();
@@ -78,7 +70,6 @@ var optionsWithApproval = new ChatClientAgentRunOptions(new()
 // var response = middlewareAgent  // Using per-request middleware in addition to agent-level middleware
 var response = await originalAgent // Using per-request middleware without agent-level middleware
     .AsBuilder()
-    // Setup the middleware
     .Use(PerRequestFunctionCallingMiddleware)
     .Use(ConsolePromptingApprovalMiddleware)
     .Build()
