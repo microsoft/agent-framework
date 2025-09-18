@@ -179,7 +179,6 @@ class BaseMiddlewarePipeline(ABC):
 
     def _create_handler_chain(
         self,
-        context: Any,
         final_handler: Callable[[Any], Awaitable[Any]],
         result_container: dict[str, Any],
         result_key: str = "result",
@@ -187,7 +186,6 @@ class BaseMiddlewarePipeline(ABC):
         """Create a chain of middleware handlers.
 
         Args:
-            context: The execution context
             final_handler: The final handler to execute
             result_container: Container to store the result
             result_key: Key to use in the result container
@@ -433,7 +431,7 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
             # Execute actual handler and populate context for observability
             return await final_handler(c)
 
-        first_handler = self._create_handler_chain(context, function_final_handler, result_container, "result")
+        first_handler = self._create_handler_chain(function_final_handler, result_container, "result")
         await first_handler(context)
 
         # Return the result from result container or overridden result
