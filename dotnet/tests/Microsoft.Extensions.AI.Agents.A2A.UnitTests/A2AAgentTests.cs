@@ -16,6 +16,8 @@ using A2A;
 
 namespace Microsoft.Extensions.AI.Agents.A2A.UnitTests;
 
+#pragma warning disable IDE0004 // Cast is redundant. - False positive due to conditional compilation with covariant return types.
+
 /// <summary>
 /// Unit tests for the <see cref="A2AAgent"/> class.
 /// </summary>

@@ -8,6 +8,8 @@ using Moq;
 
 namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
 
+#pragma warning disable IDE0004 // Cast is redundant. - False positive due to conditional compilation with covariant return types.
+
 public class ChatClientAgentTests
 {
     #region Constructor Tests
@@ -1726,7 +1728,11 @@ public class ChatClientAgentTests
         // Assert
         Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
         Assert.IsType<ChatClientAgentThread>(thread);
+#if NET5_0_OR_GREATER
+        var typedThread = thread;
+#else
         var typedThread = (ChatClientAgentThread)thread;
+#endif
         Assert.Same(mockStore.Object, typedThread.MessageStore);
     }
 
@@ -1753,7 +1759,11 @@ public class ChatClientAgentTests
         // Assert
         Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
         Assert.IsType<ChatClientAgentThread>(thread);
+#if NET5_0_OR_GREATER
+        var typedThread = thread;
+#else
         var typedThread = (ChatClientAgentThread)thread;
+#endif
         Assert.Same(mockContextProvider.Object, typedThread.AIContextProvider);
     }
 
