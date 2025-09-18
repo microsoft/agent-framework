@@ -50,9 +50,9 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        if (request.Port.Request == typeof(NumberSignal))
+        if (request.DataIs<NumberSignal>())
         {
-            var signal = (NumberSignal)request.Data;
+            var signal = request.DataAs<NumberSignal>();
             switch (signal)
             {
                 case NumberSignal.Init:
@@ -67,7 +67,7 @@ public static class Program
             }
         }
 
-        throw new NotSupportedException($"Request {request.Port.Request} is not supported");
+        throw new NotSupportedException($"Request {request.PortInfo.RequestType} is not supported");
     }
 
     private static int ReadIntegerFromConsole(string prompt)

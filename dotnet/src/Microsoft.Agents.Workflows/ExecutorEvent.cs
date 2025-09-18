@@ -1,10 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Serialization;
+
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
 /// Base class for <see cref="Executor"/>-scoped events.
 /// </summary>
+[JsonDerivedType(typeof(ExecutorInvokedEvent))]
+[JsonDerivedType(typeof(ExecutorCompletedEvent))]
+[JsonDerivedType(typeof(ExecutorFailedEvent))]
 public class ExecutorEvent(string executorId, object? data) : WorkflowEvent(data)
 {
     /// <summary>

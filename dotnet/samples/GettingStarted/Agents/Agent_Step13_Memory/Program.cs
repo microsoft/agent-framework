@@ -38,7 +38,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     Instructions = "You are a friendly assistant. Always address the user by their name.",
-    AIContextProviderFactory = () => new SampleApp.UserInfoMemory(chatClient.AsIChatClient())
+    AIContextProviderFactory = (jse, jso) => new UserInfoMemory(chatClient.AsIChatClient(), jse, jso)
 });
 
 // Create a new thread for the conversation.
@@ -57,7 +57,7 @@ var threadElement = await thread.SerializeAsync();
 Console.WriteLine("\n>> Use deserialized thread with previously created memories\n");
 
 // Later we can deserialize the thread and continue the conversation with the previous memory component state.
-var deserializedThread = await agent.DeserializeThreadAsync(threadElement);
+var deserializedThread = agent.DeserializeThread(threadElement);
 Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedThread));
 
 Console.WriteLine("\n>> Read memories from memory component\n");
@@ -89,16 +89,30 @@ namespace SampleApp
     /// <summary>
     /// Sample memory component that can remember a user's name and age.
     /// </summary>
-    internal sealed class UserInfoMemory(IChatClient chatClient, UserInfo? userInfo = null) : AIContextProvider
+    internal sealed class UserInfoMemory : AIContextProvider
     {
-        public UserInfo UserInfo { get; set; } = userInfo ?? new();
+        private readonly IChatClient _chatClient;
+
+        public UserInfoMemory(IChatClient chatClient, UserInfo? userInfo = null)
+        {
+            this._chatClient = chatClient;
+            this.UserInfo = userInfo ?? new UserInfo();
+        }
+
+        public UserInfoMemory(IChatClient chatClient, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            this._chatClient = chatClient;
+            this.UserInfo = JsonSerializer.Deserialize<UserInfo>(serializedState, jsonSerializerOptions) ?? new UserInfo();
+        }
+
+        public UserInfo UserInfo { get; set; }
 
         public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((this.UserInfo.UserName == null || this.UserInfo.UserAge == null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
             {
-                var result = await chatClient.GetResponseAsync<UserInfo>(
+                var result = await this._chatClient.GetResponseAsync<UserInfo>(
                     context.RequestMessages,
                     new ChatOptions()
                     {

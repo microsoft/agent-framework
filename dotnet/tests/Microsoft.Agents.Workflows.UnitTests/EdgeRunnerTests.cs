@@ -31,7 +31,7 @@ public class EdgeRunnerTests
         runContext.Executors["executor1"] = new ForwardMessageExecutor<string>("executor1");
         runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
 
-        DirectEdgeData edgeData = new("executor1", "executor2", condition);
+        DirectEdgeData edgeData = new("executor1", "executor2", new EdgeId(0), condition);
         DirectEdgeRunner runner = new(runContext, edgeData);
 
         MessageEnvelope envelope = new(MessageVariant1, targetId: targetId);
@@ -90,7 +90,7 @@ public class EdgeRunnerTests
             ? (targetMatch.Value ? "executor2" : "executor1")
             : null;
 
-        FanOutEdgeData edgeData = new("executor1", ["executor2", "executor3"], assigner);
+        FanOutEdgeData edgeData = new("executor1", ["executor2", "executor3"], new EdgeId(0), assigner);
         FanOutEdgeRunner runner = new(runContext, edgeData);
 
         MessageEnvelope envelope = new("test", targetId: targetId);
@@ -145,7 +145,7 @@ public class EdgeRunnerTests
         runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
         runContext.Executors["executor3"] = new ForwardMessageExecutor<string>("executor3");
 
-        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3");
+        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0));
         FanInEdgeRunner runner = new(runContext, edgeData);
 
         // Step 1: Send message from executor1, should not forward yet.

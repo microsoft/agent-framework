@@ -39,7 +39,7 @@ internal sealed class AgentActor(
             if (threadResult.Value is { } threadJson)
             {
                 // Deserialize the thread state if it exists
-                this._thread = await agent.DeserializeThreadAsync(threadJson, cancellationToken: cancellationToken).ConfigureAwait(false);
+                this._thread = agent.DeserializeThread(threadJson, cancellationToken: cancellationToken);
                 hasExistingThread = true;
             }
         }
