@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -145,7 +146,10 @@ class _CallbackAggregator(Executor):
     """
 
     def __init__(self, callback: Callable[..., Any], id: str | None = None) -> None:
-        super().__init__(id)
+        derived_id = getattr(callback, "__name__", "") or ""
+        if not derived_id or derived_id == "<lambda>":
+            derived_id = f"{type(self).__name__}_{uuid.uuid4().hex}"
+        super().__init__(id or derived_id)
         self._callback = callback
         self._param_count = len(inspect.signature(callback).parameters)
 
