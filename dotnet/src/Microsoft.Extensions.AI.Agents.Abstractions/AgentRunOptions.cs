@@ -27,11 +27,6 @@ public class AgentRunOptions
     }
 
     /// <summary>
-    /// Specifies whether the agent should allow long-running runs if supported by underlying service.
-    /// </summary>
-    public bool? AllowLongRuns { get; set; }
-
-    /// <summary>
     /// Token to get result of a long-running operation.
     /// </summary>
     public ContinuationToken? ContinuationToken { get; set; }
