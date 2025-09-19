@@ -1246,7 +1246,7 @@ if(response.Status is {} status)
 
 ##### 6.1.3 Continuation Token
 
-This option suggests using `System.ClientModel.ContinuationToken` to encapsulate all properties required for long-running operations.
+This option suggests using `ContinuationToken` to encapsulate all properties required for long-running operations.
 The continuation token will be returned by chat clients as part of the `ChatResponse` and `ChatResponseUpdate` responses to indicate that
 the response is part of a long-running execution. A null value of the property will indicate that the response is not part of a long-running execution.
 Chat clients will accept a non-null value of the property to indicate that callers want to get the status and result of an existing long-running execution.
@@ -1407,7 +1407,7 @@ public class CustomAgent : AIAgent
 {
     public override async Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var response = await this.client.CancelRunAsync(id, options?.Thread?.ConversationId);
+        var response = await this._client.CancelRunAsync(id, options?.Thread?.ConversationId);
 
         return ConvertToAgentRunResponse(response); 
     }
@@ -1441,6 +1441,137 @@ public class AgentCancelRunOptions
 Similar design considerations can be applied to the `DeleteRunAsync` method and the `AgentDeleteRunOptions` class.
 
 Having options in the method signatures allows for future extensibility; however, they can be added later if needed to the method overloads.
+
+**Pros:**
+- Existing `Run{Streaming}Async` methods are reused for common operations.
+- New methods for uncommon operations can be added in a non-breaking way.
+
+### 2. Model To Support Long-Running Operations
+  
+To support long-running operations, there should be a way to return an identifier of the long-running operation or entity by the `RunAsync` and `RunStreamingAsync` 
+methods and to accept it as a parameter to get the result of the long-running operation.  
+  
+Section "6. Model To Support Long-Running Operations" above discusses different options for modeling long-running operations for chat clients, so they won't be repeated here, 
+except the one that uses continuation tokens to encapsulate long-running operation properties since it was agreed to be the best option for chat clients.  
+  
+#### 2.1 Continuation Token
+
+This option suggests using `ContinuationToken` to encapsulate all properties required for long-running operations. The continuation token will be returned by agents as part
+of the `AgentRunResponse` and `AgentRunResponseUpdate` responses to indicate that the response is part of a long-running execution. A null value of the property will indicate
+that the response is not part of a long-running execution or the long-running execution has been completed. Agents will accept the token and will get the result of an existing
+long-running execution if the token is non-null or start a new operation if the token is null.
+
+Each agent will implement its own continuation token class that inherits from `ContinuationToken` to encapsulate properties required for long-running operations that are
+specific to the underlying API the agent works with. For example, for the OpenAI Responses API, the continuation token class will encapsulate the `ResponseId` and `SequenceNumber` properties.
+
+```csharp
+internal sealed class LongRunContinuationToken : ContinuationToken
+{
+    public LongRunContinuationToken(string responseId)
+    {
+        this.ResponseId = responseId;
+    }
+
+    public string ResponseId { get; set; }
+    public int? SequenceNumber { get; set; }
+
+    public static LongRunContinuationToken FromToken(ContinuationToken token)
+    {
+        if (token is LongRunContinuationToken longRunContinuationToken)
+        {
+            return longRunContinuationToken;
+        }
+
+        BinaryData data = token.ToBytes();
+        Utf8JsonReader reader = new(data);
+        string responseId = null!;
+        int? sequenceNumber = null;
+        reader.Read();
+        // Reading functionality
+        return new(responseId)
+        {
+            SequenceNumber = sequenceNumber
+        };
+    }
+}
+
+public class AgentRunOptions
+{
+    public ContinuationToken? ContinuationToken { get; set; }
+}
+
+public class AgentRunResponse
+{
+    public ContinuationToken? ContinuationToken { get; }
+}
+ 
+public class AgentRunResponseUpdate
+{
+    public ContinuationToken? ContinuationToken { get; }
+}
+
+// Usage example
+AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
+
+AgentRunOptions options = new() { ContinuationToken = response.ContinuationToken };
+
+while (response.ContinuationToken is { } token)
+{
+    options.ContinuationToken = token;
+    response = await agent.RunAsync([], options);
+}
+
+Console.WriteLine(response.Text);
+```
+
+**Pro:** No proliferation of long-running operation properties in agents' model classes.
+
+### 3. Enabling Long-Running Operations
+
+This section considers different options for enabling long-running operations for agents.
+
+The "2. Enabling Long-Running Operations" section above discusses different options for enabling long-running operations for chat clients, which are:
+- Execution Mode per `Get{Streaming}ResponseAsync` Invocation
+- Execution Mode per Chat Client Instance
+- Combined Approach
+
+For agents that are supposed to be configured once in accordance with a role in a scenario, it makes sense to have an enabling option per agent instance only, rather than per method invocation.
+  
+#### 3.1 Execution Mode per Agent Instance
+
+This option proposes adding a new `enableLongRuns` parameter to the constructors of agents that work with APIs that support explicit execution mode configuration.
+The parameter value will be `true` if the agent should operate in long-running operation mode, and `false`, `null`, or omitted if it should operate in quick prompt mode.  
+  
+Agents that work with APIs that don't require explicit configuration, like A2A agents, won't have this parameter in their constructors and will operate according 
+to their own logic/configuration.  
+  
+```csharp  
+public class CustomAgent : AIAgent  
+{  
+    private readonly bool _enableLongRuns;  
+  
+    public CustomAgent(bool enableLongRuns)  
+    {  
+        this._enableLongRuns = enableLongRuns;  
+    }  
+  
+    // Existing methods...  
+}  
+  
+// Consumer code example  
+AIAgent agent = new CustomAgent(enableLongRuns: true);  
+  
+// Start a long-running execution for the prompt  
+AgentRunResponse response = await agent.RunAsync("What is the capital of France?");  
+```  
+  
+An agent can be configured to always operate in long-running operation mode or quick prompt mode based on their role in a specific scenario.
+For example, an agent responsible for generating ideas for images can be configured for quick prompt mode, while an agent responsible for image generation
+can be configured to always use long-running execution mode.  
+  
+**Pro:** Can be beneficial for scenarios where agents need to be configured upfront in accordance with their role in a scenario.  
+  
+**Con:** Less flexible than the previous option, as it requires configuring of agents upfront at instantiation time. However, this flexibility might not be needed for agents.
 
 ## Decision Outcome
 
