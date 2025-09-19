@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/shared/app-header";
 import { DebugPanel } from "@/components/shared/debug-panel";
+import { AboutModal } from "@/components/shared/about-modal";
 import { AgentView } from "@/components/agent/agent-view";
 import { WorkflowView } from "@/components/workflow/workflow-view";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -36,6 +37,7 @@ export default function App() {
     return savedWidth ? parseInt(savedWidth, 10) : 320;
   });
   const [isResizing, setIsResizing] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
 
   // Initialize app - load agents and workflows
   useEffect(() => {
@@ -221,6 +223,7 @@ export default function App() {
         selectedItem={appState.selectedAgent}
         onSelect={handleEntitySelect}
         isLoading={appState.isLoading}
+        onSettingsClick={() => setShowAboutModal(true)}
       />
 
       {/* Main Content - Split Panel */}
@@ -294,6 +297,12 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* About Modal */}
+      <AboutModal
+        open={showAboutModal}
+        onOpenChange={setShowAboutModal}
+      />
     </div>
   );
 }

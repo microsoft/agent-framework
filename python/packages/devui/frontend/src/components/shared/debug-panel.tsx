@@ -18,6 +18,7 @@ import {
   MessageSquare,
   ChevronRight,
   ChevronDown,
+  Info,
 } from "lucide-react";
 import type { ExtendedResponseStreamEvent } from "@/types";
 
@@ -963,6 +964,18 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
           {traceEvents.length === 0 ? (
             <div className="text-center text-muted-foreground text-sm py-8">
               No trace data available.
+              <br />
+              {events && events.length > 0 && (
+                <div className="mt-3 text-xs border rounded p-2">
+                  {" "}
+                  <Info className="inline h-4 w-4 mr-1  " />
+                  You may have to set the environment variable{" "}
+                  <span className="font-mono bg-accent/10 px-1 rounded">
+                    ENABLE_OTEL=true
+                  </span>{" "}
+                  to enable tracing.
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-3">

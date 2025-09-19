@@ -15,6 +15,7 @@ interface AppHeaderProps {
   selectedItem?: AgentInfo | WorkflowInfo;
   onSelect: (item: AgentInfo | WorkflowInfo) => void;
   isLoading?: boolean;
+  onSettingsClick?: () => void;
 }
 
 export function AppHeader({
@@ -23,6 +24,7 @@ export function AppHeader({
   selectedItem,
   onSelect,
   isLoading = false,
+  onSettingsClick,
 }: AppHeaderProps) {
   return (
     <header className="flex h-14 items-center gap-4 border-b px-4">
@@ -37,7 +39,7 @@ export function AppHeader({
 
       <div className="flex items-center gap-2 ml-auto">
         <ModeToggle />
-        <Button variant="ghost" size="sm">
+        <Button variant="ghost" size="sm" onClick={onSettingsClick}>
           <Settings className="h-4 w-4" />
         </Button>
       </div>
