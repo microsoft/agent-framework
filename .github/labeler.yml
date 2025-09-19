@@ -24,5 +24,11 @@ workflows:
     - dotnet/src/Microsoft.Agents.Workflows/**
     - dotnet/src/Microsoft.Agents.Workflows.Declarative/**
     - dotnet/samples/GettingStarted/Workflow/**
-    - python/packages/workflows/**
+    - python/packages/main/agent_framework/_workflow/**
     - python/samples/getting_started/workflow/**
+
+# Add 'lab' label to any change within the 'python/packages/lab' directory
+lab:
+- changed-files:
+  - any-glob-to-any-file:
+    - python/packages/lab/**
