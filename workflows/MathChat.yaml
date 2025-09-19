@@ -24,10 +24,10 @@
 # If the student has demonstrated comprehension and responded to all of your feedback, 
 # give the student your congraluations by using the word "congratulations".    
 #
-kind: AdaptiveDialog
-beginDialog:
+kind: Workflow
+trigger:
 
-  kind: OnActivity
+  kind: OnConversationStart
   id: workflow_demo
   actions:
 
