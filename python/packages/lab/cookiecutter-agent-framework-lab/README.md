@@ -11,7 +11,7 @@ cookiecutter ./cookiecutter-agent-framework-lab
 
 You will be prompted for the following information:
 
-- **package_name**: The name of your lab package (e.g., "lighting", "vision")
+- **package_name**: The name of your lab package (e.g., "lightning", "vision")
 - **package_display_name**: Human-readable name (e.g., "Lighting Tools", "Computer Vision")
 - **package_description**: Brief description of the package (auto-generated from display name)
 - **version**: Starting version (default: 0.1.0b1)
