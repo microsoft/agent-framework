@@ -703,7 +703,13 @@ class Workflow(AFBaseModel):
     # Graph signature helpers
 
     def _compute_graph_signature(self) -> dict[str, Any]:
-        """Build a canonical description of the workflow graph."""
+        """Build a canonical fingerprint of the workflow graph topology for checkpoint validation.
+
+        This creates a minimal, stable representation that captures only the structural
+        elements of the workflow (executor types, edge relationships, topology) while
+        ignoring data/state changes. Used to verify that a workflow's structure hasn't
+        changed when resuming from checkpoints.
+        """
         executors_signature = {
             executor_id: f"{executor.__class__.__module__}.{executor.__class__.__name__}"
             for executor_id, executor in self.executors.items()
@@ -832,7 +838,10 @@ class WorkflowBuilder:
             if name:
                 proposed_id = str(name)
                 if proposed_id in self._executors:
-                    proposed_id = f"{proposed_id}-{uuid.uuid4().hex[:8]}"
+                    raise ValueError(
+                        f"Duplicate executor ID '{proposed_id}' from agent name. "
+                        "Agent names must be unique within a workflow."
+                    )
             wrapper = AgentExecutor(candidate, id=proposed_id, streaming=True)
             self._agent_wrappers[id(candidate)] = wrapper
             return wrapper

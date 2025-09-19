@@ -149,7 +149,7 @@ class TestWorkflowAgent:
         """Test end-to-end workflow with RequestInfoEvent handling."""
         # Create workflow with requesting executor -> request info executor (no cycle)
         requesting_executor = RequestingExecutor(id="requester")
-        request_info_executor = RequestInfoExecutor()
+        request_info_executor = RequestInfoExecutor(id="request_info")
 
         workflow = (
             WorkflowBuilder()

@@ -711,17 +711,13 @@ class RequestInfoExecutor(Executor):
 
     _PENDING_SHARED_STATE_KEY: ClassVar[str] = "_af_pending_request_info"
 
-    def __init__(self, id: str | None = None):
-        """Initialize the RequestInfoExecutor with an optional custom ID.
+    def __init__(self, id: str):
+        """Initialize the RequestInfoExecutor with a unique ID.
 
         Args:
-            id: Optional custom ID for this RequestInfoExecutor. If not provided,
-                a unique ID will be generated.
+            id: Unique ID for this RequestInfoExecutor.
         """
-        import uuid
-
-        executor_id = id or f"request_info_{uuid.uuid4().hex[:8]}"
-        super().__init__(id=executor_id)
+        super().__init__(id=id)
         self._request_events: dict[str, RequestInfoEvent] = {}
         self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
 
@@ -1344,7 +1340,11 @@ class AgentExecutor(Executor):
             exec_id = id
         else:
             agent_name = agent.name
-            exec_id = str(agent_name) if agent_name else f"executor_{uuid.uuid4()}"
+            if agent_name:
+                exec_id = str(agent_name)
+            else:
+                logger.warning("Agent has no name, using fallback ID 'executor_unnamed'")
+                exec_id = "executor_unnamed"
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()

@@ -184,29 +184,6 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> "Workflow":
         .with_checkpointing(checkpoint_storage=checkpoint_storage)  # Enable persistence
         .build()
     )
-    # return (
-    #     (
-    #         WorkflowBuilder(max_iterations=5)
-    #         .add_edge(upper_case_executor, reverse_text_executor)  # Uppercase -> Reverse
-    #         .add_edge(reverse_text_executor, submit_lower)  # Reverse -> Build Agent request
-    #         .add_edge(submit_lower, lower_agent)  # Submit to AgentExecutor
-    #         .add_edge(lower_agent, finalize)  # Agent output -> Finalize
-    #         .set_start_executor(upper_case_executor)  # Entry point
-    #         .with_checkpointing(checkpoint_storage=checkpoint_storage)  # Enable persistence
-    #         .build()
-    #     )
-    #     if checkpoint_storage
-    #     else (
-    #         WorkflowBuilder(max_iterations=5)
-    #         .add_edge(upper_case_executor, reverse_text_executor)
-    #         .add_edge(reverse_text_executor, submit_lower)
-    #         .add_edge(submit_lower, lower_agent)
-    #         .add_edge(lower_agent, finalize)
-    #         .set_start_executor(upper_case_executor)
-    #         .build()
-    #     )
-    # )
-
 
 def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
     """Display human-friendly checkpoint metadata using framework summaries."""
