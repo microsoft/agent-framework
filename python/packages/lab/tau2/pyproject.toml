@@ -35,6 +35,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["agent_framework_lab_tau2", "agent_framework.lab.tau2"]
 
+[tool.setuptools.package-dir]
+"agent_framework.lab.tau2" = "namespace/agent_framework/lab/tau2"
+"agent_framework_lab_tau2" = "agent_framework_lab_tau2"
+
 [tool.setuptools.package-data]
 agent_framework_lab_tau2 = ["py.typed"]
 
