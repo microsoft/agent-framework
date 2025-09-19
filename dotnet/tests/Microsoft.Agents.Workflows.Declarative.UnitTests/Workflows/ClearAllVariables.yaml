@@ -6,5 +6,5 @@ beginDialog:
   actions:
     - kind: ClearAllVariables
       id: clear_all
-      variables: [ConversationScopedVariables]
+      variables: ConversationScopedVariables
 
