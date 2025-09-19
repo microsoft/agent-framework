@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.Hosting;
 /// <summary>
 /// Represents an agent thread for a <see cref="AgentProxy"/>.
 /// </summary>
-public sealed partial class AgentProxyThread : ServiceIdAgentThread
+internal sealed partial class AgentProxyThread : ServiceIdAgentThread
 {
 #if NET7_0_OR_GREATER
     [System.Diagnostics.CodeAnalysis.StringSyntax("Regex")]
