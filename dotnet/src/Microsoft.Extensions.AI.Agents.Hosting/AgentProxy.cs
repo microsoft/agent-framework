@@ -45,7 +45,7 @@ public sealed class AgentProxy : AIAgent
     /// </summary>
     /// <param name="conversationId">The thread identifier.</param>
     /// <returns>The thread.</returns>
-    public AgentThread GetThread(string conversationId) => new AgentProxyThread(conversationId);
+    public AgentThread GetNewThread(string conversationId) => new AgentProxyThread(conversationId);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(

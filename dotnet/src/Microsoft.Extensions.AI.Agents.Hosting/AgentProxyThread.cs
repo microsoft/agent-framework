@@ -42,7 +42,7 @@ public sealed partial class AgentProxyThread : ServiceIdAgentThread
     /// Initializes a new instance of the <see cref="AgentProxyThread"/> class with the specified identifier.
     /// </summary>
     /// <param name="id">The unique identifier for the agent proxy thread.</param>
-    public AgentProxyThread(string id)
+    internal AgentProxyThread(string id)
     {
         Throw.IfNullOrEmpty(id);
         ValidateId(id);
@@ -52,7 +52,7 @@ public sealed partial class AgentProxyThread : ServiceIdAgentThread
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentProxyThread"/> class with the specified identifier.
     /// </summary>
-    public AgentProxyThread() : this(CreateId())
+    internal AgentProxyThread() : this(CreateId())
     {
     }
 
