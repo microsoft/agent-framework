@@ -73,15 +73,4 @@ def patched_otel_settings(monkeypatch) -> "OtelSettings":  # type: ignore
     )  # reset to default values
     monkeypatch.setattr(observability, "OTEL_SETTINGS", otel, raising=False)  # type: ignore
 
-    # Recreate module-level tracer and workflow_tracer so other modules that
-    # import them from `agent_framework.observability` will see the updated
-    # tracer providers based on the new OTEL_SETTINGS instance.
-    from opentelemetry.trace import NoOpTracer
-
-    observability.tracer = otel.tracer_provider.get_tracer("agent_framework")
-    observability.workflow_tracer = (
-        otel.tracer_provider.get_tracer("agent_framework") if otel.enable_workflow_otel else NoOpTracer()
-    )
-    observability.meter = otel.meter_provider.get_meter("agent_framework")
-
     return otel

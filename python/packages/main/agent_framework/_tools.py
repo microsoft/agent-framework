@@ -33,7 +33,7 @@ from .observability import (
     capture_exception,  # type: ignore
     get_function_span,
     get_function_span_attributes,
-    meter,
+    get_meter,
 )
 
 if TYPE_CHECKING:
@@ -372,7 +372,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     func: Callable[..., Awaitable[ReturnT] | ReturnT]
     input_model: type[ArgsT]
     _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
-        default_factory=lambda: meter.create_histogram(
+        default_factory=lambda: get_meter().create_histogram(
             name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
             unit=OtelAttr.DURATION_UNIT,
             description="Measures the duration of a function's execution",

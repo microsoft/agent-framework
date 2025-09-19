@@ -7,7 +7,7 @@ from typing import Annotated
 
 from agent_framework import HostedCodeInterpreterTool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.observability import tracer
+from agent_framework.observability import get_tracer
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
@@ -65,7 +65,9 @@ async def main() -> None:
         if use_foundry_telemetry:
             await client.setup_foundry_telemetry(enable_live_metrics=True)
 
-        with tracer.start_as_current_span(name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT) as span:
+        with get_tracer().start_as_current_span(
+            name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT
+        ) as span:
             for question in questions:
                 print(f"{BLUE}User: {question}{RESET}")
                 print(f"{BLUE}Assistant: {RESET}", end="")

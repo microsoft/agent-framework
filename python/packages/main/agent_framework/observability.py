@@ -486,6 +486,8 @@ class OtelSettings(AFBaseSettings):
         self._configure_tracing([*(exporters if exporters else []), *new_exporters])
 
     def _configure_tracing(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
+        from opentelemetry._logs import set_logger_provider
+        from opentelemetry.metrics import set_meter_provider
         from opentelemetry.sdk._events import EventLoggerProvider
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
         from opentelemetry.sdk._logs._internal.export import LogExporter
@@ -495,6 +497,7 @@ class OtelSettings(AFBaseSettings):
         from opentelemetry.sdk.metrics.view import DropAggregation, View
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
+        from opentelemetry.trace import set_tracer_provider
 
         # Tracing
         if not self._tracer_provider:
@@ -504,6 +507,10 @@ class OtelSettings(AFBaseSettings):
             for exporter in exporters
             if isinstance(exporter, SpanExporter)
         ]
+        # setting global tracer provider, other libaries can use this,
+        # but if another global tracer provider is already set this will not override it.
+        # Internal AF functions should use OTEL_SETTINGS.tracer_provider to get the correct tracer provider.
+        set_tracer_provider(self._tracer_provider)
 
         # Logging
         if not self._logger_provider:
@@ -519,7 +526,7 @@ class OtelSettings(AFBaseSettings):
             handler = LoggingHandler(logger_provider=self._logger_provider)
             logger.addHandler(handler)
         logger.setLevel(logging.NOTSET)
-
+        set_logger_provider(self._logger_provider)
         # Events
         if not self._event_logger_provider:
             self._event_logger_provider = EventLoggerProvider(self._logger_provider)
@@ -542,6 +549,7 @@ class OtelSettings(AFBaseSettings):
                     View(instrument_name="gen_ai*"),
                 ],
             )
+        set_meter_provider(self._meter_provider)
 
 
 global OTEL_SETTINGS
@@ -605,8 +613,6 @@ def get_meter(
         attributes: Optional. Attributes that are associated with the emitted telemetry.
     """
     global OTEL_SETTINGS
-    if not OTEL_SETTINGS.is_setup:
-        OTEL_SETTINGS.setup_telemetry()
     return OTEL_SETTINGS.meter_provider.get_meter(
         name=name, version=version, schema_url=schema_url, attributes=attributes
     )
@@ -666,14 +672,11 @@ def setup_telemetry(
     )
 
 
-tracer = get_tracer()
-
-meter = get_meter()
 # region Chat Client Telemetry
 
 
 def _get_duration_histogram() -> "Histogram":
-    return meter.create_histogram(
+    return get_meter().create_histogram(
         name=Meters.LLM_OPERATION_DURATION,
         unit=OtelAttr.DURATION_UNIT,
         description="Captures the duration of operations of function-invoking chat clients",
@@ -682,7 +685,7 @@ def _get_duration_histogram() -> "Histogram":
 
 
 def _get_token_usage_histogram() -> "Histogram":
-    return meter.create_histogram(
+    return get_meter().create_histogram(
         name=Meters.LLM_TOKEN_USAGE,
         unit=OtelAttr.T_UNIT,
         description="Captures the token usage of chat clients",
@@ -1096,7 +1099,7 @@ def get_function_span(
     Returns:
         trace.Span: The started span as a context manager.
     """
-    return tracer.start_as_current_span(
+    return get_tracer().start_as_current_span(
         name=f"{attributes[OtelAttr.OPERATION]} {attributes[OtelAttr.TOOL_NAME]}",
         attributes=attributes,
         set_status_on_exception=False,
@@ -1111,7 +1114,7 @@ def _get_span(
     span_name_attribute: str,
 ) -> Generator["Span", Any, Any]:
     """Start a span for a agent run."""
-    span = tracer.start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
+    span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
     span.set_attributes(attributes)
     with use_span(
         span=span,
@@ -1316,7 +1319,9 @@ class EdgeGroupDeliveryStatus(Enum):
         return self.value
 
 
-workflow_tracer = get_tracer() if OTEL_SETTINGS.WORKFLOW_ENABLED else NoOpTracer()
+def workflow_tracer() -> "Tracer":
+    """Get a workflow tracer or a no-op tracer if not enabled."""
+    return get_tracer() if OTEL_SETTINGS.WORKFLOW_ENABLED else NoOpTracer()
 
 
 def create_workflow_span(
@@ -1325,7 +1330,7 @@ def create_workflow_span(
     kind: SpanKind = SpanKind.INTERNAL,
 ) -> "_AgnosticContextManager[Span]":
     """Create a generic workflow span."""
-    return workflow_tracer.start_as_current_span(name, kind=kind, attributes=attributes)
+    return workflow_tracer().start_as_current_span(name, kind=kind, attributes=attributes)
 
 
 def create_processing_span(
@@ -1366,7 +1371,7 @@ def create_processing_span(
                         )
                         links.append(Link(span_context))
 
-    return workflow_tracer.start_as_current_span(
+    return workflow_tracer().start_as_current_span(
         OtelAttr.EXECUTOR_PROCESS_SPAN,
         kind=SpanKind.INTERNAL,
         attributes={
@@ -1438,7 +1443,7 @@ def create_edge_group_processing_span(
                 # If linking fails, continue without link (graceful degradation)
                 pass
 
-    return workflow_tracer.start_as_current_span(
+    return workflow_tracer().start_as_current_span(
         OtelAttr.EDGE_GROUP_PROCESS_SPAN,
         kind=SpanKind.INTERNAL,
         attributes=attributes,

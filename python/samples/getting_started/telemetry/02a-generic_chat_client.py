@@ -7,7 +7,7 @@ from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from agent_framework import __version__, ai_function
-from agent_framework.observability import get_tracer, tracer
+from agent_framework.observability import get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -59,7 +59,7 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
 
     """
     scenario_name = "Chat Client Stream" if stream else "Chat Client"
-    with tracer.start_as_current_span(name=f"Scenario: {scenario_name}", kind=SpanKind.CLIENT):
+    with get_tracer().start_as_current_span(name=f"Scenario: {scenario_name}", kind=SpanKind.CLIENT):
         print("Running scenario:", scenario_name)
         message = "What's the weather in Amsterdam and in Paris?"
         print(f"User: {message}")
@@ -84,7 +84,7 @@ async def run_ai_function() -> None:
     The telemetry will include information about the AI function execution
     and the AI service execution.
     """
-    with tracer.start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT):
+    with get_tracer().start_as_current_span("Scenario: AI Function", kind=SpanKind.CLIENT):
         print("Running scenario: AI Function")
         func = ai_function(get_weather)
         weather = await func.invoke(location="Amsterdam")
