@@ -727,6 +727,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     if item.result:
                         # Handle the result as either a proper data URI or raw base64 string
                         uri = item.result
+                        media_type = None
                         if not uri.startswith("data:"):
                             # Raw base64 string - convert to proper data URI format
                             # Detect format from base64 data
@@ -750,9 +751,20 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 # Fallback to png if decoding fails
                                 format_type = "png"
                             uri = f"data:image/{format_type};base64,{uri}"
+                            media_type = f"image/{format_type}"
+                        else:
+                            # Parse media type from existing data URI
+                            try:
+                                # Extract media type from data URI (e.g., "data:image/png;base64,...")
+                                if ";" in uri and uri.startswith("data:"):
+                                    media_type = uri.split(";")[0].split(":", 1)[1]
+                            except Exception:
+                                # Fallback if parsing fails
+                                media_type = "image"
                         contents.append(
                             DataContent(
                                 uri=uri,
+                                media_type=media_type,
                                 raw_representation=item,
                             )
                         )

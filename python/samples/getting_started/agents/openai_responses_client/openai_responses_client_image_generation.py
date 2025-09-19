@@ -49,14 +49,13 @@ async def main() -> None:
                 "background": "transparent",
                 "quality": "low",
                 "format": "webp",
-                "compression": 85,
             }
         ],
     )
 
     query = "Generate a nice beach scenery with blue skies in summer time."
     print(f"User: {query}")
-    print("Generating image with parameters: landscape, transparent, low quality, WebP format...")
+    print("Generating image with parameters: 1024x1024 size, transparent background, low quality, WebP format...")
 
     result = await agent.run(query)
     print(f"Agent: {result.text}")
