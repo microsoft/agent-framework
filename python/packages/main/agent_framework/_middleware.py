@@ -21,6 +21,8 @@ __all__ = [
     "FunctionInvocationContext",
     "FunctionMiddleware",
     "Middleware",
+    "agent_middleware",
+    "function_middleware",
     "use_agent_middleware",
 ]
 
@@ -135,6 +137,53 @@ FunctionMiddlewareCallable = Callable[
 
 # Type alias for all middleware types
 Middleware: TypeAlias = AgentMiddleware | AgentMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable
+
+
+# Middleware type markers for decorators
+def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
+    """Decorator to mark a function as agent middleware.
+
+    This decorator explicitly identifies a function as agent middleware,
+    which processes AgentRunContext objects.
+
+    Args:
+        func: The middleware function to mark as agent middleware.
+
+    Returns:
+        The same function with agent middleware marker.
+
+    Example:
+        @agent_middleware
+        async def my_middleware(context: AgentRunContext, next):
+            # Process agent invocation
+            await next(context)
+    """
+    # Add marker attribute to identify this as agent middleware
+    func._middleware_type = "agent"  # type: ignore
+    return func
+
+
+def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareCallable:
+    """Decorator to mark a function as function middleware.
+
+    This decorator explicitly identifies a function as function middleware,
+    which processes FunctionInvocationContext objects.
+
+    Args:
+        func: The middleware function to mark as function middleware.
+
+    Returns:
+        The same function with function middleware marker.
+
+    Example:
+        @function_middleware
+        async def my_middleware(context: FunctionInvocationContext, next):
+            # Process function invocation
+            await next(context)
+    """
+    # Add marker attribute to identify this as function middleware
+    func._middleware_type = "function"  # type: ignore
+    return func
 
 
 class AgentMiddlewareWrapper(AgentMiddleware):
@@ -483,6 +532,72 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     original_run = agent_class.run  # type: ignore[attr-defined]
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
 
+    def _determine_middleware_type(middleware: Any) -> str:
+        """Determine middleware type using decorator and/or parameter type annotation.
+
+        Args:
+            middleware: The middleware function to analyze.
+
+        Returns:
+            "agent" or "function" indicating the middleware type.
+
+        Raises:
+            ValueError: When middleware type cannot be determined or there's a mismatch.
+        """
+        # Check for decorator marker
+        decorator_type: str | None = getattr(middleware, "_middleware_type", None)
+
+        # Check for parameter type annotation
+        param_type = None
+        try:
+            sig = inspect.signature(middleware)
+            params = list(sig.parameters.values())
+
+            # Must have at least 2 parameters (context and next)
+            if len(params) >= 2:
+                first_param = params[0]
+                if hasattr(first_param.annotation, "__name__"):
+                    annotation_name = first_param.annotation.__name__
+                    if annotation_name == "AgentRunContext":
+                        param_type = "agent"
+                    elif annotation_name == "FunctionInvocationContext":
+                        param_type = "function"
+            else:
+                # Not enough parameters - can't be valid middleware
+                raise ValueError(
+                    f"Middleware function must have at least 2 parameters (context, next), "
+                    f"but {middleware.__name__} has {len(params)}"
+                )
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise  # Re-raise our custom errors
+            # Signature inspection failed - continue with other checks
+            pass
+
+        if decorator_type and param_type:
+            # Both decorator and parameter type specified - they must match
+            if decorator_type != param_type:
+                raise ValueError(
+                    f"Middleware type mismatch: decorator indicates '{decorator_type}' "
+                    f"but parameter type indicates '{param_type}' for function {middleware.__name__}"
+                )
+            return decorator_type
+
+        if decorator_type:
+            # Just decorator specified - rely on decorator
+            return decorator_type
+
+        if param_type:
+            # Just parameter type specified - rely on types
+            return param_type
+
+        # Neither decorator nor parameter type specified - throw exception
+        raise ValueError(
+            f"Cannot determine middleware type for function {middleware.__name__}. "
+            f"Please either use @agent_middleware/@function_middleware decorators "
+            f"or specify parameter types (AgentRunContext or FunctionInvocationContext)."
+        )
+
     def _build_middleware_pipelines(
         agent_level_middlewares: Middleware | list[Middleware] | None,
         run_level_middlewares: Middleware | list[Middleware] | None = None,
@@ -523,31 +638,15 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             elif isinstance(middleware, FunctionMiddleware):
                 function_middlewares.append(middleware)
             elif callable(middleware):  # type: ignore[arg-type]
-                # Check function signature to determine type
-                try:
-                    sig = inspect.signature(middleware)
-                    params = list(sig.parameters.values())
-                    if len(params) >= 1:
-                        first_param = params[0]
-                        # Check if first parameter is AgentRunContext or FunctionInvocationContext
-                        if (
-                            hasattr(first_param.annotation, "__name__")
-                            and first_param.annotation.__name__ == "AgentRunContext"
-                        ):
-                            agent_middlewares.append(middleware)  # type: ignore
-                        elif (
-                            hasattr(first_param.annotation, "__name__")
-                            and first_param.annotation.__name__ == "FunctionInvocationContext"
-                        ):
-                            function_middlewares.append(middleware)  # type: ignore
-                        else:
-                            # Default to agent middleware if uncertain
-                            agent_middlewares.append(middleware)  # type: ignore
-                    else:
-                        agent_middlewares.append(middleware)  # type: ignore
-                except Exception:
-                    # If signature inspection fails, assume it's an agent middleware
+                # Determine middleware type using decorator and/or parameter type annotation
+                middleware_type = _determine_middleware_type(middleware)
+                if middleware_type == "agent":
                     agent_middlewares.append(middleware)  # type: ignore
+                elif middleware_type == "function":
+                    function_middlewares.append(middleware)  # type: ignore
+                else:
+                    # This should not happen if _determine_middleware_type is implemented correctly
+                    raise ValueError(f"Unknown middleware type: {middleware_type}")
             else:
                 # Fallback
                 agent_middlewares.append(middleware)  # type: ignore

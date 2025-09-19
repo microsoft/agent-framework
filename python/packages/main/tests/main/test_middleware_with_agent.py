@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Awaitable, Callable
+from typing import Any
+
+import pytest
 
 from agent_framework import (
     AgentRunResponseUpdate,
@@ -12,6 +15,8 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
+    agent_middleware,
+    function_middleware,
 )
 from agent_framework._middleware import (
     AgentMiddleware,
@@ -1053,7 +1058,7 @@ class TestRunLevelMiddleware:
                 execution_log.append("run_level_function_end")
 
         # Create tool function for testing function middleware
-        def test_tool(message: str) -> str:
+        def custom_tool(message: str) -> str:
             execution_log.append("tool_executed")
             return f"Tool response: {message}"
 
@@ -1065,7 +1070,7 @@ class TestRunLevelMiddleware:
                     contents=[
                         FunctionCallContent(
                             call_id="test_call",
-                            name="test_tool",
+                            name="custom_tool",
                             arguments='{"message": "test"}',
                         )
                     ],
@@ -1079,7 +1084,7 @@ class TestRunLevelMiddleware:
         agent = ChatAgent(
             chat_client=chat_client,
             middleware=[AgentLevelAgentMiddleware(), AgentLevelFunctionMiddleware()],
-            tools=[test_tool],
+            tools=[custom_tool],
         )
 
         # Execute with run-level middleware
@@ -1113,7 +1118,224 @@ class TestRunLevelMiddleware:
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
-        assert function_calls[0].name == "test_tool"
+        assert function_calls[0].name == "custom_tool"
         assert function_results[0].call_id == function_calls[0].call_id
         assert function_results[0].result is not None
         assert "Tool response: test" in str(function_results[0].result)
+
+
+class TestMiddlewareDecoratorLogic:
+    """Test the middleware decorator and type annotation logic."""
+
+    async def test_decorator_and_type_match(self, chat_client: MockChatClient) -> None:
+        """Both decorator and parameter type specified and match."""
+
+        execution_order: list[str] = []
+
+        @agent_middleware
+        async def matching_agent_middleware(
+            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("decorator_type_match_agent")
+            await next(context)
+
+        @function_middleware
+        async def matching_function_middleware(
+            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("decorator_type_match_function")
+            await next(context)
+
+        # Create tool function for testing function middleware
+        def custom_tool(message: str) -> str:
+            execution_order.append("tool_executed")
+            return f"Tool response: {message}"
+
+        # Set up mock to return a function call first, then a regular response
+        function_call_response = ChatResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[
+                        FunctionCallContent(
+                            call_id="test_call",
+                            name="custom_tool",
+                            arguments='{"message": "test"}',
+                        )
+                    ],
+                )
+            ]
+        )
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
+        chat_client.responses = [function_call_response, final_response]
+
+        # Should work without errors
+        agent = ChatAgent(
+            chat_client=chat_client,
+            middleware=[matching_agent_middleware, matching_function_middleware],
+            tools=[custom_tool],
+        )
+
+        response = await agent.run([ChatMessage(role=Role.USER, text="test")])
+
+        assert response is not None
+        assert "decorator_type_match_agent" in execution_order
+        assert "decorator_type_match_function" in execution_order
+
+    async def test_decorator_and_type_mismatch(self, chat_client: MockChatClient) -> None:
+        """Both decorator and parameter type specified but don't match."""
+
+        # This will cause a type error at decoration time, so we need to test differently
+        # Should raise ValueError due to mismatch during agent creation
+        with pytest.raises(ValueError, match="Middleware type mismatch"):
+
+            @agent_middleware  # type: ignore[arg-type]
+            async def mismatched_middleware(
+                context: FunctionInvocationContext,  # Wrong type for @agent_middleware
+                next: Any,
+            ) -> None:
+                await next(context)
+
+            agent = ChatAgent(chat_client=chat_client, middleware=[mismatched_middleware])
+            await agent.run([ChatMessage(role=Role.USER, text="test")])
+
+    async def test_only_decorator_specified(self, chat_client: Any) -> None:
+        """Only decorator specified - rely on decorator."""
+        execution_order: list[str] = []
+
+        @agent_middleware
+        async def decorator_only_agent(context: Any, next: Any) -> None:  # No type annotation
+            execution_order.append("decorator_only_agent")
+            await next(context)
+
+        @function_middleware
+        async def decorator_only_function(context: Any, next: Any) -> None:  # No type annotation
+            execution_order.append("decorator_only_function")
+            await next(context)
+
+        # Create tool function for testing function middleware
+        def custom_tool(message: str) -> str:
+            execution_order.append("tool_executed")
+            return f"Tool response: {message}"
+
+        # Set up mock to return a function call first, then a regular response
+        function_call_response = ChatResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[
+                        FunctionCallContent(
+                            call_id="test_call",
+                            name="custom_tool",
+                            arguments='{"message": "test"}',
+                        )
+                    ],
+                )
+            ]
+        )
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
+        chat_client.responses = [function_call_response, final_response]
+
+        # Should work - relies on decorator
+        agent = ChatAgent(
+            chat_client=chat_client, middleware=[decorator_only_agent, decorator_only_function], tools=[custom_tool]
+        )
+
+        response = await agent.run([ChatMessage(role=Role.USER, text="test")])
+
+        assert response is not None
+        assert "decorator_only_agent" in execution_order
+        assert "decorator_only_function" in execution_order
+
+    async def test_only_type_specified(self, chat_client: Any) -> None:
+        """Only parameter type specified - rely on types."""
+        execution_order: list[str] = []
+
+        # No decorator
+        async def type_only_agent(context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+            execution_order.append("type_only_agent")
+            await next(context)
+
+        # No decorator
+        async def type_only_function(
+            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("type_only_function")
+            await next(context)
+
+        # Create tool function for testing function middleware
+        def custom_tool(message: str) -> str:
+            execution_order.append("tool_executed")
+            return f"Tool response: {message}"
+
+        # Set up mock to return a function call first, then a regular response
+        function_call_response = ChatResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[
+                        FunctionCallContent(
+                            call_id="test_call",
+                            name="custom_tool",
+                            arguments='{"message": "test"}',
+                        )
+                    ],
+                )
+            ]
+        )
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
+        chat_client.responses = [function_call_response, final_response]
+
+        # Should work - relies on type annotations
+        agent = ChatAgent(
+            chat_client=chat_client, middleware=[type_only_agent, type_only_function], tools=[custom_tool]
+        )
+
+        response = await agent.run([ChatMessage(role=Role.USER, text="test")])
+
+        assert response is not None
+        assert "type_only_agent" in execution_order
+        assert "type_only_function" in execution_order
+
+    async def test_neither_decorator_nor_type(self, chat_client: Any) -> None:
+        """Neither decorator nor parameter type specified - should throw exception."""
+
+        async def no_info_middleware(context: Any, next: Any) -> None:  # No decorator, no type
+            await next(context)
+
+        # Should raise ValueError
+        with pytest.raises(ValueError, match="Cannot determine middleware type"):
+            agent = ChatAgent(chat_client=chat_client, middleware=[no_info_middleware])
+            await agent.run([ChatMessage(role=Role.USER, text="test")])
+
+    async def test_insufficient_parameters_error(self, chat_client: Any) -> None:
+        """Test that middleware with insufficient parameters raises an error."""
+        from agent_framework import ChatAgent, agent_middleware
+
+        # Should raise ValueError about insufficient parameters
+        with pytest.raises(ValueError, match="must have at least 2 parameters"):
+
+            @agent_middleware  # type: ignore[arg-type]
+            async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter
+                pass
+
+            agent = ChatAgent(chat_client=chat_client, middleware=[insufficient_params_middleware])
+            await agent.run([ChatMessage(role=Role.USER, text="test")])
+
+    async def test_decorator_markers_preserved(self) -> None:
+        """Test that decorator markers are properly set on functions."""
+
+        @agent_middleware
+        async def test_agent_middleware(context: Any, next: Any) -> None:
+            pass
+
+        @function_middleware
+        async def test_function_middleware(context: Any, next: Any) -> None:
+            pass
+
+        # Check that decorator markers were set
+        assert hasattr(test_agent_middleware, "_middleware_type")
+        assert test_agent_middleware._middleware_type == "agent"  # type: ignore[attr-defined]
+
+        assert hasattr(test_function_middleware, "_middleware_type")
+        assert test_function_middleware._middleware_type == "function"  # type: ignore[attr-defined]
