@@ -110,10 +110,7 @@ public class SpecializedExecutorSmokeTests
         }
     }
 
-    public class TestAgentThread : InMemoryAgentThread
-    {
-        internal TestAgentThread() : base() { }
-    }
+    public class TestAgentThread() : InMemoryAgentThread();
 
     internal sealed class TestWorkflowContext : IWorkflowContext
     {
