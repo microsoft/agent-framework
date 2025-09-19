@@ -56,7 +56,7 @@ internal sealed class WorkflowFormulaState
     }
 
     public void Set(string variableName, FormulaValue value, string? scopeName = null) =>
-        this.GetScope(scopeName)[variableName] = value;
+        this.GetScope(scopeName ?? DefaultScopeName)[variableName] = value;
 
     public bool SetInitialized() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
 
