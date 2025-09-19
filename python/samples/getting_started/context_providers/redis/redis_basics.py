@@ -37,9 +37,11 @@ from redisvl.utils.vectorize import OpenAITextVectorizer
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 
 
-def search_flights(origin_airport_code: str,
-                destination_airport_code: str,
-                detailed: bool = False) -> str:
+def search_flights(
+    origin_airport_code: str,
+    destination_airport_code: str,
+    detailed: bool = False
+) -> str:
     """Simulated flight-search tool to demonstrate tool memory.
 
     The agent can call this function, and the returned details can be stored
@@ -95,19 +97,15 @@ async def main() -> None:
     )
     # The provider manages persistence and retrieval. application_id/agent_id/user_id
     # scope data for multi-tenant separation; thread_id (set later) narrows to a
-    # specific conversation. overwrite_redis_index makes the example idempotent for
-    # repeated local runs.
+    # specific conversation. 
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
-        overwrite_redis_index=True,
-        drop_redis_index=True,
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
         user_id="kermit",
-        vectorizer=vectorizer,
+        redis_vectorizer=vectorizer,
         vector_field_name="vector",
-        vector_datatype="float32",
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
     )
@@ -136,11 +134,13 @@ async def main() -> None:
     # (Debug-only output so you can verify retrieval works as expected.)
     print("Model Invoking Result:")
     print(ctx)
-    print('\n')
+
+    # Drop / delete the provider index in Redis
+    await provider.redis_index.delete()
 
     # --- Agent + provider: teach and recall a preference ---
 
-    print("2. Agent + provider: teach and recall a preference")
+    print("\n2. Agent + provider: teach and recall a preference")
     print("-" * 40)
     # Fresh provider for the agent demo (recreates index)
     vectorizer = OpenAITextVectorizer(
@@ -151,15 +151,13 @@ async def main() -> None:
     # Recreate a clean index so the next scenario starts fresh
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
-        index_name="redis_basics",
-        overwrite_redis_index=True,
-        drop_redis_index=True,
+        index_name="redis_basics_2",
+        prefix="context_2",
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
         user_id="kermit",
-        vectorizer=vectorizer,
+        redis_vectorizer=vectorizer,
         vector_field_name="vector",
-        vector_datatype="float32",
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
     )
@@ -189,17 +187,18 @@ async def main() -> None:
     print("User: ", query)
     print("Agent: ", result)
 
+    # Drop / delete the provider index in Redis
+    await provider.redis_index.delete()
 
     # --- Agent + provider + tool: store and recall tool-derived context ---
 
-    print("3. Agent + provider + tool: store and recall tool-derived context")
+    print("\n3. Agent + provider + tool: store and recall tool-derived context")
     print("-" * 40)
     # Text-only provider (full-text search only). Omits vectorizer and related params.
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
-        index_name="redis_basics",
-        overwrite_redis_index=True,
-        drop_redis_index=True,
+        index_name="redis_basics_3",
+        prefix="context_3",
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
         user_id="kermit"
@@ -226,6 +225,9 @@ async def main() -> None:
     result = await agent.run(query)
     print("User: ", query)
     print("Agent: ", result)
+
+    # Drop / delete the provider index in Redis
+    await provider.redis_index.delete()
 
 if __name__ == "__main__":
     asyncio.run(main())

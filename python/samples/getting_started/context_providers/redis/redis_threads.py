@@ -52,16 +52,16 @@ async def example_global_thread_scope() -> None:
     )
 
     provider = RedisProvider(
-                    redis_url="redis://localhost:6379",
-                    index_name="redis_threads_global",
-                    overwrite_redis_index=True,
-                    drop_redis_index=True,
-                    application_id="threads_demo_app",
-                    agent_id="threads_demo_agent",
-                    user_id="threads_demo_user",
-                    thread_id=global_thread_id,
-                    scope_to_per_operation_thread_id=False,  # Share memories across all threads
-                )
+        redis_url="redis://localhost:6379",
+        index_name="redis_threads_global",
+        # overwrite_redis_index=True,
+        # drop_redis_index=True,
+        application_id="threads_demo_app",
+        agent_id="threads_demo_agent",
+        user_id="threads_demo_user",
+        thread_id=global_thread_id,
+        scope_to_per_operation_thread_id=False,  # Share memories across all threads
+    )
 
     agent = client.create_agent(
         name="GlobalMemoryAssistant",
@@ -85,6 +85,9 @@ async def example_global_thread_scope() -> None:
     result = await agent.run(query, thread=new_thread)
     print(f"Agent: {result}\n")
 
+    # Clean up the Redis index
+    await provider.redis_index.delete()
+
 
 async def example_per_operation_thread_scope() -> None:
     """Example 2: Per-operation thread scope (memories isolated per thread).
@@ -105,24 +108,26 @@ async def example_per_operation_thread_scope() -> None:
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
+    
+    provider = RedisProvider(
+        redis_url="redis://localhost:6379",
+        index_name="redis_threads_dynamic",
+        # overwrite_redis_index=True,
+        # drop_redis_index=True,
+        application_id="threads_demo_app",
+        agent_id="threads_demo_agent",
+        user_id="threads_demo_user",
+        scope_to_per_operation_thread_id=True,  # Isolate memories per thread
+        redis_vectorizer=vectorizer,
+        vector_field_name="vector",
+        vector_algorithm="hnsw",
+        vector_distance_metric="cosine",
+    )
+    
     agent = client.create_agent(
         name="ScopedMemoryAssistant",
         instructions="You are an assistant with thread-scoped memory.",
-        context_providers=RedisProvider(
-            redis_url="redis://localhost:6379",
-            index_name="redis_threads_dynamic",
-            overwrite_redis_index=True,
-            drop_redis_index=True,
-            application_id="threads_demo_app",
-            agent_id="threads_demo_agent",
-            user_id="threads_demo_user",
-            scope_to_per_operation_thread_id=True,  # Isolate memories per thread
-            vectorizer=vectorizer,
-            vector_field_name="vector",
-            vector_datatype="float32",
-            vector_algorithm="hnsw",
-            vector_distance_metric="cosine",
-        ),
+        context_providers=provider,
     )
 
     # Create a specific thread for this scoped provider
@@ -152,9 +157,12 @@ async def example_per_operation_thread_scope() -> None:
     result = await agent.run(query, thread=dedicated_thread)
     print(f"Agent: {result}\n")
 
+    # Clean up the Redis index
+    await provider.redis_index.delete()
+
 
 async def example_multiple_agents() -> None:
-    """Example 3: Multiple agents with different thread configurations (isolated via agent_id)."""
+    """Example 3: Multiple agents with different thread configurations (isolated via agent_id) but within 1 index."""
     print("3. Multiple Agents with Different Thread Configurations:")
     print("-" * 40)
 
@@ -168,47 +176,41 @@ async def example_multiple_agents() -> None:
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
+    
+    personal_provider = RedisProvider(
+        redis_url="redis://localhost:6379",
+        index_name="redis_threads_agents",
+        application_id="threads_demo_app",
+        agent_id="agent_personal",
+        user_id="threads_demo_user",
+        redis_vectorizer=vectorizer,
+        vector_field_name="vector",
+        vector_algorithm="hnsw",
+        vector_distance_metric="cosine",
+    )
+    
     personal_agent = client.create_agent(
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
-        context_providers=RedisProvider(
-            redis_url="redis://localhost:6379",
-            index_name="redis_threads_agents",
-            overwrite_redis_index=True,
-            drop_redis_index=True,
-            application_id="threads_demo_app",
-            agent_id="agent_personal",
-            user_id="threads_demo_user",
-            vectorizer=vectorizer,
-            vector_field_name="vector",
-            vector_datatype="float32",
-            vector_algorithm="hnsw",
-            vector_distance_metric="cosine",
-        ),
+        context_providers=personal_provider,
     )
-    # Separate vectorizer for the work agent is optional; sharing is fine too
-    vectorizer_work = OpenAITextVectorizer(
-        model="text-embedding-ada-002",
-        api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+    
+    work_provider = RedisProvider(
+        redis_url="redis://localhost:6379",
+        index_name="redis_threads_agents",
+        application_id="threads_demo_app",
+        agent_id="agent_work",
+        user_id="threads_demo_user",
+        redis_vectorizer=vectorizer,
+        vector_field_name="vector",
+        vector_algorithm="hnsw",
+        vector_distance_metric="cosine",
     )
+    
     work_agent = client.create_agent(
         name="WorkAssistant",
         instructions="You are a work assistant that helps with professional tasks.",
-        context_providers=RedisProvider(
-            redis_url="redis://localhost:6379",
-            index_name="redis_threads_agents",
-            overwrite_redis_index=False,
-            drop_redis_index=False,
-            application_id="threads_demo_app",
-            agent_id="agent_work",
-            user_id="threads_demo_user",
-            vectorizer=vectorizer_work,
-            vector_field_name="vector",
-            vector_datatype="float32",
-            vector_algorithm="hnsw",
-            vector_distance_metric="cosine",
-        ),
+        context_providers=work_provider,
     )
 
     # Store personal information
@@ -232,6 +234,9 @@ async def example_multiple_agents() -> None:
     print(f"User to Work Agent: {query}")
     result = await work_agent.run(query)
     print(f"Work Agent: {result}\n")
+
+    # Clean up the Redis index (shared)
+    await work_provider.redis_index.delete()
 
 
 async def main() -> None:

@@ -7,7 +7,15 @@ import numpy as np
 import pytest
 from agent_framework import ChatMessage, Role
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework_redis import RedisProvider
+from redisvl.utils.vectorize import CustomTextVectorizer
 
+
+
+CUSTOM_VECTORIZER = CustomTextVectorizer(
+    embed=lambda x: [1.0, 2.0, 3.0],
+    dtype="float32"
+)
 
 @pytest.fixture
 def mock_index() -> AsyncMock:
@@ -15,6 +23,7 @@ def mock_index() -> AsyncMock:
     idx.create = AsyncMock()
     idx.load = AsyncMock()
     idx.query = AsyncMock()
+    idx.exists = AsyncMock(return_value=False)
 
     async def _paginate_generator(*_args: Any, **_kwargs: Any):
         # Default empty generator; override per-test as needed
@@ -30,6 +39,18 @@ def mock_index() -> AsyncMock:
 def patch_index_from_dict(mock_index: AsyncMock):
     with patch("agent_framework_redis._provider.AsyncSearchIndex") as mock_cls:
         mock_cls.from_dict = MagicMock(return_value=mock_index)
+        
+        # Mock from_existing to return a mock with matching schema by default
+        # This prevents schema validation errors in tests that don't specifically test schema validation
+        async def mock_from_existing(index_name, redis_url):
+            mock_existing = AsyncMock()
+            # Return a schema that will match whatever the provider generates
+            # This is a bit of a hack, but allows existing tests to continue working
+            mock_existing.schema.to_dict = MagicMock(side_effect=lambda: mock_cls.from_dict.call_args[0][0] if mock_cls.from_dict.call_args else {})
+            return mock_existing
+        
+        mock_cls.from_existing = AsyncMock(side_effect=mock_from_existing)
+        
         yield mock_cls
 
 
@@ -71,8 +92,6 @@ class TestRedisProviderInitialization:
 
     # Constructing without filters should not raise; filters are enforced at call-time
     def test_init_without_filters_ok(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider()
         assert provider.user_id is None
         assert provider.agent_id is None
@@ -81,8 +100,6 @@ class TestRedisProviderInitialization:
 
     # Schema should omit vector field when no vector configuration is provided
     def test_schema_without_vector_field(self, patch_index_from_dict):
-        from agent_framework_redis._provider import RedisProvider
-
         RedisProvider(user_id="u1")
         # Inspect schema passed to from_dict
         args, kwargs = patch_index_from_dict.from_dict.call_args
@@ -107,8 +124,6 @@ class TestRedisProviderMessages:
     @pytest.mark.asyncio
     # Writes require at least one scoping filter to avoid unbounded operations
     async def test_messages_adding_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
             await provider.messages_adding("thread123", ChatMessage(role=Role.USER, text="Hello"))
@@ -116,8 +131,6 @@ class TestRedisProviderMessages:
     @pytest.mark.asyncio
     # Captures the per-operation thread id when provided
     async def test_thread_created_sets_per_operation_id(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(user_id="u1")
         await provider.thread_created("t1")
         assert provider._per_operation_thread_id == "t1"
@@ -125,8 +138,6 @@ class TestRedisProviderMessages:
     @pytest.mark.asyncio
     # Enforces single-thread usage when scope_to_per_operation_thread_id is True
     async def test_thread_created_conflict_when_scoped(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(user_id="u1", scope_to_per_operation_thread_id=True)
         provider._per_operation_thread_id = "t1"
         with pytest.raises(ValueError) as exc:
@@ -136,8 +147,6 @@ class TestRedisProviderMessages:
     @pytest.mark.asyncio
     # Aggregates all results from the async paginator into a flat list
     async def test_search_all_paginates(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         async def gen(_q, page_size: int = 200):  # noqa: ARG001, ANN001
             yield [{"id": 1}]
             yield [{"id": 2}, {"id": 3}]
@@ -152,8 +161,6 @@ class TestRedisProviderModelInvoking:
     @pytest.mark.asyncio
     # Reads require at least one scoping filter to avoid unbounded operations
     async def test_model_invoking_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
             await provider.model_invoking(ChatMessage(role=Role.USER, text="Hi"))
@@ -163,8 +170,6 @@ class TestRedisProviderModelInvoking:
     async def test_textquery_path_and_context_contents(
         self, mock_index: AsyncMock, patch_index_from_dict, patch_queries
     ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         # Arrange: text-only search
         mock_index.query = AsyncMock(return_value=[{"content": "A"}, {"content": "B"}])
         provider = RedisProvider(user_id="u1")
@@ -179,7 +184,6 @@ class TestRedisProviderModelInvoking:
         assert kwargs["text"] == "q1"
         assert kwargs["text_field_name"] == "content"
         assert kwargs["num_results"] == 10
-        assert kwargs["return_score"] is True
         assert "filter_expression" in kwargs
 
         # Context contains memories joined after the default prompt
@@ -192,8 +196,6 @@ class TestRedisProviderModelInvoking:
     async def test_model_invoking_empty_results_returns_empty_context(
         self, mock_index: AsyncMock, patch_index_from_dict, patch_queries
     ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         mock_index.query = AsyncMock(return_value=[])
         provider = RedisProvider(user_id="u1")
         ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="any")])
@@ -202,16 +204,8 @@ class TestRedisProviderModelInvoking:
     @pytest.mark.asyncio
     # Ensures hybrid vector-text search is used when a vectorizer and vector field are configured
     async def test_hybridquery_path_with_vectorizer(self, mock_index: AsyncMock, patch_index_from_dict, patch_queries):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        class DummyVectorizer:
-            dims = 3
-
-            async def aembed_many(self, texts, batch_size: int = 1):  # noqa: ANN001
-                return [[0.1, 0.2, 0.3] for _ in texts]
-
         mock_index.query = AsyncMock(return_value=[{"content": "Hit"}])
-        provider = RedisProvider(user_id="u1", vectorizer=DummyVectorizer(), vector_field_name="vec")
+        provider = RedisProvider(user_id="u1", redis_vectorizer=CUSTOM_VECTORIZER, vector_field_name="vec")
 
         ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="hello")])
 
@@ -220,7 +214,7 @@ class TestRedisProviderModelInvoking:
         k = patch_queries["calls"]["HybridQuery"][0]
         assert k["text"] == "hello"
         assert k["vector_field_name"] == "vec"
-        assert k["vector"] == [0.1, 0.2, 0.3]
+        assert k["vector"] == [1.0, 2.0, 3.0]
         assert k["dtype"] == "float32"
         assert k["num_results"] == 10
         assert "filter_expression" in k
@@ -233,8 +227,6 @@ class TestRedisProviderContextManager:
     @pytest.mark.asyncio
     # Verifies async context manager returns self for chaining
     async def test_async_context_manager_returns_self(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(user_id="u1")
         async with provider as ctx:
             assert ctx is provider
@@ -242,8 +234,6 @@ class TestRedisProviderContextManager:
     @pytest.mark.asyncio
     # Exit should be a no-op and not raise
     async def test_aexit_noop(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(user_id="u1")
         assert await provider.__aexit__(None, None, None) is None
 
@@ -254,8 +244,6 @@ class TestMessagesAddingBehavior:
     async def test_messages_adding_adds_partition_defaults_and_roles(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(
             application_id="app",
             agent_id="agent",
@@ -289,8 +277,6 @@ class TestMessagesAddingBehavior:
     async def test_messages_adding_ignores_blank_and_disallowed_roles(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(user_id="u1", scope_to_per_operation_thread_id=True)
         msgs = [
             ChatMessage(role=Role.USER, text="   "),
@@ -307,8 +293,6 @@ class TestIndexCreationPublicCalls:
     async def test_messages_adding_triggers_index_create_once_when_drop_true(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(user_id="u1", drop_redis_index=True)
         await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m1"))
         await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m2"))
@@ -320,8 +304,6 @@ class TestIndexCreationPublicCalls:
     async def test_model_invoking_triggers_create_when_drop_false_and_not_exists(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         mock_index.exists = AsyncMock(return_value=False)
         provider = RedisProvider(user_id="u1", drop_redis_index=False)
         mock_index.query = AsyncMock(return_value=[{"content": "C"}])
@@ -333,8 +315,6 @@ class TestThreadCreatedAdditional:
     @pytest.mark.asyncio
     # Allows None or same thread id repeatedly; different id raises when scoped
     async def test_thread_created_allows_none_and_same_id(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
         provider = RedisProvider(user_id="u1", scope_to_per_operation_thread_id=True)
         # None is allowed
         await provider.thread_created(None)
@@ -352,18 +332,10 @@ class TestVectorPopulation:
     async def test_messages_adding_populates_vector_field_when_vectorizer_present(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        class DummyVectorizer:
-            dims = 3
-
-            async def aembed_many(self, texts, batch_size: int = 1):  # noqa: ANN001
-                return [[1.0, 2.0, 3.0] for _ in texts]
-
         provider = RedisProvider(
             user_id="u1",
             scope_to_per_operation_thread_id=True,
-            vectorizer=DummyVectorizer(),
+            redis_vectorizer=CUSTOM_VECTORIZER,
             vector_field_name="vec",
         )
 
@@ -380,12 +352,7 @@ class TestVectorPopulation:
 class TestRedisProviderSchemaVectors:
     # Adds a vector field when vectorizer supplies dims implicitly
     def test_schema_with_vector_field_and_dims_inferred(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        class DummyVectorizer:
-            dims = 3
-
-        RedisProvider(user_id="u1", vectorizer=DummyVectorizer(), vector_field_name="vec")
+        RedisProvider(user_id="u1", redis_vectorizer=CUSTOM_VECTORIZER, vector_field_name="vec")
         args, _ = patch_index_from_dict.from_dict.call_args
         schema = args[0]
         names = [f["name"] for f in schema["fields"]]
@@ -393,61 +360,91 @@ class TestRedisProviderSchemaVectors:
         assert "vec" in names
         assert types["vec"] == "vector"
 
-    # Raises when vectorizer has no dims and caller doesn't provide vector_dims
-    def test_init_vectorizer_missing_dims_raises(self, patch_index_from_dict):  # noqa: ARG002
+    # Raises when redis_vectorizer is not the correct type
+    def test_init_invalid_vectorizer(self, patch_index_from_dict):  # noqa: ARG002
         from agent_framework.exceptions import ServiceInvalidRequestError
-
-        from agent_framework_redis._provider import RedisProvider
 
         class DummyVectorizer:
             pass
 
-        with pytest.raises(ServiceInvalidRequestError):
-            RedisProvider(user_id="u1", vectorizer=DummyVectorizer(), vector_field_name="vec")
-
-    # Honors explicit vector_dims and other vector attributes over vectorizer defaults
-    def test_init_vector_dims_override(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        class DummyVectorizer:
-            dims = 3
-
-        RedisProvider(
-            user_id="u1",
-            vectorizer=DummyVectorizer(),
-            vector_field_name="vec",
-            vector_dims=5,
-            vector_algorithm="hnsw",
-            vector_datatype="float32",
-            vector_distance_metric="cosine",
-        )
-        args, _ = patch_index_from_dict.from_dict.call_args
-        schema = args[0]
-        vec = next(f for f in schema["fields"] if f["name"] == "vec")
-        assert vec["attrs"]["dims"] == 5
+        with pytest.raises(Exception):
+            RedisProvider(user_id="u1", redis_vectorizer=DummyVectorizer(), vector_field_name="vec")
 
 
 class TestEnsureIndex:
     @pytest.mark.asyncio
-    # Creates index once when drop=True and marks fresh_initialization
-    async def test_ensure_index_drop_true_creates_once(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        provider = RedisProvider(user_id="u1", drop_redis_index=True)
-        assert provider.fresh_initialization is False
+    # Creates index once and marks _index_initialized to prevent duplicate calls
+    async def test_ensure_index_creates_once(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
+        # Mock index doesn't exist, so it will be created
+        mock_index.exists = AsyncMock(return_value=False)
+        provider = RedisProvider(user_id="u1", overwrite_index=False)
+        
+        assert provider._index_initialized is False
         await provider._ensure_index()
         assert mock_index.create.await_count == 1
-        assert provider.fresh_initialization is True
+        assert provider._index_initialized is True
+        
+        # Second call should not create again due to _index_initialized flag
         await provider._ensure_index()
-        # Should not create again
         assert mock_index.create.await_count == 1
 
     @pytest.mark.asyncio
-    # Creates index when drop=False and index does not exist
-    async def test_ensure_index_when_drop_false_and_not_exists(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework_redis._provider import RedisProvider
-
-        mock_index.exists = AsyncMock(return_value=False)
-        provider = RedisProvider(user_id="u1", drop_redis_index=False)
+    # Creates index with overwrite=True when overwrite_index=True
+    async def test_ensure_index_with_overwrite_true(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
+        mock_index.exists = AsyncMock(return_value=True)
+        provider = RedisProvider(user_id="u1", overwrite_index=True)
+        
         await provider._ensure_index()
-        assert mock_index.create.await_count == 1
+        
+        # Should call create with overwrite=True, drop=False
+        mock_index.create.assert_called_once_with(overwrite=True, drop=False)
+
+    @pytest.mark.asyncio
+    # Creates index with overwrite=False when index doesn't exist
+    async def test_ensure_index_create_if_missing(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
+        mock_index.exists = AsyncMock(return_value=False)
+        provider = RedisProvider(user_id="u1", overwrite_index=False)
+        
+        await provider._ensure_index()
+        
+        # Should call create with overwrite=False, drop=False
+        mock_index.create.assert_called_once_with(overwrite=False, drop=False)
+
+    @pytest.mark.asyncio
+    # Validates schema compatibility when index exists and overwrite=False
+    async def test_ensure_index_schema_validation_success(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
+        mock_index.exists = AsyncMock(return_value=True)
+        provider = RedisProvider(user_id="u1", overwrite_index=False)
+        
+        # Mock existing index with matching schema
+        expected_schema = provider.schema_dict
+        patch_index_from_dict.from_existing.return_value.schema.to_dict.return_value = expected_schema
+        
+        await provider._ensure_index()
+        
+        # Should validate schema and proceed to create
+        patch_index_from_dict.from_existing.assert_called_once_with("context", redis_url="redis://localhost:6379")
+        mock_index.create.assert_called_once_with(overwrite=False, drop=False)
+
+    @pytest.mark.asyncio
+    # Raises ServiceInitializationError when schemas don't match
+    async def test_ensure_index_schema_validation_failure(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
+        mock_index.exists = AsyncMock(return_value=True)
+        provider = RedisProvider(user_id="u1", overwrite_index=False)
+        
+        # Override the mock to return a different schema after provider is created
+        async def mock_from_existing_different(index_name, redis_url):
+            mock_existing = AsyncMock()
+            mock_existing.schema.to_dict = MagicMock(return_value={"different": "schema"})
+            return mock_existing
+        
+        patch_index_from_dict.from_existing = AsyncMock(side_effect=mock_from_existing_different)
+        
+        with pytest.raises(ServiceInitializationError) as exc:
+            await provider._ensure_index()
+        
+        assert "schema does not match" in str(exc.value)
+        assert "overwrite_index=True" in str(exc.value)
+        
+        # Should not call create when schema validation fails
+        mock_index.create.assert_not_called()

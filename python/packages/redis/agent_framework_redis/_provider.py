@@ -6,7 +6,7 @@ import sys
 from collections.abc import MutableSequence, Sequence
 from functools import reduce
 from operator import and_
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, Optional
 
 from agent_framework import ChatMessage, Context, ContextProvider, Role, TextContent
 from agent_framework.exceptions import (
@@ -25,146 +25,70 @@ from redisvl.index import AsyncSearchIndex
 from redisvl.query import FilterQuery, HybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
+from redisvl.utils.vectorize import BaseVectorizer
 
 
 class RedisProvider(ContextProvider):
-    """Redis-backed context provider with dynamic, filterable schema.
+    """Redis context provider with dynamic, filterable schema.
 
-    Stores chat messages in RediSearch and retrieves scoped context.
+    Stores context in Redis and retrieves scoped context.
     Uses full-text or optional hybrid vector search to ground model responses.
     """
 
     # Connection and indexing
     redis_url: str = "redis://localhost:6379"
-    index_name: str = "af_memory"
-    prefix: str = "memory"
-    fresh_initialization: bool = False
+    index_name: str = "context"
+    prefix: str = "context"
 
-    # Vector configuration (optional, injected by caller)
-    vectorizer: Any | None = None
-    vector_dims: int | None = None
-    vector_field_name: str | None = None
-    vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None
-    vector_algorithm: Literal["flat", "hnsw"] | None = None
-    vector_distance_metric: Literal["cosine", "ip", "l2"] | None = None
+    # Redis vectorizer configuration (optional, injected by client)
+    redis_vectorizer: Optional[BaseVectorizer] = None
+    vector_field_name: Optional[str] = None
+    vector_algorithm: Optional[Literal["flat", "hnsw"]] = None
+    vector_distance_metric: Optional[Literal["cosine", "ip", "l2"]] = None
 
     # Partition fields (indexed for filtering)
-    application_id: str | None = None
-    agent_id: str | None = None
-    user_id: str | None = None
-    thread_id: str | None = None
+    application_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    user_id: Optional[str] = None
+    thread_id: Optional[str] = None
     scope_to_per_operation_thread_id: bool = False
 
     # Prompt and runtime
     context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT
     redis_index: Any = None
-    overwrite_redis_index: bool = True
-    drop_redis_index: bool = True
-    _per_operation_thread_id: str | None = None
-    token_escaper: TokenEscaper | None = None
-    # Conversation tracking
-    _conversation_id: str | None = None
+    overwrite_index: bool = False
+    _per_operation_thread_id: Optional[str] = None
+    _token_escaper: TokenEscaper = TokenEscaper()
+    _conversation_id: Optional[str] = None
+    _index_initialized: bool = False
+    _schema_dict: Optional[dict[str, Any]] = None
 
-    def __init__(
-        self,
-        *,
-        redis_url: str = "redis://localhost:6379",
-        index_name: str = "af_memory",
-        prefix: str = "memory",
-        fresh_initialization: bool = False,
-        # Vector: optional; pass a vectorizer instance to enable hybrid search
-        vectorizer: Any | None = None,
-        vector_dims: int | None = None,
-        vector_field_name: str | None = None,
-        vector_datatype: Literal["float32", "float16", "bfloat16"] | None = None,
-        vector_algorithm: Literal["flat", "hnsw"] | None = None,
-        vector_distance_metric: Literal["cosine", "ip", "l2"] | None = None,
-        # Partition fields
-        application_id: str | None = None,
-        agent_id: str | None = None,
-        user_id: str | None = None,
-        thread_id: str | None = None,
-        scope_to_per_operation_thread_id: bool = False,
-        context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
-        overwrite_redis_index: bool = True,
-        drop_redis_index: bool = True,
-    ):
-        """Initializes a new instance of the RedisProvider class.
-
-        Builds the index schema and wires optional, caller-provided vectorizer.
-        Wires default partition filters used to scope reads and writes.
-
-        Args:
-            redis_url: Redis connection URL.
-            index_name: RediSearch index name.
-            prefix: Key prefix for stored documents.
-            fresh_initialization: Whether this is a fresh setup run.
-            vectorizer: A text embedding vectorizer implementing aembed_many, or None.
-            vector_dims: Vector dimensionality; inferred from vectorizer.dims if not provided.
-            vector_field_name: Name of the vector field in the schema or None.
-            vector_datatype: Vector datatype if vectors are enabled.
-            vector_algorithm: Vector index algorithm if vectors are enabled.
-            vector_distance_metric: Vector distance metric if vectors are enabled.
-            application_id: Application scope filter or None.
-            agent_id: Agent scope filter or None.
-            user_id: User scope filter or None.
-            thread_id: Thread scope filter or None.
-            scope_to_per_operation_thread_id: Whether to scope to per-operation thread ID.
-            context_prompt: Prompt to prepend to retrieved memories.
-            overwrite_redis_index: Whether to overwrite the index on create.
-            drop_redis_index: Whether to drop the index before create.
+    def model_post_init(self, __context: Any) -> None:
+        """Post-initialization hook to set up computed fields after Pydantic initialization.
+        
+        This is called automatically by Pydantic after the model is initialized.
         """
-        # Resolve vector dimensionality when a vectorizer is provided
-        resolved_vector_dims: int | None
-        if vectorizer is not None:
-            if vector_dims is not None:
-                resolved_vector_dims = int(vector_dims)
-            else:
-                dims = getattr(vectorizer, "dims", None)
-                if dims is None:
-                    raise ServiceInvalidRequestError(
-                        "vector_dims must be provided when the vectorizer does not expose a 'dims' attribute."
-                    )
-                resolved_vector_dims = int(dims)
-        else:
-            resolved_vector_dims = None
+        # Create Redis index using the cached schema_dict property
+        self.redis_index = AsyncSearchIndex.from_dict(self.schema_dict, redis_url=self.redis_url, validate_on_load=True)
 
-        schema_dict = self._build_schema_dict(
-            index_name=index_name,
-            prefix=prefix,
-            vector_field_name=vector_field_name,
-            vector_dims=resolved_vector_dims,
-            vector_datatype=vector_datatype,
-            vector_algorithm=vector_algorithm,
-            vector_distance_metric=vector_distance_metric,
-        )
-
-        redis_index = AsyncSearchIndex.from_dict(schema_dict, redis_url=redis_url, validate_on_load=True)
-
-        token_escaper: TokenEscaper = TokenEscaper()
-
-        super().__init__(
-            redis_url=redis_url,  # type: ignore[reportCallIssue]
-            index_name=index_name,  # type: ignore[reportCallIssue]
-            prefix=prefix,  # type: ignore[reportCallIssue]
-            fresh_initialization=fresh_initialization,  # type: ignore[reportCallIssue]
-            vectorizer=vectorizer,  # type: ignore[reportCallIssue]
-            vector_field_name=vector_field_name,  # type: ignore[reportCallIssue]
-            vector_dims=resolved_vector_dims,  # type: ignore[reportCallIssue]
-            vector_datatype=vector_datatype,  # type: ignore[reportCallIssue]
-            vector_algorithm=vector_algorithm,  # type: ignore[reportCallIssue]
-            vector_distance_metric=vector_distance_metric,  # type: ignore[reportCallIssue]
-            application_id=application_id,  # type: ignore[reportCallIssue]
-            agent_id=agent_id,  # type: ignore[reportCallIssue]
-            user_id=user_id,  # type: ignore[reportCallIssue]
-            thread_id=thread_id,  # type: ignore[reportCallIssue]
-            scope_to_per_operation_thread_id=scope_to_per_operation_thread_id,  # type: ignore[reportCallIssue]
-            context_prompt=context_prompt,  # type: ignore[reportCallIssue]
-            redis_index=redis_index,  # type: ignore[reportCallIssue]
-            overwrite_redis_index=overwrite_redis_index,  # type: ignore[reportCallIssue]
-            drop_redis_index=drop_redis_index,  # type: ignore[reportCallIssue]
-            token_escaper=token_escaper,  # type: ignore[reportCallIssue]
-        )
+    @property
+    def schema_dict(self) -> dict[str, Any]:
+        """Get the Redis schema dictionary, computing and caching it on first access."""
+        if self._schema_dict is None:
+            # Get vector configuration from vectorizer if available
+            vector_dims = self.redis_vectorizer.dims if self.redis_vectorizer is not None else None
+            vector_datatype = self.redis_vectorizer.dtype if self.redis_vectorizer is not None else None
+            
+            self._schema_dict = self._build_schema_dict(
+                index_name=self.index_name,
+                prefix=self.prefix,
+                vector_field_name=self.vector_field_name,
+                vector_dims=vector_dims,
+                vector_datatype=vector_datatype,
+                vector_algorithm=self.vector_algorithm,
+                vector_distance_metric=self.vector_distance_metric,
+            )
+        return self._schema_dict
 
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         """Builds a combined filter expression from simple equality tags.
@@ -248,18 +172,49 @@ class RedisProvider(ContextProvider):
         }
 
     async def _ensure_index(self) -> None:
-        """Ensures the index exists, creating or dropping as configured.
-
-        Called before reads/writes so queries are safe and the schema is applied deterministically.
+        """Initialize the search index.
+        
+        - Connect to existing index if it exists and schema matches
+        - Create new index if it doesn't exist  
+        - Overwrite if requested via overwrite_index=True
+        - Validate schema compatibility to prevent accidental data loss
         """
-        if self.drop_redis_index:
-            if not self.fresh_initialization:
-                await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
-                self.fresh_initialization = True
-        else:
-            if not await self.redis_index.exists():
-                await self.redis_index.create(overwrite=self.overwrite_redis_index, drop=self.drop_redis_index)
-        return
+        if self._index_initialized:
+            return
+
+        # Check if index already exists
+        index_exists = await self.redis_index.exists()
+        
+        if not self.overwrite_index and index_exists:
+            # Validate schema compatibility before connecting
+            await self._validate_schema_compatibility()
+        
+        # Create the index (will connect to existing or create new)
+        await self.redis_index.create(overwrite=self.overwrite_index, drop=False)
+        
+        self._index_initialized = True
+
+    async def _validate_schema_compatibility(self) -> None:
+        """Validate that existing index schema matches current configuration.
+        
+        Raises ServiceInitializationError if schemas don't match, with helpful guidance.
+        """
+        # Get existing index schema
+        existing_index = await AsyncSearchIndex.from_existing(
+            self.index_name, 
+            redis_url=self.redis_url
+        )
+        
+        # Compare schemas by converting both to dictionaries
+        existing_schema = existing_index.schema.to_dict()
+        current_schema = self.schema_dict
+        
+        if existing_schema != current_schema:
+            raise ServiceInitializationError(
+                f"Existing Redis index '{self.index_name}' schema does not match the current configuration. "
+                "This could lead to data corruption or query failures. "
+                "Set overwrite_index=True to rebuild the index with the new schema (this will preserve data but may cause temporary downtime)."
+            )
 
     async def _add(
         self,
@@ -306,9 +261,9 @@ class RedisProvider(ContextProvider):
             prepared.append(d)
 
         # Batch embed contents for every message
-        if self.vectorizer and self.vector_field_name:
+        if self.redis_vectorizer and self.vector_field_name:
             text_list = [d["content"] for d in prepared]
-            embeddings = await self.vectorizer.aembed_many(text_list, batch_size=len(text_list))
+            embeddings = await self.redis_vectorizer.aembed_many(text_list, batch_size=len(text_list))
             for i, d in enumerate(prepared):
                 vec = np.asarray(embeddings[i], dtype=np.float32).tobytes()
                 field_name: str = self.vector_field_name
@@ -322,18 +277,11 @@ class RedisProvider(ContextProvider):
         self,
         text: str,
         *,
-        text_field_name: str = "content",
         text_scorer: str = "BM25STD",
         filter_expression: Any | None = None,
         return_fields: list[str] | None = None,
         num_results: int = 10,
-        return_score: bool = True,
-        dialect: int = 2,
-        sort_by: str | None = None,
-        in_order: bool = False,
-        params: dict[str, Any] | None = None,
         alpha: float = 0.7,
-        dtype: Literal["float32", "float16", "bfloat16"] = "float32",
     ) -> list[dict[str, Any]]:
         """Runs a text or hybrid vector-text search with optional filters.
 
@@ -341,18 +289,11 @@ class RedisProvider(ContextProvider):
 
         Args:
             text: Query text.
-            text_field_name: Text field to search.
             text_scorer: Scorer to use for text ranking.
             filter_expression: Additional filter expression to AND with partition filters.
             return_fields: Fields to return in results.
             num_results: Maximum number of results.
-            return_score: Whether to include scores for text-only search.
-            dialect: RediSearch dialect version.
-            sort_by: Field to sort by (text-only search).
-            in_order: Whether to preserve field order (text-only search).
-            params: Additional query params.
             alpha: Hybrid balancing parameter when vectors are enabled.
-            dtype: Vector dtype when vectors are enabled.
 
         Returns:
             List of result dictionaries.
@@ -388,22 +329,20 @@ class RedisProvider(ContextProvider):
         )
 
         try:
-            if self.vectorizer and self.vector_field_name:
+            if self.redis_vectorizer and self.vector_field_name:
                 # Build hybrid query: combine full-text and vector similarity
-                embed_list = await self.vectorizer.aembed_many([q], batch_size=1)
-                vector: list[float] = [float(x) for x in (embed_list[0] or [])]
+                vector = await self.redis_vectorizer.aembed(q)
                 query = HybridQuery(
                     text=q,
-                    text_field_name=text_field_name,
+                    text_field_name="content",
                     vector=vector,
                     vector_field_name=self.vector_field_name,
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
                     alpha=alpha,
-                    dtype=dtype,
+                    dtype=self.redis_vectorizer.dtype,
                     num_results=num_results,
                     return_fields=return_fields,
-                    dialect=dialect,
                     stopwords=None,
                 )
                 hybrid_results = await self.redis_index.query(query)
@@ -411,17 +350,11 @@ class RedisProvider(ContextProvider):
             # Text-only search
             query = TextQuery(
                 text=q,
-                text_field_name=text_field_name,
+                text_field_name="content",
                 text_scorer=text_scorer,
                 filter_expression=combined_filter,
                 num_results=num_results,
                 return_fields=return_fields,
-                dialect=dialect,
-                # return_score supported on TextQuery; omit on HybridQuery for compatibility
-                return_score=return_score,
-                sort_by=sort_by,
-                in_order=in_order,
-                params=params,
                 stopwords=None,
             )
             text_results = await self.redis_index.query(query)
@@ -570,5 +503,5 @@ class RedisProvider(ContextProvider):
             and thread_id != self._per_operation_thread_id
         ):
             raise ValueError(
-                "RedisProvider can only be used with one thread,when scope_to_per_operation_thread_id is True."
+                "RedisProvider can only be used with one thread, when scope_to_per_operation_thread_id is True."
             )
