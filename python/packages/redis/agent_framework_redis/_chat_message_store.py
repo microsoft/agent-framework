@@ -91,7 +91,7 @@ class RedisChatMessageStore:
         self.max_messages = max_messages
 
         # Initialize Redis client with connection pooling and async support
-        self._redis_client = redis.from_url(redis_url, decode_responses=True)
+        self._redis_client = redis.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
 
         # Handle initial messages (will be moved to Redis on first access)
         self._initial_messages = list(messages) if messages else []
@@ -270,7 +270,7 @@ class RedisChatMessageStore:
 
         # Recreate Redis client if the URL changed
         if state.redis_url and state.redis_url != getattr(self, "_last_redis_url", None):
-            self._redis_client = redis.from_url(state.redis_url, decode_responses=True)
+            self._redis_client = redis.from_url(state.redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
             self._last_redis_url = state.redis_url
 
         # Reset initial message state since we're connecting to existing data
@@ -356,7 +356,7 @@ class RedisChatMessageStore:
             The count of messages currently stored in Redis.
         """
         await self._ensure_initial_messages_added()
-        return await self._redis_client.llen(self.redis_key)  # type: ignore[misc]
+        return await self._redis_client.llen(self.redis_key)  # type: ignore[misc,no-any-return]
 
     async def getitem(self, index: int) -> ChatMessage:
         """Get a message by index using Redis LINDEX.
@@ -417,7 +417,7 @@ class RedisChatMessageStore:
             The count of messages currently stored in Redis.
         """
         await self._ensure_initial_messages_added()
-        return await self._redis_client.llen(self.redis_key)  # type: ignore[misc]
+        return await self._redis_client.llen(self.redis_key)  # type: ignore[misc,no-any-return]
 
     async def index(self, item: ChatMessage) -> int:
         """Return the index of the first occurrence of the specified message.
