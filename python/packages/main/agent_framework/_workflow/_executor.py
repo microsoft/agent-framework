@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, cast, get_args, get_origin, overload
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -686,24 +686,30 @@ class RequestInfoExecutor(Executor):
         def _encode_event(event: RequestInfoEvent) -> dict[str, Any]:
             request_data = event.data
             payload: dict[str, Any]
-            if is_dataclass(request_data):
+            data_cls = request_data.__class__ if request_data is not None else type(None)
+
+            if request_data is not None and is_dataclass(request_data) and not isinstance(request_data, type):
+                dataclass_instance = cast(Any, request_data)
                 payload = {
                     "kind": "dataclass",
-                    "type": f"{request_data.__class__.__module__}:{request_data.__class__.__qualname__}",
-                    "value": asdict(request_data),
-                }
-            elif hasattr(request_data, "model_dump"):
-                payload = {
-                    "kind": "pydantic",
-                    "type": f"{request_data.__class__.__module__}:{request_data.__class__.__qualname__}",
-                    "value": request_data.model_dump(mode="json"),
+                    "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                    "value": asdict(dataclass_instance),
                 }
             else:
-                payload = {
-                    "kind": "raw",
-                    "type": f"{request_data.__class__.__module__}:{request_data.__class__.__qualname__}",
-                    "value": request_data.__dict__,
-                }
+                model_dump_fn = getattr(request_data, "model_dump", None) if request_data is not None else None
+                if callable(model_dump_fn):
+                    typed_dump = cast(Callable[..., Any], model_dump_fn)
+                    payload = {
+                        "kind": "pydantic",
+                        "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                        "value": typed_dump(mode="json"),
+                    }
+                else:
+                    payload = {
+                        "kind": "raw",
+                        "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                        "value": vars(request_data) if request_data is not None else {},
+                    }
 
             return {
                 "source_executor_id": event.source_executor_id,
@@ -718,7 +724,6 @@ class RequestInfoExecutor(Executor):
 
     def restore_state(self, state: dict[str, Any]) -> None:
         """Restore pending request bookkeeping from checkpoint state."""
-
         self._request_events.clear()
         stored_events = state.get("request_events", {})
 
@@ -758,19 +763,32 @@ class RequestInfoExecutor(Executor):
         kind = metadata.get("kind")
         type_name = metadata.get("type", "")
         value = metadata.get("value", {})
-        request_cls = self._import_qualname(type_name) if type_name else RequestInfoMessage
+        imported = self._import_qualname(type_name) if type_name else RequestInfoMessage
+        target_cls: type[RequestInfoMessage]
+        if isinstance(imported, type) and issubclass(imported, RequestInfoMessage):
+            target_cls = imported
+        else:
+            target_cls = RequestInfoMessage
 
         if kind == "dataclass" and isinstance(value, dict):
-            return request_cls(**value)
-        if kind == "pydantic" and isinstance(value, dict) and hasattr(request_cls, "model_validate"):
-            return request_cls.model_validate(value)
+            with contextlib.suppress(TypeError):
+                return target_cls(**value)
+
+        if kind == "pydantic" and isinstance(value, dict):
+            model_validate = getattr(target_cls, "model_validate", None)
+            if callable(model_validate):
+                return cast(RequestInfoMessage, model_validate(value))
+
         if isinstance(value, dict):
             with contextlib.suppress(TypeError):
-                return request_cls(**value)
-            instance = request_cls.__new__(request_cls)
+                return target_cls(**value)
+            instance = cast(RequestInfoMessage, object.__new__(target_cls))
             instance.__dict__.update(value)
             return instance
-        return request_cls()
+
+        with contextlib.suppress(Exception):
+            return target_cls()
+        return RequestInfoMessage()
 
     @handler
     async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:

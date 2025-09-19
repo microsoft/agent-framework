@@ -503,7 +503,7 @@ class MagenticManagerBase(AFBaseModel, ABC):
 
     def restore_state(self, state: dict[str, Any]) -> None:
         """Restore runtime state from checkpoint data."""
-        return None
+        return
 
 
 class StandardMagenticManager(MagenticManagerBase):
@@ -916,6 +916,32 @@ class MagenticOrchestratorExecutor(Executor):
             except Exception as exc:  # pragma: no cover
                 logger.warning("Failed to restore manager state: %s", exc)
 
+        self._reconcile_restored_participants()
+
+    def _reconcile_restored_participants(self) -> None:
+        """Ensure restored participant roster matches the current workflow graph."""
+        if self._context is None:
+            return
+
+        restored = self._context.participant_descriptions or {}
+        expected = self._participants
+
+        restored_names = set(restored.keys())
+        expected_names = set(expected.keys())
+
+        if restored_names != expected_names:
+            missing = ", ".join(sorted(expected_names - restored_names)) or "none"
+            unexpected = ", ".join(sorted(restored_names - expected_names)) or "none"
+            raise RuntimeError(
+                "Magentic checkpoint restore failed: participant names do not match the checkpoint. "
+                "Ensure MagenticBuilder.participants keys remain stable across runs. "
+                f"Missing names: {missing}; unexpected names: {unexpected}."
+            )
+
+        # Refresh descriptions so prompt surfaces always reflect the rebuilt workflow inputs.
+        for name, description in expected.items():
+            restored[name] = description
+
     async def _ensure_state_restored(
         self,
         context: WorkflowContext[Any],
@@ -930,10 +956,11 @@ class MagenticOrchestratorExecutor(Executor):
             self._state_restored = True
             return
         try:
-            self.restore_state(cast(dict[str, Any], state))
+            self.restore_state(state)
         except Exception as exc:  # pragma: no cover
-            logger.warning("Magentic Orchestrator: Failed to apply checkpoint state: %s", exc)
-        finally:
+            logger.warning("Magentic Orchestrator: Failed to apply checkpoint state: %s", exc, exc_info=True)
+            raise
+        else:
             self._state_restored = True
 
     @handler
@@ -1408,10 +1435,11 @@ class MagenticAgentExecutor(Executor):
             self._state_restored = True
             return
         try:
-            self.restore_state(cast(dict[str, Any], state))
+            self.restore_state(state)
         except Exception as exc:  # pragma: no cover
-            logger.warning("Agent %s: Failed to apply checkpoint state: %s", self._agent_id, exc)
-        finally:
+            logger.warning("Agent %s: Failed to apply checkpoint state: %s", self._agent_id, exc, exc_info=True)
+            raise
+        else:
             self._state_restored = True
 
     @handler
@@ -1938,6 +1966,16 @@ class MagenticWorkflow:
         async for event in self._workflow.run_stream(message):
             yield event
 
+    async def run_stream_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+        responses: dict[str, Any] | None = None,
+    ) -> AsyncIterable[WorkflowEvent]:
+        """Resume orchestration from a checkpoint and stream resulting events."""
+        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
+            yield event
+
     async def run_with_string(self, task_text: str) -> WorkflowRunResult:
         """Run the workflow with a task string and return all events.
 
@@ -1978,6 +2016,18 @@ class MagenticWorkflow:
         """
         events: list[WorkflowEvent] = []
         async for event in self.run_stream(message):
+            events.append(event)
+        return WorkflowRunResult(events)
+
+    async def run_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+        responses: dict[str, Any] | None = None,
+    ) -> WorkflowRunResult:
+        """Resume orchestration from a checkpoint and collect all resulting events."""
+        events: list[WorkflowEvent] = []
+        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
             events.append(event)
         return WorkflowRunResult(events)
 
