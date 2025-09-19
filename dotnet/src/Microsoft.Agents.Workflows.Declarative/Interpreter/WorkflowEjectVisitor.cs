@@ -88,31 +88,38 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
+        string actionId = item.GetId();
+        this.Executors.Add(new ConditionGroupTemplate(item).TransformText());
+        this.Instances.Add(new InstanceTemplate(actionId).TransformText());
+
+        this.Edges.Add(new EdgeTemplate("root", actionId).TransformText()); // %%% CONTINUE WITH
+
         //ConditionGroupExecutor action = new(item, this._workflowState);
         //this.ContinueWith(action);
         //this.ContinuationFor(action.Id, action.ParentId);
 
-        //string? lastConditionItemId = null;
-        //foreach (ConditionItem conditionItem in item.Conditions)
-        //{
-        //    // Create conditional link for conditional action
-        //    lastConditionItemId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
-        //    this._workflowModel.AddLink(action.Id, lastConditionItemId, (result) => action.IsMatch(conditionItem, result));
+        string? lastConditionItemId = null;
+        foreach (ConditionItem conditionItem in item.Conditions)
+        {
+            // Create conditional link for conditional action
+            lastConditionItemId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
+            this.Edges.Add(new EdgeTemplate(actionId, lastConditionItemId).TransformText()); // %%% CONDITION (result) => action.IsMatch(conditionItem, result));
 
-        //    conditionItem.Accept(this);
-        //}
+            conditionItem.Accept(this);
+        }
 
-        //if (item.ElseActions?.Actions.Length > 0)
-        //{
-        //    if (lastConditionItemId is not null)
-        //    {
-        //        // Create clean start for else action from prior conditions
-        //        this.RestartAfter(lastConditionItemId, action.Id);
-        //    }
-        //    // Create conditional link for else action
-        //    string stepId = ConditionGroupExecutor.Steps.Else(item);
-        //    this._workflowModel.AddLink(action.Id, stepId, (result) => action.IsElse(result));
-        //}
+        if (item.ElseActions?.Actions.Length > 0)
+        {
+            if (lastConditionItemId is not null)
+            {
+                // Create clean start for else action from prior conditions
+                //this.RestartAfter(lastConditionItemId, action.Id);
+            }
+
+            // Create conditional link for else action
+            string stepId = ConditionGroupExecutor.Steps.Else(item);
+            this.Edges.Add(new EdgeTemplate(actionId, stepId).TransformText()); // %%% CONDITION (result) => action.IsElse(result));
+        }
     }
 
     protected override void Visit(GotoAction item)

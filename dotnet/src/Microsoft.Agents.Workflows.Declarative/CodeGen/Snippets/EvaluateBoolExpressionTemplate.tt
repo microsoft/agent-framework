@@ -1,0 +1,25 @@
+﻿<#+
+void EvaluateBoolExpression(BoolExpression expression, string targetVariable)
+{
+    if (expression is null)
+    {#>
+        bool <#= targetVariable #> = false;<#+ 
+    }
+    else if (expression.IsLiteral)
+    {#>
+        bool <#= targetVariable #> = <#= expression.LiteralValue #>;<#+ 
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        bool <#= targetVariable #> = await context.ReadStateAsync<bool>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsExpression)
+    {#>
+        bool <#= targetVariable #> = await context.EvaluateExpressionAsync<bool>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    }
+    else
+    {
+        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    }
+}
+#>

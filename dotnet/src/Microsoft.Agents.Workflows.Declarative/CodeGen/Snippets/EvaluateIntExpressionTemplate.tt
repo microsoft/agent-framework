@@ -16,7 +16,7 @@ void EvaluateIntExpression(IntExpression expression, string targetVariable, bool
     }
     else if (expression.IsExpression)
     {#>
-        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync<int>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else
     {

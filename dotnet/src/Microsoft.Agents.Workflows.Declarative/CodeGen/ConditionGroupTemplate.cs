@@ -10,6 +10,7 @@
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 {
     using Microsoft.Agents.Workflows.Declarative.Extensions;
+    using Microsoft.Agents.Workflows.Declarative.ObjectModel;
     using Microsoft.Bot.ObjectModel;
     using Microsoft.Extensions.AI;
     using System.Collections.Generic;
@@ -43,6 +44,8 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
+            this.Write("\n");
+            this.Write("\n");
             this.Write("\n/// <summary>\n/// Conditional branching similar to an if / elseif / elseif / els" +
                     "e chain.\n/// </summary>\ninternal sealed class ");
             
@@ -59,8 +62,53 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line default
             #line hidden
             this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
-                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {\n    " +
-                    "}\n}");
+                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
+
+        for (int index = 0; index < this.Model.Conditions.Length; ++index)
+        {
+            ConditionItem conditionItem = this.Model.Conditions[index];
+            if (conditionItem.Condition is null)
+            {
+                continue; // Skip if no condition is defined
+            }
+
+            EvaluateBoolExpression(conditionItem.Condition, $"condition{index}");
+            
+            #line default
+            #line hidden
+            this.Write("\n        if (condition");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(index));
+            
+            #line default
+            #line hidden
+            this.Write(")\n        {\n            return \"");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(ConditionGroupExecutor.Steps.Item(this.Model, conditionItem)));
+            
+            #line default
+            #line hidden
+            this.Write("\";\n        }\n        ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
+
+        }
+        
+            
+            #line default
+            #line hidden
+            this.Write("\n        return \"");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ConditionGroupTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(ConditionGroupExecutor.Steps.Else(this.Model)));
+            
+            #line default
+            #line hidden
+            this.Write("\";\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
         
@@ -124,6 +172,196 @@ this.Write("\").ConfigureAwait(false);");
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 
+}
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+
+void EvaluateBoolExpression(BoolExpression expression, string targetVariable)
+{
+    if (expression is null)
+    {
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write("\n        bool ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(" = false;");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+ 
+    }
+    else if (expression.IsLiteral)
+    {
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write("\n        bool ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(" = ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(";");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+ 
+    }
+    else if (expression.IsVariableReference)
+    {
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write("\n        bool ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(" = await context.ReadStateAsync<bool>(key: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write("\", scopeName: \"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write("\").ConfigureAwait(false);");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+
+    }
+    else if (expression.IsExpression)
+    {
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write("\n        bool ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(" = await context.EvaluateExpressionAsync<bool>(\"");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write("\").ConfigureAwait(false);");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+ 
+    }
+    else
+    {
+        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    }
 }
 
         
@@ -744,7 +982,7 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync(\"");
+this.Write(" = await context.EvaluateExpressionAsync<int>(\"");
 
         
         #line default
