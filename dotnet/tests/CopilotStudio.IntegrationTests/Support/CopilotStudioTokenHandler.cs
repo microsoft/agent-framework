@@ -135,8 +135,6 @@ internal sealed class CopilotStudioTokenHandler : HttpClientHandler
             storageProperties.WithMacKeyChain(KeyChainServiceName, KeyChainAccountName);
         }
 
-        MsalCacheHelper tokenCacheHelper = await MsalCacheHelper.CreateAsync(storageProperties.Build()).ConfigureAwait(false);
-
-        return tokenCacheHelper;
+        return await MsalCacheHelper.CreateAsync(storageProperties.Build()).ConfigureAwait(false);
     }
 }

@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
-
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 
 /// <summary>
@@ -25,11 +23,11 @@ public class AIContextTests
     {
         var context = new AIContext
         {
-            Messages = new List<ChatMessage>
-            {
+            Messages =
+            [
                 new(ChatRole.User, "Hello"),
                 new(ChatRole.Assistant, "Hi there!")
-            }
+            ]
         };
 
         Assert.NotNull(context.Messages);
@@ -43,11 +41,11 @@ public class AIContextTests
     {
         var context = new AIContext
         {
-            Tools = new List<AITool>
-            {
+            Tools =
+            [
                 AIFunctionFactory.Create(() => "Function1", "Function1", "Description1"),
                 AIFunctionFactory.Create(() => "Function2", "Function2", "Description2"),
-            }
+            ]
         };
 
         Assert.NotNull(context.Tools);

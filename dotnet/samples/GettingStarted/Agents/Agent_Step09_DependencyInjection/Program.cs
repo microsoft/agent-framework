@@ -69,7 +69,7 @@ internal sealed class SampleService(AIAgent agent, [FromKeyedServices("AppShutdo
         // Delay a little to allow the service to finish starting.
         await Task.Delay(100, cancellationToken);
 
-        while (cancellationToken.IsCancellationRequested is false)
+        while (!cancellationToken.IsCancellationRequested)
         {
             Console.WriteLine("\nAgent: Ask me to tell you a joke about a specific topic. To exit just press Ctrl+C or enter without any input.\n");
             Console.Write("> ");
@@ -83,7 +83,7 @@ internal sealed class SampleService(AIAgent agent, [FromKeyedServices("AppShutdo
             }
 
             // Stream the output to the console as it is generated.
-            await foreach (var update in agent.RunStreamingAsync(input, this._thread!, cancellationToken: cancellationToken))
+            await foreach (var update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
             {
                 Console.Write(update);
             }

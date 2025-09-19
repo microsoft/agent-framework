@@ -605,10 +605,7 @@ class TestSerializationWorkflowClasses:
         executor = SampleExecutor(id="valid-id")
         assert executor.id == "valid-id"
 
-        # Test validation failure for empty id - pydantic automatically validates min_length=1
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError):
             SampleExecutor(id="")
 
     def test_edge_field_validation(self) -> None:

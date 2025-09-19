@@ -74,16 +74,16 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
 {
     private static readonly ActivitySource ActivitySource = new("Microsoft.Extensions.AI.Agents.Runtime.Abstractions.InMemoryActorStateStorage");
 
-    private readonly ConcurrentDictionary<ActorId, ActorState> _actorStates = new();
+    private readonly ConcurrentDictionary<ActorId, ActorState> _actorStates = [];
     private readonly object _lockObject = new();
-    private long _globalETagCounter = 0;
+    private long _globalETagCounter;
 
     /// <summary>
     /// Represents the internal state of an actor including its key-value pairs and ETag.
     /// </summary>
     private sealed class ActorState
     {
-        public ConcurrentDictionary<string, JsonElement> Data { get; } = new();
+        public ConcurrentDictionary<string, JsonElement> Data { get; } = [];
         public string ETag { get; set; } = "0";
     }
 
@@ -117,9 +117,10 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
                 // Check ETag for optimistic concurrency control
                 if (actorState.ETag != etag)
                 {
-                    activity?.SetTag("state.success", false);
-                    activity?.SetTag("error.type", "etag_mismatch");
-                    activity?.SetStatus(ActivityStatusCode.Error, "ETag mismatch - concurrent modification detected");
+                    activity?
+                        .SetTag("state.success", false)
+                        .SetTag("error.type", "etag_mismatch")
+                        .SetStatus(ActivityStatusCode.Error, "ETag mismatch - concurrent modification detected");
 
                     // Return failure with current ETag
                     return new ValueTask<WriteResponse>(new WriteResponse(actorState.ETag, success: false));
@@ -155,9 +156,10 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
 
                 // Set success attributes
                 SetOperationStatus(activity, true);
-                activity?.SetTag("state.success", true);
-                activity?.SetTag("state.new_etag", newETag);
-                activity?.SetTag("state.operations", string.Join(",", operationTypes));
+                activity?
+                    .SetTag("state.success", true)
+                    .SetTag("state.new_etag", newETag)
+                    .SetTag("state.operations", string.Join(",", operationTypes));
 
                 return new ValueTask<WriteResponse>(new WriteResponse(newETag, success: true));
             }
@@ -240,9 +242,10 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
 
             // Set success attributes
             SetOperationStatus(activity, true);
-            activity?.SetTag("state.etag", actorState.ETag);
-            activity?.SetTag("state.operations", string.Join(",", operationTypes));
-            activity?.SetTag("state.success", true);
+            activity?
+                .SetTag("state.etag", actorState.ETag)
+                .SetTag("state.operations", string.Join(",", operationTypes))
+                .SetTag("state.success", true);
 
             return new ValueTask<ReadResponse>(new ReadResponse(actorState.ETag, results.AsReadOnly()));
         }
@@ -276,36 +279,26 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
     /// </summary>
     /// <param name="actorId">The actor identifier.</param>
     /// <returns>The number of keys stored for the specified actor, or 0 if the actor has no state.</returns>
-    public int GetKeyCount(ActorId actorId)
-    {
-        return this._actorStates.TryGetValue(actorId, out var state) ? state.Data.Count : 0;
-    }
+    public int GetKeyCount(ActorId actorId) =>
+        this._actorStates.TryGetValue(actorId, out var state) ? state.Data.Count : 0;
 
     /// <summary>
     /// Gets the current ETag for a specific actor.
     /// </summary>
     /// <param name="actorId">The actor identifier.</param>
     /// <returns>The current ETag for the specified actor, or "0" if the actor has no state.</returns>
-    public string GetETag(ActorId actorId)
-    {
-        return this._actorStates.TryGetValue(actorId, out var state) ? state.ETag : "0";
-    }
+    public string GetETag(ActorId actorId) =>
+        this._actorStates.TryGetValue(actorId, out var state) ? state.ETag : "0";
 
     /// <summary>
     /// Sets actor attributes on an activity.
     /// </summary>
     /// <param name="activity">The activity to set attributes on.</param>
     /// <param name="actorId">The actor ID.</param>
-    private static void SetActorAttributes(Activity? activity, ActorId actorId)
-    {
-        if (activity == null)
-        {
-            return;
-        }
-
-        activity.SetTag("actor.id", actorId.ToString());
-        activity.SetTag("actor.type", actorId.Type.Name);
-    }
+    private static void SetActorAttributes(Activity? activity, ActorId actorId) =>
+        activity?
+            .SetTag("actor.id", actorId.ToString())
+            .SetTag("actor.type", actorId.Type.Name);
 
     /// <summary>
     /// Sets state operation attributes on an activity.
@@ -316,7 +309,7 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
     /// <param name="etag">Optional ETag value.</param>
     private static void SetStateAttributes(Activity? activity, string operationType, int? operationCount = null, string? etag = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -342,7 +335,7 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
     /// <param name="errorMessage">Optional error message for failures.</param>
     private static void SetOperationStatus(Activity? activity, bool success, string? errorMessage = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -362,23 +355,15 @@ public sealed class InMemoryActorStateStorage : IActorStateStorage
     /// </summary>
     /// <param name="activity">The activity to set error attributes on.</param>
     /// <param name="exception">The exception that occurred.</param>
-    private static void SetErrorAttributes(Activity? activity, Exception exception)
-    {
-        if (activity == null)
-        {
-            return;
-        }
-
-        activity.SetTag("error.type", exception.GetType().Name);
-        activity.SetTag("error.message", exception.Message);
-        activity.SetStatus(ActivityStatusCode.Error, exception.Message);
-
-        // Add exception event
-        activity.AddEvent(new ActivityEvent("exception", DateTimeOffset.UtcNow, new ActivityTagsCollection
-        {
-            ["error.type"] = exception.GetType().Name,
-            ["error.message"] = exception.Message,
-            ["error.stack_trace"] = exception.StackTrace
-        }));
-    }
+    private static void SetErrorAttributes(Activity? activity, Exception exception) =>
+        activity?
+            .SetTag("error.type", exception.GetType().Name)
+            .SetTag("error.message", exception.Message)
+            .SetStatus(ActivityStatusCode.Error, exception.Message)
+            .AddEvent(new ActivityEvent("exception", DateTimeOffset.UtcNow, new ActivityTagsCollection
+            {
+                ["error.type"] = exception.GetType().Name,
+                ["error.message"] = exception.Message,
+                ["error.stack_trace"] = exception.StackTrace
+            }));
 }

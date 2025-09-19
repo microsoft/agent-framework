@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.UnitTests;
 
 public class EdgeRunnerTests
 {
-    private async Task CreateAndRunDirectedEdgeTestAsync(bool? conditionMatch = null, bool? targetMatch = null)
+    private static async Task CreateAndRunDirectedEdgeTestAsync(bool? conditionMatch = null, bool? targetMatch = null)
     {
         const string MessageVariant1 = "test";
         const string MessageVariant2 = "something else";
@@ -31,7 +31,7 @@ public class EdgeRunnerTests
         runContext.Executors["executor1"] = new ForwardMessageExecutor<string>("executor1");
         runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
 
-        DirectEdgeData edgeData = new("executor1", "executor2", condition);
+        DirectEdgeData edgeData = new("executor1", "executor2", new EdgeId(0), condition);
         DirectEdgeRunner runner = new(runContext, edgeData);
 
         MessageEnvelope envelope = new(MessageVariant1, targetId: targetId);
@@ -58,21 +58,21 @@ public class EdgeRunnerTests
         //   NoCondition vs Condition(=> true) vs Condition(=> false)
         //   Untargeted vs Targeted(matching) vs Targeted(not matching)
 
-        await this.CreateAndRunDirectedEdgeTestAsync(); // NoCondition, Untargeted
+        await CreateAndRunDirectedEdgeTestAsync(); // NoCondition, Untargeted
 
-        await this.CreateAndRunDirectedEdgeTestAsync(targetMatch: true); // NoCondition, Targeted
-        await this.CreateAndRunDirectedEdgeTestAsync(targetMatch: false); // NoCondition, Targeted(not matching)
+        await CreateAndRunDirectedEdgeTestAsync(targetMatch: true); // NoCondition, Targeted
+        await CreateAndRunDirectedEdgeTestAsync(targetMatch: false); // NoCondition, Targeted(not matching)
 
-        await this.CreateAndRunDirectedEdgeTestAsync(conditionMatch: true); // Condition(=> true), Untargeted
-        await this.CreateAndRunDirectedEdgeTestAsync(conditionMatch: false); // Condition(=> false), Untargeted
+        await CreateAndRunDirectedEdgeTestAsync(conditionMatch: true); // Condition(=> true), Untargeted
+        await CreateAndRunDirectedEdgeTestAsync(conditionMatch: false); // Condition(=> false), Untargeted
 
-        await this.CreateAndRunDirectedEdgeTestAsync(conditionMatch: true, targetMatch: true); // Condition(=> true), Targeted(matching)
-        await this.CreateAndRunDirectedEdgeTestAsync(conditionMatch: true, targetMatch: false); // Condition(=> true), Targeted(not matching)
-        await this.CreateAndRunDirectedEdgeTestAsync(conditionMatch: false, targetMatch: true); // Condition(=> false), Targeted(matching)
-        await this.CreateAndRunDirectedEdgeTestAsync(conditionMatch: false, targetMatch: false); // Condition(=> false), Targeted(not matching)
+        await CreateAndRunDirectedEdgeTestAsync(conditionMatch: true, targetMatch: true); // Condition(=> true), Targeted(matching)
+        await CreateAndRunDirectedEdgeTestAsync(conditionMatch: true, targetMatch: false); // Condition(=> true), Targeted(not matching)
+        await CreateAndRunDirectedEdgeTestAsync(conditionMatch: false, targetMatch: true); // Condition(=> false), Targeted(matching)
+        await CreateAndRunDirectedEdgeTestAsync(conditionMatch: false, targetMatch: false); // Condition(=> false), Targeted(not matching)
     }
 
-    private async Task CreateAndRunFanOutEdgeTestAsync(bool? assignerSelectsEmpty = null, bool? targetMatch = null)
+    private static async Task CreateAndRunFanOutEdgeTestAsync(bool? assignerSelectsEmpty = null, bool? targetMatch = null)
     {
         TestRunContext runContext = new();
 
@@ -90,7 +90,7 @@ public class EdgeRunnerTests
             ? (targetMatch.Value ? "executor2" : "executor1")
             : null;
 
-        FanOutEdgeData edgeData = new("executor1", ["executor2", "executor3"], assigner);
+        FanOutEdgeData edgeData = new("executor1", ["executor2", "executor3"], new EdgeId(0), assigner);
         FanOutEdgeRunner runner = new(runContext, edgeData);
 
         MessageEnvelope envelope = new("test", targetId: targetId);
@@ -122,18 +122,18 @@ public class EdgeRunnerTests
         //   NoAssigned vs Assigner(includes output) vs Assigner(does not include output)
         //   Untargeted vs Targeted(matching) vs Targeted(not matching)
 
-        await this.CreateAndRunFanOutEdgeTestAsync(); // NoAssigner, Untargeted
+        await CreateAndRunFanOutEdgeTestAsync(); // NoAssigner, Untargeted
 
-        await this.CreateAndRunFanOutEdgeTestAsync(targetMatch: true); // NoAssigner, Targeted(matching)
-        await this.CreateAndRunFanOutEdgeTestAsync(targetMatch: false); // NoAssigner, Targeted(not matching)
+        await CreateAndRunFanOutEdgeTestAsync(targetMatch: true); // NoAssigner, Targeted(matching)
+        await CreateAndRunFanOutEdgeTestAsync(targetMatch: false); // NoAssigner, Targeted(not matching)
 
-        await this.CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: false); // Assigner(includes output), Untargeted
-        await this.CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: true); // Assigner(does not include output), Untargeted
+        await CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: false); // Assigner(includes output), Untargeted
+        await CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: true); // Assigner(does not include output), Untargeted
 
-        await this.CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: false, targetMatch: true); // Assigner(includes output), Targeted(matching)
-        await this.CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: false, targetMatch: false); // Assigner(includes output), Targeted(not matching)
-        await this.CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: true, targetMatch: true); // Assigner(does not include output), Targeted(matching)
-        await this.CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: true, targetMatch: false); // Assigner(does not include output), Targeted(not matching) 
+        await CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: false, targetMatch: true); // Assigner(includes output), Targeted(matching)
+        await CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: false, targetMatch: false); // Assigner(includes output), Targeted(not matching)
+        await CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: true, targetMatch: true); // Assigner(does not include output), Targeted(matching)
+        await CreateAndRunFanOutEdgeTestAsync(assignerSelectsEmpty: true, targetMatch: false); // Assigner(does not include output), Targeted(not matching) 
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public class EdgeRunnerTests
         runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
         runContext.Executors["executor3"] = new ForwardMessageExecutor<string>("executor3");
 
-        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3");
+        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0));
         FanInEdgeRunner runner = new(runContext, edgeData);
 
         // Step 1: Send message from executor1, should not forward yet.
@@ -154,13 +154,13 @@ public class EdgeRunnerTests
         // Step 4: Send message from executor2, should forward now.
 
         FanInEdgeState state = runner.CreateState();
-        await RunIteration();
+        await RunIterationAsync();
 
         // Repeat the same sequence, to ensure state is properly reset inside of FanInEdgeState.
         runContext.QueuedMessages.Clear();
-        await RunIteration();
+        await RunIterationAsync();
 
-        async ValueTask RunIteration()
+        async ValueTask RunIterationAsync()
         {
             await runner.ChaseAsync("executor1", new("part1"), state, tracer: null);
 

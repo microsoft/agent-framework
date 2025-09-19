@@ -3,8 +3,6 @@
 import asyncio
 from dataclasses import dataclass
 
-import pytest
-
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -64,7 +62,6 @@ class SimpleParent(Executor):
         self.result = response
 
 
-@pytest.mark.asyncio
 async def test_simple_sub_workflow():
     """Test the simplest possible sub-workflow."""
     # Create sub-workflow with dummy executor to satisfy validation

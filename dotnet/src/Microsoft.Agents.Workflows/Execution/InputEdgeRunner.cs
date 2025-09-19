@@ -6,7 +6,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
+internal sealed class InputEdgeRunner(IRunnerContext runContext, string sinkId)
     : EdgeRunner<string>(runContext, sinkId)
 {
     public IWorkflowContext WorkflowContext { get; } = runContext.Bind(sinkId);
@@ -19,10 +19,7 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         return new InputEdgeRunner(runContext, port.Id);
     }
 
-    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer)
-    {
-        return await this.RunContext.EnsureExecutorAsync(this.EdgeData, tracer).ConfigureAwait(false);
-    }
+    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData, tracer).ConfigureAwait(false);
 
     public async ValueTask<object?> ChaseAsync(MessageEnvelope envelope, IStepTracer? tracer)
     {
@@ -35,7 +32,7 @@ internal class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         }
 
         // TODO: Throw instead? / Log
-        Debug.WriteLine($"Executor {target.Id} cannot handle message of type {envelope.MessageType.FullName}. Dropping.");
+        Debug.WriteLine($"Executor {target.Id} cannot handle message of type {envelope.MessageType.TypeName}. Dropping.");
 
         return null;
     }

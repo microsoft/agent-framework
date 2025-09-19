@@ -9,11 +9,11 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 /// </summary>
 internal static class ActivityExtensions
 {
-    public const string ActorCreated = ActorRuntimeOpenTelemetryConsts.EventInfo.Names.ActorCreated;
-    public const string ActorStarted = ActorRuntimeOpenTelemetryConsts.EventInfo.Names.ActorStarted;
-    public const string MessageSent = ActorRuntimeOpenTelemetryConsts.EventInfo.Names.MessageSent;
-    public const string MessageReceived = ActorRuntimeOpenTelemetryConsts.EventInfo.Names.MessageReceived;
-    public const string RequestCompleted = ActorRuntimeOpenTelemetryConsts.EventInfo.Names.RequestCompleted;
+    public const string ActorCreated = EventInfo.Names.ActorCreated;
+    public const string ActorStarted = EventInfo.Names.ActorStarted;
+    public const string MessageSent = EventInfo.Names.MessageSent;
+    public const string MessageReceived = EventInfo.Names.MessageReceived;
+    public const string RequestCompleted = EventInfo.Names.RequestCompleted;
 
     // Re-export common status values for convenience
     public const string Started = "started";
@@ -31,18 +31,19 @@ internal static class ActivityExtensions
     /// <param name="operation">Optional operation name.</param>
     public static void SetActorAttributes(this System.Diagnostics.Activity? activity, ActorId actorId, string? operation = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
 
-        activity.SetTag(ActorRuntimeOpenTelemetryConsts.Actor.Id, actorId.ToString());
-        activity.SetTag(ActorRuntimeOpenTelemetryConsts.Actor.Type, actorId.Type.Name);
-        activity.SetTag(ActorRuntimeOpenTelemetryConsts.Actor.RpcSystem, ActorRuntimeOpenTelemetryConsts.Actor.SystemName);
+        activity
+            .SetTag(Actor.Id, actorId.ToString())
+            .SetTag(Actor.Type, actorId.Type.Name)
+            .SetTag(Actor.RpcSystem, Actor.SystemName);
 
         if (!string.IsNullOrEmpty(operation))
         {
-            activity.SetTag(ActorRuntimeOpenTelemetryConsts.Actor.Operation, operation);
+            activity.SetTag(Actor.Operation, operation);
         }
     }
 
@@ -55,7 +56,7 @@ internal static class ActivityExtensions
     /// <param name="method">Optional message method.</param>
     public static void SetMessageAttributes(this System.Diagnostics.Activity? activity, string messageId, string? messageType = null, string? method = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -82,7 +83,7 @@ internal static class ActivityExtensions
     /// <param name="timeout">Optional timeout value.</param>
     public static void SetRequestAttributes(this System.Diagnostics.Activity? activity, string requestId, string? method = null, System.TimeSpan? timeout = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -109,7 +110,7 @@ internal static class ActivityExtensions
     /// <param name="etag">Optional ETag value.</param>
     public static void SetStateAttributes(this System.Diagnostics.Activity? activity, string operationType, int? operationCount = null, string? etag = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -135,7 +136,7 @@ internal static class ActivityExtensions
     /// <param name="errorMessage">Optional error message for failures.</param>
     public static void SetOperationStatus(this System.Diagnostics.Activity? activity, bool success, string? errorMessage = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -156,25 +157,17 @@ internal static class ActivityExtensions
     /// <param name="activity">The activity to set error attributes on.</param>
     /// <param name="exception">The exception that occurred.</param>
     /// <param name="errorType">Optional custom error type.</param>
-    public static void SetErrorAttributes(this System.Diagnostics.Activity? activity, System.Exception exception, string? errorType = null)
-    {
-        if (activity == null)
-        {
-            return;
-        }
-
-        activity.SetTag(ErrorInfo.Type, errorType ?? exception.GetType().Name);
-        activity.SetTag(ErrorInfo.Message, exception.Message);
-        activity.SetStatus(System.Diagnostics.ActivityStatusCode.Error, exception.Message);
-
-        // Add exception event
-        activity.AddEvent(new System.Diagnostics.ActivityEvent("exception", System.DateTimeOffset.UtcNow, new System.Diagnostics.ActivityTagsCollection
-        {
-            [ErrorInfo.Type] = errorType ?? exception.GetType().Name,
-            [ErrorInfo.Message] = exception.Message,
-            [ErrorInfo.StackTrace] = exception.StackTrace
-        }));
-    }
+    public static void SetErrorAttributes(this System.Diagnostics.Activity? activity, System.Exception exception, string? errorType = null) =>
+        activity?
+            .SetTag(ErrorInfo.Type, errorType ?? exception.GetType().Name)
+            .SetTag(ErrorInfo.Message, exception.Message)
+            .SetStatus(System.Diagnostics.ActivityStatusCode.Error, exception.Message)
+            .AddEvent(new System.Diagnostics.ActivityEvent("exception", System.DateTimeOffset.UtcNow, new System.Diagnostics.ActivityTagsCollection
+            {
+                [ErrorInfo.Type] = errorType ?? exception.GetType().Name,
+                [ErrorInfo.Message] = exception.Message,
+                [ErrorInfo.StackTrace] = exception.StackTrace
+            }));
 
     /// <summary>
     /// Sets RPC-style attributes for actor operations.
@@ -182,17 +175,11 @@ internal static class ActivityExtensions
     /// <param name="activity">The activity to set attributes on.</param>
     /// <param name="service">The RPC service name.</param>
     /// <param name="method">The RPC method name.</param>
-    public static void SetRpcAttributes(this System.Diagnostics.Activity? activity, string service, string method)
-    {
-        if (activity == null)
-        {
-            return;
-        }
-
-        activity.SetTag(Actor.RpcSystem, Actor.SystemName);
-        activity.SetTag(Actor.RpcService, service);
-        activity.SetTag(Actor.RpcMethod, method);
-    }
+    public static void SetRpcAttributes(this System.Diagnostics.Activity? activity, string service, string method) =>
+        activity?
+            .SetTag(Actor.RpcSystem, Actor.SystemName)
+            .SetTag(Actor.RpcService, service)
+            .SetTag(Actor.RpcMethod, method);
 
     /// <summary>
     /// Sets up complete telemetry for actor retrieval/creation operations.
@@ -203,7 +190,7 @@ internal static class ActivityExtensions
     /// <param name="started">Whether the actor was started.</param>
     public static void SetupActorOperation(this System.Diagnostics.Activity? activity, ActorId actorId, bool? exists = null, bool? started = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -233,7 +220,7 @@ internal static class ActivityExtensions
     /// <param name="status">Optional message status.</param>
     public static void SetupMessageOperation(this System.Diagnostics.Activity? activity, ActorId actorId, string messageId, string? messageType = null, string? method = null, string? status = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -259,7 +246,7 @@ internal static class ActivityExtensions
     /// <param name="timeout">Optional timeout value.</param>
     public static void SetupRequestOperation(this System.Diagnostics.Activity? activity, ActorId actorId, string requestId, string? method = null, string service = "ActorClient", string rpcMethod = "SendRequest", System.TimeSpan? timeout = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -279,7 +266,7 @@ internal static class ActivityExtensions
     /// <param name="etag">Optional ETag value.</param>
     public static void SetupStateOperation(this System.Diagnostics.Activity? activity, ActorId actorId, string operationType, int? operationCount = null, string? etag = null)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -295,7 +282,7 @@ internal static class ActivityExtensions
     /// <param name="additionalTags">Optional additional tags to set.</param>
     public static void RecordSuccess(this System.Diagnostics.Activity? activity, params (string key, object? value)[] additionalTags)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -317,7 +304,7 @@ internal static class ActivityExtensions
     /// <param name="additionalTags">Optional additional tags to set.</param>
     public static void RecordFailure(this System.Diagnostics.Activity? activity, System.Exception exception, string? errorType = null, params (string key, object? value)[] additionalTags)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -339,7 +326,7 @@ internal static class ActivityExtensions
     /// <param name="additionalData">Optional additional event data.</param>
     public static void AddActorEvent(this System.Diagnostics.Activity? activity, string eventName, ActorId actorId, params (string key, object? value)[] additionalData)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -368,7 +355,7 @@ internal static class ActivityExtensions
     /// <param name="eventData">Additional event data.</param>
     public static void CompleteWithEvent(this System.Diagnostics.Activity? activity, string eventName, ActorId actorId, (string key, object? value)[] statusTags, params (string key, object? value)[] eventData)
     {
-        if (activity == null)
+        if (activity is null)
         {
             return;
         }
@@ -405,5 +392,5 @@ internal static class ActivityExtensions
     /// Record failure.
     /// </summary>
     public static void Fail(this System.Diagnostics.Activity? activity, System.Exception exception, string? status = null) =>
-        RecordFailure(activity, exception, null, status != null ? (Request.Status, status) : default);
+        RecordFailure(activity, exception, null, status is not null ? (Request.Status, status) : default);
 }

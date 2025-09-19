@@ -15,7 +15,7 @@ namespace Microsoft.Agents.Workflows.Execution;
 /// appropriate) and published during a step transition.</remarks>
 /// <param name="scopeId"></param>
 /// <param name="key"></param>
-internal class UpdateKey(ScopeId scopeId, string key)
+internal sealed class UpdateKey(ScopeId scopeId, string key)
 {
     public ScopeId ScopeId { get; } = Throw.IfNull(scopeId);
     public string Key { get; } = Throw.IfNullOrEmpty(key);
@@ -24,15 +24,9 @@ internal class UpdateKey(ScopeId scopeId, string key)
         : this(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key)
     { }
 
-    public override string ToString()
-    {
-        return $"{this.ScopeId}/{this.Key}";
-    }
+    public override string ToString() => $"{this.ScopeId}/{this.Key}";
 
-    public bool IsMatchingScope(ScopeId scopeId, bool strict = false)
-    {
-        return this.ScopeId == scopeId && (!strict || this.ScopeId.ExecutorId == scopeId.ExecutorId);
-    }
+    public bool IsMatchingScope(ScopeId scopeId, bool strict = false) => this.ScopeId == scopeId && (!strict || this.ScopeId.ExecutorId == scopeId.ExecutorId);
 
     public override bool Equals(object? obj)
     {
@@ -46,8 +40,5 @@ internal class UpdateKey(ScopeId scopeId, string key)
         return false;
     }
 
-    public override int GetHashCode()
-    {
-        return HashCode.Combine(this.ScopeId.ExecutorId, this.ScopeId.ScopeName, this.Key);
-    }
+    public override int GetHashCode() => HashCode.Combine(this.ScopeId.ExecutorId, this.ScopeId.ScopeName, this.Key);
 }

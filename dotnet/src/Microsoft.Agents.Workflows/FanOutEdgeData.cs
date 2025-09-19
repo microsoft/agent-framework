@@ -11,30 +11,32 @@ namespace Microsoft.Agents.Workflows;
 /// Represents a connection from a single node to a set of nodes, optionally associated with a paritition selector
 /// function which maps incoming messages to a subset of the target set.
 /// </summary>
-/// <param name="sourceId">The id of the source executor node.</param>
-/// <param name="sinkIds">A list of ids of the target executor nodes.</param>
-/// <param name="assigner">A function that maps an incoming message to a subset of the target executor nodes.</param>
-public sealed class FanOutEdgeData(
-    string sourceId,
-    List<string> sinkIds,
-    AssignerF? assigner = null) : EdgeData
+internal sealed class FanOutEdgeData : EdgeData
 {
+    internal FanOutEdgeData(string sourceId, List<string> sinkIds, EdgeId edgeId, AssignerF? assigner = null) : base(edgeId)
+    {
+        this.SourceId = sourceId;
+        this.SinkIds = sinkIds;
+        this.EdgeAssigner = assigner;
+        this.Connection = new([sourceId], sinkIds);
+    }
+
     /// <summary>
     /// The Id of the source <see cref="Executor"/> node.
     /// </summary>
-    public string SourceId => sourceId;
+    public string SourceId { get; }
 
     /// <summary>
     /// The ordered list of Ids of the destination <see cref="Executor"/> nodes.
     /// </summary>
-    public List<string> SinkIds => sinkIds;
+    public List<string> SinkIds { get; }
 
     /// <summary>
     /// A function mapping an incoming message to a subset of the target executor nodes (or optionally all of them).
     /// If <see langword="null"/>, all destination nodes are selected.
     /// </summary>
-    public AssignerF? EdgeAssigner => assigner;
+    public AssignerF? EdgeAssigner { get; }
 
     /// <inheritdoc />
-    internal override EdgeConnection Connection { get; } = new([sourceId], sinkIds);
+    internal override EdgeConnection Connection { get; }
 }
