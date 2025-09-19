@@ -55,7 +55,7 @@ async def simple_agent_middleware(context, next):  # type: ignore - parameters i
 
 
 @function_middleware  # Decorator marks this as function middleware - no type annotations needed
-async def simple_function_middleware(context, next):  # type: ignore
+async def simple_function_middleware(context, next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Function middleware that runs before and after function calls."""
     print(f"[Function Middleware] Before calling: {context.function.name}")  # type: ignore
     await next(context)
