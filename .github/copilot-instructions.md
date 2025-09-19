@@ -12,7 +12,7 @@ Microsoft Agent Framework is a comprehensive multi-language framework for buildi
 
 #### Install uv package manager (Required for Python development)
 ```bash
-pip3 install uv
+pip install uv
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
