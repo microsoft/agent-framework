@@ -32,25 +32,25 @@ internal sealed class FunctionCallMiddlewareAgent : DelegatingAIAgent
     // Decorate options to add the middleware function
     private AgentRunOptions? AgentRunOptionsWithFunctionMiddleware(AgentRunOptions? options)
     {
-        if (options is ChatClientAgentRunOptions aco && aco.ChatOptions?.Tools is { Count: > 0 } tools)
+        if (options is ChatClientAgentRunOptions aco)
         {
             // Creates an immutable agent run options 
-            var newAgentOptions = new ChatClientAgentRunOptions(aco.ChatOptions.Clone());
+            var newAgentOptions = new ChatClientAgentRunOptions(aco.ChatOptions?.Clone());
 
             if (aco.AIToolsTransformer is null)
             {
-                newAgentOptions.AIToolsTransformer = LocalTransformerImpl;
+                newAgentOptions.AIToolsTransformer = LocalTransformer;
             }
             else
             {
                 var original = aco.AIToolsTransformer;
 
-                newAgentOptions.AIToolsTransformer = tools => LocalTransformerImpl(original(tools));
+                newAgentOptions.AIToolsTransformer = tools => LocalTransformer(original(tools));
             }
 
             return newAgentOptions;
 
-            IList<AITool>? LocalTransformerImpl(IList<AITool>? tools)
+            IList<AITool>? LocalTransformer(IList<AITool>? tools)
                 => tools?.Select(tool => tool is AIFunction aiFunction
                     ? aiFunction is ApprovalRequiredAIFunction approvalRequiredAiFunction
                     ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._callbackFunc))

@@ -111,12 +111,22 @@ public sealed class ChatClientAgent : AIAgent
         (AgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
+        var chatClient = this.ChatClient;
+
         // If we have an AIToolsTransformer, we should use it to transform the tools before sending them to the chat client.
-        if (chatOptions is not null
-            && options is ChatClientAgentRunOptions agentChatOptions
-            && agentChatOptions.AIToolsTransformer is not null)
+        if (chatOptions is not null && options is ChatClientAgentRunOptions agentChatOptions)
         {
-            chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
+            if (agentChatOptions.AIToolsTransformer is not null)
+            {
+                chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
+            }
+
+            if (agentChatOptions.ChatClientFactory is not null)
+            {
+                // If we have a custom chat client factory, we should use it to create a new chat client with the transformed tools.
+                chatClient = agentChatOptions.ChatClientFactory(chatClient);
+                _ = Throw.IfNull(chatClient);
+            }
         }
 
         var agentName = this.GetLoggingAgentName();
@@ -127,7 +137,7 @@ public sealed class ChatClientAgent : AIAgent
         ChatResponse chatResponse;
         try
         {
-            chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
+            chatResponse = await chatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -170,12 +180,22 @@ public sealed class ChatClientAgent : AIAgent
 
         int messageCount = threadMessages.Count;
 
+        var chatClient = this.ChatClient;
+
         // If we have an AIToolsTransformer, we should use it to transform the tools before sending them to the chat client.
-        if (chatOptions is not null
-            && options is ChatClientAgentRunOptions agentChatOptions
-            && agentChatOptions.AIToolsTransformer is not null)
+        if (chatOptions is not null && options is ChatClientAgentRunOptions agentChatOptions)
         {
-            chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
+            if (agentChatOptions.AIToolsTransformer is not null)
+            {
+                chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
+            }
+
+            if (agentChatOptions.ChatClientFactory is not null)
+            {
+                // If we have a custom chat client factory, we should use it to create a new chat client with the transformed tools.
+                chatClient = agentChatOptions.ChatClientFactory(chatClient);
+                _ = Throw.IfNull(chatClient);
+            }
         }
 
         var loggingAgentName = this.GetLoggingAgentName();
@@ -189,7 +209,7 @@ public sealed class ChatClientAgent : AIAgent
         try
         {
             // Using the enumerator to ensure we consider the case where no updates are returned for notification.
-            responseUpdatesEnumerator = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            responseUpdatesEnumerator = chatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
         }
         catch (Exception ex)
         {

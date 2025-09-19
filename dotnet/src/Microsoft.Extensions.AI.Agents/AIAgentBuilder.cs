@@ -8,7 +8,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>A builder for creating pipelines of <see cref="AIAgent"/>.</summary>
-public sealed class AIAgentBuilder
+public class AIAgentBuilder : IAIAgentBuilder<AIAgent>
 {
     private readonly Func<IServiceProvider, AIAgent> _innerAgentFactory;
 
@@ -31,12 +31,7 @@ public sealed class AIAgentBuilder
         this._innerAgentFactory = Throw.IfNull(innerAgentFactory);
     }
 
-    /// <summary>Builds an <see cref="AIAgent"/> that represents the entire pipeline. Calls to this instance will pass through each of the pipeline stages in turn.</summary>
-    /// <param name="services">
-    /// The <see cref="IServiceProvider"/> that should provide services to the <see cref="AIAgent"/> instances.
-    /// If <see langword="null"/>, an empty <see cref="IServiceProvider"/> will be used.
-    /// </param>
-    /// <returns>An instance of <see cref="AIAgent"/> that represents the entire pipeline.</returns>
+    /// <inheritdoc/>
     public AIAgent Build(IServiceProvider? services = null)
     {
         services ??= EmptyServiceProvider.Instance;
@@ -60,11 +55,7 @@ public sealed class AIAgentBuilder
         return agent;
     }
 
-    /// <summary>Adds a factory for an intermediate agent to the agent pipeline.</summary>
-    /// <param name="agentFactory">The agent factory function.</param>
-    /// <returns>The updated <see cref="AIAgentBuilder"/> instance.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="agentFactory"/> is <see langword="null"/>.</exception>
-    /// <related type="Article" href="https://learn.microsoft.com/dotnet/ai/microsoft-extensions-ai#functionality-pipelines">Pipelines of functionality.</related>
+    /// <inheritdoc/>
     public AIAgentBuilder Use(Func<AIAgent, AIAgent> agentFactory)
     {
         _ = Throw.IfNull(agentFactory);
@@ -72,17 +63,39 @@ public sealed class AIAgentBuilder
         return this.Use((innerAgent, _) => agentFactory(innerAgent));
     }
 
-    /// <summary>Adds a factory for an intermediate agent to the agent pipeline.</summary>
-    /// <param name="agentFactory">The agent factory function.</param>
-    /// <returns>The updated <see cref="AIAgentBuilder"/> instance.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="agentFactory"/> is <see langword="null"/>.</exception>
-    /// <related type="Article" href="https://learn.microsoft.com/dotnet/ai/microsoft-extensions-ai#functionality-pipelines">Pipelines of functionality.</related>
+    /// <inheritdoc/>
     public AIAgentBuilder Use(Func<AIAgent, IServiceProvider, AIAgent> agentFactory)
     {
         _ = Throw.IfNull(agentFactory);
 
         (this._agentFactories ??= []).Add(agentFactory);
         return this;
+    }
+}
+
+public class ChatClientAgentBuilder : AIAgentBuilder, IAIAgentBuilder<ChatClientAgent>
+{
+    /// <summary>Initializes a new instance of the <see cref="ChatClientAgentBuilder"/> class.</summary>
+    /// <param name="innerAgent">The inner <see cref="AIAgent"/> that represents the underlying backend.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
+    public ChatClientAgentBuilder(ChatClientAgent innerAgent) : base(innerAgent)
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="ChatClientAgentBuilder"/> class.</summary>
+    /// <param name="innerAgentFactory">A callback that produces the inner <see cref="AIAgent"/> that represents the underlying backend.</param>
+    public ChatClientAgentBuilder(Func<IServiceProvider, ChatClientAgent> innerAgentFactory) : base(innerAgentFactory)
+    {
+    }
+
+    ChatClientAgent IAIAgentBuilder<ChatClientAgent>.Build(IServiceProvider? services)
+    {
+        return (ChatClientAgent)this.Build(services);
+    }
+
+    IAIAgentBuilder<ChatClientAgent> IAIAgentBuilder<ChatClientAgent>.Use(Func<AIAgent, IServiceProvider, AIAgent> agentFactory)
+    {
+        base.Use(agentFactory);
     }
 }
 

@@ -13,14 +13,14 @@ namespace Microsoft.Extensions.AI.Agents;
 public static class AIAgentBuilderExtensions
 {
     /// <summary>
-    /// Adds a middleware to the AI agent pipeline that intercepts and processes <see cref="AIFunction"/> invocations.
+    /// Adds a middleware to the AI agent pipeline that intercepts and processes agent running invocation operations.
     /// </summary>
     /// <param name="builder">The <see cref="AIAgentBuilder"/> to which the middleware is added.</param>
-    /// <param name="callback">A delegate that processes function invocations. The delegate receives the invocation context, the next
-    /// middleware in the pipeline, and a cancellation token, and returns a task representing the result of the
-    /// invocation.</param>
-    /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
-    public static AIAgentBuilder UseFunctionInvocationContext(this AIAgentBuilder builder, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callback)
+    /// <param name="callback">A delegate that processes agent running invocations. The delegate takes the current <see
+    /// cref="AgentRunContext"/> and a function representing the next core agent invocation, and
+    /// returns a <see cref="Task"/> that completes when the callback finished processing.</param>
+    /// <returns>The <see cref="AIAgentBuilder"/> instance, allowing for further configuration of the pipeline.</returns>
+    public static IAIAgentBuilder<AIAgent> UseRunningContext(this IAIAgentBuilder<AIAgent> builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
         => Use(builder, callback);
 
     /// <summary>
@@ -31,7 +31,26 @@ public static class AIAgentBuilderExtensions
     /// cref="AgentRunContext"/> and a function representing the next core agent invocation, and
     /// returns a <see cref="Task"/> that completes when the callback finished processing.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance, allowing for further configuration of the pipeline.</returns>
-    public static AIAgentBuilder UseRunningContext(this AIAgentBuilder builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
+    public static IAIAgentBuilder<AIAgent> Use(this IAIAgentBuilder<AIAgent> builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
+        => builder.Use((innerAgent, _) => new RunningMiddlewareAgent(innerAgent, callback));
+}
+
+/// <summary>
+/// Provides extension methods for configuring an <see cref="AIAgentBuilder"/> instance.
+/// </summary>
+/// <remarks>This class contains methods that extend the functionality of the <see cref="AIAgentBuilder"/>  to
+/// allow additional customization and behavior injection.</remarks>
+public static class ChatClientAgentBuilderExtensions
+{
+    /// <summary>
+    /// Adds a middleware to the AI agent pipeline that intercepts and processes <see cref="AIFunction"/> invocations.
+    /// </summary>
+    /// <param name="builder">The <see cref="AIAgentBuilder"/> to which the middleware is added.</param>
+    /// <param name="callback">A delegate that processes function invocations. The delegate receives the invocation context, the next
+    /// middleware in the pipeline, and a cancellation token, and returns a task representing the result of the
+    /// invocation.</param>
+    /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
+    public static IAIAgentBuilder<ChatClientAgent> UseFunctionInvocationContext(this IAIAgentBuilder<ChatClientAgent> builder, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callback)
         => Use(builder, callback);
 
     /// <summary>
@@ -42,17 +61,6 @@ public static class AIAgentBuilderExtensions
     /// middleware in the pipeline, and a cancellation token, and returns a task representing the result of the
     /// invocation.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
-    public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callback)
-        => builder.Use((innerAgent) => new FunctionCallMiddlewareAgent(innerAgent, callback));
-
-    /// <summary>
-    /// Adds a middleware to the AI agent pipeline that intercepts and processes agent running invocation operations.
-    /// </summary>
-    /// <param name="builder">The <see cref="AIAgentBuilder"/> to which the middleware is added.</param>
-    /// <param name="callback">A delegate that processes agent running invocations. The delegate takes the current <see
-    /// cref="AgentRunContext"/> and a function representing the next core agent invocation, and
-    /// returns a <see cref="Task"/> that completes when the callback finished processing.</param>
-    /// <returns>The <see cref="AIAgentBuilder"/> instance, allowing for further configuration of the pipeline.</returns>
-    public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
-        => builder.Use((innerAgent) => new RunningMiddlewareAgent(innerAgent, callback));
+    public static IAIAgentBuilder<ChatClientAgent> Use(this IAIAgentBuilder<ChatClientAgent> builder, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callback)
+        => builder.Use((innerAgent, _) => new FunctionCallMiddlewareAgent(innerAgent, callback));
 }

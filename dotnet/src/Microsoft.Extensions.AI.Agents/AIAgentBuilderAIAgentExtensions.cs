@@ -22,4 +22,19 @@ public static class AIAgentBuilderAIAgentExtensions
 
         return new AIAgentBuilder(innerAgent);
     }
+
+    /// <summary>Creates a new <see cref="ChatClientAgentBuilder"/> using <paramref name="innerAgent"/> as its inner agent.</summary>
+    /// <param name="innerAgent">The agent to use as the inner agent.</param>
+    /// <returns>The new <see cref="ChatClientAgentBuilder"/> instance.</returns>
+    /// <remarks>
+    /// This method is equivalent to using the <see cref="ChatClientAgentBuilder"/> constructor directly,
+    /// specifying <paramref name="innerAgent"/> as the inner agent.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
+    public static ChatClientAgentBuilder AsBuilder(this ChatClientAgent innerAgent)
+    {
+        _ = Throw.IfNull(innerAgent);
+
+        return new ChatClientAgentBuilder(innerAgent);
+    }
 }
