@@ -79,10 +79,12 @@ exclude = ["**/data"]
 [tool.poe]
 executor.type = "uv"
 include = "../../../shared_tasks.toml"
+
 [tool.poe.tasks]
 test = "pytest --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered tests"
 mypy = "mypy agent_framework_lab_tau2"
-
+setup-data = "python tests/setup_data.py"
+purge-data = "python tests/purge_data.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

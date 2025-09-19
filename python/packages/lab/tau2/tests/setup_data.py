@@ -3,7 +3,6 @@
 import shutil
 import subprocess
 from pathlib import Path
-import pytest
 
 
 def setup_tau2_data():
@@ -11,6 +10,7 @@ def setup_tau2_data():
 
     # Get project directory (parent of tests directory)
     data_dir = Path.cwd() / "data"
+    print(data_dir)
 
     print("Setting up tau2 data directory...")
 
@@ -58,19 +58,5 @@ def setup_tau2_data():
     return str(data_dir)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_environment():
-    """
-    Session-scoped fixture that runs automatically before all tests.
-    Sets up the tau2 data directory and environment variables.
-    """
-    data_dir = setup_tau2_data()
-
-    # Verify data directory exists
-    if not Path(data_dir).exists():
-        pytest.skip("TAU2 data directory could not be set up")
-
-    yield data_dir
-
-    # Cleanup could go here if needed, but we'll keep the data
-    # for subsequent test runs to avoid re-downloading
+if __name__ == "__main__":
+    setup_tau2_data()

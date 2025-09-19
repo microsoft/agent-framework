@@ -115,7 +115,10 @@ jobs:
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/gaia test  -n logical --dist loadfile --dist worksteal --junitxml=coverage_gaia.xml
         working-directory: ./python
       - name: Test with pytest - lab - tau2
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/tau2 test  -n logical --dist loadfile --dist worksteal --junitxml=coverage_tau2.xml
+        run: |
+          uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/tau2 setup-data
+          uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/tau2 test  -n logical --dist loadfile --dist worksteal --junitxml=coverage_tau2.xml
+          uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/tau2 purge-data
         working-directory: ./python
       - name: Move coverage file - lab
         run: |
