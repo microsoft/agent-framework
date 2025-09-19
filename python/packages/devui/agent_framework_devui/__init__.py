@@ -2,6 +2,7 @@
 
 """Agent Framework DevUI - Debug interface with OpenAI compatible API server."""
 
+import importlib.metadata
 import logging
 import webbrowser
 from typing import Any
@@ -12,7 +13,10 @@ from .models._discovery_models import DiscoveryResponse, EntityInfo
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.0"
+try:
+    __version__ = importlib.metadata.version(__name__)
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0"  # Fallback for development mode
 
 
 def serve(
@@ -35,7 +39,17 @@ def serve(
         cors_origins: List of allowed CORS origins
         ui_enabled: Whether to enable the UI
     """
+    import re
+
     import uvicorn
+
+    # Validate host parameter early for security
+    if not re.match(r"^(localhost|127\.0\.0\.1|0\.0\.0\.0|[a-zA-Z0-9.-]+)$", host):
+        raise ValueError(f"Invalid host: {host}. Must be localhost, IP address, or valid hostname")
+
+    # Validate port parameter
+    if not isinstance(port, int) or not (1 <= port <= 65535):
+        raise ValueError(f"Invalid port: {port}. Must be integer between 1 and 65535")
 
     # Create server with direct parameters
     server = DevServer(
@@ -53,10 +67,40 @@ def serve(
     if auto_open:
 
         def open_browser() -> None:
+            import http.client
+            import re
             import time
 
-            time.sleep(1.5)
-            webbrowser.open(f"http://{host}:{port}")
+            # Validate host and port for security
+            if not re.match(r"^(localhost|127\.0\.0\.1|0\.0\.0\.0|[a-zA-Z0-9.-]+)$", host):
+                logger.warning(f"Invalid host for auto-open: {host}")
+                return
+
+            if not isinstance(port, int) or not (1 <= port <= 65535):
+                logger.warning(f"Invalid port for auto-open: {port}")
+                return
+
+            # Wait for server to be ready by checking health endpoint
+            browser_url = f"http://{host}:{port}"
+
+            for _ in range(30):  # 15 second timeout (30 * 0.5s)
+                try:
+                    # Use http.client for safe connection handling (standard library)
+                    conn = http.client.HTTPConnection(host, port, timeout=1)
+                    try:
+                        conn.request("GET", "/health")
+                        response = conn.getresponse()
+                        if response.status == 200:
+                            webbrowser.open(browser_url)
+                            return
+                    finally:
+                        conn.close()
+                except (http.client.HTTPException, OSError, TimeoutError):
+                    pass
+                time.sleep(0.5)
+
+            # Fallback: open browser anyway after timeout
+            webbrowser.open(browser_url)
 
         import threading
 

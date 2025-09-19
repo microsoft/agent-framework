@@ -10,10 +10,8 @@ import type {
   RunWorkflowRequest,
   ThreadInfo,
 } from "@/types";
-import type {
-  AgentFrameworkRequest,
-  ExtendedResponseStreamEvent,
-} from "@/types/openai";
+import type { AgentFrameworkRequest } from "@/types/agent-framework";
+import type { ExtendedResponseStreamEvent } from "@/types/openai";
 
 // Backend API response types to match Python Pydantic models
 interface EntityInfo {
@@ -254,25 +252,29 @@ class ApiClient {
 
   // OpenAI-compatible streaming methods using /v1/responses endpoint
 
-  // Stream agent execution using OpenAI format - direct event pass-through
+  // Stream agent execution using pure OpenAI format
   async *streamAgentExecutionOpenAI(
     agentId: string,
     request: RunAgentRequest
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
-    // Convert to OpenAI format
     const openAIRequest: AgentFrameworkRequest = {
-      model: "agent-framework", // Placeholder model name
-      input: Array.isArray(request.messages)
-        ? request.messages
-            .map((m) => (typeof m === "string" ? m : JSON.stringify(m)))
-            .join("\n")
-        : request.messages,
+      model: "agent-framework",
+      input: request.input, // Direct OpenAI ResponseInputParam
       stream: true,
       extra_body: {
         entity_id: agentId,
-        thread_id: request.thread_id, // Pass thread_id to backend
+        thread_id: request.thread_id,
       },
     };
+
+    return yield* this.streamAgentExecutionOpenAIDirect(agentId, openAIRequest);
+  }
+
+  // Stream agent execution using direct OpenAI format
+  async *streamAgentExecutionOpenAIDirect(
+    _agentId: string,
+    openAIRequest: AgentFrameworkRequest
+  ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
 
     const response = await fetch(`${this.baseUrl}/v1/responses`, {
       method: "POST",

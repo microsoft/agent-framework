@@ -3,14 +3,8 @@
 """Agent Framework DevUI Models - OpenAI-compatible types and custom extensions."""
 
 # Import discovery models
-from ._discovery_models import DiscoveryResponse, EntityInfo
-
-# Import all OpenAI-compatible types
-from ._openai_compat import (
-    InputTokensDetails,
-    Metadata,
-    OpenAIResponse,
-    OutputTokensDetails,
+# Import all OpenAI types directly from the openai package
+from openai.types.responses import (
     Response,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
@@ -18,14 +12,15 @@ from ._openai_compat import (
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseReasoningTextDeltaEvent,
-    ResponsesModel,
     ResponseStreamEvent,
     ResponseTextDeltaEvent,
     ResponseUsage,
     ToolParam,
 )
+from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
+from openai.types.shared import Metadata, ResponsesModel
 
-# Import all custom Agent Framework types
+from ._discovery_models import DiscoveryResponse, EntityInfo
 from ._openai_custom import (
     AgentFrameworkRequest,
     OpenAIError,
@@ -40,7 +35,8 @@ from ._openai_custom import (
     ResponseWorkflowEventDelta,
 )
 
-# Version info: OpenAI types copied from version 1.107.1 (2025-01-15)
+# Type alias for compatibility
+OpenAIResponse = Response
 
 # Export all types for easy importing
 __all__ = [

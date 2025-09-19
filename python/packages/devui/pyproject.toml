@@ -25,18 +25,13 @@ classifiers = [
 dependencies = [
     "agent-framework",
     "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0", 
-    "pydantic>=2.5.0",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "pyyaml>=6.0.0",
+    "uvicorn[standard]>=0.24.0",
     "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
-langgraph = ["langgraph>=0.1.0"]
 dev = ["pytest>=7.0.0", "watchdog>=3.0.0"]
-all = ["langgraph>=0.1.0", "pytest>=7.0.0", "watchdog>=3.0.0"]
+all = ["pytest>=7.0.0", "watchdog>=3.0.0"]
 
 [project.scripts]
 devui = "agent_framework_devui:main"

@@ -6,21 +6,29 @@ import importlib
 import importlib.util
 import logging
 import sys
+import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-# Import concrete types for proper typing
-if TYPE_CHECKING:
-    pass
+from dotenv import load_dotenv
 
-from ...models._discovery_models import EntityInfo
-from .._base import EntityDiscovery
+from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
 
 
-class AgentFrameworkEntityDiscovery(EntityDiscovery):
+class EntityDiscovery:
     """Discovery for Agent Framework entities - agents and workflows."""
+
+    def __init__(self, entities_dir: str | None = None):
+        """Initialize entity discovery.
+
+        Args:
+            entities_dir: Directory to scan for entities (optional)
+        """
+        self.entities_dir = entities_dir
+        self._entities: dict[str, EntityInfo] = {}
+        self._loaded_objects: dict[str, Any] = {}
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Scan for Agent Framework entities.
@@ -37,6 +45,95 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
         logger.info(f"Discovered {len(self._entities)} Agent Framework entities")
         return self.list_entities()
+
+    def get_entity_info(self, entity_id: str) -> EntityInfo | None:
+        """Get entity metadata.
+
+        Args:
+            entity_id: Entity identifier
+
+        Returns:
+            Entity information or None if not found
+        """
+        return self._entities.get(entity_id)
+
+    def get_entity_object(self, entity_id: str) -> Any | None:
+        """Get the actual loaded entity object.
+
+        Args:
+            entity_id: Entity identifier
+
+        Returns:
+            Entity object or None if not found
+        """
+        return self._loaded_objects.get(entity_id)
+
+    def list_entities(self) -> list[EntityInfo]:
+        """List all discovered entities.
+
+        Returns:
+            List of all entity information
+        """
+        return list(self._entities.values())
+
+    def register_entity(self, entity_id: str, entity_info: EntityInfo, entity_object: Any) -> None:
+        """Register an entity with both metadata and object.
+
+        Args:
+            entity_id: Unique entity identifier
+            entity_info: Entity metadata
+            entity_object: Actual entity object for execution
+        """
+        self._entities[entity_id] = entity_info
+        self._loaded_objects[entity_id] = entity_object
+        logger.debug(f"Registered entity: {entity_id} ({entity_info.type})")
+
+    async def create_entity_info_from_object(self, entity_object: Any, entity_type: str | None = None) -> EntityInfo:
+        """Create EntityInfo from Agent Framework entity object.
+
+        Args:
+            entity_object: Agent Framework entity object
+            entity_type: Optional entity type override
+
+        Returns:
+            EntityInfo with Agent Framework specific metadata
+        """
+        # Determine entity type if not provided
+        if entity_type is None:
+            entity_type = "agent"
+            # Check if it's a workflow
+            if hasattr(entity_object, "get_executors_list") or hasattr(entity_object, "executors"):
+                entity_type = "workflow"
+
+        # Extract metadata
+        name = getattr(entity_object, "name", "unknown")
+        description = getattr(entity_object, "description", "")
+
+        # Generate entity ID using Agent Framework specific naming
+        entity_id = self._generate_entity_id(entity_object, entity_type)
+
+        # Extract tools/executors using Agent Framework specific logic
+        tools_list = await self._extract_tools_from_object(entity_object, entity_type)
+
+        # Create EntityInfo with Agent Framework specifics
+        return EntityInfo(
+            id=entity_id,
+            name=name,
+            description=description,
+            type=entity_type,
+            framework="agent_framework",
+            tools=[str(tool) for tool in (tools_list or [])],
+            executors=tools_list if entity_type == "workflow" else [],
+            input_schema={"type": "string"},  # Default schema
+            start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
+            metadata={
+                "source": "agent_framework_object",
+                "class_name": entity_object.__class__.__name__
+                if hasattr(entity_object, "__class__")
+                else str(type(entity_object)),
+                "has_run_stream": hasattr(entity_object, "run_stream"),
+            },
+        )
 
     async def _scan_entities_directory(self, entities_dir: Path) -> None:
         """Scan the entities directory for Agent Framework entities.
@@ -142,6 +239,21 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
             if self._load_env_file(entities_env):
                 return True
 
+        return False
+
+    def _load_env_file(self, env_path: Path) -> bool:
+        """Load environment variables from .env file.
+
+        Args:
+            env_path: Path to .env file
+
+        Returns:
+            True if file was loaded successfully
+        """
+        if env_path.exists():
+            load_dotenv(env_path, override=True)
+            logger.debug(f"Loaded .env from {env_path}")
+            return True
         return False
 
     def _load_module_from_pattern(self, pattern: str) -> Any | None:
@@ -306,7 +418,7 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
                 id=entity_id,
                 type=obj_type,
                 name=name,
-                framework=self.framework_name,
+                framework="agent_framework",
                 description=description,
                 tools=tools_union,
                 metadata={
@@ -377,51 +489,34 @@ class AgentFrameworkEntityDiscovery(EntityDiscovery):
 
         return tools
 
-    async def create_entity_info_from_object(self, entity_object: Any, entity_type: str | None = None) -> EntityInfo:
-        """Create EntityInfo from Agent Framework entity object.
-
-        Override of base method with Agent Framework specific logic.
+    def _generate_entity_id(self, entity: Any, entity_type: str) -> str:
+        """Generate entity ID with priority: name -> id -> class_name -> uuid.
 
         Args:
-            entity_object: Agent Framework entity object
-            entity_type: Optional entity type override
+            entity: Entity object
+            entity_type: Type of entity (agent, workflow, etc.)
 
         Returns:
-            EntityInfo with Agent Framework specific metadata
+            Generated entity ID
         """
-        # Determine entity type if not provided
-        if entity_type is None:
-            entity_type = "agent"
-            # Check if it's a workflow
-            if hasattr(entity_object, "get_executors_list") or hasattr(entity_object, "executors"):
-                entity_type = "workflow"
+        import re
 
-        # Extract metadata
-        name = getattr(entity_object, "name", "unknown")
-        description = getattr(entity_object, "description", "")
+        # Priority 1: entity.name
+        if hasattr(entity, "name") and entity.name:
+            name = str(entity.name).lower().replace(" ", "-").replace("_", "-")
+            return f"{entity_type}_{name}"
 
-        # Generate entity ID using Agent Framework specific naming
-        entity_id = f"{entity_type}_{name.replace('-', '_').replace(' ', '_')}"
+        # Priority 2: entity.id
+        if hasattr(entity, "id") and entity.id:
+            entity_id = str(entity.id).lower().replace(" ", "-").replace("_", "-")
+            return f"{entity_type}_{entity_id}"
 
-        # Extract tools/executors using Agent Framework specific logic
-        tools_list = await self._extract_tools_from_object(entity_object, entity_type)
+        # Priority 3: class name
+        if hasattr(entity, "__class__"):
+            class_name = entity.__class__.__name__
+            # Convert CamelCase to kebab-case
+            class_name = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", class_name).lower()
+            return f"{entity_type}_{class_name}"
 
-        # Create EntityInfo with Agent Framework specifics
-        return EntityInfo(
-            id=entity_id,
-            name=name,
-            description=description,
-            type=entity_type,
-            framework="agent_framework",
-            tools=[str(tool) for tool in (tools_list or [])],
-            executors=tools_list if entity_type == "workflow" else [],
-            input_schema={"type": "string"},  # Default schema
-            start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
-            metadata={
-                "source": "agent_framework_object",
-                "class_name": entity_object.__class__.__name__
-                if hasattr(entity_object, "__class__")
-                else str(type(entity_object)),
-                "has_run_stream": hasattr(entity_object, "run_stream"),
-            },
-        )
+        # Priority 4: fallback to uuid
+        return f"{entity_type}_{uuid.uuid4().hex[:8]}"

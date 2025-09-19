@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Union
 
-from ...models import (
+from .models import (
     AgentFrameworkRequest,
     InputTokensDetails,
     OpenAIResponse,
@@ -27,7 +27,6 @@ from ...models import (
     ResponseUsageEventComplete,
     ResponseWorkflowEventComplete,
 )
-from .._base import MessageMapper
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +40,13 @@ EventType = Union[
 ]
 
 
-class AgentFrameworkMessageMapper(MessageMapper):
+class MessageMapper:
     """Maps Agent Framework messages/responses to OpenAI format."""
 
     def __init__(self) -> None:
         """Initialize Agent Framework message mapper."""
-        super().__init__()
+        self.sequence_counter = 0
+        self._conversion_contexts: dict[int, dict[str, Any]] = {}
 
         # Register content type mappers for all 12 Agent Framework content types
         self.content_mappers = {
@@ -81,7 +81,7 @@ class AgentFrameworkMessageMapper(MessageMapper):
             return [await self._create_error_event(raw_event.get("message", "Unknown error"), context)]
 
         # Handle ResponseTraceEvent objects from our trace collector
-        from ...models import ResponseTraceEvent
+        from .models import ResponseTraceEvent
 
         if isinstance(raw_event, ResponseTraceEvent):
             return [
@@ -176,6 +176,37 @@ class AgentFrameworkMessageMapper(MessageMapper):
         except Exception as e:
             logger.exception(f"Error aggregating response: {e}")
             return await self._create_error_response(str(e), request)
+
+    def _get_or_create_context(self, request: AgentFrameworkRequest) -> dict[str, Any]:
+        """Get or create conversion context for this request.
+
+        Args:
+            request: Request to get context for
+
+        Returns:
+            Conversion context dictionary
+        """
+        request_key = id(request)
+        if request_key not in self._conversion_contexts:
+            self._conversion_contexts[request_key] = {
+                "sequence_counter": 0,
+                "item_id": f"msg_{uuid.uuid4().hex[:8]}",
+                "content_index": 0,
+                "output_index": 0,
+            }
+        return self._conversion_contexts[request_key]
+
+    def _next_sequence(self, context: dict[str, Any]) -> int:
+        """Get next sequence number for events.
+
+        Args:
+            context: Conversion context
+
+        Returns:
+            Next sequence number
+        """
+        context["sequence_counter"] += 1
+        return int(context["sequence_counter"])
 
     async def _convert_agent_update(self, update: Any, context: dict[str, Any]) -> Sequence[Any]:
         """Convert AgentRunResponseUpdate to OpenAI events using comprehensive content mapping.
@@ -460,26 +491,6 @@ class AgentFrameworkMessageMapper(MessageMapper):
     def _chunk_json_string(self, json_str: str, chunk_size: int = 50) -> list[str]:
         """Chunk JSON string for streaming."""
         return [json_str[i : i + chunk_size] for i in range(0, len(json_str), chunk_size)]
-
-    def _workflow_event_to_text(self, event: Any) -> str:
-        """Convert workflow event to text representation."""
-        try:
-            event_name = event.__class__.__name__
-            text_parts = [f"🔄 {event_name}"]
-
-            # Add event data if available
-            if hasattr(event, "data") and event.data is not None:
-                if isinstance(event.data, str):
-                    text_parts.append(f": {event.data}")
-                else:
-                    text_parts.append(f": {event.data!s}")
-
-            text_parts.append("\\n")
-            return "".join(text_parts)
-
-        except Exception as e:
-            logger.warning(f"Error converting workflow event to text: {e}")
-            return f"Workflow event: {event!s}\\n"
 
     async def _create_error_response(self, error_message: str, request: AgentFrameworkRequest) -> OpenAIResponse:
         """Create error response."""

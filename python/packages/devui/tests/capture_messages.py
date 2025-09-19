@@ -8,13 +8,13 @@ Message Capture Script - Debug message flow
 
 import asyncio
 import contextlib
+import http.client
 import json
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-import requests
 import uvicorn
 from openai import OpenAI
 
@@ -22,14 +22,14 @@ from agent_framework_devui import DevServer
 
 
 def start_server() -> tuple[str, Any]:
-    """Start server with examples directory."""
-    # Get examples directory
+    """Start server with samples directory."""
+    # Get samples directory
     current_dir = Path(__file__).parent
-    examples_dir = current_dir.parent / "examples"
+    samples_dir = current_dir.parent / "samples"
 
     # Create and start server with simplified parameters
     server = DevServer(
-        entities_dir=str(examples_dir.resolve()),
+        entities_dir=str(samples_dir.resolve()),
         host="127.0.0.1",
         port=8085,  # Use different port
         ui_enabled=False,
@@ -58,9 +58,14 @@ def start_server() -> tuple[str, Any]:
     max_retries = 10
     for attempt in range(max_retries):
         try:
-            response = requests.get("http://127.0.0.1:8085/health", timeout=5)
-            if response.status_code == 200:
-                break
+            conn = http.client.HTTPConnection("127.0.0.1", 8085, timeout=5)
+            try:
+                conn.request("GET", "/health")
+                response = conn.getresponse()
+                if response.status == 200:
+                    break
+            finally:
+                conn.close()
         except Exception as e:
             if attempt < max_retries - 1:
                 time.sleep(2)
@@ -235,8 +240,14 @@ def main():
         client = OpenAI(base_url=f"{base_url}/v1", api_key="dummy-key")
 
         # Discover entities
-        discovery_response = requests.get(f"{base_url}/v1/entities", timeout=10)
-        entities = discovery_response.json()["entities"]
+        conn = http.client.HTTPConnection("127.0.0.1", 8085, timeout=10)
+        try:
+            conn.request("GET", "/v1/entities")
+            response = conn.getresponse()
+            response_data = response.read().decode("utf-8")
+            entities = json.loads(response_data)["entities"]
+        finally:
+            conn.close()
 
         all_results = {}
 

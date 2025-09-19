@@ -103,24 +103,45 @@ class ResponseUsageEventComplete(BaseModel):
     sequence_number: int
 
 
-# Agent Framework Request Model
-class AgentFrameworkRequest(BaseModel):
-    """Extended OpenAI Responses API request with Agent Framework routing."""
+# Agent Framework extension fields
+class AgentFrameworkExtraBody(BaseModel):
+    """Agent Framework specific routing fields for OpenAI requests."""
 
-    # Core OpenAI Responses API fields (match schema exactly)
-    model: str  # Using str instead of ResponsesModel for simplicity
-    input: str  # Simplified from ResponseInputParam
+    entity_id: str
+    thread_id: str | None = None
+    input_data: dict[str, Any] | None = None
+
+    class Config:
+        extra = "allow"  # Allow additional fields
+
+
+# Agent Framework Request Model - Extending real OpenAI types
+class AgentFrameworkRequest(BaseModel):
+    """OpenAI ResponseCreateParams with Agent Framework extensions.
+
+    This properly extends the real OpenAI API request format while adding
+    our custom routing fields in extra_body.
+    """
+
+    # All OpenAI fields from ResponseCreateParams
+    model: str
+    input: str | list[Any]  # ResponseInputParam
     stream: bool | None = False
 
-    # Optional OpenAI fields we want to support
+    # Common OpenAI optional fields
     instructions: str | None = None
-    metadata: dict[str, Any] | None = None  # Simplified from Metadata type
+    metadata: dict[str, Any] | None = None
     temperature: float | None = None
     max_output_tokens: int | None = None
-    tools: list[dict[str, Any]] | None = None  # Simplified from ToolParam
+    tools: list[dict[str, Any]] | None = None
 
-    # Agent Framework extension for entity routing
-    extra_body: dict[str, Any] | None = None
+    # Agent Framework extension - strongly typed
+    extra_body: AgentFrameworkExtraBody | None = None
+
+    class Config:
+        # Allow extra fields from OpenAI spec
+        extra = "allow"
+
     entity_id: str | None = None  # Allow entity_id as top-level field
 
     def get_entity_id(self) -> str | None:
@@ -130,9 +151,8 @@ class AgentFrameworkRequest(BaseModel):
             return self.entity_id
 
         # Priority 2: entity_id in extra_body
-        if self.extra_body and "entity_id" in self.extra_body:
-            entity_id = self.extra_body["entity_id"]
-            return str(entity_id) if entity_id is not None else None
+        if self.extra_body and hasattr(self.extra_body, "entity_id"):
+            return self.extra_body.entity_id
 
         return None
 

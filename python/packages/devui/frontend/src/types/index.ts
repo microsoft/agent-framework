@@ -74,16 +74,8 @@ export interface SessionInfo {
 }
 
 export interface RunAgentRequest {
-  messages:
-    | string
-    | Array<{
-        role: "user" | "assistant" | "system" | "tool";
-        contents: import("./agent-framework").Contents[];
-        author_name?: string;
-        message_id?: string;
-      }>;
+  input: import("./agent-framework").ResponseInputParam;
   thread_id?: string;
-  options?: Record<string, unknown>;
 }
 
 export interface RunWorkflowRequest {
@@ -96,7 +88,6 @@ export interface RunWorkflowRequest {
 export type {
   ResponseStreamEvent,
   ResponseTextDeltaEvent,
-  AgentFrameworkRequest,
   OpenAIResponse,
   OpenAIError,
   // New structured event types
@@ -107,6 +98,16 @@ export type {
   ResponseUsageEventComplete,
   StructuredEvent,
 } from "./openai";
+
+// Re-export Agent Framework types
+export type {
+  AgentFrameworkRequest,
+  AgentFrameworkExtraBody,
+  ResponseInputParam,
+  ResponseInputTextParam,
+  ResponseInputImageParam,
+  ResponseInputFileParam,
+} from "./agent-framework";
 
 export interface HealthResponse {
   status: "healthy";

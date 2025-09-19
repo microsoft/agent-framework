@@ -9,26 +9,25 @@ from pathlib import Path
 
 import pytest
 
-from agent_framework_devui.executors import EntityNotFoundError
-from agent_framework_devui.executors.agent_framework._discovery import AgentFrameworkEntityDiscovery
-from agent_framework_devui.executors.agent_framework._executor import AgentFrameworkExecutor
-from agent_framework_devui.executors.agent_framework._mapper import AgentFrameworkMessageMapper
-from agent_framework_devui.models import AgentFrameworkRequest
+from agent_framework_devui._discovery import EntityDiscovery
+from agent_framework_devui._executor import AgentFrameworkExecutor, EntityNotFoundError
+from agent_framework_devui._mapper import MessageMapper
+from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
 
 
 @pytest.fixture
 def test_entities_dir():
-    """Use the examples directory which has proper entity structure."""
+    """Use the samples directory which has proper entity structure."""
     current_dir = Path(__file__).parent
-    examples_dir = current_dir.parent / "examples"
-    return str(examples_dir.resolve())
+    samples_dir = current_dir.parent / "samples"
+    return str(samples_dir.resolve())
 
 
 @pytest.fixture
 async def executor(test_entities_dir):
     """Create configured executor."""
-    discovery = AgentFrameworkEntityDiscovery("agent_framework", test_entities_dir)
-    mapper = AgentFrameworkMessageMapper()
+    discovery = EntityDiscovery(test_entities_dir)
+    mapper = MessageMapper()
     executor = AgentFrameworkExecutor(discovery, mapper)
 
     # Discover entities
@@ -42,11 +41,18 @@ async def test_executor_entity_discovery(executor):
     """Test executor entity discovery."""
     entities = await executor.discover_entities()
 
-    # Should find entities from examples directory (at least 1 agent, 1+ workflows)
-    assert len(entities) >= 2
+    # Should find entities from samples directory
+    assert len(entities) > 0, "Should discover at least one entity"
+
     entity_types = [e.type for e in entities]
-    assert "agent" in entity_types  # WeatherAgent
-    assert "workflow" in entity_types  # spam_workflow and/or fanout_workflow
+    assert "agent" in entity_types, "Should find at least one agent"
+    assert "workflow" in entity_types, "Should find at least one workflow"
+
+    # Test entity structure
+    for entity in entities:
+        assert entity.id, "Entity should have an ID"
+        assert entity.name, "Entity should have a name"
+        assert entity.type in ["agent", "workflow"], "Entity should have valid type"
 
 
 @pytest.mark.asyncio
@@ -72,7 +78,7 @@ async def test_executor_sync_execution(executor):
     agent_id = agents[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework", input="test data", stream=False, extra_body={"entity_id": agent_id}
+        model="agent-framework", input="test data", stream=False, extra_body=AgentFrameworkExtraBody(entity_id=agent_id)
     )
 
     response = await executor.execute_sync(request)
@@ -94,7 +100,10 @@ async def test_executor_streaming_execution(executor):
     agent_id = agents[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework", input="streaming test", stream=True, extra_body={"entity_id": agent_id}
+        model="agent-framework",
+        input="streaming test",
+        stream=True,
+        extra_body=AgentFrameworkExtraBody(entity_id=agent_id),
     )
 
     event_count = 0
@@ -122,7 +131,12 @@ async def test_executor_invalid_entity_id(executor):
 @pytest.mark.asyncio
 async def test_executor_missing_entity_id(executor):
     """Test execution without entity ID."""
-    request = AgentFrameworkRequest(model="agent-framework", input="test", stream=False, extra_body={})
+    request = AgentFrameworkRequest(
+        model="agent-framework",
+        input="test",
+        stream=False,
+        extra_body=None,  # Test case for missing entity_id
+    )
 
     entity_id = request.get_entity_id()
     assert entity_id is None
@@ -146,8 +160,8 @@ class StreamingAgent:
             yield f"word_{i}: {word} "
 """)
 
-            discovery = AgentFrameworkEntityDiscovery("agent_framework", str(temp_path))
-            mapper = AgentFrameworkMessageMapper()
+            discovery = EntityDiscovery(str(temp_path))
+            mapper = MessageMapper()
             executor = AgentFrameworkExecutor(discovery, mapper)
 
             # Test discovery
@@ -156,7 +170,10 @@ class StreamingAgent:
             if entities:
                 # Test sync execution
                 request = AgentFrameworkRequest(
-                    model="agent-framework", input="test input", stream=False, extra_body={"entity_id": entities[0].id}
+                    model="agent-framework",
+                    input="test input",
+                    stream=False,
+                    extra_body=AgentFrameworkExtraBody(entity_id=entities[0].id),
                 )
 
                 await executor.execute_sync(request)

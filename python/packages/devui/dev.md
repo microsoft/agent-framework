@@ -45,7 +45,7 @@ AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
 **Option A: In-Memory Mode (Recommended for quick testing)**
 
 ```bash
-cd packages/devui/examples
+cd packages/devui/samples
 python in_memory_mode.py
 ```
 
@@ -54,7 +54,7 @@ This runs a simple example with predefined agents and opens your browser automat
 **Option B: Directory-Based Discovery**
 
 ```bash
-cd packages/devui/examples
+cd packages/devui/samples
 devui
 ```
 

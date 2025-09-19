@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "main"))
 # Import Agent Framework types (assuming they are always available)
 from agent_framework._types import AgentRunResponseUpdate, ErrorContent, FunctionCallContent, Role, TextContent
 
-from agent_framework_devui.executors.agent_framework._mapper import AgentFrameworkMessageMapper
-from agent_framework_devui.models import AgentFrameworkRequest
+from agent_framework_devui._mapper import MessageMapper
+from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
 
 
 def create_test_content(content_type: str, **kwargs: Any) -> Any:
@@ -42,21 +42,22 @@ def create_test_agent_update(contents: list[Any]) -> Any:
 
 
 @pytest.fixture
-def mapper() -> AgentFrameworkMessageMapper:
-    return AgentFrameworkMessageMapper()
+def mapper() -> MessageMapper:
+    return MessageMapper()
 
 
 @pytest.fixture
 def test_request() -> AgentFrameworkRequest:
     return AgentFrameworkRequest(
-        model="agent-framework", input="Test input", stream=True, extra_body={"entity_id": "test_agent"}
+        model="agent-framework",
+        input="Test input",
+        stream=True,
+        extra_body=AgentFrameworkExtraBody(entity_id="test_agent"),
     )
 
 
 @pytest.mark.asyncio
-async def test_critical_isinstance_bug_detection(
-    mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest
-) -> None:
+async def test_critical_isinstance_bug_detection(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """CRITICAL: Test that would have caught the isinstance vs hasattr bug."""
 
     content = create_test_content("text", text="Bug detection test")
@@ -79,7 +80,7 @@ async def test_critical_isinstance_bug_detection(
 
 
 @pytest.mark.asyncio
-async def test_text_content_mapping(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
+async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test TextContent mapping."""
     content = create_test_content("text", text="Hello, clean test!")
     update = create_test_agent_update([content])
@@ -92,7 +93,7 @@ async def test_text_content_mapping(mapper: AgentFrameworkMessageMapper, test_re
 
 
 @pytest.mark.asyncio
-async def test_function_call_mapping(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
+async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test FunctionCallContent mapping."""
     content = create_test_content("function_call", name="test_func", arguments={"location": "TestCity"})
     update = create_test_agent_update([content])
@@ -108,7 +109,7 @@ async def test_function_call_mapping(mapper: AgentFrameworkMessageMapper, test_r
 
 
 @pytest.mark.asyncio
-async def test_error_content_mapping(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
+async def test_error_content_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test ErrorContent mapping."""
     content = create_test_content("error", message="Test error", code="test_code")
     update = create_test_agent_update([content])
@@ -122,7 +123,7 @@ async def test_error_content_mapping(mapper: AgentFrameworkMessageMapper, test_r
 
 
 @pytest.mark.asyncio
-async def test_mixed_content_types(mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest) -> None:
+async def test_mixed_content_types(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test multiple content types together."""
     contents = [
         create_test_content("text", text="Starting..."),
@@ -142,9 +143,7 @@ async def test_mixed_content_types(mapper: AgentFrameworkMessageMapper, test_req
 
 
 @pytest.mark.asyncio
-async def test_unknown_content_fallback(
-    mapper: AgentFrameworkMessageMapper, test_request: AgentFrameworkRequest
-) -> None:
+async def test_unknown_content_fallback(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test graceful handling of unknown content types."""
     # Test the fallback path directly since we can't create invalid AgentRunResponseUpdate
     # due to Pydantic validation. Instead, test the content mapper's unknown content handling.
@@ -168,9 +167,9 @@ async def test_unknown_content_fallback(
 if __name__ == "__main__":
     # Simple test runner
     async def run_all_tests() -> None:
-        mapper = AgentFrameworkMessageMapper()
+        mapper = MessageMapper()
         test_request = AgentFrameworkRequest(
-            model="agent-framework", input="Test", stream=True, extra_body={"entity_id": "test"}
+            model="agent-framework", input="Test", stream=True, extra_body=AgentFrameworkExtraBody(entity_id="test")
         )
 
         tests = [

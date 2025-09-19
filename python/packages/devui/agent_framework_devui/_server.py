@@ -12,9 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .executors.agent_framework._discovery import AgentFrameworkEntityDiscovery
-from .executors.agent_framework._executor import AgentFrameworkExecutor
-from .executors.agent_framework._mapper import AgentFrameworkMessageMapper
+from ._discovery import EntityDiscovery
+from ._executor import AgentFrameworkExecutor
+from ._mapper import MessageMapper
 from .models import AgentFrameworkRequest, OpenAIError
 from .models._discovery_models import DiscoveryResponse, EntityInfo
 
@@ -58,8 +58,8 @@ class DevServer:
             logger.info("Initializing Agent Framework executor...")
 
             # Create components directly
-            entity_discovery = AgentFrameworkEntityDiscovery("agent_framework", self.entities_dir)
-            message_mapper = AgentFrameworkMessageMapper()
+            entity_discovery = EntityDiscovery(self.entities_dir)
+            message_mapper = MessageMapper()
             self.executor = AgentFrameworkExecutor(entity_discovery, message_mapper)
 
             # Discover entities from directory
@@ -126,7 +126,7 @@ class DevServer:
             executor = await self._ensure_executor()
             entities = await executor.discover_entities()
 
-            return {"status": "healthy", "entities_count": len(entities), "framework": executor.framework_name}
+            return {"status": "healthy", "entities_count": len(entities), "framework": "agent_framework"}
 
         @app.get("/v1/entities", response_model=DiscoveryResponse)
         async def discover_entities() -> DiscoveryResponse:

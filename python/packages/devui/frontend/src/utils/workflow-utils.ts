@@ -1,11 +1,13 @@
-// import dagre from "dagre"; // Removed to eliminate 4.88MB lodash dependency
 import { applySimpleLayout } from "./simple-layout";
 import type { Node, Edge } from "@xyflow/react";
 import type {
   ExecutorNodeData,
   ExecutorState,
 } from "@/components/workflow/executor-node";
-import type { ExtendedResponseStreamEvent } from "@/types";
+import type {
+  ExtendedResponseStreamEvent,
+  ResponseWorkflowEventComplete,
+} from "@/types";
 import type { Workflow } from "@/types/workflow";
 import { getTypedWorkflow } from "@/types/workflow";
 
@@ -46,7 +48,6 @@ export interface NodeUpdate {
   error?: string;
   timestamp: string;
 }
-
 
 /**
  * Convert workflow dump data to React Flow nodes
@@ -311,8 +312,13 @@ export function processWorkflowEvents(
   const nodeUpdates: Record<string, NodeUpdate> = {};
 
   events.forEach((event) => {
-    if (event.type === "response.workflow_event.complete" && "data" in event && event.data) {
-      const data = event.data as any;
+    if (
+      event.type === "response.workflow_event.complete" &&
+      "data" in event &&
+      event.data
+    ) {
+      const workflowEvent = event as ResponseWorkflowEventComplete;
+      const data = workflowEvent.data;
       const executorId = data.executor_id;
       const eventType = data.event_type;
       const eventData = data.data;
@@ -338,13 +344,15 @@ export function processWorkflowEvents(
       }
 
       // Update the node state (keep most recent update per executor)
-      nodeUpdates[executorId] = {
-        nodeId: executorId,
-        state,
-        data: eventData,
-        error,
-        timestamp: new Date().toISOString(),
-      };
+      if (executorId) {
+        nodeUpdates[executorId] = {
+          nodeId: executorId,
+          state,
+          data: eventData,
+          error,
+          timestamp: new Date().toISOString(),
+        };
+      }
     }
   });
 
@@ -358,7 +366,6 @@ export function updateNodesWithEvents(
   nodes: Node<ExecutorNodeData>[],
   nodeUpdates: Record<string, NodeUpdate>
 ): Node<ExecutorNodeData>[] {
-
   return nodes.map((node) => {
     const update = nodeUpdates[node.id];
     if (update) {
@@ -376,7 +383,6 @@ export function updateNodesWithEvents(
   });
 }
 
-
 /**
  * Get executors that are currently in execution (invoked but not yet completed)
  */
@@ -390,14 +396,20 @@ export function getCurrentlyExecutingExecutors(
 
   // Process events to find the most recent event for each executor
   events.forEach((event) => {
-    if (event.type === "response.workflow_event.complete" && "data" in event && event.data) {
-      const data = event.data as any;
+    if (
+      event.type === "response.workflow_event.complete" &&
+      "data" in event &&
+      event.data
+    ) {
+      const workflowEvent = event as ResponseWorkflowEventComplete;
+      const data = workflowEvent.data;
       const executorId = data.executor_id;
       const eventType = data.event_type;
 
       if (
-        eventType === "ExecutorInvokeEvent" ||
-        eventType === "ExecutorCompletedEvent"
+        executorId &&
+        (eventType === "ExecutorInvokeEvent" ||
+          eventType === "ExecutorCompletedEvent")
       ) {
         executorTimeline[executorId] = {
           lastEvent: eventType,
@@ -425,19 +437,27 @@ export function updateEdgesWithSequenceAnalysis(
   const currentlyExecuting = getCurrentlyExecutingExecutors(events);
 
   // Build simple state tracking for each executor
-  const executorStates: Record<string, { completed: boolean; invoked: boolean }> = {};
-  
+  const executorStates: Record<
+    string,
+    { completed: boolean; invoked: boolean }
+  > = {};
+
   events.forEach((event) => {
-    if (event.type === "response.workflow_event.complete" && "data" in event && event.data) {
-      const data = event.data as any;
+    if (
+      event.type === "response.workflow_event.complete" &&
+      "data" in event &&
+      event.data
+    ) {
+      const workflowEvent = event as ResponseWorkflowEventComplete;
+      const data = workflowEvent.data;
       const executorId = data.executor_id;
       const eventType = data.event_type;
-      
+
       if (executorId && eventType) {
         if (!executorStates[executorId]) {
           executorStates[executorId] = { completed: false, invoked: false };
         }
-        
+
         if (eventType === "ExecutorInvokeEvent") {
           executorStates[executorId].invoked = true;
         } else if (eventType === "ExecutorCompletedEvent") {
@@ -447,12 +467,11 @@ export function updateEdgesWithSequenceAnalysis(
     }
   });
 
-
   return edges.map((edge) => {
     const sourceState = executorStates[edge.source];
     const targetState = executorStates[edge.target];
     const targetIsExecuting = currentlyExecuting.includes(edge.target);
-    
+
     let style = { ...edge.style };
     let animated = false;
 
@@ -494,4 +513,3 @@ export function updateEdgesWithSequenceAnalysis(
     };
   });
 }
-

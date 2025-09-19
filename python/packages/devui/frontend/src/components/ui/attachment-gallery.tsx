@@ -3,8 +3,7 @@
  */
 
 import { useState } from "react";
-import { X, FileText, Image } from "lucide-react";
-import { Button } from "./button";
+import { FileText, Image, Trash2 } from "lucide-react";
 
 export interface AttachmentItem {
   id: string;
@@ -89,20 +88,26 @@ function AttachmentPreview({ attachment, onRemove }: AttachmentPreviewProps) {
     >
       {renderPreview()}
 
-      {/* Remove button on hover */}
-      {isHovered && (
-        <Button
-          variant="destructive"
-          size="icon"
-          className="absolute -top-1 -right-1 h-5 w-5 rounded-full"
-          onClick={onRemove}
-        >
-          <X className="h-3 w-3" />
-        </Button>
-      )}
+      {/* Dark overlay with centered delete icon on hover */}
+      <div
+        className={`absolute inset-0 bg-black/60 flex items-center justify-center transition-all duration-200 ease-in-out ${
+          isHovered
+            ? 'opacity-100 backdrop-blur-sm'
+            : 'opacity-0 pointer-events-none'
+        }`}
+        onClick={onRemove}
+      >
+        <div className={`transition-all duration-200 ease-in-out ${
+          isHovered
+            ? 'scale-100 opacity-100'
+            : 'scale-75 opacity-0'
+        }`}>
+          <Trash2 className="h-5 w-5 text-white drop-shadow-lg" />
+        </div>
+      </div>
 
       {/* File name tooltip */}
-      <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-75 text-white text-xs p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-75 text-white text-xs p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity duration-200">
         {attachment.file.name}
       </div>
     </div>

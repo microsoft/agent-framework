@@ -31,10 +31,10 @@ function DataContentRenderer({ content, className }: RenderProps) {
 
   if (content.type !== "data") return null;
 
-  // Extract data URI and media type
-  const dataUri = typeof content.data === "string" ? content.data : "";
+  // Extract data URI and media type (updated for new field names)
+  const dataUri = typeof content.uri === "string" ? content.uri : "";
   const mediaTypeMatch = dataUri.match(/^data:([^;]+)/);
-  const mediaType = content.mime_type || mediaTypeMatch?.[1] || "unknown";
+  const mediaType = content.media_type || mediaTypeMatch?.[1] || "unknown";
 
   const isImage = mediaType.startsWith("image/");
   const isPdf = mediaType === "application/pdf";
@@ -185,7 +185,7 @@ function UriContentRenderer({ content, className }: RenderProps) {
 
   if (content.type !== "uri") return null;
 
-  const isImage = content.mime_type?.startsWith("image/");
+  const isImage = content.media_type?.startsWith("image/");
 
   if (isImage && !imageError) {
     return (
@@ -220,7 +220,7 @@ function UriContentRenderer({ content, className }: RenderProps) {
           rel="noopener noreferrer"
           className="text-sm font-medium hover:underline"
         >
-          {content.mime_type || "External Link"}
+          {content.media_type || "External Link"}
         </a>
       </div>
       <div className="text-xs text-muted-foreground mt-1 break-all">

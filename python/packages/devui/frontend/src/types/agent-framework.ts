@@ -1,7 +1,74 @@
 /**
- * TypeScript interfaces matching Agent Framework Python types
- * Generated from Agent Framework _types.py, _threads.py, and _events.py
+ * TypeScript interfaces matching OpenAI Responses API and Agent Framework Python types
+ * Generated from OpenAI SDK and Agent Framework _types.py, _threads.py, and _events.py
  */
+
+// OpenAI Responses API Types - EXACT match to OpenAI SDK
+export interface ResponseInputTextParam {
+  text: string;
+  /** The type of the input item. Always `input_text`. */
+  type: "input_text";
+}
+
+export interface ResponseInputImageParam {
+  /** The detail level of the image to be sent to the model. One of `high`, `low`, or `auto`. Defaults to `auto`. */
+  detail: "low" | "high" | "auto";
+  /** The type of the input item. Always `input_image`. */
+  type: "input_image";
+  /** The ID of the file to be sent to the model. */
+  file_id?: string;
+  /** The URL of the image to be sent to the model. A fully qualified URL or base64 encoded image in a data URL. */
+  image_url?: string;
+}
+
+export interface ResponseInputFileParam {
+  /** The type of the input item. Always `input_file`. */
+  type: "input_file";
+  /** The content of the file to be sent to the model. */
+  file_data: string;
+  /** The ID of the file to be sent to the model. */
+  file_id?: string;
+  /** The URL of the file to be sent to the model. */
+  file_url: string;
+  /** The name of the file to be sent to the model. */
+  filename: string;
+}
+
+export type ResponseInputContent = ResponseInputTextParam | ResponseInputImageParam | ResponseInputFileParam;
+
+export interface EasyInputMessage {
+  type?: "message";
+  role: "user" | "assistant" | "system" | "developer";
+  content: string | ResponseInputContent[];
+}
+
+export type ResponseInputItem = EasyInputMessage;
+export type ResponseInputParam = ResponseInputItem[];
+
+// Agent Framework extension fields (matches backend AgentFrameworkExtraBody)
+export interface AgentFrameworkExtraBody {
+  entity_id: string;
+  thread_id?: string;
+  input_data?: Record<string, any>;
+}
+
+// Agent Framework Request - OpenAI ResponseCreateParams with extensions
+export interface AgentFrameworkRequest {
+  model: string;
+  input: string | ResponseInputParam;  // Union type matching OpenAI
+  stream?: boolean;
+
+  // Common OpenAI optional fields
+  instructions?: string;
+  metadata?: Record<string, any>;
+  temperature?: number;
+  max_output_tokens?: number;
+  tools?: Record<string, any>[];
+
+  // Agent Framework extension - strongly typed
+  extra_body?: AgentFrameworkExtraBody;
+  entity_id?: string; // Allow entity_id as top-level field too
+}
 
 // Base types
 export type Role = "system" | "user" | "assistant" | "tool";
@@ -58,14 +125,14 @@ export interface TextReasoningContent extends BaseContent {
 
 export interface DataContent extends BaseContent {
   type: "data";
-  data: unknown;
-  mime_type?: string;
+  uri: string;
+  media_type?: string;
 }
 
 export interface UriContent extends BaseContent {
   type: "uri";
   uri: string;
-  mime_type?: string;
+  media_type?: string;
 }
 
 export interface ErrorContent extends BaseContent {

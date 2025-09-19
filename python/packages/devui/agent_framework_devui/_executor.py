@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+
 """Agent Framework executor implementation."""
 
 import json
@@ -10,26 +11,33 @@ from typing import Any
 
 from agent_framework import AgentThread
 
-from ..._tracing import capture_traces
-from ...models import AgentFrameworkRequest
-from .._base import EntityNotFoundError, FrameworkExecutor
-from ._discovery import AgentFrameworkEntityDiscovery
-from ._mapper import AgentFrameworkMessageMapper
+from ._discovery import EntityDiscovery
+from ._mapper import MessageMapper
+from ._tracing import capture_traces
+from .models import AgentFrameworkRequest, OpenAIResponse
+from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
 
 
-class AgentFrameworkExecutor(FrameworkExecutor):
+class EntityNotFoundError(Exception):
+    """Raised when an entity is not found."""
+
+    pass
+
+
+class AgentFrameworkExecutor:
     """Executor for Agent Framework entities - agents and workflows."""
 
-    def __init__(self, entity_discovery: AgentFrameworkEntityDiscovery, message_mapper: AgentFrameworkMessageMapper):
+    def __init__(self, entity_discovery: EntityDiscovery, message_mapper: MessageMapper):
         """Initialize Agent Framework executor.
 
         Args:
             entity_discovery: Entity discovery instance
             message_mapper: Message mapper instance
         """
-        super().__init__(entity_discovery, message_mapper)
+        self.entity_discovery = entity_discovery
+        self.message_mapper = message_mapper
         self._setup_tracing_provider()
         self._setup_agent_framework_tracing()
 
@@ -240,6 +248,76 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             logger.error(f"Error deserializing thread {thread_id}: {e}")
             return False
 
+    async def discover_entities(self) -> list[EntityInfo]:
+        """Discover all available entities.
+
+        Returns:
+            List of discovered entities
+        """
+        return await self.entity_discovery.discover_entities()
+
+    def get_entity_info(self, entity_id: str) -> EntityInfo:
+        """Get entity information.
+
+        Args:
+            entity_id: Entity identifier
+
+        Returns:
+            Entity information
+
+        Raises:
+            EntityNotFoundError: If entity is not found
+        """
+        entity_info = self.entity_discovery.get_entity_info(entity_id)
+        if entity_info is None:
+            raise EntityNotFoundError(f"Entity '{entity_id}' not found")
+        return entity_info
+
+    async def execute_streaming(self, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
+        """Execute request and stream results in OpenAI format.
+
+        Args:
+            request: Request to execute
+
+        Yields:
+            OpenAI response stream events
+        """
+        try:
+            entity_id = request.get_entity_id()
+            if not entity_id:
+                logger.error("No entity_id specified in request")
+                return
+
+            # Validate entity exists
+            if not self.entity_discovery.get_entity_info(entity_id):
+                logger.error(f"Entity '{entity_id}' not found")
+                return
+
+            # Execute entity and convert events
+            async for raw_event in self.execute_entity(entity_id, request):
+                openai_events = await self.message_mapper.convert_event(raw_event, request)
+                for event in openai_events:
+                    yield event
+
+        except Exception as e:
+            logger.exception(f"Error in streaming execution: {e}")
+            # Could yield error event here
+
+    async def execute_sync(self, request: AgentFrameworkRequest) -> OpenAIResponse:
+        """Execute request synchronously and return complete response.
+
+        Args:
+            request: Request to execute
+
+        Returns:
+            Final aggregated OpenAI response
+        """
+        # Collect all streaming events
+        events = [event async for event in self.execute_streaming(request)]
+
+        # Aggregate into final response
+        return await self.message_mapper.aggregate_to_response(events, request)
+
     async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
         """Execute the entity and yield raw Agent Framework events plus trace events.
 
@@ -261,7 +339,7 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             logger.info(f"Executing {entity_info.type}: {entity_id}")
 
             # Extract session_id from request for trace context
-            session_id = request.extra_body.get("session_id") if request.extra_body else None
+            session_id = getattr(request.extra_body, "session_id", None) if request.extra_body else None
 
             # Use simplified trace capture
             with capture_traces(session_id=session_id, entity_id=entity_id) as trace_collector:
@@ -297,20 +375,24 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             Agent update events and trace events
         """
         try:
-            # Extract user message from input
-            user_message = self._extract_user_message(request.input)
+            # Convert input to proper ChatMessage or string
+            user_message = self._convert_input_to_chat_message(request.input)
 
             # Get thread if provided in extra_body
             thread = None
-            if request.extra_body and "thread_id" in request.extra_body:
-                thread_id = request.extra_body["thread_id"]
+            if request.extra_body and hasattr(request.extra_body, "thread_id") and request.extra_body.thread_id:
+                thread_id = request.extra_body.thread_id
                 thread = self.get_thread(thread_id)
                 if thread:
                     logger.debug(f"Using existing thread: {thread_id}")
                 else:
                     logger.warning(f"Thread {thread_id} not found, proceeding without thread")
 
-            logger.debug(f"Executing agent with input: {user_message[:100]}...")
+            # Debug logging - handle both string and ChatMessage
+            if isinstance(user_message, str):
+                logger.debug(f"Executing agent with text input: {user_message[:100]}...")
+            else:
+                logger.debug(f"Executing agent with multimodal ChatMessage: {type(user_message)}")
 
             # Use Agent Framework's native streaming with optional thread
             if thread:
@@ -349,8 +431,9 @@ class AgentFrameworkExecutor(FrameworkExecutor):
         """
         try:
             # Get input data - prefer structured data from extra_body
-            if request.extra_body and "input_data" in request.extra_body:
-                input_data = request.extra_body["input_data"]
+            input_data: str | list[Any] | dict[str, Any]
+            if request.extra_body and hasattr(request.extra_body, "input_data") and request.extra_body.input_data:
+                input_data = request.extra_body.input_data
                 logger.debug(f"Using structured input_data from extra_body: {type(input_data)}")
             else:
                 input_data = request.input
@@ -374,8 +457,124 @@ class AgentFrameworkExecutor(FrameworkExecutor):
             logger.error(f"Error in workflow execution: {e}")
             yield {"type": "error", "message": f"Workflow execution error: {e!s}"}
 
-    def _extract_user_message(self, input_data: Any) -> str:
-        """Extract user message from various input formats.
+    def _convert_input_to_chat_message(self, input_data: Any) -> Any:
+        """Convert OpenAI Responses API input to Agent Framework ChatMessage or string.
+
+        Args:
+            input_data: OpenAI ResponseInputParam (List[ResponseInputItemParam])
+
+        Returns:
+            ChatMessage for multimodal content, or string for simple text
+        """
+        # Import Agent Framework types
+        try:
+            from agent_framework import ChatMessage, DataContent, Role, TextContent
+        except ImportError:
+            # Fallback to string extraction if Agent Framework not available
+            return self._extract_user_message_fallback(input_data)
+
+        # Handle simple string input (backward compatibility)
+        if isinstance(input_data, str):
+            return input_data
+
+        # Handle OpenAI ResponseInputParam (List[ResponseInputItemParam])
+        if isinstance(input_data, list):
+            return self._convert_openai_input_to_chat_message(input_data, ChatMessage, TextContent, DataContent, Role)
+
+        # Fallback for other formats
+        return self._extract_user_message_fallback(input_data)
+
+    def _convert_openai_input_to_chat_message(
+        self, input_items: list[Any], ChatMessage: Any, TextContent: Any, DataContent: Any, Role: Any
+    ) -> Any:
+        """Convert OpenAI ResponseInputParam to Agent Framework ChatMessage.
+
+        Args:
+            input_items: List of OpenAI ResponseInputItemParam objects (dicts or objects)
+            ChatMessage: ChatMessage class for creating chat messages
+            TextContent: TextContent class for text content
+            DataContent: DataContent class for data/media content
+            Role: Role enum for message roles
+
+        Returns:
+            ChatMessage with converted content
+        """
+        contents = []
+
+        # Process each input item
+        for item in input_items:
+            # Handle dict format (from JSON)
+            if isinstance(item, dict):
+                item_type = item.get("type")
+                if item_type == "message":
+                    # Extract content from OpenAI message
+                    message_content = item.get("content", [])
+
+                    # Handle both string content and list content
+                    if isinstance(message_content, str):
+                        contents.append(TextContent(text=message_content))
+                    elif isinstance(message_content, list):
+                        for content_item in message_content:
+                            # Handle dict content items
+                            if isinstance(content_item, dict):
+                                content_type = content_item.get("type")
+
+                                if content_type == "input_text":
+                                    text = content_item.get("text", "")
+                                    contents.append(TextContent(text=text))
+
+                                elif content_type == "input_image":
+                                    image_url = content_item.get("image_url", "")
+                                    if image_url:
+                                        # Extract media type from data URI if possible
+                                        # Parse media type from data URL, fallback to image/png
+                                        if image_url.startswith("data:"):
+                                            try:
+                                                # Extract media type from data:image/jpeg;base64,... format
+                                                media_type = image_url.split(";")[0].split(":")[1]
+                                            except (IndexError, AttributeError):
+                                                logger.warning(
+                                                    f"Failed to parse media type from data URL: {image_url[:30]}..."
+                                                )
+                                                media_type = "image/png"
+                                        else:
+                                            media_type = "image/png"
+                                        contents.append(DataContent(uri=image_url, media_type=media_type))
+
+                                elif content_type == "input_file":
+                                    # Handle file input
+                                    file_data = content_item.get("file_data")
+                                    file_url = content_item.get("file_url")
+                                    filename = content_item.get("filename", "")
+
+                                    # Determine media type from filename
+                                    media_type = "application/octet-stream"  # default
+                                    if filename:
+                                        if filename.lower().endswith(".pdf"):
+                                            media_type = "application/pdf"
+                                        elif filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+                                            media_type = f"image/{filename.split('.')[-1].lower()}"
+
+                                    # Use file_data or file_url
+                                    if file_data:
+                                        # Assume file_data is base64, create data URI
+                                        data_uri = f"data:{media_type};base64,{file_data}"
+                                        contents.append(DataContent(uri=data_uri, media_type=media_type))
+                                    elif file_url:
+                                        contents.append(DataContent(uri=file_url, media_type=media_type))
+
+            # Handle other OpenAI input item types as needed
+            # (tool calls, function results, etc.)
+
+        # If no contents found, create a simple text message
+        if not contents:
+            contents.append(TextContent(text=""))
+
+        # Create ChatMessage with user role
+        return ChatMessage(role=Role.USER, contents=contents)
+
+    def _extract_user_message_fallback(self, input_data: Any) -> str:
+        """Fallback method to extract user message as string.
 
         Args:
             input_data: Input data in various formats

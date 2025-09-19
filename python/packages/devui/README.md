@@ -1,6 +1,9 @@
 # DevUI - Agent Framework Debug Interface
 
-A lightweight, standalone debug interface for entities (agents/workflows) in the Microsoft Agent Framework supporting both **directory-based discovery** and **in-memory entity registration**.
+A lightweight, standalone sample app interface for running entities (agents/workflows) in the Microsoft Agent Framework supporting both **directory-based discovery** and **in-memory entity registration**.
+
+> [!IMPORTANT]
+> This is simply a **sample app** to help you get started with the Agent Framework. It is **not** intended for production use. For production, you should build your own custom interface and API server using the Agent Framework SDK.
 
 ![DevUI Screenshot](./docs/devuiscreen.png)
 
@@ -75,7 +78,7 @@ curl -X POST http://localhost:8080/v1/responses \
 EOF
 ```
 
-Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/executors/agent_framework/_mapper.py`. See the mapping table below:
+Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/_mapper.py`. See the mapping table below:
 
 | Agent Framework Content           | OpenAI Event                              | Type     |
 | --------------------------------- | ----------------------------------------- | -------- |
@@ -115,14 +118,16 @@ Options:
 
 ## Implementation
 
-- **Discovery**: `agent_framework_devui/executors/agent_framework/_discovery.py`
-- **Execution**: `agent_framework_devui/executors/agent_framework/_executor.py`
+- **Discovery**: `agent_framework_devui/_discovery.py`
+- **Execution**: `agent_framework_devui/_executor.py`
+- **Message Mapping**: `agent_framework_devui/_mapper.py`
+- **Session Management**: `agent_framework_devui/_session.py`
 - **API Server**: `agent_framework_devui/_server.py`
 - **CLI**: `agent_framework_devui/_cli.py`
 
 ## Examples
 
-See `examples/` for working agent and workflow implementations.
+See `samples/` for working agent and workflow implementations.
 
 ## License
 

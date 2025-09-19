@@ -216,24 +216,7 @@ export interface ResponseUsage {
 }
 
 // Request format for Agent Framework
-export interface AgentFrameworkRequest {
-  model: string;
-  input: string | Record<string, unknown>;
-  stream?: boolean;
-  instructions?: string;
-  metadata?: Record<string, unknown>;
-  temperature?: number;
-  max_output_tokens?: number;
-  tools?: Record<string, unknown>[];
-
-  // Agent Framework routing
-  extra_body?: {
-    entity_id: string;
-    input_data?: Record<string, unknown>; // Structured data for workflows
-    [key: string]: unknown; // Allow additional properties
-  };
-  entity_id?: string; // Alternative top-level field
-}
+// AgentFrameworkRequest moved to agent-framework.ts to avoid conflicts
 
 // Error response
 export interface OpenAIError {

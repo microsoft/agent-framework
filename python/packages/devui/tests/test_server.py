@@ -9,15 +9,15 @@ from pathlib import Path
 import pytest
 
 from agent_framework_devui import DevServer
-from agent_framework_devui.models import AgentFrameworkRequest
+from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
 
 
 @pytest.fixture
 def test_entities_dir():
-    """Use the examples directory which has proper entity structure."""
+    """Use the samples directory which has proper entity structure."""
     current_dir = Path(__file__).parent
-    examples_dir = current_dir.parent / "examples"
-    return str(examples_dir.resolve())
+    samples_dir = current_dir.parent / "samples"
+    return str(samples_dir.resolve())
 
 
 @pytest.mark.asyncio
@@ -29,7 +29,7 @@ async def test_server_health_endpoint(test_entities_dir):
     # Test entity count
     entities = await executor.discover_entities()
     assert len(entities) > 0
-    assert executor.framework_name == "agent_framework"
+    # Framework name is now hardcoded since we simplified to single framework
 
 
 @pytest.mark.asyncio
@@ -57,7 +57,10 @@ async def test_server_execution_sync(test_entities_dir):
     agent_id = entities[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework", input="San Francisco", stream=False, extra_body={"entity_id": agent_id}
+        model="agent-framework",
+        input="San Francisco",
+        stream=False,
+        extra_body=AgentFrameworkExtraBody(entity_id=agent_id),
     )
 
     response = await executor.execute_sync(request)
@@ -75,7 +78,7 @@ async def test_server_execution_streaming(test_entities_dir):
     agent_id = entities[0].id
 
     request = AgentFrameworkRequest(
-        model="agent-framework", input="New York", stream=True, extra_body={"entity_id": agent_id}
+        model="agent-framework", input="New York", stream=True, extra_body=AgentFrameworkExtraBody(entity_id=agent_id)
     )
 
     event_count = 0
@@ -124,7 +127,7 @@ class WeatherAgent:
                     model="agent-framework",
                     input="test location",
                     stream=False,
-                    extra_body={"entity_id": entities[0].id},
+                    extra_body=AgentFrameworkExtraBody(entity_id=entities[0].id),
                 )
 
                 await executor.execute_sync(request)

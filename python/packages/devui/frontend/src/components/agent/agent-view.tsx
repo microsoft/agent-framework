@@ -134,6 +134,8 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [dragCounter, setDragCounter] = useState(0);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -170,7 +172,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     accumulatedText.current = "";
 
     loadThreads();
-  }, [selectedAgent.id]);
+  }, [selectedAgent]);
 
   // Handle file uploads
   const handleFilesSelected = async (files: File[]) => {
@@ -198,6 +200,45 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
   const handleRemoveAttachment = (id: string) => {
     setAttachments((prev) => prev.filter((att) => att.id !== id));
+  };
+
+  // Drag and drop handlers
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragCounter((prev) => prev + 1);
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const newCounter = dragCounter - 1;
+    setDragCounter(newCounter);
+    if (newCounter === 0) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    setDragCounter(0);
+
+    if (isSubmitting || chatState.isStreaming) return;
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      await handleFilesSelected(files);
+    }
   };
 
   // Helper functions
@@ -270,24 +311,50 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
   // Handle message sending
   const handleSendMessage = useCallback(
-    async (messages: RunAgentRequest["messages"]) => {
+    async (request: RunAgentRequest) => {
       if (!selectedAgent) return;
 
-      // Convert to ChatMessage format for UI state
-      let userMessageContents: import("@/types/agent-framework").Contents[];
-      if (typeof messages === "string") {
-        userMessageContents = [
-          {
-            type: "text",
-            text: messages,
-          } as import("@/types/agent-framework").TextContent,
-        ];
-      } else {
-        // Cast the contents to the proper Contents type
-        userMessageContents = messages.flatMap(
-          (msg) => msg.contents
-        ) as import("@/types/agent-framework").Contents[];
+      // Extract text and attachments from OpenAI format for UI display
+      let displayText = "";
+      const attachmentContents: import("@/types/agent-framework").Contents[] =
+        [];
+
+      // Parse OpenAI ResponseInputParam to extract display content
+      for (const inputItem of request.input) {
+        if (inputItem.type === "message" && Array.isArray(inputItem.content)) {
+          for (const contentItem of inputItem.content) {
+            if (contentItem.type === "input_text") {
+              displayText += contentItem.text + " ";
+            } else if (contentItem.type === "input_image") {
+              attachmentContents.push({
+                type: "data",
+                uri: contentItem.image_url || "",
+                media_type: "image/png", // Default, should extract from data URI
+              } as import("@/types/agent-framework").DataContent);
+            } else if (contentItem.type === "input_file") {
+              const dataUri = `data:application/octet-stream;base64,${contentItem.file_data}`;
+              attachmentContents.push({
+                type: "data",
+                uri: dataUri,
+                media_type: "application/pdf", // Should be dynamic based on filename
+              } as import("@/types/agent-framework").DataContent);
+            }
+          }
+        }
       }
+
+      const userMessageContents: import("@/types/agent-framework").Contents[] =
+        [
+          ...(displayText.trim()
+            ? [
+                {
+                  type: "text",
+                  text: displayText.trim(),
+                } as import("@/types/agent-framework").TextContent,
+              ]
+            : []),
+          ...attachmentContents,
+        ];
 
       // Add user message to UI state
       const userMessage: ChatMessage = {
@@ -330,10 +397,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           }
         }
 
-        const request = {
-          messages,
+        const apiRequest = {
+          input: request.input,
           thread_id: threadToUse?.id,
-          options: { capture_traces: true },
         };
 
         // Clear text accumulator for new response
@@ -342,7 +408,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamAgentExecutionOpenAI(
           selectedAgent.id,
-          request
+          apiRequest
         );
 
         for await (const openAIEvent of streamGenerator) {
@@ -444,7 +510,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         }));
       }
     },
-    [selectedAgent, currentThread, chatState.messages, onDebugEvent]
+    [selectedAgent, currentThread, onDebugEvent]
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -462,39 +528,76 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     setInputValue("");
 
     try {
-      // Create rich message format
+      // Create OpenAI Responses API format
       if (attachments.length > 0 || messageText) {
-        const contents: import("@/types/agent-framework").Contents[] = [];
+        const content: import("@/types/agent-framework").ResponseInputContent[] =
+          [];
 
-        // Add text content if present
+        // Add text content if present - EXACT OpenAI ResponseInputTextParam
         if (messageText) {
-          contents.push({
-            type: "text",
+          content.push({
             text: messageText,
-          } as import("@/types/agent-framework").TextContent);
+            type: "input_text",
+          } as import("@/types/agent-framework").ResponseInputTextParam);
         }
 
-        // Add attachments as data content
+        // Add attachments using EXACT OpenAI types
         for (const attachment of attachments) {
           const dataUri = await readFileAsDataURL(attachment.file);
-          contents.push({
-            type: "data",
-            data: dataUri,
-            mime_type: attachment.file.type,
-          } as import("@/types/agent-framework").DataContent);
+
+          if (attachment.file.type.startsWith("image/")) {
+            // EXACT OpenAI ResponseInputImageParam
+            content.push({
+              detail: "auto",
+              type: "input_image",
+              image_url: dataUri,
+            } as import("@/types/agent-framework").ResponseInputImageParam);
+          } else {
+            // EXACT OpenAI ResponseInputFileParam (but we need to handle the required fields)
+            const base64Data = dataUri.split(",")[1]; // Extract base64 part
+            content.push({
+              type: "input_file",
+              file_data: base64Data,
+              file_url: dataUri, // Use data URI as the URL
+              filename: attachment.file.name,
+            } as import("@/types/agent-framework").ResponseInputFileParam);
+          }
         }
 
-        const richMessage = [
-          {
-            role: "user" as const,
-            contents,
-          },
-        ];
+        const openaiInput: import("@/types/agent-framework").ResponseInputParam =
+          [
+            {
+              type: "message",
+              role: "user",
+              content,
+            },
+          ];
 
-        await handleSendMessage(richMessage);
+        // Use pure OpenAI format
+        await handleSendMessage({
+          input: openaiInput,
+          thread_id: currentThread?.id,
+        });
       } else {
-        // Simple string message for backward compatibility
-        await handleSendMessage(messageText);
+        // Simple text message using OpenAI format
+        const openaiInput: import("@/types/agent-framework").ResponseInputParam =
+          [
+            {
+              type: "message",
+              role: "user",
+              content: [
+                {
+                  text: messageText,
+                  type: "input_text",
+                } as import("@/types/agent-framework").ResponseInputTextParam,
+              ],
+            },
+          ];
+
+        await handleSendMessage({
+          input: openaiInput,
+          thread_id: currentThread?.id,
+        });
       }
 
       // Clear attachments after sending
@@ -604,7 +707,29 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
       {/* Input */}
       <div className="border-t flex-shrink-0">
-        <div className="p-4">
+        <div
+          className={`p-4 relative transition-all duration-300 ease-in-out ${
+            isDragOver ? "bg-blue-50 dark:bg-blue-950/20" : ""
+          }`}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          {/* Drag overlay */}
+          {isDragOver && (
+            <div className="absolute inset-2 border-2 border-dashed border-blue-400 dark:border-blue-500 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 backdrop-blur-sm flex items-center justify-center transition-all duration-200 ease-in-out z-10">
+              <div className="text-center">
+                <div className="text-blue-600 dark:text-blue-400 text-sm font-medium mb-1">
+                  Drop files here
+                </div>
+                <div className="text-blue-500 dark:text-blue-500 text-xs">
+                  Images, PDFs, and other files
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Attachment gallery */}
           {attachments.length > 0 && (
             <div className="mb-3">
