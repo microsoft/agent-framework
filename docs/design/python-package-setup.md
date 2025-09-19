@@ -57,25 +57,18 @@ Overall the following structure is proposed:
         * context_providers
         * logging
         * workflows (includes multi-agent orchestration)
-        * guardrails / filters
+        * middleware
+        * telemetry (user_agent)
     * advanced components, will be exposed from `agent_framework.<component>`:
-        * vector_data (tbd, vector stores and other MEVD pieces)
+        * vector_data (tbd, vector stores and other MEVD-like pieces)
         * text_search (tbd)
         * exceptions
         * evaluations (tbd)
         * utils (optional)
-        * telemetry (could also be observability or monitoring)
-    * connectors; subpackages*
-        * Subpackages are any additional functionality that is useful for a user, to reduce friction they will imported in a similar way as advanced components, however the code for them will be in a separate package, so that they can be installed separately, they must expose all public items, in their main `__init__.py` file, so that they can be imported from the main package without additional import levels.
-        In the main package a corresponding folder will be created, with a `__init__.py` file that lazy imports the public items from the subpackage, so that they can be exposed from the main package.
-        * Some examples are:
-            * azure (non LLM integrations)
-            * will be exposed through i.e. `agent_framework.azure`
-            * anything other then a connector that we want to expose as a separate package, for instance:
-                * mem0 (memory management)
-                * would be exposed through i.e. `agent_framework.mem0`
-        * A package name cannot overlap with each other or with components in the main package, so `guardrails` cannot be used as a package name, since it is already used in the main package.
-            * A package can implement additional guardrails functionality, but that would become something like `from agent_framework.azure import ContentSafetyGuardrail`, which would contain a guardrail implementation using Azure Content Safety, but it is not the same as the `agent_framework.guardrails` component.
+        * observability
+    * vendor folders with connectors and integrations, will be exposed from `agent_framework.<vendor>`:
+        * Code can be both in folder or in subpackage with lazy import.
+        * See subpackage scope below for more detail
 * tests
 * samples
 * extensions
@@ -86,12 +79,20 @@ All the init's in the subpackages will use lazy loading so avoid importing the e
 Internal imports will be done using relative imports, so that the package can be used as a namespace package.
 
 ### File structure
-The resulting file structure will be as follows:
+The resulting file structure will be as follows (not all things currently implemented, just an example):
 
 ```plaintext
 packages/
     main/
         agent_framework/
+            azure/
+                __init__.py
+                _chat_client.py
+                ...
+            microsoft/
+                __init__.py
+                _copilot_studio.py
+                ...
             openai/
                 __init__.py
                 _chat_client.py
@@ -103,17 +104,16 @@ packages/
             _tools.py
             _models.py
             _logging.py
-            context_providers.py
-            guardrails.py
+            _middleware.py
+            _telemetry.py
+            observability.py
             exceptions.py
-            evaluations.py
             utils.py
-            telemetry.py
-            templates.py
-            text_search.py
-            vector_data.py
-            workflows.py
             py.typed
+        _workflow/
+            __init__.py
+            _workflow.py
+            ...etc...
         tests/
             unit/
                 test_types.py
@@ -122,28 +122,27 @@ packages/
         pyproject.toml
         README.md
         ...
-    mem0/
-        agent_framework/
-            mem0/
-                __init__.py
-                _mem0.py
-                ...
+    azure-ai-agents/
+        agent_framework-azure-ai-agents/
+            __init__.py
+            _chat_client.py
+            ...
+        tests/
+            test_azure_ai_agents.py
+        samples/ (optional)
+            ...
+        pyproject.toml
+        README.md
+        ...
     redis/
         ...
-    google/
-        agent_framework/
-            google/
-                __init__.py
-                _chat.py
-                _bigquery.py
-                ...
+    mem0/
+        agent_framework-mem0/
+            __init__.py
+            _provider.py
+            ...
         tests/
-            unit/
-                test_google_client.py
-                test_google_tools.py
-                ...
-            integration/
-                test_google_integration.py
+            test_mem0_provider.py
         samples/ (optional)
             ...
         pyproject.toml
