@@ -47,7 +47,7 @@ def get_current_time() -> str:
 
 
 @agent_middleware  # Decorator marks this as agent middleware - no type annotations needed
-async def simple_agent_middleware(context, next):  # type: ignore
+async def simple_agent_middleware(context, next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Agent middleware that runs before and after agent execution."""
     print("[Agent Middleware] Before agent execution")
     await next(context)
