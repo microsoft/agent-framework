@@ -359,16 +359,6 @@ class Executor(AFBaseModel):
             "source": "instance_method",  # Distinguish from class handlers if needed
         })
 
-    def can_handle_type(self, message_type: type[Any]) -> bool:
-        """Check if the executor can handle a given message type.
-
-        Args:
-            message_type: The message type to check.
-
-        Returns:
-            True if the executor can handle the message type, False otherwise.
-        """
-        return message_type in self._handlers
 
     @property
     def input_types(self) -> list[type[Any]]:

@@ -210,6 +210,7 @@ class TestFunctionExecutor:
                 message_type=str,
                 ctx_annotation=WorkflowContext[str],
                 output_types=[str],
+                workflow_output_types=[],
             )
 
     def test_complex_type_annotations(self):
