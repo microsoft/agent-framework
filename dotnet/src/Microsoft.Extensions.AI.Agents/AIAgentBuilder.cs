@@ -8,7 +8,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>A builder for creating pipelines of <see cref="AIAgent"/>.</summary>
-public class AIAgentBuilder : IAIAgentBuilder<AIAgent>
+public sealed class AIAgentBuilder
 {
     private readonly Func<IServiceProvider, AIAgent> _innerAgentFactory;
 
@@ -71,49 +71,23 @@ public class AIAgentBuilder : IAIAgentBuilder<AIAgent>
         (this._agentFactories ??= []).Add(agentFactory);
         return this;
     }
-}
 
-public class ChatClientAgentBuilder : AIAgentBuilder, IAIAgentBuilder<ChatClientAgent>
-{
-    /// <summary>Initializes a new instance of the <see cref="ChatClientAgentBuilder"/> class.</summary>
-    /// <param name="innerAgent">The inner <see cref="AIAgent"/> that represents the underlying backend.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
-    public ChatClientAgentBuilder(ChatClientAgent innerAgent) : base(innerAgent)
+    /// <summary>
+    /// Provides an empty <see cref="IServiceProvider"/> implementation.
+    /// </summary>
+    private sealed class EmptyServiceProvider : IServiceProvider, IKeyedServiceProvider
     {
+        /// <summary>Gets the singleton instance of <see cref="EmptyServiceProvider"/>.</summary>
+        public static EmptyServiceProvider Instance { get; } = new();
+
+        /// <inheritdoc/>
+        public object? GetService(Type serviceType) => null;
+
+        /// <inheritdoc/>
+        public object? GetKeyedService(Type serviceType, object? serviceKey) => null;
+
+        /// <inheritdoc/>
+        public object GetRequiredKeyedService(Type serviceType, object? serviceKey) =>
+            throw new InvalidOperationException($"No service for type '{serviceType}' has been registered.");
     }
-
-    /// <summary>Initializes a new instance of the <see cref="ChatClientAgentBuilder"/> class.</summary>
-    /// <param name="innerAgentFactory">A callback that produces the inner <see cref="AIAgent"/> that represents the underlying backend.</param>
-    public ChatClientAgentBuilder(Func<IServiceProvider, ChatClientAgent> innerAgentFactory) : base(innerAgentFactory)
-    {
-    }
-
-    ChatClientAgent IAIAgentBuilder<ChatClientAgent>.Build(IServiceProvider? services)
-    {
-        return (ChatClientAgent)this.Build(services);
-    }
-
-    IAIAgentBuilder<ChatClientAgent> IAIAgentBuilder<ChatClientAgent>.Use(Func<AIAgent, IServiceProvider, AIAgent> agentFactory)
-    {
-        base.Use(agentFactory);
-    }
-}
-
-/// <summary>
-/// Provides an empty <see cref="IServiceProvider"/> implementation.
-/// </summary>
-internal sealed class EmptyServiceProvider : IServiceProvider, IKeyedServiceProvider
-{
-    /// <summary>Gets the singleton instance of <see cref="EmptyServiceProvider"/>.</summary>
-    public static EmptyServiceProvider Instance { get; } = new();
-
-    /// <inheritdoc/>
-    public object? GetService(Type serviceType) => null;
-
-    /// <inheritdoc/>
-    public object? GetKeyedService(Type serviceType, object? serviceKey) => null;
-
-    /// <inheritdoc/>
-    public object GetRequiredKeyedService(Type serviceType, object? serviceKey) =>
-        throw new InvalidOperationException($"No service for type '{serviceType}' has been registered.");
 }

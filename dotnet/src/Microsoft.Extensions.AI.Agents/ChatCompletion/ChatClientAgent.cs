@@ -267,8 +267,9 @@ public sealed class ChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null) =>
-        base.GetService(serviceType, serviceKey)
-        ?? (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
+        serviceType == typeof(ChatClientAgent) ? this
+        : base.GetService(serviceType, serviceKey) ??
+        (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
         : serviceType == typeof(IChatClient) ? this.ChatClient
         : this.ChatClient.GetService(serviceType, serviceKey));
 

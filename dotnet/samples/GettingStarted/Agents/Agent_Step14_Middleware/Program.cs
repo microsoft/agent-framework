@@ -22,45 +22,17 @@ var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? thr
 var persistentEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
-
-var persistentClient = new PersistentAgentsClient(persistentEndpoint, new AzureCliCredential());
-
-
-var agent = persistentClient.CreateAIAgent(
-    deploymentName,
-    // Adding middleware to the chat client level
-    clientFactory: (chatClient) => chatClient
-        .AsBuilder()
-            .Use(ChatClientMiddleware)
-        .Build())
-
-.AsBuilder()
-    // Adding middleware to the agent level
-    .Use(FunctionCallMiddleware1)
-    .Use(FunctionCallOverrideWeather)
-    .Use(PIIMiddleware)
-    .Use(GuardrailMiddleware)
-.Build();
-
-
-
 // Get a client to create/retrieve server side agents with
 var azureOpenAIClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName);
-
-
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
-
-
 [Description("The current datetime offset.")]
 static string GetDateTime()
     => DateTimeOffset.Now.ToString();
-
-
 
 // Adding middleware to the chat client level
 var chatClient = azureOpenAIClient.AsIChatClient()
@@ -68,12 +40,11 @@ var chatClient = azureOpenAIClient.AsIChatClient()
         .Use(ChatClientMiddleware)
     .Build();
 
-
+// For flexibility we create the agent without any middleware.
 var originalAgent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(
         instructions: "You are an AI assistant that helps people find information.",
         // Agent level tools
         tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]));
-
 
 // Adding middleware to the agent level
 var middlewareEnabledAgent = originalAgent
@@ -84,23 +55,15 @@ var middlewareEnabledAgent = originalAgent
         .Use(GuardrailMiddleware)
     .Build();
 
-
-
 var thread = middlewareEnabledAgent.GetNewThread();
-
-
 
 Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
 var guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");
 Console.WriteLine($"Guard railed response: {guardRailedResponse}");
 
-
-
 Console.WriteLine("\n\n=== Example 2: PII detection ===");
 var piiResponse = await middlewareEnabledAgent.RunAsync("My name is John Doe, call me at 123-456-7890 or email me at john@something.com");
 Console.WriteLine($"Pii filtered response: {piiResponse}");
-
-
 
 Console.WriteLine("\n\n=== Example 3: Agent function middleware ===");
 
@@ -113,12 +76,8 @@ var options = new ChatClientAgentRunOptions(new()
 var functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", thread, options);
 Console.WriteLine($"Function calling response: {functionCallResponse}");
 
-
-
 // Special per-request middleware agent.
 Console.WriteLine("\n\n=== Example 4: Per-request middleware with human in the loop function approval ===");
-
-
 
 var optionsWithApproval = new ChatClientAgentRunOptions(new()
 {
@@ -132,7 +91,6 @@ var optionsWithApproval = new ChatClientAgentRunOptions(new()
         .Build()
 };
 
-
 // var response = middlewareAgent  // Using per-request middleware in addition to agent-level middleware
 var response = await originalAgent // Using per-request middleware without agent-level middleware
     .AsBuilder()
@@ -143,16 +101,12 @@ var response = await originalAgent // Using per-request middleware without agent
 
 Console.WriteLine($"Per-request middleware response: {response}");
 
-
-
 async Task FunctionCallMiddleware1(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Pre-Invoke");
     await next(context);
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Post-Invoke");
 }
-
-
 
 async Task FunctionCallOverrideWeather(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
 {
@@ -167,16 +121,12 @@ async Task FunctionCallOverrideWeather(AgentFunctionInvocationContext context, F
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Post-Invoke");
 }
 
-
-
 async Task PerRequestFunctionCallingMiddleware(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Pre-Invoke");
     await next(context);
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Post-Invoke");
 }
-
-
 
 async Task PIIMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
 {
@@ -214,8 +164,6 @@ async Task PIIMiddleware(AgentRunContext context, Func<AgentRunContext, Task> ne
     }
 }
 
-
-
 async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
 {
     // Guardrail: Simple keyword-based filtering
@@ -250,8 +198,6 @@ async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Ta
     }
 }
 
-
-
 async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
 {
     await next(context);
@@ -279,16 +225,12 @@ async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<Agen
     }
 }
 
-
-
 async Task ChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task> next, CancellationToken cancellationToken)
 {
     Console.WriteLine("Chat Client Middleware - Pre-Chat");
     await next(message, options, cancellationToken);
     Console.WriteLine("Chat Client Middleware - Post-Chat");
 }
-
-
 
 async Task PerRequestChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task> next, CancellationToken cancellationToken)
 {
