@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import os
 from typing import Any, cast
 
 import pytest
@@ -15,8 +14,6 @@ from agent_framework._workflow._workflow import Workflow
 from agent_framework._workflow._workflow_context import WorkflowContext
 from agent_framework.observability import (
     OtelAttr,
-    WorkflowTracer,
-    add_workflow_event,
     create_processing_span,
     create_workflow_span,
 )
@@ -101,33 +98,6 @@ class FanInAggregator(Executor):
         return self._processed_messages
 
 
-async def test_workflow_tracer_configuration() -> None:
-    """Test that workflow tracer can be enabled and disabled."""
-    # Test disabled by default
-    tracer = WorkflowTracer()
-    assert not tracer.enabled
-
-    # Test enabled with environment variable
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = "true"
-
-    # Force reload the settings to pick up the environment variable
-    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
-
-    tracer.settings = WorkflowDiagnosticSettings()
-
-    assert tracer.enabled
-
-    # Restore original value
-    if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL", None)
-    else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = original_value
-
-    # Reload settings again
-    tracer.settings = WorkflowDiagnosticSettings()
-
-
 async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test creation and attributes of all span types (workflow, processing, sending)."""
     # Create a mock workflow object
@@ -151,7 +121,7 @@ async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter:
             OtelAttr.WORKFLOW_ID: mock_workflow.id,
         },
     ) as workflow_span:
-        add_workflow_event("workflow.started")
+        workflow_span.add_event(OtelAttr.WORKFLOW_STARTED)
         sending_attributes = {
             OtelAttr.MESSAGE_TYPE: "ResponseMessage",
             OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID: "target-789",

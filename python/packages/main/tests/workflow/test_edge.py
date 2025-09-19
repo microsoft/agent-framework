@@ -5,9 +5,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from agent_framework._workflow._telemetry import EdgeGroupDeliveryStatus, workflow_tracer
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import SpanExporter
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import (
@@ -28,53 +26,23 @@ from agent_framework._workflow._edge import (
     SwitchCaseEdgeGroupDefault,
 )
 from agent_framework._workflow._edge_runner import create_edge_runner
+from agent_framework.observability import EdgeGroupDeliveryStatus
 
 
 @pytest.fixture
-def tracing_enabled():
-    """Enable tracing for tests."""
-    import os
-
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = "true"
-
-    # Force reload the settings to pick up the environment variable
-    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
-
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-    yield
-
-    # Restore original value
-    if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS", None)
-    else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = original_value
-
-    # Reload settings again
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-
-@pytest.fixture
-def span_exporter(tracing_enabled):
+@pytest.mark.parametrize("enable_workflow_otel", [True], indirect=True)
+def span_exporter(otel_settings) -> SpanExporter:
     """Set up OpenTelemetry test infrastructure."""
+    from agent_framework.observability import setup_telemetry
 
     # Use the built-in InMemorySpanExporter for better compatibility
     exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-
-    # Store original tracer
-    original_tracer = workflow_tracer.tracer
-
-    # Set up our test tracer
-    workflow_tracer.tracer = tracer_provider.get_tracer("agent_framework")
+    setup_telemetry(exporters=[exporter], enable_workflow_otel=True)
 
     yield exporter
 
     # Clean up
     exporter.clear()
-    workflow_tracer.tracer = original_tracer
 
 
 @dataclass
@@ -342,7 +310,7 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     assert span.attributes is not None
     assert span.attributes.get("edge_group.type") == "SingleEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is True
-    assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED
+    assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
     assert span.attributes.get("edge_group.id") is not None
     assert span.attributes.get("message.source_id") == source.id
 

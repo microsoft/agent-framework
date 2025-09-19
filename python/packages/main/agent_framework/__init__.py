@@ -2,11 +2,13 @@
 
 import importlib
 import importlib.metadata
+from typing import Final
 
 try:
-    __version__ = importlib.metadata.version(__name__)
+    _version = importlib.metadata.version(__name__)
 except importlib.metadata.PackageNotFoundError:
-    __version__ = "0.0.0"  # Fallback for development mode
+    _version = "0.0.0"  # Fallback for development mode
+__version__: Final[str] = _version
 
 from ._agents import *  # noqa: F403
 from ._clients import *  # noqa: F403

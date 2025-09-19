@@ -12,6 +12,7 @@ __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
     "APP_INFO",
     "USER_AGENT_KEY",
+    "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "prepend_agent_framework_to_user_agent",
 ]
 

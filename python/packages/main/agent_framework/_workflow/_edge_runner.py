@@ -103,7 +103,7 @@ class SingleEdgeRunner(EdgeRunner):
                 if message.target_id and message.target_id != self._edge.target_id:
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
-                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH,  # type: ignore[reportArgumentType]
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
                     })
                     return False
 
@@ -111,7 +111,7 @@ class SingleEdgeRunner(EdgeRunner):
                     if self._edge.should_route(message.data):
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: True,
-                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED,  # type: ignore[reportArgumentType]
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
                         })
                         should_execute = True
                         target_id = self._edge.target_id
@@ -119,20 +119,20 @@ class SingleEdgeRunner(EdgeRunner):
                     else:
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: False,
-                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE,  # type: ignore[reportArgumentType]
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,
                         })
                         # Return True here because message was processed, just condition failed
                         return True
                 else:
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
-                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH,  # type: ignore[reportArgumentType]
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
                     })
                     return False
             except Exception as e:
                 span.set_attributes({
                     OtelAttr.EDGE_GROUP_DELIVERED: False,
-                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION,  # type: ignore[reportArgumentType]
+                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
                 })
                 raise e
 
@@ -175,7 +175,7 @@ class FanOutEdgeRunner(EdgeRunner):
                 if not self._validate_selection_result(selection_results):
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
-                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION,  # type: ignore[reportArgumentType]
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
                     })
                     raise RuntimeError(
                         f"Invalid selection result: {selection_results}. "
@@ -190,27 +190,27 @@ class FanOutEdgeRunner(EdgeRunner):
                             if edge.should_route(message.data):
                                 span.set_attributes({
                                     OtelAttr.EDGE_GROUP_DELIVERED: True,
-                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED,  # type: ignore[reportArgumentType]
+                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
                                 })
                                 single_target_edge = edge
                             else:
                                 span.set_attributes({
                                     OtelAttr.EDGE_GROUP_DELIVERED: False,
-                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE,  # type: ignore[reportArgumentType] # noqa: E501
+                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,  # noqa: E501
                                 })
                                 # For targeted messages with condition failure, return True (message was processed)
                                 return True
                         else:
                             span.set_attributes({
                                 OtelAttr.EDGE_GROUP_DELIVERED: False,
-                                OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH,  # type: ignore[reportArgumentType]
+                                OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,  # noqa: E501
                             })
                             # For targeted messages that can't be handled, return False
                             return False
                     else:
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: False,
-                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH,  # type: ignore[reportArgumentType]
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
                         })
                         # For targeted messages not in selection, return False
                         return False
@@ -224,18 +224,18 @@ class FanOutEdgeRunner(EdgeRunner):
                     if len(deliverable_edges) > 0:
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: True,
-                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED,  # type: ignore[reportArgumentType]
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
                         })
                     else:
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: False,
-                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH,  # type: ignore[reportArgumentType]
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
                         })
 
             except Exception as e:
                 span.set_attributes({
                     OtelAttr.EDGE_GROUP_DELIVERED: False,
-                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION,  # type: ignore[reportArgumentType]
+                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
                 })
                 raise e
 
@@ -290,7 +290,7 @@ class FanInEdgeRunner(EdgeRunner):
                 if message.target_id and message.target_id != self._edges[0].target_id:
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
-                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH,  # type: ignore[reportArgumentType]
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
                     })
                     return False
 
@@ -300,13 +300,13 @@ class FanInEdgeRunner(EdgeRunner):
                     self._buffer[message.source_id].append(message)
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: True,
-                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.BUFFERED,  # type: ignore[reportArgumentType]
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.BUFFERED.value,
                     })
                 else:
                     # If the edge cannot handle the data, return False
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
-                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH,  # type: ignore[reportArgumentType]
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
                     })
                     return False
 
@@ -330,7 +330,7 @@ class FanInEdgeRunner(EdgeRunner):
                     )
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: True,
-                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED,  # type: ignore[reportArgumentType]
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
                     })
 
                     # Store execution data for later
@@ -343,7 +343,7 @@ class FanInEdgeRunner(EdgeRunner):
             except Exception as e:
                 span.set_attributes({
                     OtelAttr.EDGE_GROUP_DELIVERED: False,
-                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION,  # type: ignore[reportArgumentType]
+                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
                 })
                 raise e
 

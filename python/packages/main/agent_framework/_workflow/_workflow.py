@@ -303,7 +303,7 @@ class Workflow(AFBaseModel):
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
             except Exception as exc:
                 # Surface structured failure details before propagating exception
-                details = WorkflowErrorDetails.from_exception(e)
+                details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowFailedEvent(details)
                 yield failed_event

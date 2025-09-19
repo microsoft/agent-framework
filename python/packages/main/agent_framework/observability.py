@@ -3,11 +3,11 @@
 import contextlib
 import json
 import logging
-from collections.abc import Generator, Mapping
+from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping
 from enum import Enum
 from functools import wraps
 from time import perf_counter, time_ns
-from typing import TYPE_CHECKING, Any, AsyncIterable, Awaitable, Callable, ClassVar, Final, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Final, TypeVar
 
 from opentelemetry.semconv_ai import GenAISystem, Meters, SpanAttributes
 from opentelemetry.trace import Link, NoOpTracer, Span, SpanKind, StatusCode, use_span
@@ -258,7 +258,7 @@ def _get_exporters(
     credential: "TokenCredential | None" = None,
 ) -> list["LogExporter | SpanExporter | MetricExporter"]:
     """Create the different exporters based on the connection string and endpoint."""
-    from azure.monitor.opentelemetry.exporter import (  # pylint: disable=import-error,no-name-in-module
+    from azure.monitor.opentelemetry.exporter import (
         AzureMonitorLogExporter,
         AzureMonitorMetricExporter,
         AzureMonitorTraceExporter,
@@ -279,13 +279,6 @@ def _get_exporters(
             exporters.append(AzureMonitorTraceExporter(connection_string=conn_string, credential=credential))
             exporters.append(AzureMonitorMetricExporter(connection_string=conn_string, credential=credential))
     return exporters
-
-
-OTEL_ENABLED_ENV_VAR = "ENABLE_OTEL"
-SENSITIVE_DATA_ENV_VAR = "ENABLE_SENSITIVE_DATA"
-MONITOR_CONNECTION_STRING_ENV_VAR = "APPLICATION_INSIGHTS_CONNECTION_STRING"
-MONITOR_LIVE_METRICS_ENV_VAR = "APPLICATION_INSIGHTS_LIVE_METRICS"
-OTLP_ENDPOINT_ENV_VAR = "OTLP_ENDPOINT"
 
 
 class OtelSettings(AFBaseSettings):
@@ -360,6 +353,7 @@ class OtelSettings(AFBaseSettings):
 
     @property
     def resource(self) -> "Resource":
+        """Get the resource for the telemetry."""
         if not self._resource:
             from opentelemetry.sdk.resources import Resource
             from opentelemetry.semconv.attributes import service_attributes
@@ -369,6 +363,7 @@ class OtelSettings(AFBaseSettings):
 
     @property
     def tracer_provider(self) -> "TracerProvider":
+        """Get the tracer provider."""
         if not self._tracer_provider:
             self.setup_telemetry()
         if not self._tracer_provider:
@@ -377,10 +372,11 @@ class OtelSettings(AFBaseSettings):
 
     @property
     def meter_provider(self) -> "MeterProvider":
+        """Get the meter provider."""
         if not self._meter_provider:
             self.setup_telemetry()
         if not self._meter_provider:
-            raise AgentFrameworkException("Tracing provider could not be created.")
+            raise AgentFrameworkException("Meter provider could not be created.")
         return self._meter_provider
 
     def setup_telemetry(self, credential: "TokenCredential | None" = None) -> None:
@@ -396,7 +392,6 @@ class OtelSettings(AFBaseSettings):
 
         if not self.application_insights_connection_string and not self.otlp_endpoint:
             logger.warning("Telemetry is enabled but no connection string or OTLP endpoint is provided.")
-            return
 
         global_logger = logging.getLogger()
         global_logger.setLevel(logging.NOTSET)
@@ -442,11 +437,49 @@ class OtelSettings(AFBaseSettings):
         exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
         credential: "TokenCredential | None" = None,
     ) -> None:
+        """Add additional exporters to the existing configuration.
+
+        If you supply exporters, those will be added to the relevant providers directly.
+        If you supply endpoints or connection strings, new exporters will be created and added.
+        OTLP_endpoints will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
+        Connection_strings will be used to create AzureMonitorExporters.
+
+        If a endpoint or connection string is already configured, through the environment variables, it will be skipped.
+        If you call this method twice with the same additional endpoint or connection string, it will be added twice.
+
+        Args:
+            otlp_endpoints: A list of OpenTelemetry Protocol (OTLP) endpoints. Default is None.
+            connection_strings: A list of Azure Monitor connection strings. Default is None.
+            exporters: A list of exporters, for logs, metrics or spans, or any combination. Default is None.
+            credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
+        """
         if not self._executed_setup:
             self.setup_telemetry(credential=credential)
 
+        new_endpoints: list[str] = []
+        if otlp_endpoints is not None and self.otlp_endpoint is not None:
+            existing_endpoints = self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
+            for endpoint in otlp_endpoints:
+                if endpoint not in existing_endpoints:
+                    new_endpoints.append(endpoint)
+                else:
+                    logger.warning(f"OTLP endpoint {endpoint} is already configured, skipping.")
+
+        new_connection_strings: list[str] = []
+        if connection_strings is not None and self.application_insights_connection_string is not None:
+            existing_connection_strings = (
+                self.application_insights_connection_string
+                if isinstance(self.application_insights_connection_string, list)
+                else [self.application_insights_connection_string]
+            )
+            for conn_string in connection_strings:
+                if conn_string not in existing_connection_strings:
+                    new_connection_strings.append(conn_string)
+                else:
+                    logger.warning(f"Connection string {conn_string} is already configured, skipping.")
+
         new_exporters = _get_exporters(
-            endpoints=otlp_endpoints,
+            endpoints=new_endpoints,
             connection_strings=connection_strings,
             credential=credential,
         )
@@ -467,7 +500,7 @@ class OtelSettings(AFBaseSettings):
         if not self._tracer_provider:
             self._tracer_provider = TracerProvider(resource=self.resource)
         [
-            self._tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+            self._tracer_provider.add_span_processor(BatchSpanProcessor(exporter))  # type: ignore[func-returns-value]
             for exporter in exporters
             if isinstance(exporter, SpanExporter)
         ]
@@ -572,6 +605,8 @@ def get_meter(
         attributes: Optional. Attributes that are associated with the emitted telemetry.
     """
     global OTEL_SETTINGS
+    if not OTEL_SETTINGS.is_setup:
+        OTEL_SETTINGS.setup_telemetry()
     return OTEL_SETTINGS.meter_provider.get_meter(
         name=name, version=version, schema_url=schema_url, attributes=attributes
     )
@@ -579,6 +614,7 @@ def get_meter(
 
 def setup_telemetry(
     enable_otel: bool | None = None,
+    enable_workflow_otel: bool | None = None,
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | list[str] | None = None,
     application_insights_connection_string: str | list[str] | None = None,
@@ -595,6 +631,7 @@ def setup_telemetry(
 
     Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
+        enable_workflow_otel: Enable OpenTelemetry diagnostics for Workflows. Default is False.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
             Will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
@@ -617,6 +654,8 @@ def setup_telemetry(
         OTEL_SETTINGS.enable_otel = enable_otel
     if enable_sensitive_data is not None:
         OTEL_SETTINGS.enable_sensitive_data = enable_sensitive_data
+    if enable_workflow_otel is not None:
+        OTEL_SETTINGS.enable_workflow_otel = enable_workflow_otel
     if enable_live_metrics is not None:
         OTEL_SETTINGS.application_insights_live_metrics = enable_live_metrics
     OTEL_SETTINGS.add_exporters(
@@ -1057,7 +1096,7 @@ def get_function_span(
     Returns:
         trace.Span: The started span as a context manager.
     """
-    return get_tracer().start_as_current_span(
+    return tracer.start_as_current_span(
         name=f"{attributes[OtelAttr.OPERATION]} {attributes[OtelAttr.TOOL_NAME]}",
         attributes=attributes,
         set_status_on_exception=False,
@@ -1072,7 +1111,7 @@ def _get_span(
     span_name_attribute: str,
 ) -> Generator["Span", Any, Any]:
     """Start a span for a agent run."""
-    span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
+    span = tracer.start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
     span.set_attributes(attributes)
     with use_span(
         span=span,
