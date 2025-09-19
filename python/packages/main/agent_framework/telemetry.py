@@ -1026,8 +1026,12 @@ def _capture_messages(
 
     prepped = prepare_messages(messages)
     for index, message in enumerate(prepped):
+        try:
+            message_data = message.model_dump(exclude_none=True)
+        except Exception:
+            message_data = {"role": message.role.value, "contents": message.contents}
         logger.info(
-            message.model_dump_json(exclude_none=True),
+            message_data,
             extra={
                 OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role.value),
                 OtelAttr.PROVIDER_NAME: provider_name,

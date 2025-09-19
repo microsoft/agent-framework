@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowCompletedEvent, WorkflowEvent
+from ._events import WorkflowCompletedEvent, WorkflowEvent, _framework_event_origin
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
@@ -280,7 +280,9 @@ class Runner:
                         if isinstance(message.data, AgentExecutorResponse):
                             final_messages = message.data.agent_run_response.messages
                             final_text = final_messages[-1].text if final_messages else "(no content)"
-                            await self._ctx.add_event(WorkflowCompletedEvent(final_text))
+                            with _framework_event_origin():
+                                completion_event = WorkflowCompletedEvent(final_text)
+                            await self._ctx.add_event(completion_event)
                             continue  # Terminal handled
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.debug("Suppressed exception during terminal message type check: %s", exc)
@@ -301,7 +303,9 @@ class Runner:
                             # Emit a single completion event with final text (best-effort extraction)
                             final_messages = message.data.agent_run_response.messages
                             final_text = final_messages[-1].text if final_messages else "(no content)"
-                            await self._ctx.add_event(WorkflowCompletedEvent(final_text))
+                            with _framework_event_origin():
+                                completion_event = WorkflowCompletedEvent(final_text)
+                            await self._ctx.add_event(completion_event)
                             continue
                     except Exception as exc:  # pragma: no cover
                         logger.debug("Terminal completion emission failed: %s", exc)

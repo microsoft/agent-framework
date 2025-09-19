@@ -19,7 +19,7 @@
     <PackageVersion Include="Aspire.Hosting.Testing" Version="9.4.2" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.4" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.2" />
-    <PackageVersion Include="Azure.Identity" Version="1.15.0" />
+    <PackageVersion Include="Azure.Identity" Version="1.16.0" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.7.2" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.0-preview.1.25458.4" />
@@ -82,7 +82,7 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.3.0-preview.4" />
     <!-- Inference SDKs -->
-    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.1" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
     <PackageVersion Include="OllamaSharp" Version="5.4.4" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.0" />
