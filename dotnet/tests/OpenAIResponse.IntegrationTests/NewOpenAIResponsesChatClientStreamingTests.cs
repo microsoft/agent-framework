@@ -317,56 +317,42 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.Null(lastContinuationToken);
     }
 
-    //[Theory]
-    //[InlineData(true)]
-    //[InlineData(false)]
-    //public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync(bool continueInBackground)
-    //{
-    //    // Part 1: Start the background run.
-    //    NewChatOptions options = new();
-    //    options.SetAwaitRunResult(false);
-    //    options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync()
+    {
+        // Part 1: Start the background run.
+        NewChatOptions options = new();
+        options.AllowLongRunningResponses = true;
+        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-    //    string? sequenceNumber = null;
-    //    string? responseId = null;
-    //    string? conversationId = null;
+        ContinuationToken? continuationToken = null;
 
-    //    await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options))
-    //    {
-    //        // Stop processing updates as soon as we see the function call update received
-    //        if (update.RawRepresentation is StreamingResponseOutputItemAddedUpdate)
-    //        {
-    //            // Capture the response id, conversation id, and sequence number of the event so we
-    //            // can continue getting the rest of the events starting from the same point in the test below.
-    //            responseId = update.ResponseId;
-    //            sequenceNumber = update.GetSequenceNumber();
-    //            conversationId = update.ConversationId;
-    //        }
-    //    }
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
+        {
+            // Stop processing updates as soon as we see the function call update received
+            if (update.RawRepresentation is StreamingResponseOutputItemAddedUpdate)
+            {
+                // Capture the continuation token so we can continue getting
+                continuationToken = update.ContinuationToken;
+                break;
+            }
+        }
 
-    //    Assert.NotNull(sequenceNumber);
-    //    Assert.NotNull(responseId);
-    //    Assert.NotNull(conversationId);
+        Assert.NotNull(continuationToken);
 
-    //    // Part 2: Continue getting the rest of the response from the saved point using a new client that does not have the previous state containing the first part of function call.
-    //    using IChatClient chatClient = this._openAIResponseClient
-    //        .AsNewIChatClient()
-    //        .AsBuilder()
-    //        .UseFunctionInvocation()
-    //        .Build();
-    //    string responseText = "";
-    //    options.SetAwaitRunResult(!continueInBackground);
-    //    options.ConversationId = conversationId;
-    //    options.SetPreviousResponseId(responseId);
-    //    options.SetStartAfter(sequenceNumber);
+        // Part 2: Continue getting the rest of the response from the saved point using a new client that does not have the previous state containing the first part of function call.
+        using var chatClient = new NewFunctionInvokingChatClient(this._openAIResponseClient.AsNewIChatClient());
 
-    //    await foreach (var item in chatClient.GetStreamingResponseAsync([], options))
-    //    {
-    //        responseText += item;
-    //    }
+        string responseText = "";
+        options.ContinuationToken = continuationToken;
 
-    //    Assert.Contains("5:43", responseText);
-    //}
+        await foreach (var item in chatClient.GetStreamingResponseAsync([], options))
+        {
+            responseText += item;
+        }
+
+        Assert.Contains("5:43", responseText);
+    }
 
     [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
