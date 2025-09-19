@@ -186,6 +186,34 @@ def test_workflow_viz_unsupported_format():
         viz.export(format="invalid")  # type: ignore
 
 
+def test_workflow_viz_graphviz_binary_not_found():
+    """Test that missing graphviz binary raises ImportError with helpful message."""
+    import unittest.mock
+
+    # Skip test if graphviz package is not available
+    pytest.importorskip("graphviz")
+
+    executor1 = MockExecutor(id="executor1")
+    executor2 = MockExecutor(id="executor2")
+
+    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    viz = WorkflowViz(workflow)
+
+    # Mock graphviz.Source.render to raise ExecutableNotFound
+    with unittest.mock.patch("graphviz.Source") as mock_source_class:
+        mock_source = unittest.mock.MagicMock()
+        mock_source_class.return_value = mock_source
+
+        # Import the ExecutableNotFound exception for the test
+        from graphviz.backend.execute import ExecutableNotFound
+
+        mock_source.render.side_effect = ExecutableNotFound("failed to execute PosixPath('dot')")
+
+        # Test that the proper ImportError is raised with helpful message
+        with pytest.raises(ImportError, match="The graphviz executables are not found"):
+            viz.export(format="svg")
+
+
 def test_workflow_viz_conditional_edge():
     """Test that conditional edges are rendered dashed with a label."""
     start = MockExecutor(id="start")

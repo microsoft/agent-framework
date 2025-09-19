@@ -33,7 +33,7 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
         ChatClientAgent? agent = null;
         if (this.IsSupported(agentDefinition))
         {
-            IChatClient? chatClient = null;
+            IChatClient? chatClient;
 
             var openAIChatClient = agentCreationOptions.ServiceProvider?.GetService(typeof(ChatClient)) as ChatClient;
             if (openAIChatClient is not null)

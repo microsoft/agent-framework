@@ -33,6 +33,7 @@
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
   </Folder>

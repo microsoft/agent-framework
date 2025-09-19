@@ -167,7 +167,7 @@ internal static class RecordDataValueExtensions
         var maxNumResults = agentToolDefinition.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("max_num_results"))?.Value;
         if (maxNumResults is not null && maxNumResults > 0)
         {
-            details.MaxNumResults = ((int?)maxNumResults);
+            details.MaxNumResults = (int?)maxNumResults;
         }
 
         FileSearchRankingOptions? rankingOptions = agentToolDefinition.GetFileSearchRankingOptions();

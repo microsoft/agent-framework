@@ -39,7 +39,7 @@ internal static class AgentBotElementYaml
 
         // Use PowerFx to evaluate the expressions in the agent definition.
         SemanticModel semanticModel = botDefinition.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
-        var environmentVariables = semanticModel.GetAllEnvironmentVariablesReferencedInTheBot();
+        var environmentVariables = semanticModel.GetEnvironmentVariables();
 
         return botDefinition.Descendants().OfType<GptComponentMetadata>().First();
     }

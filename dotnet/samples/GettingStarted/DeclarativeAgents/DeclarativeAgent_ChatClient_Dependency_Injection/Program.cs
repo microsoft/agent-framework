@@ -8,7 +8,6 @@ using Azure.Identity;
 using Microsoft.Agents.Declarative;
 using Microsoft.Extensions.AI.Agents.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -20,7 +19,7 @@ var chatClient = new AzureOpenAIClient(
 
 // Set up dependency injection to provide the TokenCredential implementation
 var serviceCollection = new ServiceCollection();
-serviceCollection.AddTransient<ChatClient>((sp) => chatClient);
+serviceCollection.AddTransient((sp) => chatClient);
 IServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
 
 // Define the agent using a YAML definition.

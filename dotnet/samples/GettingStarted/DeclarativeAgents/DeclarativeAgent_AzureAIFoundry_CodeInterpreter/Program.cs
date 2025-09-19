@@ -20,7 +20,7 @@ var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCr
 
 // Set up dependency injection to provide the TokenCredential implementation
 var serviceCollection = new ServiceCollection();
-serviceCollection.AddTransient<PersistentAgentsClient>((sp) => persistentAgentsClient);
+serviceCollection.AddTransient((sp) => persistentAgentsClient);
 IServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
 
 // Define the agent using a YAML definition.

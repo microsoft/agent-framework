@@ -72,7 +72,15 @@ environments = [
 fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
-testpaths = 'tests'
+testpaths = [
+    'tests', 
+    'packages/main/tests',
+    'packages/azure/tests', 
+    'packages/foundry/tests',
+    'packages/copilotstudio/tests',
+    'packages/mem0/tests',
+    'packages/runtime/tests'
+]
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

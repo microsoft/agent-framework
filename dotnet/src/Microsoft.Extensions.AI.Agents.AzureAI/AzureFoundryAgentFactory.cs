@@ -30,7 +30,7 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
         //Throw.IfNull(agentDefinition);
 
         ChatClientAgent? agent = null;
-        PersistentAgentsClient? persistentAgentsClient = null;
+        PersistentAgentsClient? persistentAgentsClient;
         if (this.IsSupported(agentDefinition))
         {
             persistentAgentsClient = agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
