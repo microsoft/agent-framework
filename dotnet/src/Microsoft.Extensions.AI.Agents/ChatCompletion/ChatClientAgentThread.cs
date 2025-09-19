@@ -150,7 +150,7 @@ public class ChatClientAgentThread : AgentThread
     /// <summary>
     /// Gets or sets the <see cref="AIContextProvider"/> used by this thread to provide additional context to the AI model before each invocation.
     /// </summary>
-    public AIContextProvider? AIContextProvider { get; set; }
+    public AIContextProvider? AIContextProvider { get; internal set; }
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
