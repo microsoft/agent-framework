@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from typing import Any, Generic, TypeVar, cast, get_args
+from types import UnionType
+from typing import Any, Generic, TypeVar, Union, cast, get_args, get_origin
 
 from opentelemetry.propagate import inject
 
@@ -21,9 +22,101 @@ from ._shared_state import SharedState
 from ._telemetry import workflow_tracer
 
 T_Out = TypeVar("T_Out")
+T_W_Out = TypeVar("T_W_Out")
 
 
 logger = logging.getLogger(__name__)
+
+
+def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[type[Any]], list[type[Any]]]:
+    """Infer output types from the WorkflowContext generic parameter.
+
+    Examples:
+    - WorkflowContext[str] -> ([str], [])
+    - WorkflowOutputContext[str, int] -> ([], [int])
+    - WorkflowOutputContext[str | int, bool] -> ([], [bool])
+    - WorkflowContext[Union[str, int]] -> ([str, int], [])
+    - WorkflowContext[Any] -> ([], [])
+
+    Returns:
+        Tuple of (output_types, workflow_output_types)
+    """
+    # If no annotation or not parameterized, return empty lists
+    try:
+        origin = get_origin(ctx_annotation)
+    except Exception:
+        origin = None
+
+    # If annotation is unsubscripted WorkflowContext, nothing to infer
+    if origin is None:
+        return [], []
+
+    # Expecting WorkflowContext[T] or WorkflowOutputContext[T, U]
+    if origin is not WorkflowContext and origin is not WorkflowOutputContext:
+        return [], []
+
+    args = get_args(ctx_annotation)
+    if not args:
+        return [], []
+
+    if origin is WorkflowContext:
+        # WorkflowContext[T] -> output_types from T, no workflow output types
+        t = args[0]
+        t_origin = get_origin(t)
+        if t is Any:
+            return [], []
+
+        if t_origin in (Union, UnionType):
+            output_types = [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
+            return output_types, []
+
+        if t is Any or t is type(None):
+            return [], []
+        return [t], []
+
+    elif origin is WorkflowOutputContext:
+        # WorkflowOutputContext[T_Out, T_W_Out] -> output_types from T_Out, workflow_output_types from T_W_Out
+        if len(args) < 2:
+            # Only one generic parameter, treat as workflow output type for backward compatibility
+            t = args[0]
+            t_origin = get_origin(t)
+            if t is Any:
+                return [], []
+
+            if t_origin in (Union, UnionType):
+                output_types = [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
+                return [], output_types
+
+            if t is Any or t is type(None):
+                return [], []
+            return [], [t]
+        else:
+            # Two generic parameters: T_Out and T_W_Out
+            t_out, t_w_out = args
+
+            # Process T_Out for output_types
+            output_types = []
+            t_out_origin = get_origin(t_out)
+            if t_out is not Any and t_out is not type(None):
+                if t_out_origin in (Union, UnionType):
+                    output_types = [arg for arg in get_args(t_out) if arg is not Any and arg is not type(None)]
+                else:
+                    output_types = [t_out]
+
+            # Process T_W_Out for workflow_output_types
+            workflow_output_types = []
+            t_w_out_origin = get_origin(t_w_out)
+            if t_w_out is not Any and t_w_out is not type(None):
+                if t_w_out_origin in (Union, UnionType):
+                    workflow_output_types = [arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None)]
+                else:
+                    workflow_output_types = [t_w_out]
+
+            return output_types, workflow_output_types
+
+    return [], []
+
+
 
 
 _FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
@@ -42,7 +135,11 @@ class WorkflowContext(Generic[T_Out]):
 
     This class is used to provide a way for executors to interact with the workflow
     context and shared state, while preventing direct access to the runtime context.
+
+    Type Parameters:
+        T_Out: The type for send_message() outputs
     """
+
 
     def __init__(
         self,
@@ -161,25 +258,25 @@ class WorkflowContext(Generic[T_Out]):
         return None
 
 
-class WorkflowOutputContext(WorkflowContext[T_Out]):
+
+class WorkflowOutputContext(WorkflowContext[T_Out], Generic[T_Out, T_W_Out]):
     """Specialized context for executors that produce workflow output to external caller.
 
     This class extends WorkflowContext to provide additional functionality
     for the executor that uses it, specifically the ability to yield the overall
     workflow output.
+
+    Generic Parameters:
+        T_Out: The type for send_message() outputs
+        T_W_Out: The type for yield_output() workflow outputs
     """
 
-    async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
-        raise NotImplementedError(
-            "send_message is not supported in WorkflowOutputContext. "
-            "use yield_output() to set the overall workflow output."
-        )
 
-    async def yield_output(self, output: T_Out) -> None:
+    async def yield_output(self, output: T_W_Out) -> None:
         """Set the output of the workflow.
 
         Args:
-            output: The output to yield. This must conform to the output type(s)
+            output: The output to yield. This must conform to the workflow output type(s)
                     declared on this context.
         """
         with _framework_event_origin():

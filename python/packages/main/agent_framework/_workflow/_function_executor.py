@@ -13,11 +13,10 @@ This module provides:
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from types import UnionType
-from typing import Any, Union, get_args, get_origin, overload
+from typing import Any, get_origin, overload
 
 from ._executor import Executor
-from ._workflow_context import WorkflowContext, WorkflowOutputContext
+from ._workflow_context import WorkflowContext, WorkflowOutputContext, infer_output_types_from_ctx_annotation
 
 
 def _is_workflow_context_type(annotation: Any) -> bool:
@@ -29,56 +28,6 @@ def _is_workflow_context_type(annotation: Any) -> bool:
     return annotation is WorkflowContext or annotation is WorkflowOutputContext
 
 
-def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[type], bool]:
-    """Infer output types list from the WorkflowContext generic parameter.
-
-    Examples:
-    - WorkflowContext[str] -> ([str], False)
-    - WorkflowOutputContext[str] -> ([str], True)
-    - WorkflowContext[str | int] -> ([str, int], False)
-    - WorkflowContext[Union[str, int]] -> ([str, int], False)
-    - WorkflowContext[Any] -> ([], False) (unknown)
-    - WorkflowContext[None] -> ([], False)
-
-    Returns:
-        Tuple of (output_types, is_workflow_output)
-    """
-    # If no annotation or not parameterized, return empty list
-    try:
-        origin = get_origin(ctx_annotation)
-    except Exception:
-        origin = None
-
-    # If annotation is unsubscripted WorkflowContext, nothing to infer
-    if origin is None:
-        return [], False
-
-    # Expecting WorkflowContext[T] or WorkflowOutputContext[T]
-    if origin is not WorkflowContext and origin is not WorkflowOutputContext:
-        return [], False
-
-    is_workflow_output = origin is WorkflowOutputContext
-
-    args = get_args(ctx_annotation)
-    if not args:
-        return [], is_workflow_output
-
-    t = args[0]
-    # If t is a Union, flatten it
-    t_origin = get_origin(t)
-    # If Any, treat as unknown -> no output types inferred
-    if t is Any:
-        return [], is_workflow_output
-
-    if t_origin in (Union, UnionType):
-        # Return all union args as-is (may include generic aliases like list[str])
-        output_types = [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
-        return output_types, is_workflow_output
-
-    # Single concrete or generic alias type (e.g., str, int, list[str])
-    if t is Any or t is type(None):
-        return [], is_workflow_output
-    return [t], is_workflow_output
 
 
 class FunctionExecutor(Executor):
@@ -170,12 +119,12 @@ class FunctionExecutor(Executor):
 
         if has_context:
             ctx_annotation = params[1].annotation
-            output_types, is_workflow_output = _infer_output_types_from_ctx_annotation(ctx_annotation)
+            output_types, workflow_output_types = infer_output_types_from_ctx_annotation(ctx_annotation)
         else:
             # For single-parameter functions, we can't infer output types
             ctx_annotation = None
             output_types = []
-            is_workflow_output = False
+            workflow_output_types = []
 
         # Initialize parent WITHOUT calling _discover_handlers yet
         # We'll manually set up the attributes first
@@ -225,7 +174,7 @@ class FunctionExecutor(Executor):
             message_type=message_type,
             ctx_annotation=ctx_annotation,
             output_types=output_types,
-            is_workflow_output=is_workflow_output,
+            workflow_output_types=workflow_output_types,
         )
 
         # Now we can safely call _discover_handlers (it won't find any class-level handlers)

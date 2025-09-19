@@ -9,8 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from textwrap import shorten
-from types import UnionType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, Union, cast, get_args, get_origin, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast, overload
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -35,7 +34,7 @@ from ._events import (
 )
 from ._runner_context import _decode_checkpoint_value
 from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext, WorkflowOutputContext
+from ._workflow_context import WorkflowContext, WorkflowOutputContext, infer_output_types_from_ctx_annotation
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +207,7 @@ class Executor(AFBaseModel):
                             "name": handler_spec["name"],
                             "message_type": message_type,
                             "output_types": handler_spec.get("output_types", []),
-                            "is_workflow_output": handler_spec.get("is_workflow_output", False),
+                            "workflow_output_types": handler_spec.get("workflow_output_types", []),
                             "source": "class_method",  # Distinguish from instance handlers if needed
                         })
 
@@ -335,7 +334,7 @@ class Executor(AFBaseModel):
         message_type: type,
         ctx_annotation: Any,
         output_types: list[type],
-        is_workflow_output: bool = False,
+        workflow_output_types: list[type],
     ) -> None:
         """Register a handler at instance level.
 
@@ -344,8 +343,8 @@ class Executor(AFBaseModel):
             func: The async handler function to register
             message_type: Type of message this handler processes
             ctx_annotation: The WorkflowContext[T] annotation from the function
-            output_types: List of output types inferred from ctx_annotation
-            is_workflow_output: Whether this handler uses WorkflowOutputContext
+            output_types: List of output types for send_message()
+            workflow_output_types: List of workflow output types for yield_output()
         """
         if message_type in self._handlers:
             raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
@@ -356,7 +355,7 @@ class Executor(AFBaseModel):
             "message_type": message_type,
             "ctx_annotation": ctx_annotation,
             "output_types": output_types,
-            "is_workflow_output": is_workflow_output,
+            "workflow_output_types": workflow_output_types,
             "source": "instance_method",  # Distinguish from class handlers if needed
         })
 
@@ -386,16 +385,13 @@ class Executor(AFBaseModel):
 
         Returns:
             A list of the output types inferred from the handlers' WorkflowContext[T] annotations.
-            Excludes types from WorkflowOutputContext[T] which are handled separately.
         """
         output_types: set[type[Any]] = set()
 
-        # Collect output types from all handlers (unified approach)
+        # Collect output types from all handlers
         for handler_spec in self._handler_specs:
-            # Only include if not from WorkflowOutputContext
-            if not handler_spec.get("is_workflow_output", False):
-                handler_output_types = handler_spec.get("output_types", [])
-                output_types.update(handler_output_types)
+            handler_output_types = handler_spec.get("output_types", [])
+            output_types.update(handler_output_types)
 
         return list(output_types)
 
@@ -404,16 +400,14 @@ class Executor(AFBaseModel):
         """Get the list of workflow output types that this executor can produce via yield_output().
 
         Returns:
-            A list of the output types inferred from handlers' WorkflowOutputContext[T] annotations.
+            A list of the workflow output types inferred from handlers' WorkflowOutputContext[T, U] annotations.
         """
         output_types: set[type[Any]] = set()
 
-        # Collect workflow output types from all handlers (unified approach)
+        # Collect workflow output types from all handlers
         for handler_spec in self._handler_specs:
-            # Only include if from WorkflowOutputContext
-            if handler_spec.get("is_workflow_output", False):
-                handler_output_types = handler_spec.get("output_types", [])
-                output_types.update(handler_output_types)
+            handler_workflow_output_types = handler_spec.get("workflow_output_types", [])
+            output_types.update(handler_workflow_output_types)
 
         return list(output_types)
 
@@ -453,49 +447,6 @@ def handler(
             ...
     """
 
-    def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> list[type[Any]]:
-        """Infer output types list from the WorkflowContext generic parameter.
-
-        Examples:
-        - WorkflowContext[str] -> [str]
-        - WorkflowContext[str | int] -> [str, int]
-        - WorkflowContext[Union[str, int]] -> [str, int]
-        - WorkflowContext -> [] (unknown)
-        """
-        # If no annotation or not parameterized, return empty list
-        try:
-            origin = get_origin(ctx_annotation)
-        except Exception:
-            origin = None
-
-        # If annotation is unsubscripted WorkflowContext, nothing to infer
-        if origin is None:
-            # Might be the class itself or Any; try simple check by name to avoid import cycles
-            return []
-
-        # Expecting WorkflowContext[T] or WorkflowOutputContext[T]
-        if origin is not WorkflowContext and origin is not WorkflowOutputContext:
-            return []
-
-        args = get_args(ctx_annotation)
-        if not args:
-            return []
-
-        t = args[0]
-        # If t is a Union, flatten it
-        t_origin = get_origin(t)
-        # If Any, treat as unknown -> no output types inferred
-        if t is Any:
-            return []
-
-        if t_origin in (Union, UnionType):
-            # Return all union args as-is (may include generic aliases like list[str])
-            return [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
-
-        # Single concrete or generic alias type (e.g., str, int, list[str])
-        if t is Any or t is type(None):
-            return []
-        return [t]
 
     def decorator(
         func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
@@ -515,15 +466,9 @@ def handler(
         if ctx_annotation is inspect.Parameter.empty:
             # Allow missing ctx annotation, but we can't infer outputs
             inferred_output_types: list[type[Any]] = []
-            is_workflow_output = False
+            inferred_workflow_output_types: list[type[Any]] = []
         else:
-            inferred_output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
-            # Check if this is a WorkflowOutputContext
-            try:
-                origin = get_origin(ctx_annotation)
-                is_workflow_output = origin is WorkflowOutputContext
-            except Exception:
-                is_workflow_output = False
+            inferred_output_types, inferred_workflow_output_types = infer_output_types_from_ctx_annotation(ctx_annotation)
 
         @functools.wraps(func)
         async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext[Any]) -> Any:
@@ -537,9 +482,9 @@ def handler(
         wrapper._handler_spec = {  # type: ignore
             "name": func.__name__,
             "message_type": message_type,
-            # Keep output_types in spec for validators, inferred from WorkflowContext[T]
+            # Keep output_types and workflow_output_types in spec for validators
             "output_types": inferred_output_types,
-            "is_workflow_output": is_workflow_output,
+            "workflow_output_types": inferred_workflow_output_types,
         }
 
         return wrapper
