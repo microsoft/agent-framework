@@ -173,9 +173,10 @@ class BaseAgent(AFBaseModel):
 
     def as_tool(
         self,
+        *,
         name: str | None = None,
         description: str | None = None,
-        arg_name: str = "input",
+        arg_name: str = "task",
         arg_description: str | None = None,
         stream_callback: Callable[[AgentRunResponseUpdate], None]
         | Callable[[AgentRunResponseUpdate], Awaitable[None]]
@@ -186,7 +187,7 @@ class BaseAgent(AFBaseModel):
         Args:
             name: The name for the tool. If None, uses the agent's name.
             description: The description for the tool. If None, uses the agent's description or empty string.
-            arg_name: The name of the function argument (default: "input").
+            arg_name: The name of the function argument (default: "task").
             arg_description: The description for the function argument.
                 If None, defaults to "Input for {self.display_name}".
             stream_callback: Optional callback for streaming responses. If provided, uses run_stream.
@@ -202,11 +203,11 @@ class BaseAgent(AFBaseModel):
         if tool_name is None:
             raise ValueError("Agent tool name cannot be None. Either provide a name parameter or set the agent's name.")
         tool_description = description or self.description or ""
-        argument_description = arg_description or f"Input for {self.display_name}"
+        argument_description = arg_description or f"Task for {tool_name}"
 
         # Create dynamic input model with the specified argument name
         field_info = Field(..., description=argument_description)
-        input_model = create_model(f"{self.display_name}_Input", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
+        input_model = create_model(f"{self.display_name}_Task", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
 
         # Check if callback is async once, outside the wrapper
         is_async_callback = stream_callback is not None and inspect.iscoroutinefunction(stream_callback)
@@ -216,21 +217,21 @@ class BaseAgent(AFBaseModel):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            if stream_callback is not None:
-                # Use streaming mode - accumulate updates and create final response
-                response_updates: list[AgentRunResponseUpdate] = []
-                async for update in self.run_stream(input_text):
-                    response_updates.append(update)
-                    if is_async_callback:
-                        await stream_callback(update)  # type: ignore[misc]
-                    else:
-                        stream_callback(update)
+            if stream_callback is None:
+                # Use non-streaming mode
+                return (await self.run(input_text)).text
 
-                # Create final text from accumulated updates
-                return AgentRunResponse.from_agent_run_response_updates(response_updates).text
-            # Use non-streaming mode
-            response = await self.run(input_text)
-            return response.text
+            # Use streaming mode - accumulate updates and create final response
+            response_updates: list[AgentRunResponseUpdate] = []
+            async for update in self.run_stream(input_text):
+                response_updates.append(update)
+                if is_async_callback:
+                    await stream_callback(update)  # type: ignore[misc]
+                else:
+                    stream_callback(update)
+
+            # Create final text from accumulated updates
+            return AgentRunResponse.from_agent_run_response_updates(response_updates).text
 
         return AIFunction(name=tool_name, description=tool_description, func=agent_wrapper, input_model=input_model)
 

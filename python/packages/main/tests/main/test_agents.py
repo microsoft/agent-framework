@@ -444,8 +444,8 @@ async def test_chat_agent_as_tool_defaults(chat_client: ChatClientProtocol) -> N
 
     # Check default input field
     schema = tool.input_model.model_json_schema()
-    assert "input" in schema["properties"]
-    assert "Input for TestAgent" in schema["properties"]["input"]["description"]
+    assert "task" in schema["properties"]
+    assert "Task for TestAgent" in schema["properties"]["task"]["description"]
 
 
 async def test_chat_agent_as_tool_no_name(chat_client: ChatClientProtocol) -> None:
@@ -464,7 +464,7 @@ async def test_chat_agent_as_tool_function_execution(chat_client: ChatClientProt
     tool = agent.as_tool()
 
     # Test function execution
-    result = await tool.invoke(arguments=tool.input_model(input="Hello"))
+    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
 
     # Should return the agent's response text
     assert isinstance(result, str)
@@ -484,7 +484,7 @@ async def test_chat_agent_as_tool_with_stream_callback(chat_client: ChatClientPr
     tool = agent.as_tool(stream_callback=stream_callback)
 
     # Execute the tool
-    result = await tool.invoke(arguments=tool.input_model(input="Hello"))
+    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
 
     # Should have collected streaming updates
     assert len(collected_updates) > 0
@@ -518,7 +518,7 @@ async def test_chat_agent_as_tool_with_async_stream_callback(chat_client: ChatCl
     tool = agent.as_tool(stream_callback=async_stream_callback)
 
     # Execute the tool
-    result = await tool.invoke(arguments=tool.input_model(input="Hello"))
+    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
 
     # Should have collected streaming updates
     assert len(collected_updates) > 0
