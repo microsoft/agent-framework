@@ -1,5 +1,5 @@
 [project]
-name = "agent-framework-lab-lighting"
+name = "agent-framework-lab-lightning"
 description = "RL Module for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
@@ -28,7 +28,7 @@ dependencies = [
 
 
 [project.scripts]
-lighting = "agent_framework_lab_lighting:main"
+lightning = "agent_framework_lab_lightning:main"
 
 
 [build-system]
@@ -36,10 +36,10 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["agent_framework_lab_lighting", "agent_framework.lab.lighting"]
+packages = ["agent_framework_lab_lightning", "agent_framework.lab.lightning"]
 
 [tool.setuptools.package-data]
-agent_framework_lab_lighting = ["py.typed"]
+agent_framework_lab_lightning = ["py.typed"]
 
 [tool.ruff]
 line-length = 120
@@ -66,15 +66,15 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 implicit_reexport = true
-packages = ["agent_framework_lab_lighting"]
+packages = ["agent_framework_lab_lightning"]
 
 
 [tool.poe]
 executor.type = "uv"
 include = "../../../shared_tasks.toml"
 [tool.poe.tasks]
-test = "pytest --cov=agent_framework_lab_lighting --cov-report=term-missing:skip-covered tests"
-mypy = "mypy agent_framework_lab_lighting"
+test = "pytest --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered tests"
+mypy = "mypy agent_framework_lab_lightning"
 
 
 [tool.pytest.ini_options]
