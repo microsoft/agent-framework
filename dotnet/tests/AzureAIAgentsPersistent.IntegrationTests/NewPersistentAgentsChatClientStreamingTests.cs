@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -32,8 +31,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         };
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         // Act
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -68,8 +67,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         using var client = await CreateChatClientAsync(enableLongRunningResponses);
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         // Act
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?").Select(u => (NewChatResponseUpdate)u))
@@ -106,8 +105,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             AllowLongRunningResponses = true
         };
 
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
         string responseText = "";
 
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -181,8 +180,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         };
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         await foreach (var update in client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
@@ -254,8 +253,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         };
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         await foreach (var update in client.GetStreamingResponseAsync("What's the weather in Paris right now? Include the time.", options).Select(u => (NewChatResponseUpdate)u))
         {

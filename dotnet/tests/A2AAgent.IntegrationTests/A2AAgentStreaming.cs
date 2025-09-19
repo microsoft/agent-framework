@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -25,8 +24,8 @@ public sealed class A2AAgentStreaming
         AIAgent agent = await this.CreateA2AAgentAsync();
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         // Act
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
@@ -50,7 +49,7 @@ public sealed class A2AAgentStreaming
         AIAgent agent = await this.CreateA2AAgentAsync();
 
         string responseText = "";
-        ContinuationToken? continuationToken = null;
+        string? continuationToken = null;
 
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
         {
@@ -91,7 +90,7 @@ public sealed class A2AAgentStreaming
         AIAgent agent = await this.CreateA2AAgentAsync();
 
         string responseText = "";
-        ContinuationToken? continuationToken = null;
+        string? continuationToken = null;
 
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
         {
@@ -132,7 +131,7 @@ public sealed class A2AAgentStreaming
 
         AgentThread thread = agent.GetNewThread();
 
-        ContinuationToken? continuationToken = null;
+        string? continuationToken = null;
         UserInputRequestContent[]? userInputsRequests = null;
 
         // 1. Ask the agent to book a flight intentionally omitting details to trigger user input request

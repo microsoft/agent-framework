@@ -1,11 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.ClientModel;
 using System.Text.Json;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI;
 
-internal sealed class LongRunContinuationToken : ContinuationToken
+internal sealed class LongRunContinuationToken
 {
     public LongRunContinuationToken(string responseId)
     {
@@ -16,54 +16,18 @@ internal sealed class LongRunContinuationToken : ContinuationToken
 
     public int? SequenceNumber { get; set; }
 
-    public static LongRunContinuationToken FromToken(ContinuationToken token)
+    public static LongRunContinuationToken Deserialize(string json)
     {
-        if (token is LongRunContinuationToken longRunContinuationToken)
-        {
-            return longRunContinuationToken;
-        }
+        json = Throw.IfNullOrEmpty(json);
 
-        BinaryData data = token.ToBytes();
+        var token = JsonSerializer.Deserialize<LongRunContinuationToken>(json, OpenAIJsonContext2.Default.LongRunContinuationToken)
+            ?? throw new InvalidOperationException("Failed to deserialize LongRunContinuationToken.");
 
-        if (data.ToMemory().Length == 0)
-        {
-            throw new ArgumentException("Failed to create LongRunContinuationToken from provided token.", nameof(token));
-        }
+        return token;
+    }
 
-        Utf8JsonReader reader = new(data);
-
-        string responseId = null!;
-        int? startAfter = null;
-
-        reader.Read();
-
-        while (reader.Read())
-        {
-            if (reader.TokenType == JsonTokenType.EndObject)
-            {
-                break;
-            }
-
-            string propertyName = reader.GetString()!;
-
-            switch (propertyName)
-            {
-                case "responseId":
-                    reader.Read();
-                    responseId = reader.GetString()!;
-                    break;
-                case "sequenceNumber":
-                    reader.Read();
-                    startAfter = reader.GetInt32();
-                    break;
-                default:
-                    throw new JsonException($"Unrecognized property '{propertyName}'.");
-            }
-        }
-
-        return new(responseId)
-        {
-            SequenceNumber = startAfter
-        };
+    public string Serialize()
+    {
+        return JsonSerializer.Serialize(this, OpenAIJsonContext2.Default.LongRunContinuationToken);
     }
 }

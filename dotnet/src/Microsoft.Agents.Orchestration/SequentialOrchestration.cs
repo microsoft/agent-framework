@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -47,7 +46,7 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
     private async Task<AgentRunResponse> ResumeAsync(int i, IReadOnlyCollection<ChatMessage> input, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         AgentRunResponse? response = null;
-        ContinuationToken? continuationToken = null;
+        string? continuationToken = null;
 
         for (; i < this.Agents.Count;)
         {
@@ -76,12 +75,12 @@ public sealed partial class SequentialOrchestration : OrchestratingAgent
         return response!;
     }
 
-    private Task CheckpointAsync(int index, IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, ContinuationToken? continuationToken, CancellationToken cancellationToken)
+    private Task CheckpointAsync(int index, IReadOnlyCollection<ChatMessage> messages, OrchestratingAgentContext context, string? continuationToken, CancellationToken cancellationToken)
     {
         return context.Runtime is not null
             ? base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(index, messages, continuationToken), OrchestrationJsonContext.Default.SequentialState), context, cancellationToken)
             : Task.CompletedTask;
     }
 
-    internal sealed record SequentialState(int Index, IReadOnlyCollection<ChatMessage> Messages, ContinuationToken? ContinuationToken);
+    internal sealed record SequentialState(int Index, IReadOnlyCollection<ChatMessage> Messages, string? ContinuationToken);
 }

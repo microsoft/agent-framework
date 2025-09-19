@@ -64,7 +64,7 @@ internal sealed class A2AAgent : AIAgent
 
         // The continuation token provided by a caller indicates that the caller is interested in either task refinement
         // by sending additional messages to the task or obtaining the status and result of the task.
-        if (options is { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
+        if (options is { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
         {
             // If any messages are provided for a long-running task, we will consider them as the task refinement messages.
             if (inputMessages is { Count: > 0 })
@@ -120,7 +120,7 @@ internal sealed class A2AAgent : AIAgent
 
         // The continuation token provided by a caller indicates that the caller is interested in either task refinement
         // by sending additional messages to the task or reconnecting to the stream if the connection was lost.
-        if (options is { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
+        if (options is { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
         {
             // If any messages are provided for a long-running task, we will consider them as the task refinement messages.
             if (inputMessages is { Count: > 0 })
@@ -368,11 +368,11 @@ internal sealed class A2AAgent : AIAgent
         return agentRunResponse.ToAgentRunResponseUpdates();
     }
 
-    private static LongRunContinuationToken? GetContinuationToken(string taskId, TaskState state)
+    private static string? GetContinuationToken(string taskId, TaskState state)
     {
         if (state != TaskState.Completed)
         {
-            return new LongRunContinuationToken(taskId);
+            return new LongRunContinuationToken(taskId).Serialize();
         }
 
         return null;

@@ -15,6 +15,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -98,7 +99,7 @@ namespace Azure.AI.Agents.Persistent
         {
             Argument.AssertNotNull(messages, nameof(messages));
 
-            var lrToken = options is NewChatOptions { ContinuationToken: { } token } ? LongRunContinuationToken.FromToken(token) : null;
+            var lrToken = options is NewChatOptions { ContinuationToken: { Length: > 0 } token } ? LongRunContinuationToken.Deserialize(token) : null;
 
             // Extract necessary state from messages and options.
             (ThreadAndRunOptions runOptions, List<FunctionResultContent>? toolResults) =
@@ -336,7 +337,7 @@ namespace Azure.AI.Agents.Persistent
             }
         }
 
-        private LongRunContinuationToken? GetContinuationToken(string runId, string threadId, RunStatus status, ChatOptions? options, string? stepId = null, bool? throwIfOperationCancelled = true)
+        private string? GetContinuationToken(string runId, string threadId, RunStatus status, ChatOptions? options, string? stepId = null, bool? throwIfOperationCancelled = true)
         {
             if (!this.IsLongRunningResponsesModeEnabled(options))
             {
@@ -360,10 +361,12 @@ namespace Azure.AI.Agents.Persistent
 
             if (status != RunStatus.Completed)
             {
-                return new LongRunContinuationToken(runId, threadId)
+                var token = new LongRunContinuationToken(runId, threadId)
                 {
                     StepId = stepId,
                 };
+
+                return token.Serialize();
             }
 
             return null;
@@ -720,7 +723,7 @@ namespace Azure.AI.Agents.Persistent
                     }
                 }
             }
-            // If this method is called via non-streaming api, we either poll to completion if requested or return the current status.
+            // If this method is called via non-streaming api, return the current status.
             else
             {
                 await foreach (var update in GetRunUpdates_InternalAsync(run, options, cancellationToken).ConfigureAwait(false))
@@ -735,11 +738,9 @@ namespace Azure.AI.Agents.Persistent
                 {
                     List<RunStep> steps = [];
 
-                    //string? stepIdToStartAfter = (options as NewChatOptions)?.StartAfter;
-                    //bool skipSteps = !string.IsNullOrWhiteSpace(stepIdToStartAfter);
                     string? stepIdToStartFrom = null;
                     bool skipSteps = false;
-                    if (options is NewChatOptions { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } lrToken)
+                    if (options is NewChatOptions { ContinuationToken: { } token } && LongRunContinuationToken.Deserialize(token) is { } lrToken)
                     {
                         stepIdToStartFrom = lrToken.StepId;
                         skipSteps = !string.IsNullOrWhiteSpace(stepIdToStartFrom);
@@ -1008,3 +1009,10 @@ namespace Azure.AI.Agents.Persistent
         }
     }
 }
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
+    UseStringEnumConverter = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    WriteIndented = true)]
+[JsonSerializable(typeof(LongRunContinuationToken))]
+internal sealed partial class JsonContext : JsonSerializerContext;

@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.ClientModel;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
@@ -29,5 +28,5 @@ public class AgentRunOptions
     /// <summary>
     /// Token to get result of a long-running operation.
     /// </summary>
-    public ContinuationToken? ContinuationToken { get; set; }
+    public string? ContinuationToken { get; set; }
 }

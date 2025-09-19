@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -149,7 +148,7 @@ public class AgentRunResponseUpdate
     /// <summary>
     /// Represent a token that can be used to retrieve result of a long-running operation.
     /// </summary>
-    public ContinuationToken? ContinuationToken { get; set; }
+    public string? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;

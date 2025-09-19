@@ -2,6 +2,7 @@
 
 using System.ClientModel;
 using System.Text.Json;
+using Microsoft.Shared.Diagnostics;
 
 namespace Azure.AI.Agents.Persistent;
 
@@ -19,59 +20,18 @@ internal sealed class LongRunContinuationToken : ContinuationToken
 
     public string? StepId { get; set; }
 
-    public static LongRunContinuationToken FromToken(ContinuationToken token)
+    public static LongRunContinuationToken Deserialize(string json)
     {
-        if (token is LongRunContinuationToken longRunContinuationToken)
-        {
-            return longRunContinuationToken;
-        }
+        json = Throw.IfNullOrEmpty(json);
 
-        BinaryData data = token.ToBytes();
+        var token = JsonSerializer.Deserialize<LongRunContinuationToken>(json, JsonContext.Default.LongRunContinuationToken)
+            ?? throw new InvalidOperationException("Failed to deserialize LongRunContinuationToken.");
 
-        if (data.ToMemory().Length == 0)
-        {
-            throw new ArgumentException("Failed to create LongRunContinuationToken from provided token.", nameof(token));
-        }
+        return token;
+    }
 
-        Utf8JsonReader reader = new(data);
-
-        string runId = null!;
-        string threadId = null!;
-        string? stepId = null;
-
-        reader.Read();
-
-        while (reader.Read())
-        {
-            if (reader.TokenType == JsonTokenType.EndObject)
-            {
-                break;
-            }
-
-            string propertyName = reader.GetString()!;
-
-            switch (propertyName)
-            {
-                case "runId":
-                    reader.Read();
-                    runId = reader.GetString()!;
-                    break;
-                case "threadId":
-                    reader.Read();
-                    threadId = reader.GetString()!;
-                    break;
-                case "stepId":
-                    reader.Read();
-                    stepId = reader.GetString();
-                    break;
-                default:
-                    throw new JsonException($"Unrecognized property '{propertyName}'.");
-            }
-        }
-
-        return new(runId, threadId)
-        {
-            StepId = stepId
-        };
+    public string Serialize()
+    {
+        return JsonSerializer.Serialize(this, JsonContext.Default.LongRunContinuationToken);
     }
 }

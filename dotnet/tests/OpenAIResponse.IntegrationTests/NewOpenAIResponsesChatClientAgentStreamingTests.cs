@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -38,8 +37,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         };
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         // Act
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?", options: options))
@@ -74,8 +73,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         using var agent = CreateAIAgent(enableLongRunningResponses: enableLongRunningResponses);
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         // Act
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
@@ -107,8 +106,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         using var agent = CreateAIAgent(enableLongRunningResponses: true);
 
         // Part 1: Start the background run and get the first part of the response.
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
         string responseText = "";
 
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
@@ -219,8 +218,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
 
         // Part 1: Start the background run.
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         await foreach (var update in agent.RunStreamingAsync("What time is it?"))
         {
@@ -266,8 +265,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
 
         // Part 1: Start the background run.
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         await foreach (var update in agent.RunStreamingAsync("What's the weather in Paris right now? Include the time."))
         {

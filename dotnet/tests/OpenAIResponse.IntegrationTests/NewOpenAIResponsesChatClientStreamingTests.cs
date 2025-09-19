@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -48,8 +47,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         };
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         // Act
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -88,8 +87,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             .Build();
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         // Act
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?").Select(u => (NewChatResponseUpdate)u))
@@ -124,8 +123,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             AllowLongRunningResponses = true
         };
 
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
         string responseText = "";
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -240,8 +239,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         };
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
@@ -285,8 +284,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         };
 
         string responseText = "";
-        ContinuationToken? firstContinuationToken = null;
-        ContinuationToken? lastContinuationToken = null;
+        string? firstContinuationToken = null;
+        string? lastContinuationToken = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What's the weather in Paris right now? Include the time.", options).Select(u => (NewChatResponseUpdate)u))
         {
@@ -325,7 +324,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         options.AllowLongRunningResponses = true;
         options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        ContinuationToken? continuationToken = null;
+        string? continuationToken = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {

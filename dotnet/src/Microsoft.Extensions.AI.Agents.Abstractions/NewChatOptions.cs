@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.ClientModel;
 using System.Collections.Generic;
 
 namespace Microsoft.Extensions.AI;
@@ -25,7 +24,7 @@ public class NewChatOptions : ChatOptions
     /// <summary>
     /// Token to get result of a long-running operation.
     /// </summary>
-    public ContinuationToken? ContinuationToken { get; set; }
+    public string? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override ChatOptions Clone()

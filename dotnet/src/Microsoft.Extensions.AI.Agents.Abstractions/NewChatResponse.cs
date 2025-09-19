@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.ClientModel;
-
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
@@ -18,5 +16,5 @@ public class NewChatResponse : ChatResponse
     /// <summary>
     /// Represent a token that can be used to retrieve result of a long-running operation.
     /// </summary>
-    public ContinuationToken? ContinuationToken { get; set; }
+    public string? ContinuationToken { get; set; }
 }

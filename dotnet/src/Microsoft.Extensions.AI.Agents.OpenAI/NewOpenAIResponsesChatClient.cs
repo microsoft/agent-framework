@@ -90,9 +90,9 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of this response
         // rather than in creating a new one.
-        if (options is NewChatOptions { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
+        if (options is NewChatOptions { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
         {
-            // If continuation token with response id is provided, and no functions are involved, get the response by id.
+            // If continuation token with response, get the response by id.
             openAIResponse = (await _responseClient.GetResponseAsync(longRunToken.ResponseId, cancellationToken).ConfigureAwait(false)).Value;
         }
         else
@@ -168,7 +168,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
         return response;
     }
 
-    private static LongRunContinuationToken? GetContinuationToken(
+    private static string? GetContinuationToken(
         bool? backgroundModeEnabled,
         ResponseStatus? status,
         string responseId,
@@ -199,10 +199,12 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         if (status != ResponseStatus.Completed)
         {
-            return new LongRunContinuationToken(responseId)
+            var token = new LongRunContinuationToken(responseId)
             {
                 SequenceNumber = sequenceNumber,
             };
+
+            return token.Serialize();
         }
 
         return null;
@@ -270,7 +272,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of this response
         // rather than in creating a new one.
-        if (options is NewChatOptions { ContinuationToken: { } token } && LongRunContinuationToken.FromToken(token) is { } longRunToken)
+        if (options is NewChatOptions { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
         {
             // If response id is provided, get the response by id.
             streamingUpdates = _responseClient.GetResponseStreamingAsync(longRunToken.ResponseId, longRunToken.SequenceNumber, cancellationToken);
@@ -1154,4 +1156,5 @@ internal static class OpenAIClientExtensions3
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(IEnumerable<string>))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(LongRunContinuationToken))]
 internal sealed partial class OpenAIJsonContext2 : JsonSerializerContext;

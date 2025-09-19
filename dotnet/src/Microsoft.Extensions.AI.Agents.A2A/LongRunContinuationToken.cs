@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel;
 using System.Text.Json;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.A2A;
 
-internal sealed class LongRunContinuationToken : ContinuationToken
+internal sealed class LongRunContinuationToken
 {
     public LongRunContinuationToken(string taskId)
     {
@@ -15,46 +15,18 @@ internal sealed class LongRunContinuationToken : ContinuationToken
 
     public string TaskId { get; set; }
 
-    public static LongRunContinuationToken FromToken(ContinuationToken token)
+    public static LongRunContinuationToken Deserialize(string json)
     {
-        if (token is LongRunContinuationToken longRunContinuationToken)
-        {
-            return longRunContinuationToken;
-        }
+        json = Throw.IfNullOrEmpty(json);
 
-        BinaryData data = token.ToBytes();
+        var token = JsonSerializer.Deserialize<LongRunContinuationToken>(json, A2AJsonContext.Default.LongRunContinuationToken)
+            ?? throw new InvalidOperationException("Failed to deserialize LongRunContinuationToken.");
 
-        if (data.ToMemory().Length == 0)
-        {
-            throw new ArgumentException("Failed to create LongRunContinuationToken from provided token.", nameof(token));
-        }
+        return token;
+    }
 
-        Utf8JsonReader reader = new(data);
-
-        string taskId = null!;
-
-        reader.Read();
-
-        while (reader.Read())
-        {
-            if (reader.TokenType == JsonTokenType.EndObject)
-            {
-                break;
-            }
-
-            string propertyName = reader.GetString()!;
-
-            switch (propertyName)
-            {
-                case "taskId":
-                    reader.Read();
-                    taskId = reader.GetString()!;
-                    break;
-                default:
-                    throw new JsonException($"Unrecognized property '{propertyName}'.");
-            }
-        }
-
-        return new(taskId);
+    public string Serialize()
+    {
+        return JsonSerializer.Serialize(this, A2AJsonContext.Default.LongRunContinuationToken);
     }
 }
