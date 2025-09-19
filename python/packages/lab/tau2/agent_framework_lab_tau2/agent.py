@@ -15,12 +15,17 @@ from agent_framework._workflow import (
 )
 from agent_framework.openai import OpenAIChatClient
 from loguru import logger
-from tau2.data_model.simulation import SimulationRun, TerminationReason
-from tau2.data_model.tasks import Task
-from tau2.domains.airline.environment import get_environment
-from tau2.evaluator.evaluator import EvaluationType, RewardInfo, evaluate_simulation
-from tau2.user.user_simulator import OUT_OF_SCOPE, STOP, TRANSFER, get_global_user_sim_guidelines
-from tau2.utils.utils import get_now
+from tau2.data_model.simulation import SimulationRun, TerminationReason  # type: ignore[import-untyped]
+from tau2.data_model.tasks import Task  # type: ignore[import-untyped]
+from tau2.domains.airline.environment import get_environment  # type: ignore[import-untyped]
+from tau2.evaluator.evaluator import EvaluationType, RewardInfo, evaluate_simulation  # type: ignore[import-untyped]
+from tau2.user.user_simulator import (  # type: ignore[import-untyped]
+    OUT_OF_SCOPE,
+    STOP,
+    TRANSFER,
+    get_global_user_sim_guidelines,
+)
+from tau2.utils.utils import get_now  # type: ignore[import-untyped]
 
 from ._message_utils import flip_messages, log_messages
 from ._sliding_window import SlidingWindowChatMessageList
@@ -68,7 +73,7 @@ class TaskRunner:
         self.max_steps = max_steps
         self.reinit()
 
-    def reinit(self):
+    def reinit(self) -> "TaskRunner":
         """Reset all state for a new task run."""
         self.step_count = 0
         self.full_conversation = []
@@ -135,7 +140,7 @@ class TaskRunner:
 
     async def conversation_orchestrator(
         self, response: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorRequest]
-    ):
+    ) -> None:
         """Orchestrate conversation flow between assistant and user simulator.
 
         This is the central routing hub that:
@@ -358,4 +363,4 @@ class TaskRunner:
         )
 
         logger.info(f"Evaluation completed - Reward: {self.full_reward_info.reward}, Info: {self.full_reward_info}")
-        return self.full_reward_info.reward
+        return self.full_reward_info.reward  # type: ignore[no-any-return]

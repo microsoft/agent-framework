@@ -64,6 +64,9 @@ warn_unreachable = true
 show_error_codes = true
 implicit_reexport = true
 packages = ["agent_framework_lab_tau2"]
+exclude = [
+  "data",
+]
 
 [tool.pyright]
 exclude = ["**/data"]

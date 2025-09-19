@@ -10,7 +10,7 @@ from agent_framework._tools import AIFunction
 from agent_framework._types import ChatMessage
 from loguru import logger
 from pydantic import BaseModel
-from tau2.data_model.message import (
+from tau2.data_model.message import (  # type: ignore[import-untyped]
     AssistantMessage,
     Message,
     SystemMessage,
@@ -18,21 +18,21 @@ from tau2.data_model.message import (
     ToolMessage,
     UserMessage,
 )
-from tau2.data_model.tasks import EnvFunctionCall, InitializationData
-from tau2.environment.environment import Environment
-from tau2.environment.tool import Tool
+from tau2.data_model.tasks import EnvFunctionCall, InitializationData  # type: ignore[import-untyped]
+from tau2.environment.environment import Environment  # type: ignore[import-untyped]
+from tau2.environment.tool import Tool  # type: ignore[import-untyped]
 
 _original_set_state = Environment.set_state
 
 
-def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction:
+def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction[Any, Any]:
     """Convert a tau2 Tool to an AIFunction for agent framework compatibility.
 
     Creates a wrapper that preserves the tool's interface while ensuring
     results are deep-copied to prevent unintended mutations.
     """
 
-    def wrapped_func(**kwargs):
+    def wrapped_func(**kwargs: Any) -> Any:
         result = tau2_tool(**kwargs)
         # Deep copy to prevent mutations of returned data
         if isinstance(result, BaseModel):
@@ -121,11 +121,11 @@ def patch_env_set_state() -> None:
     """
 
     def set_state(
-        self,
+        self: Any,
         initialization_data: InitializationData | None,
         initialization_actions: list[EnvFunctionCall] | None,
         message_history: list[Message],
-    ):
+    ) -> None:
         if self.solo_mode:
             if any(isinstance(message, UserMessage) for message in message_history):
                 raise ValueError("User messages are not allowed in solo mode")
@@ -144,7 +144,9 @@ def patch_env_set_state() -> None:
                     raise ValueError("Tool message not expected. Tool messages should always follow a tool call.")
                 if isinstance(message, (AssistantMessage, UserMessage)) and message.is_tool_call():
                     tool_calls = message.tool_calls
-                    for tc in tool_calls:  # type: ignore
+                    if tool_calls is None:
+                        raise ValueError("Tool message expected. Got None.")
+                    for tc in tool_calls:
                         if len(messages) == 0:
                             raise ValueError("Tool message expected. Got None.")
                         tm = messages.pop()
@@ -202,7 +204,7 @@ def _dump_function_result(result: Any) -> Any:
         return result
 
 
-def _to_native(obj):
+def _to_native(obj: Any) -> Any:
     """Convert data retrieved from Panquet to data usable in AGL server."""
     # 1) Arrays -> list (then recurse)
     if isinstance(obj, np.ndarray):
