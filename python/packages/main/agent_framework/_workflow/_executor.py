@@ -21,8 +21,9 @@ from ._events import (
     AgentRunEvent,
     AgentRunUpdateEvent,
     ExecutorCompletedEvent,
-    ExecutorInvokeEvent,
+    ExecutorInvokedEvent,
     RequestInfoEvent,
+    _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
 )
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
@@ -102,16 +103,22 @@ class Executor(AFBaseModel):
             # Lazy registration for SubWorkflowRequestInfo if we have interceptors
             if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
                 # Directly handle SubWorkflowRequestInfo
-                await context.add_event(ExecutorInvokeEvent(self.id))
+                with _framework_event_origin():
+                    invoke_event = ExecutorInvokedEvent(self.id)
+                await context.add_event(invoke_event)
                 try:
                     await self._handle_sub_workflow_request(message, context)
                 except Exception as exc:
                     # Surface structured executor failure before propagating
                     from ._events import ExecutorFailedEvent, WorkflowErrorDetails
 
-                    await context.add_event(ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc)))
+                    with _framework_event_origin():
+                        failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
+                    await context.add_event(failure_event)
                     raise
-                await context.add_event(ExecutorCompletedEvent(self.id))
+                with _framework_event_origin():
+                    completed_event = ExecutorCompletedEvent(self.id)
+                await context.add_event(completed_event)
                 return
 
             handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
@@ -122,16 +129,22 @@ class Executor(AFBaseModel):
 
             if handler is None:
                 raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
-            await context.add_event(ExecutorInvokeEvent(self.id))
+            with _framework_event_origin():
+                invoke_event = ExecutorInvokedEvent(self.id)
+            await context.add_event(invoke_event)
             try:
                 await handler(message, context)
             except Exception as exc:
                 # Surface structured executor failure before propagating
                 from ._events import ExecutorFailedEvent, WorkflowErrorDetails
 
-                await context.add_event(ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc)))
+                with _framework_event_origin():
+                    failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
+                await context.add_event(failure_event)
                 raise
-            await context.add_event(ExecutorCompletedEvent(self.id))
+            with _framework_event_origin():
+                completed_event = ExecutorCompletedEvent(self.id)
+            await context.add_event(completed_event)
 
     def _discover_handlers(self) -> None:
         """Discover message handlers and request interceptors in the executor class."""

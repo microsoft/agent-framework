@@ -14,9 +14,11 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowEventSource,
     WorkflowFailedEvent,
     WorkflowRunResult,
     WorkflowRunState,
+    WorkflowStartedEvent,
     WorkflowStatusEvent,
     handler,
 )
@@ -41,9 +43,12 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
             events.append(ev)
 
     # Workflow-level failure and FAILED status should be surfaced
-    assert any(isinstance(e, WorkflowFailedEvent) for e in events)
+    failed_events = [e for e in events if isinstance(e, WorkflowFailedEvent)]
+    assert failed_events
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed_events)
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.FAILED
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
 
 
 async def test_executor_failed_event_emitted_on_direct_execute():
@@ -58,7 +63,9 @@ async def test_executor_failed_event_emitted_on_direct_execute():
     with pytest.raises(RuntimeError, match="boom"):
         await failing.execute(0, wf_ctx)
     drained = await ctx.drain_events()
-    assert any(isinstance(e, ExecutorFailedEvent) for e in drained)
+    failed = [e for e in drained if isinstance(e, ExecutorFailedEvent)]
+    assert failed
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed)
 
 
 class Requester(Executor):
@@ -99,6 +106,19 @@ async def test_completed_status_streaming():
     # Last status should be COMPLETED
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.COMPLETED
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
+
+
+async def test_started_and_completed_event_origins():
+    c = Completer(id="c-origin")
+    wf = WorkflowBuilder().set_start_executor(c).build()
+    events = [ev async for ev in wf.run_stream("payload")]
+
+    started = next(e for e in events if isinstance(e, WorkflowStartedEvent))
+    assert started.origin is WorkflowEventSource.FRAMEWORK
+
+    completed = next(e for e in events if isinstance(e, WorkflowCompletedEvent))
+    assert completed.origin is WorkflowEventSource.EXECUTOR
 
 
 async def test_non_streaming_final_state_helpers():

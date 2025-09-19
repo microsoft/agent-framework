@@ -5,7 +5,7 @@ import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any, cast
+from typing import Any
 
 from pydantic import Field
 
@@ -35,6 +35,7 @@ from ._events import (
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
+    _framework_event_origin,
 )
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
@@ -50,14 +51,6 @@ else:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _default_edge_groups() -> list[EdgeGroup]:
-    return []
-
-
-def _default_executors() -> dict[str, Executor]:
-    return {}
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
@@ -125,10 +118,10 @@ class Workflow(AFBaseModel):
     """
 
     edge_groups: list[EdgeGroup] = Field(
-        default_factory=_default_edge_groups, description="List of edge groups that define the workflow edges"
+        default_factory=list, description="List of edge groups that define the workflow edges"
     )
     executors: dict[str, Executor] = Field(
-        default_factory=_default_executors, description="Dictionary mapping executor IDs to Executor instances"
+        default_factory=dict, description="Dictionary mapping executor IDs to Executor instances"
     )
     start_executor_id: str = Field(min_length=1, description="The ID of the starting executor for the workflow")
     max_iterations: int = Field(
@@ -190,20 +183,21 @@ class Workflow(AFBaseModel):
 
         # Ensure WorkflowExecutor instances have their workflow field serialized
         if "executors" in data:
-            executors_data = cast(dict[str, Any], data["executors"])
-            executor_map: dict[str, Executor] = self.executors
+            executors_data = data["executors"]
             for executor_id, executor_data in executors_data.items():
                 # Check if this is a WorkflowExecutor that might be missing its workflow field
-                if isinstance(executor_data, dict):
-                    executor_dict = cast(dict[str, Any], executor_data)
-                    if executor_dict.get("type") == "WorkflowExecutor" and "workflow" not in executor_dict:
-                        # Get the original executor object and serialize its workflow
-                        original_executor = executor_map.get(executor_id)
-                        if original_executor is not None and hasattr(original_executor, "workflow"):
-                            from ._executor import WorkflowExecutor
+                if (
+                    isinstance(executor_data, dict)
+                    and executor_data.get("type") == "WorkflowExecutor"
+                    and "workflow" not in executor_data
+                ):
+                    # Get the original executor object and serialize its workflow
+                    original_executor = self.executors.get(executor_id)
+                    if original_executor and hasattr(original_executor, "workflow"):
+                        from ._executor import WorkflowExecutor
 
-                            if isinstance(original_executor, WorkflowExecutor):
-                                executor_dict["workflow"] = original_executor.workflow.model_dump(**kwargs)
+                        if isinstance(original_executor, WorkflowExecutor):
+                            executor_data["workflow"] = original_executor.workflow.model_dump(**kwargs)
 
         return data
 
@@ -252,8 +246,12 @@ class Workflow(AFBaseModel):
                 # Add workflow started event (telemetry + surface state to consumers)
                 workflow_tracer.add_workflow_event("workflow.started")
                 # Emit explicit start/status events to the stream
-                yield WorkflowStartedEvent()
-                yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
+                with _framework_event_origin():
+                    started = WorkflowStartedEvent()
+                yield started
+                with _framework_event_origin():
+                    in_progress = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
+                yield in_progress
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -274,22 +272,34 @@ class Workflow(AFBaseModel):
 
                     if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending and not saw_completed:
                         emitted_in_progress_pending = True
-                        yield WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                        with _framework_event_origin():
+                            pending_status = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                        yield pending_status
 
                 # Success path: emit a final status based on observed terminal signals
                 if saw_completed:
-                    yield WorkflowStatusEvent(WorkflowRunState.COMPLETED)
+                    with _framework_event_origin():
+                        terminal_status = WorkflowStatusEvent(WorkflowRunState.COMPLETED)
+                    yield terminal_status
                 elif saw_request:
-                    yield WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                    with _framework_event_origin():
+                        terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                    yield terminal_status
                 else:
-                    yield WorkflowStatusEvent(WorkflowRunState.IDLE)
+                    with _framework_event_origin():
+                        terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE)
+                    yield terminal_status
 
                 workflow_tracer.add_workflow_event("workflow.completed")
             except Exception as e:
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(e)
-                yield WorkflowFailedEvent(details)
-                yield WorkflowStatusEvent(WorkflowRunState.FAILED)
+                with _framework_event_origin():
+                    failed_event = WorkflowFailedEvent(details)
+                yield failed_event
+                with _framework_event_origin():
+                    failed_status = WorkflowStatusEvent(WorkflowRunState.FAILED)
+                yield failed_status
                 workflow_tracer.add_workflow_error_event(e)
                 raise
 
