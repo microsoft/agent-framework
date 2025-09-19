@@ -706,3 +706,126 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert len(function_results) == 1
         assert function_calls[0].name == "sample_tool_function"
         assert function_results[0].call_id == function_calls[0].call_id
+
+
+class TestMiddlewareDynamicRebuild:
+    """Test cases for dynamic middleware pipeline rebuilding with ChatAgent."""
+
+    class TrackingAgentMiddleware(AgentMiddleware):
+        """Test middleware that tracks execution."""
+
+        def __init__(self, name: str, execution_log: list[str]):
+            self.name = name
+            self.execution_log = execution_log
+
+        async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+            self.execution_log.append(f"{self.name}_start")
+            await next(context)
+            self.execution_log.append(f"{self.name}_end")
+
+    async def test_middleware_dynamic_rebuild_non_streaming(self, chat_client: "MockChatClient") -> None:
+        """Test that middleware pipeline is rebuilt when agent.middleware collection is modified for non-streaming."""
+        execution_log: list[str] = []
+
+        # Create agent with initial middleware
+        middleware1 = self.TrackingAgentMiddleware("middleware1", execution_log)
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
+
+        # First execution - should use middleware1
+        await agent.run("Test message 1")
+        assert "middleware1_start" in execution_log
+        assert "middleware1_end" in execution_log
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Modify the middleware collection by adding another middleware
+        middleware2 = self.TrackingAgentMiddleware("middleware2", execution_log)
+        agent.middleware = [middleware1, middleware2]
+
+        # Second execution - should use both middleware1 and middleware2
+        await agent.run("Test message 2")
+        assert "middleware1_start" in execution_log
+        assert "middleware1_end" in execution_log
+        assert "middleware2_start" in execution_log
+        assert "middleware2_end" in execution_log
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Modify the middleware collection by replacing with just middleware2
+        agent.middleware = [middleware2]
+
+        # Third execution - should use only middleware2
+        await agent.run("Test message 3")
+        assert "middleware1_start" not in execution_log
+        assert "middleware1_end" not in execution_log
+        assert "middleware2_start" in execution_log
+        assert "middleware2_end" in execution_log
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Remove all middleware
+        agent.middleware = []
+
+        # Fourth execution - should use no middleware
+        await agent.run("Test message 4")
+        assert len(execution_log) == 0
+
+    async def test_middleware_dynamic_rebuild_streaming(self, chat_client: "MockChatClient") -> None:
+        """Test that middleware pipeline is rebuilt for streaming when agent.middleware collection is modified."""
+        execution_log: list[str] = []
+
+        # Create agent with initial middleware
+        middleware1 = self.TrackingAgentMiddleware("stream_middleware1", execution_log)
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
+
+        # First streaming execution
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("Test stream message 1"):
+            updates.append(update)
+
+        assert "stream_middleware1_start" in execution_log
+        assert "stream_middleware1_end" in execution_log
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Modify the middleware collection
+        middleware2 = self.TrackingAgentMiddleware("stream_middleware2", execution_log)
+        agent.middleware = [middleware2]
+
+        # Second streaming execution - should use only middleware2
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("Test stream message 2"):
+            updates.append(update)
+
+        assert "stream_middleware1_start" not in execution_log
+        assert "stream_middleware1_end" not in execution_log
+        assert "stream_middleware2_start" in execution_log
+        assert "stream_middleware2_end" in execution_log
+
+    async def test_middleware_order_change_detection(self, chat_client: "MockChatClient") -> None:
+        """Test that changing the order of middleware is detected and applied."""
+        execution_log: list[str] = []
+
+        middleware1 = self.TrackingAgentMiddleware("first", execution_log)
+        middleware2 = self.TrackingAgentMiddleware("second", execution_log)
+
+        # Create agent with middleware in order [first, second]
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware1, middleware2])
+
+        # First execution
+        await agent.run("Test message 1")
+        assert execution_log == ["first_start", "second_start", "second_end", "first_end"]
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Change order to [second, first]
+        agent.middleware = [middleware2, middleware1]
+
+        # Second execution - should reflect new order
+        await agent.run("Test message 2")
+        assert execution_log == ["second_start", "first_start", "first_end", "second_end"]

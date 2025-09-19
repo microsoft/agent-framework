@@ -483,10 +483,12 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     original_run = agent_class.run  # type: ignore[attr-defined]
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
 
-    def _initialize_middleware_pipelines(self: Any, middlewares: Middleware | list[Middleware] | None) -> None:
-        """Initialize agent and function middleware pipelines from the provided middleware list."""
+    def _build_middleware_pipelines(
+        middlewares: Middleware | list[Middleware] | None,
+    ) -> tuple[AgentMiddlewarePipeline, FunctionMiddlewarePipeline]:
+        """Build fresh agent and function middleware pipelines from the provided middleware list."""
         if not middlewares:
-            return
+            return AgentMiddlewarePipeline(), FunctionMiddlewarePipeline()
 
         middleware_list: list[Middleware] = middlewares if isinstance(middlewares, list) else [middlewares]  # type: ignore
 
@@ -529,8 +531,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                 # Fallback
                 agent_middlewares.append(middleware)  # type: ignore
 
-        self._agent_middleware_pipeline = AgentMiddlewarePipeline(agent_middlewares)
-        self._function_middleware_pipeline = FunctionMiddlewarePipeline(function_middlewares)
+        return AgentMiddlewarePipeline(agent_middlewares), FunctionMiddlewarePipeline(function_middlewares)
 
     async def middleware_enabled_run(
         self: Any,
@@ -540,35 +541,18 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Middleware-enabled run method."""
-        # Initialize middleware pipelines if not already done
-        if (
-            hasattr(self, "middleware")
-            and self.middleware
-            and not (
-                hasattr(self, "_agent_middleware_pipeline")
-                and hasattr(self, "_function_middleware_pipeline")
-                and (
-                    self._agent_middleware_pipeline.has_middlewares
-                    or self._function_middleware_pipeline.has_middlewares
-                )
-            )
-        ):
-            _initialize_middleware_pipelines(self, self.middleware)
-
-        # Ensure pipelines exist even if empty
-        if not hasattr(self, "_agent_middleware_pipeline"):
-            self._agent_middleware_pipeline = AgentMiddlewarePipeline()
-        if not hasattr(self, "_function_middleware_pipeline"):
-            self._function_middleware_pipeline = FunctionMiddlewarePipeline()
+        # Build fresh middleware pipelines from current middleware collection
+        current_middleware = getattr(self, "middleware", None)
+        agent_pipeline, function_pipeline = _build_middleware_pipelines(current_middleware)
 
         # Add function middleware pipeline to kwargs if available
-        if self._function_middleware_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
+        if function_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = function_pipeline
 
         normalized_messages = self._normalize_messages(messages)
 
         # Execute with middleware if available
-        if self._agent_middleware_pipeline.has_middlewares:
+        if agent_pipeline.has_middlewares:
             context = AgentRunContext(
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
@@ -578,7 +562,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             async def _execute_handler(ctx: AgentRunContext) -> AgentRunResponse:
                 return await original_run(self, ctx.messages, thread=thread, **kwargs)  # type: ignore
 
-            result = await self._agent_middleware_pipeline.execute(
+            result = await agent_pipeline.execute(
                 self,  # type: ignore[arg-type]
                 normalized_messages,
                 context,
@@ -598,35 +582,18 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Middleware-enabled run_stream method."""
-        # Initialize middleware pipelines if not already done
-        if (
-            hasattr(self, "middleware")
-            and self.middleware
-            and not (
-                hasattr(self, "_agent_middleware_pipeline")
-                and hasattr(self, "_function_middleware_pipeline")
-                and (
-                    self._agent_middleware_pipeline.has_middlewares
-                    or self._function_middleware_pipeline.has_middlewares
-                )
-            )
-        ):
-            _initialize_middleware_pipelines(self, self.middleware)
-
-        # Ensure pipelines exist even if empty
-        if not hasattr(self, "_agent_middleware_pipeline"):
-            self._agent_middleware_pipeline = AgentMiddlewarePipeline()
-        if not hasattr(self, "_function_middleware_pipeline"):
-            self._function_middleware_pipeline = FunctionMiddlewarePipeline()
+        # Build fresh middleware pipelines from current middleware collection
+        current_middleware = getattr(self, "middleware", None)
+        agent_pipeline, function_pipeline = _build_middleware_pipelines(current_middleware)
 
         # Add function middleware pipeline to kwargs if available
-        if self._function_middleware_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
+        if function_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = function_pipeline
 
         normalized_messages = self._normalize_messages(messages)
 
         # Execute with middleware if available
-        if self._agent_middleware_pipeline.has_middlewares:
+        if agent_pipeline.has_middlewares:
             context = AgentRunContext(
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
@@ -638,7 +605,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                     yield update
 
             async def _stream_generator() -> AsyncIterable[AgentRunResponseUpdate]:
-                async for update in self._agent_middleware_pipeline.execute_stream(
+                async for update in agent_pipeline.execute_stream(
                     self,  # type: ignore[arg-type]
                     normalized_messages,
                     context,
