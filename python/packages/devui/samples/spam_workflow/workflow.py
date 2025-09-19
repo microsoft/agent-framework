@@ -153,7 +153,7 @@ class ContentAnalyzer(Executor):
 class SpamDetector(Executor):
     """Step 3: An executor that determines if a message is spam based on analysis."""
 
-    def __init__(self, spam_keywords: list[str], id: str | None = None):
+    def __init__(self, spam_keywords: list[str], id: str):
         """Initialize the executor with spam keywords."""
         super().__init__(id=id)
         self._spam_keywords = spam_keywords
