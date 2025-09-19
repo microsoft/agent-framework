@@ -39,6 +39,7 @@ from ._events import (
     WorkflowEventSource,
     WorkflowFailedEvent,
     WorkflowLifecycleEvent,
+    WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
@@ -101,7 +102,7 @@ from ._validation import (
 )
 from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
-from ._workflow_context import WorkflowContext
+from ._workflow_context import WorkflowContext, WorkflowOutputContext
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
@@ -180,6 +181,8 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowFailedEvent",
     "WorkflowLifecycleEvent",
+    "WorkflowOutputContext",
+    "WorkflowOutputEvent",
     "WorkflowRunResult",
     "WorkflowRunState",
     "WorkflowStartedEvent",

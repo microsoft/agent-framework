@@ -27,11 +27,15 @@ from ._events import (
     ExecutorCompletedEvent,
     ExecutorInvokedEvent,
     RequestInfoEvent,
+    WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
+    ExecutorEvent,
     _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
 )
 from ._runner_context import _decode_checkpoint_value
 from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext
+from ._workflow_context import WorkflowContext, WorkflowOutputContext
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +97,7 @@ class Executor(AFBaseModel):
 
         self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
-        self._instance_handler_specs: list[dict[str, Any]] = []
+        self._handler_specs: list[dict[str, Any]] = []
         self._discover_handlers()
 
         if not self._handlers and not self._request_interceptors:
@@ -198,6 +202,15 @@ class Executor(AFBaseModel):
                         # Get the bound method
                         bound_method = getattr(self, attr_name)
                         self._handlers[message_type] = bound_method
+
+                        # Add to unified handler specs list
+                        self._handler_specs.append({
+                            "name": handler_spec["name"],
+                            "message_type": message_type,
+                            "output_types": handler_spec.get("output_types", []),
+                            "is_workflow_output": handler_spec.get("is_workflow_output", False),
+                            "source": "class_method",  # Distinguish from instance handlers if needed
+                        })
 
                     # Discover @intercepts_request methods
                     if hasattr(attr, "_intercepts_request"):
@@ -322,6 +335,7 @@ class Executor(AFBaseModel):
         message_type: type,
         ctx_annotation: Any,
         output_types: list[type],
+        is_workflow_output: bool = False,
     ) -> None:
         """Register a handler at instance level.
 
@@ -331,16 +345,19 @@ class Executor(AFBaseModel):
             message_type: Type of message this handler processes
             ctx_annotation: The WorkflowContext[T] annotation from the function
             output_types: List of output types inferred from ctx_annotation
+            is_workflow_output: Whether this handler uses WorkflowOutputContext
         """
         if message_type in self._handlers:
             raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
 
         self._handlers[message_type] = func
-        self._instance_handler_specs.append({
+        self._handler_specs.append({
             "name": name,
             "message_type": message_type,
             "ctx_annotation": ctx_annotation,
             "output_types": output_types,
+            "is_workflow_output": is_workflow_output,
+            "source": "instance_method",  # Distinguish from class handlers if needed
         })
 
     def can_handle_type(self, message_type: type[Any]) -> bool:
@@ -353,6 +370,52 @@ class Executor(AFBaseModel):
             True if the executor can handle the message type, False otherwise.
         """
         return message_type in self._handlers
+
+    @property
+    def input_types(self) -> list[type[Any]]:
+        """Get the list of input types that this executor can handle.
+
+        Returns:
+            A list of the message types that this executor's handlers can process.
+        """
+        return list(self._handlers.keys())
+
+    @property
+    def output_types(self) -> list[type[Any]]:
+        """Get the list of output types that this executor can produce via send_message().
+
+        Returns:
+            A list of the output types inferred from the handlers' WorkflowContext[T] annotations.
+            Excludes types from WorkflowOutputContext[T] which are handled separately.
+        """
+        output_types: set[type[Any]] = set()
+
+        # Collect output types from all handlers (unified approach)
+        for handler_spec in self._handler_specs:
+            # Only include if not from WorkflowOutputContext
+            if not handler_spec.get("is_workflow_output", False):
+                handler_output_types = handler_spec.get("output_types", [])
+                output_types.update(handler_output_types)
+
+        return list(output_types)
+
+    @property
+    def workflow_output_types(self) -> list[type[Any]]:
+        """Get the list of workflow output types that this executor can produce via yield_output().
+
+        Returns:
+            A list of the output types inferred from handlers' WorkflowOutputContext[T] annotations.
+        """
+        output_types: set[type[Any]] = set()
+
+        # Collect workflow output types from all handlers (unified approach)
+        for handler_spec in self._handler_specs:
+            # Only include if from WorkflowOutputContext
+            if handler_spec.get("is_workflow_output", False):
+                handler_output_types = handler_spec.get("output_types", [])
+                output_types.update(handler_output_types)
+
+        return list(output_types)
 
 
 # endregion: Executor
@@ -410,8 +473,8 @@ def handler(
             # Might be the class itself or Any; try simple check by name to avoid import cycles
             return []
 
-        # Expecting WorkflowContext[T]
-        if origin is not WorkflowContext:
+        # Expecting WorkflowContext[T] or WorkflowOutputContext[T]
+        if origin is not WorkflowContext and origin is not WorkflowOutputContext:
             return []
 
         args = get_args(ctx_annotation)
@@ -452,8 +515,15 @@ def handler(
         if ctx_annotation is inspect.Parameter.empty:
             # Allow missing ctx annotation, but we can't infer outputs
             inferred_output_types: list[type[Any]] = []
+            is_workflow_output = False
         else:
             inferred_output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
+            # Check if this is a WorkflowOutputContext
+            try:
+                origin = get_origin(ctx_annotation)
+                is_workflow_output = origin is WorkflowOutputContext
+            except Exception:
+                is_workflow_output = False
 
         @functools.wraps(func)
         async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext[Any]) -> Any:
@@ -469,6 +539,7 @@ def handler(
             "message_type": message_type,
             # Keep output_types in spec for validators, inferred from WorkflowContext[T]
             "output_types": inferred_output_types,
+            "is_workflow_output": is_workflow_output,
         }
 
         return wrapper
@@ -1476,6 +1547,24 @@ class WorkflowExecutor(Executor):
         self._collected_responses: dict[str, Any] = {}  # Accumulate responses
         self._expected_response_count: int = 0  # Track how many responses we're waiting for
 
+    @property
+    def input_types(self) -> list[type[Any]]:
+        """Get the input types based on the underlying workflow's input types.
+
+        Returns:
+            A list of input types that the underlying workflow can accept.
+        """
+        return self.workflow.input_types
+
+    @property
+    def output_types(self) -> list[type[Any]]:
+        """Get the output types based on the underlying workflow's output types.
+
+        Returns:
+            A list of output types that the underlying workflow can produce.
+        """
+        return self.workflow.output_types
+
     @handler  # No output_types - can send any completion data type
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
         """Execute the sub-workflow with raw input data.
@@ -1491,8 +1580,6 @@ class WorkflowExecutor(Executor):
         if isinstance(input_data, (SubWorkflowResponse, SubWorkflowRequestInfo)):
             return
 
-        from ._events import RequestInfoEvent, WorkflowCompletedEvent
-
         # Track this execution
         self._active_executions += 1
 
@@ -1500,32 +1587,18 @@ class WorkflowExecutor(Executor):
             # Run the sub-workflow and collect all events
             events = [event async for event in self.workflow.run_stream(input_data)]
 
-            # Count requests and initialize response tracking
+            # Process events in single iteration
             request_count = 0
+            workflow_completed = False
+
             for event in events:
-                if isinstance(event, RequestInfoEvent):
-                    request_count += 1
+                if isinstance(event, WorkflowOutputEvent):
+                    # Sub-workflow yielded output - send it to parent
+                    await ctx.send_message(event.output)
 
-            # Initialize response accumulation for this execution
-            # For sequential workflows (like step_08), expect only current requests
-            # For parallel workflows (like step_09), expect all requests at once
-            self._expected_response_count = request_count
-            self._collected_responses = {}
-
-            # If no requests in initial run, handle completion immediately
-            if request_count == 0:
-                self._expected_response_count = 0
-
-            # Process events to check for completion or requests
-            for event in events:
-                if isinstance(event, WorkflowCompletedEvent):
-                    # Sub-workflow completed normally - send result to parent
-                    await ctx.send_message(event.data)
-                    self._active_executions -= 1
-                    return  # Exit after completion
-
-                if isinstance(event, RequestInfoEvent):
+                elif isinstance(event, RequestInfoEvent):
                     # Sub-workflow needs external information
+                    request_count += 1
                     # Track the pending request
                     self._pending_requests[event.request_id] = event.data
 
@@ -1539,11 +1612,22 @@ class WorkflowExecutor(Executor):
                     )
 
                     await ctx.send_message(wrapped_request)
-                    # Continue processing remaining events (no return)
+
+                elif isinstance(event, WorkflowStatusEvent):
+                    # Check if workflow is completed
+                    if event.state == WorkflowRunState.COMPLETED:
+                        workflow_completed = True
+
+            # Initialize response accumulation for this execution
+            self._expected_response_count = request_count
+            self._collected_responses = {}
+
+            # Handle completion if workflow completed
+            if workflow_completed:
+                self._active_executions -= 1
+                return  # Exit after completion
 
         except Exception as e:
-            from ._events import ExecutorEvent
-
             # Sub-workflow failed - create error event
             error_event = ExecutorEvent(executor_id=self.id, data={"error": str(e), "type": "sub_workflow_error"})
             await ctx.add_event(error_event)
@@ -1577,40 +1661,56 @@ class WorkflowExecutor(Executor):
         self._collected_responses[response.request_id] = response.data
 
         # Check if we have all expected responses for current batch
-        if len(self._collected_responses) >= self._expected_response_count:
-            from ._events import RequestInfoEvent, WorkflowCompletedEvent
+        if len(self._collected_responses) < self._expected_response_count:
+            logger.debug(
+                f"WorkflowExecutor {self.id} waiting for more responses: "
+                f"{len(self._collected_responses)}/{self._expected_response_count} received"
+            )
+            return  # Wait for more responses
 
-            # Send all collected responses to the sub-workflow
-            responses_to_send = dict(self._collected_responses)
-            self._collected_responses.clear()  # Clear for next batch
+        # Send all collected responses to the sub-workflow
+        responses_to_send = dict(self._collected_responses)
+        self._collected_responses.clear()  # Clear for next batch
 
-            result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
+        result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
 
-            # Process the result events
-            new_request_count = 0
-            for event in result_events:
-                if isinstance(event, WorkflowCompletedEvent):
-                    # Sub-workflow completed - send result to parent
-                    await ctx.send_message(event.data)
-                    self._active_executions -= 1
-                    return
-                if isinstance(event, RequestInfoEvent):
-                    # Sub-workflow sent more requests - prepare for next batch
-                    new_request_count += 1
-                    self._pending_requests[event.request_id] = event.data
+        # Process events in single iteration
+        new_request_count = 0
+        workflow_completed = False
 
-                    # Send the new request to parent
-                    if not isinstance(event.data, RequestInfoMessage):
-                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-                    wrapped_request = SubWorkflowRequestInfo(
-                        request_id=event.request_id,
-                        sub_workflow_id=self.id,
-                        data=event.data,
-                    )
-                    await ctx.send_message(wrapped_request)
+        for event in result_events:
+            if isinstance(event, WorkflowOutputEvent):
+                # Sub-workflow yielded output - send it to parent
+                await ctx.send_message(event.output)
 
-            # Update expected count for next batch of requests
-            self._expected_response_count = new_request_count
+            elif isinstance(event, RequestInfoEvent):
+                # Sub-workflow sent more requests - prepare for next batch
+                new_request_count += 1
+                self._pending_requests[event.request_id] = event.data
+
+                # Send the new request to parent
+                if not isinstance(event.data, RequestInfoMessage):
+                    raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+                wrapped_request = SubWorkflowRequestInfo(
+                    request_id=event.request_id,
+                    sub_workflow_id=self.id,
+                    data=event.data,
+                )
+                await ctx.send_message(wrapped_request)
+
+            elif isinstance(event, WorkflowStatusEvent):
+                # Check if workflow is completed
+                if event.state == WorkflowRunState.COMPLETED:
+                    workflow_completed = True
+
+        # Handle completion if workflow completed
+        if workflow_completed:
+            self._active_executions -= 1
+            return
+
+        # Update expected count for next batch of requests
+        self._expected_response_count = new_request_count
+
 
 
 # endregion: Workflow Executor

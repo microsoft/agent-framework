@@ -28,9 +28,9 @@ class TestFunctionExecutor:
         assert len(func_exec._handlers) == 1
         assert str in func_exec._handlers
 
-        # Check instance handler spec was created
-        assert len(func_exec._instance_handler_specs) == 1
-        spec = func_exec._instance_handler_specs[0]
+        # Check handler spec was created
+        assert len(func_exec._handler_specs) == 1
+        spec = func_exec._handler_specs[0]
         assert spec["name"] == "process_string"
         assert spec["message_type"] is str
         assert spec["output_types"] == [str]
@@ -47,7 +47,7 @@ class TestFunctionExecutor:
         assert int in process_int._handlers
 
         # Check spec
-        spec = process_int._instance_handler_specs[0]
+        spec = process_int._handler_specs[0]
         assert spec["message_type"] is int
         assert spec["output_types"] == [int]
 
@@ -90,7 +90,7 @@ class TestFunctionExecutor:
             else:
                 await ctx.send_message(text.upper())
 
-        spec = multi_output._instance_handler_specs[0]
+        spec = multi_output._handler_specs[0]
         assert set(spec["output_types"]) == {str, int}
 
     def test_none_output_type(self):
@@ -101,7 +101,7 @@ class TestFunctionExecutor:
             # This executor doesn't send any messages
             pass
 
-        spec = no_output._instance_handler_specs[0]
+        spec = no_output._handler_specs[0]
         assert spec["output_types"] == []
 
     def test_any_output_type(self):
@@ -111,7 +111,7 @@ class TestFunctionExecutor:
         async def any_output(data: str, ctx: WorkflowContext[Any]) -> None:
             await ctx.send_message("result")
 
-        spec = any_output._instance_handler_specs[0]
+        spec = any_output._handler_specs[0]
         assert spec["output_types"] == []
 
     def test_validation_errors(self):
@@ -220,7 +220,7 @@ class TestFunctionExecutor:
             result = {item: len(item) for item in items}
             await ctx.send_message(result)
 
-        spec = process_list._instance_handler_specs[0]
+        spec = process_list._handler_specs[0]
         assert spec["message_type"] == list[str]
         assert spec["output_types"] == [dict[str, int]]
 
@@ -236,7 +236,7 @@ class TestFunctionExecutor:
         assert str in process_simple._handlers
 
         # Check spec - single parameter functions have no output types since they can't send messages
-        spec = process_simple._instance_handler_specs[0]
+        spec = process_simple._handler_specs[0]
         assert spec["message_type"] is str
         assert spec["output_types"] == []
         assert spec["ctx_annotation"] is None
@@ -296,7 +296,7 @@ class TestFunctionExecutor:
         assert str in process_sync._handlers
 
         # Check spec - sync single parameter functions have no output types
-        spec = process_sync._instance_handler_specs[0]
+        spec = process_sync._handler_specs[0]
         assert spec["message_type"] is str
         assert spec["output_types"] == []
         assert spec["ctx_annotation"] is None
@@ -314,7 +314,7 @@ class TestFunctionExecutor:
         assert int in sync_with_ctx._handlers
 
         # Check spec - sync functions with context can infer output types
-        spec = sync_with_ctx._instance_handler_specs[0]
+        spec = sync_with_ctx._handler_specs[0]
         assert spec["message_type"] is int
         assert spec["output_types"] == [int]
 

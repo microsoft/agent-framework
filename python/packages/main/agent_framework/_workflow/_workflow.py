@@ -765,6 +765,36 @@ class Workflow(AFBaseModel):
     def graph_signature_hash(self) -> str:
         return self._graph_signature_hash
 
+    @property
+    def input_types(self) -> list[type[Any]]:
+        """Get the input types of the workflow.
+
+        The input types are the list of input types of the start executor.
+
+        Returns:
+            A list of input types that the workflow can accept.
+        """
+        start_executor = self.get_start_executor()
+        return start_executor.input_types
+
+    @property
+    def output_types(self) -> list[type[Any]]:
+        """Get the output types of the workflow.
+
+        The output types are the list of all workflow output types from executors
+        that have workflow output types.
+
+        Returns:
+            A list of output types that the workflow can produce.
+        """
+        output_types: set[type[Any]] = set()
+
+        for executor in self.executors.values():
+            workflow_output_types = executor.workflow_output_types
+            output_types.update(workflow_output_types)
+
+        return list(output_types)
+
     def as_agent(self, name: str | None = None) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 

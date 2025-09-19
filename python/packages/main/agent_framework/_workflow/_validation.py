@@ -322,8 +322,8 @@ class WorkflowGraphValidator:
                     )
 
             # Also validate instance-level handler specs if present
-            if hasattr(executor, "_instance_handler_specs"):
-                for spec in executor._instance_handler_specs:
+            if hasattr(executor, "_handler_specs"):
+                for spec in executor._handler_specs:
                     handler_name = spec.get("name", "unknown")
                     ctx_ann = spec.get("ctx_annotation")
 
@@ -537,9 +537,9 @@ class WorkflowGraphValidator:
                 if isinstance(request_type, type):
                     output_types.append(request_type)
 
-        # Include output types from instance-level handler specs
-        if hasattr(executor, "_instance_handler_specs"):
-            for spec in executor._instance_handler_specs:
+        # Include output types from handler specs
+        if hasattr(executor, "_handler_specs"):
+            for spec in executor._handler_specs:
                 handler_output_types = spec.get("output_types", [])
                 output_types.extend(handler_output_types)
 

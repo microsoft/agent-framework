@@ -250,6 +250,29 @@ class RequestInfoEvent(WorkflowEvent):
         )
 
 
+class WorkflowOutputEvent(WorkflowEvent):
+    """Event triggered when a workflow executor yields output."""
+
+    def __init__(
+        self,
+        output: Any,
+        source_executor_id: str,
+    ):
+        """Initialize the workflow output event.
+
+        Args:
+            output: The output yielded by the executor.
+            source_executor_id: ID of the executor that yielded the output.
+        """
+        super().__init__(output)
+        self.output = output
+        self.source_executor_id = source_executor_id
+
+    def __repr__(self) -> str:
+        """Return a string representation of the workflow output event."""
+        return f"{self.__class__.__name__}(output={self.output}, source_executor_id={self.source_executor_id})"
+
+
 class ExecutorEvent(WorkflowEvent):
     """Base class for executor events."""
 

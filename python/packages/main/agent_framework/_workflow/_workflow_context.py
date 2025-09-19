@@ -10,9 +10,11 @@ from ._events import (
     WorkflowEventSource,
     WorkflowFailedEvent,
     WorkflowLifecycleEvent,
+    WorkflowOutputEvent,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
     WorkflowWarningEvent,
+    _framework_event_origin,
 )
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
@@ -157,3 +159,29 @@ class WorkflowContext(Generic[T_Out]):
         if hasattr(self._runner_context, "get_state"):
             return await self._runner_context.get_state(self._executor_id)  # type: ignore[return-value]
         return None
+
+
+class WorkflowOutputContext(WorkflowContext[T_Out]):
+    """Specialized context for executors that produce workflow output to external caller.
+
+    This class extends WorkflowContext to provide additional functionality
+    for the executor that uses it, specifically the ability to yield the overall
+    workflow output.
+    """
+
+    async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
+        raise NotImplementedError(
+            "send_message is not supported in WorkflowOutputContext. "
+            "use yield_output() to set the overall workflow output."
+        )
+
+    async def yield_output(self, output: T_Out) -> None:
+        """Set the output of the workflow.
+
+        Args:
+            output: The output to yield. This must conform to the output type(s)
+                    declared on this context.
+        """
+        with _framework_event_origin():
+            event = WorkflowOutputEvent(output=output, source_executor_id=self._executor_id)
+        await self._runner_context.add_event(event)
