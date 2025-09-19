@@ -13,8 +13,6 @@ using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
-#pragma warning disable IDE2000 // Avoid multiple blank lines
-#pragma warning disable RCS1036 // [deprecated] Remove unnecessary blank line
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 // Get Azure AI Foundry configuration from environment variables
