@@ -7,6 +7,7 @@ from agent_framework import (
     ChatMessage,
     Executor,
     ExecutorFailedEvent,
+    NoOutputWorkflowContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
@@ -96,7 +97,7 @@ class Reviewer(Executor):
         super().__init__(agent=agent, id=id)
 
     @handler
-    async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[str]) -> None:
+    async def handle(self, messages: list[ChatMessage], ctx: NoOutputWorkflowContext) -> None:
         """Review the full conversation transcript and complete with a final string.
 
         This node consumes all messages so far. It uses its agent to produce the final text,

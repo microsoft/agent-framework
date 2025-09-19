@@ -17,16 +17,16 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin, overload
 
 from ._executor import Executor
-from ._workflow_context import WorkflowContext
+from ._workflow_context import NoOutputWorkflowContext, WorkflowContext
 
 
 def _is_workflow_context_type(annotation: Any) -> bool:
-    """Check if an annotation represents WorkflowContext[T]."""
+    """Check if an annotation represents WorkflowContext[T] or NoOutputWorkflowContext."""
     origin = get_origin(annotation)
-    if origin is WorkflowContext:
+    if origin is WorkflowContext or origin is NoOutputWorkflowContext:
         return True
     # Also handle the case where the raw WorkflowContext class is used
-    return annotation is WorkflowContext
+    return annotation is WorkflowContext or annotation is NoOutputWorkflowContext
 
 
 def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> list[type]:
@@ -36,26 +36,31 @@ def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> list[type]:
     - WorkflowContext[str] -> [str]
     - WorkflowContext[str | int] -> [str, int]
     - WorkflowContext[Union[str, int]] -> [str, int]
-    - WorkflowContext[Any] -> [] (unknown)
-    - WorkflowContext[None] -> []
+    - NoOutputWorkflowContext -> []
     """
+    if ctx_annotation is NoOutputWorkflowContext:
+        return []
+
     # If no annotation or not parameterized, return empty list
     try:
         origin = get_origin(ctx_annotation)
     except Exception:
         origin = None
 
-    # If annotation is unsubscripted WorkflowContext, nothing to infer
+    # If annotation is unsubscripted WorkflowContext, unable to infer the type
     if origin is None:
-        return []
+        raise ValueError("Unable to infer output types from context annotation")
 
     # Expecting WorkflowContext[T]
-    if origin is not WorkflowContext:
+    if origin is not WorkflowContext and origin is not NoOutputWorkflowContext:
+        raise ValueError("Context of the handler must be WorkflowContext or NoOutputWorkflowContext")
+
+    if origin is NoOutputWorkflowContext:
         return []
 
     args = get_args(ctx_annotation)
     if not args:
-        return []
+        raise ValueError("WorkflowContext is not subscribed.")
 
     t = args[0]
     # If t is a Union, flatten it
@@ -109,13 +114,16 @@ class FunctionExecutor(Executor):
         if message_param.annotation == inspect.Parameter.empty:
             raise ValueError(f"Function {func.__name__} must have a type annotation for the message parameter")
 
-        # If there's a second parameter, validate it's WorkflowContext[T]
+        # If there's a second parameter, validate it's WorkflowContext[T] or NoOutputWorkflowContext
         if len(params) == 2:
             ctx_param = params[1]
 
             # Check ctx parameter has proper type annotation
             if ctx_param.annotation == inspect.Parameter.empty:
-                raise ValueError(f"Function {func.__name__} second parameter must be annotated as WorkflowContext[T]")
+                raise ValueError(
+                    f"Function {func.__name__} second parameter must be annotated as "
+                    "WorkflowContext[T] or NoOutputWorkflowContext"
+                )
 
             # Validate that ctx parameter is WorkflowContext[T]
             if not _is_workflow_context_type(ctx_param.annotation):
@@ -123,6 +131,9 @@ class FunctionExecutor(Executor):
                     f"Function {func.__name__} second parameter must be annotated as WorkflowContext[T], "
                     f"got {ctx_param.annotation}"
                 )
+
+            if ctx_param.annotation is NoOutputWorkflowContext:
+                return
 
             # Check that WorkflowContext has a concrete type parameter
             if ctx_param.annotation is WorkflowContext:

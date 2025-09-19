@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Any
 
 from agent_framework import (
     Executor,
+    NoOutputWorkflowContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
@@ -52,7 +52,7 @@ class ReverseTextExecutor(Executor):
     """
 
     @handler
-    async def reverse_text(self, text: str, ctx: WorkflowContext[Any]) -> None:
+    async def reverse_text(self, text: str, ctx: NoOutputWorkflowContext) -> None:
         """Reverse the input string and emit a completion event."""
         result = text[::-1]
         await ctx.add_event(WorkflowCompletedEvent(result))

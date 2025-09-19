@@ -3,7 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from agent_framework import (
     AgentExecutor,
@@ -12,6 +12,7 @@ from agent_framework import (
     ChatMessage,
     Executor,
     FileCheckpointStorage,
+    NoOutputWorkflowContext,
     RequestInfoExecutor,
     Role,
     WorkflowBuilder,
@@ -118,7 +119,7 @@ class FinalizeFromAgent(Executor):
     """Consumes the AgentExecutorResponse and emits the terminal WorkflowCompletedEvent."""
 
     @handler
-    async def finalize(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any]) -> None:
+    async def finalize(self, response: AgentExecutorResponse, ctx: NoOutputWorkflowContext) -> None:
         result = response.agent_run_response.text or ""
 
         # Persist executor-local state for auditability when inspecting checkpoints.
@@ -184,6 +185,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> "Workflow":
         .with_checkpointing(checkpoint_storage=checkpoint_storage)  # Enable persistence
         .build()
     )
+
 
 def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
     """Display human-friendly checkpoint metadata using framework summaries."""

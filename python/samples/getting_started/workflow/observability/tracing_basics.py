@@ -2,9 +2,8 @@
 
 import asyncio
 import os
-from typing import Any
 
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework import Executor, NoOutputWorkflowContext, WorkflowBuilder, WorkflowContext, handler
 
 """Basic tracing workflow sample.
 
@@ -63,7 +62,7 @@ class StartExecutor(Executor):
 
 class EndExecutor(Executor):
     @handler  # type: ignore[misc]
-    async def handle_final(self, message: str, ctx: WorkflowContext[Any]) -> None:
+    async def handle_final(self, message: str, ctx: NoOutputWorkflowContext) -> None:
         # Sink executor. The framework emits WorkflowCompletedEvent automatically after this handler returns.
         print(f"Final result: {message}")
 

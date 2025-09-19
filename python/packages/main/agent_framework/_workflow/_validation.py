@@ -230,7 +230,7 @@ class WorkflowGraphValidator:
                 - T_Out elements must be valid types (class) or typing generics (e.g., list[str]);
                     values like int() or 123 are invalid
         """
-        from ._workflow_context import WorkflowContext  # Local import to avoid cycles
+        from ._workflow_context import NoOutputWorkflowContext, WorkflowContext  # Local import to avoid cycles
 
         # Iterate over all registered executors in the workflow graph
         for executor_id, executor in self._executors.items():
@@ -327,7 +327,7 @@ class WorkflowGraphValidator:
                     handler_name = spec.get("name", "unknown")
                     ctx_ann = spec.get("ctx_annotation")
 
-                    if ctx_ann is None:
+                    if ctx_ann is None or ctx_ann is NoOutputWorkflowContext:
                         continue  # Skip if no annotation stored
 
                     # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
@@ -337,7 +337,7 @@ class WorkflowGraphValidator:
                             raise HandlerOutputAnnotationError(
                                 executor_id,
                                 handler_name,
-                                "T_Out is missing; use WorkflowContext[None] or specify concrete types",
+                                "T_Out is missing. Specify concrete types",
                             )
                     else:
                         if ctx_origin is not WorkflowContext:
@@ -351,7 +351,7 @@ class WorkflowGraphValidator:
                         raise HandlerOutputAnnotationError(
                             executor_id,
                             handler_name,
-                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
+                            "T_Out is missing. Specify concrete types",
                         )
 
                     t_out = type_args[0]

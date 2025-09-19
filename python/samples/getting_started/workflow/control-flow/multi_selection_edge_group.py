@@ -13,6 +13,7 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessage,
+    NoOutputWorkflowContext,
     Role,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -123,7 +124,7 @@ async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowConte
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+async def finalize_and_send(response: AgentExecutorResponse, ctx: NoOutputWorkflowContext) -> None:
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
     await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {parsed.response}"))
 
@@ -155,7 +156,7 @@ async def merge_summary(response: AgentExecutorResponse, ctx: WorkflowContext[An
 
 
 @executor(id="handle_spam")
-async def handle_spam(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+async def handle_spam(analysis: AnalysisResult, ctx: NoOutputWorkflowContext) -> None:
     if analysis.spam_decision == "Spam":
         await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {analysis.reason}"))
     else:
@@ -163,7 +164,7 @@ async def handle_spam(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> N
 
 
 @executor(id="handle_uncertain")
-async def handle_uncertain(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+async def handle_uncertain(analysis: AnalysisResult, ctx: NoOutputWorkflowContext) -> None:
     if analysis.spam_decision == "Uncertain":
         email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
         await ctx.add_event(
@@ -176,7 +177,7 @@ async def handle_uncertain(analysis: AnalysisResult, ctx: WorkflowContext[None])
 
 
 @executor(id="database_access")
-async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+async def database_access(analysis: AnalysisResult, ctx: NoOutputWorkflowContext) -> None:
     # Simulate DB writes for email and analysis (and summary if present)
     await asyncio.sleep(0.05)
     await ctx.add_event(DatabaseEvent(f"Email {analysis.email_id} saved to database."))

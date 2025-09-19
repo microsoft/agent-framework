@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent_framework import Executor, WorkflowContext, handler
+from agent_framework import Executor, NoOutputWorkflowContext, WorkflowContext, handler
 
 
 def test_executor_without_id():
@@ -45,6 +45,20 @@ def test_executor_invalid_handler_signature():
                 pass
 
 
+def test_executor_invalid_workflow_context_annotation():
+    """Test that an executor with an invalid WorkflowContext annotation raises an error when trying to run."""
+
+    with pytest.raises(ValueError):
+
+        class MockExecutorWithInvalidWorkflowContextAnnotation(Executor):  # type: ignore
+            """A mock executor with an invalid WorkflowContext annotation."""
+
+            @handler  # type: ignore
+            async def handle(self, message: str, ctx: WorkflowContext) -> None:  # type: ignore
+                """A mock handler with an invalid WorkflowContext annotation."""
+                pass
+
+
 def test_executor_with_valid_handlers():
     """Test that an executor with valid handlers can be instantiated and run."""
 
@@ -52,16 +66,40 @@ def test_executor_with_valid_handlers():
         """A mock executor with valid handlers."""
 
         @handler
-        async def handle_text(self, text: str, ctx: WorkflowContext) -> None:  # type: ignore
+        async def handle_text(self, text: str, ctx: WorkflowContext[str]) -> None:  # type: ignore
             """A mock handler with a valid signature."""
             pass
 
         @handler
-        async def handle_number(self, number: int, ctx: WorkflowContext) -> None:  # type: ignore
+        async def handle_number(self, number: int, ctx: WorkflowContext[int]) -> None:  # type: ignore
             """Another mock handler with a valid signature."""
             pass
 
     executor = MockExecutorWithValidHandlers(id="test")
+    assert executor.id is not None
+    assert len(executor._handlers) == 2  # type: ignore
+    assert executor.can_handle("text") is True
+    assert executor.can_handle(42) is True
+    assert executor.can_handle(3.14) is False
+
+
+def test_executor_with_no_output_handlers():
+    """Test that an executor with no output handlers can be instantiated and run."""
+
+    class MockExecutorWithNoOutputHandlers(Executor):  # type: ignore
+        """A mock executor with no output handlers."""
+
+        @handler
+        async def handle_text(self, text: str, ctx: NoOutputWorkflowContext) -> None:  # type: ignore
+            """A mock handler with a valid signature."""
+            pass
+
+        @handler
+        async def handle_number(self, number: int, ctx: NoOutputWorkflowContext) -> None:  # type: ignore
+            """Another mock handler with a valid signature."""
+            pass
+
+    executor = MockExecutorWithNoOutputHandlers(id="test")
     assert executor.id is not None
     assert len(executor._handlers) == 2  # type: ignore
     assert executor.can_handle("text") is True

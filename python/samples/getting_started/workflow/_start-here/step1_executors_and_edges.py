@@ -4,6 +4,7 @@ import asyncio
 
 from agent_framework import (
     Executor,
+    NoOutputWorkflowContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
@@ -75,7 +76,7 @@ class UpperCase(Executor):
 
 
 @executor(id="reverse_text_executor")
-async def reverse_text(text: str, ctx: WorkflowContext[str]) -> None:
+async def reverse_text(text: str, ctx: NoOutputWorkflowContext) -> None:
     """Reverse the input string and signal workflow completion.
 
     This node emits a terminal event using ctx.add_event(WorkflowCompletedEvent).

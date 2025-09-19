@@ -6,6 +6,7 @@ from typing import Any
 
 from agent_framework import (
     Executor,
+    NoOutputWorkflowContext,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
@@ -60,7 +61,7 @@ class TextProcessor(Executor):
         super().__init__(id="text_processor")
 
     @handler
-    async def process_text(self, request: TextProcessingRequest, ctx: WorkflowContext[TextProcessingResult]) -> None:
+    async def process_text(self, request: TextProcessingRequest, ctx: NoOutputWorkflowContext) -> None:
         """Process a text string and return statistics."""
         text_preview = f"'{request.text[:50]}{'...' if len(request.text) > 50 else ''}'"
         print(f"🔍 Sub-workflow processing text (Task {request.task_id}): {text_preview}")
@@ -110,7 +111,7 @@ class TextProcessingOrchestrator(Executor):
             await ctx.send_message(request, target_id="text_processor_workflow")
 
     @handler
-    async def collect_result(self, result: TextProcessingResult, ctx: WorkflowContext[None]) -> None:
+    async def collect_result(self, result: TextProcessingResult, ctx: NoOutputWorkflowContext) -> None:
         """Collect results from sub-workflows."""
         print(f"📥 Collected result from {result.task_id}")
         self.results.append(result)

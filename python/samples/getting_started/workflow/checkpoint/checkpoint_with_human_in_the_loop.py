@@ -13,6 +13,7 @@ from agent_framework import (
     ChatMessage,
     Executor,
     FileCheckpointStorage,
+    NoOutputWorkflowContext,
     RequestInfoEvent,
     RequestInfoExecutor,
     RequestInfoMessage,
@@ -190,7 +191,7 @@ class FinaliseExecutor(Executor):
     """Publishes the approved text."""
 
     @handler
-    async def publish(self, text: str, ctx: WorkflowContext[Any]) -> None:
+    async def publish(self, text: str, ctx: NoOutputWorkflowContext) -> None:
         # Store the output so diagnostics or a UI could fetch the final copy.
         await ctx.set_state({"published_text": text})
         # Emit a workflow completion event so the runner stops cleanly.

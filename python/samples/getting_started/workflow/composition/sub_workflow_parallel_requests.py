@@ -6,6 +6,7 @@ from typing import Any
 
 from agent_framework import (
     Executor,
+    NoOutputWorkflowContext,
     RequestInfoExecutor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -164,7 +165,7 @@ class ResourceRequester(Executor):
     async def handle_resource_response(
         self,
         response: RequestResponse[ResourceRequest, ResourceResponse],
-        ctx: WorkflowContext[None],
+        ctx: NoOutputWorkflowContext,
     ) -> None:
         """Handle resource allocation response."""
         if response.data:
@@ -179,7 +180,7 @@ class ResourceRequester(Executor):
 
     @handler
     async def handle_policy_response(
-        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[None]
+        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: NoOutputWorkflowContext
     ) -> None:
         """Handle policy check response."""
         if response.data:
@@ -213,7 +214,7 @@ class ResourceCache(Executor):
 
     @intercepts_request
     async def check_cache(
-        self, request: ResourceRequest, ctx: WorkflowContext[None]
+        self, request: ResourceRequest, ctx: NoOutputWorkflowContext
     ) -> RequestResponse[ResourceRequest, ResourceResponse]:
         """Intercept RESOURCE requests and check cache first."""
         print(f"🏪 CACHE interceptor checking: {request.amount} {request.resource_type}")
@@ -234,7 +235,7 @@ class ResourceCache(Executor):
 
     @handler
     async def collect_result(
-        self, response: RequestResponse[ResourceRequest, ResourceResponse], ctx: WorkflowContext[None]
+        self, response: RequestResponse[ResourceRequest, ResourceResponse], ctx: NoOutputWorkflowContext
     ) -> None:
         """Collect results from external requests that were forwarded."""
         if response.data and response.data.source != "cache":  # Don't double-count our own results
@@ -263,7 +264,7 @@ class PolicyEngine(Executor):
 
     @intercepts_request
     async def check_policy(
-        self, request: PolicyCheckRequest, ctx: WorkflowContext[None]
+        self, request: PolicyCheckRequest, ctx: NoOutputWorkflowContext
     ) -> RequestResponse[PolicyCheckRequest, PolicyResponse]:
         """Intercept POLICY requests and apply rules."""
         print(f"🛡️  POLICY interceptor checking: {request.amount} {request.resource_type}, policy={request.policy_type}")
@@ -286,7 +287,7 @@ class PolicyEngine(Executor):
 
     @handler
     async def collect_policy_result(
-        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[None]
+        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: NoOutputWorkflowContext
     ) -> None:
         """Collect policy results from external requests that were forwarded."""
         if response.data:
@@ -304,7 +305,7 @@ class Coordinator(Executor):
         await ctx.send_message(requests, target_id="resource_workflow")
 
     @handler
-    async def handle_completion(self, completion: RequestFinished, ctx: WorkflowContext[None]) -> None:
+    async def handle_completion(self, completion: RequestFinished, ctx: NoOutputWorkflowContext) -> None:
         """Handle sub-workflow completion.
 
         It comes from the sub-workflow emitted WorkflowCompletionEvent's data field.

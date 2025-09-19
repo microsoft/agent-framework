@@ -2,10 +2,10 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from agent_framework import (
     Executor,
+    NoOutputWorkflowContext,
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
@@ -126,7 +126,7 @@ class EmailValidator(Executor):
     async def handle_domain_response(
         self,
         response: RequestResponse[DomainCheckRequest, bool],
-        ctx: WorkflowContext[ValidationResult],
+        ctx: NoOutputWorkflowContext,
     ) -> None:
         """Handle domain check response from RequestInfo with correlation."""
         approved = bool(response.data)
@@ -181,7 +181,7 @@ class SmartEmailOrchestrator(Executor):
 
     @intercepts_request
     async def check_domain(
-        self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
+        self, request: DomainCheckRequest, ctx: NoOutputWorkflowContext
     ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
         print(f"🔍 Parent intercepting domain check for: {request.domain}")
@@ -192,7 +192,7 @@ class SmartEmailOrchestrator(Executor):
         return RequestResponse[DomainCheckRequest, bool].forward()
 
     @handler
-    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
+    async def collect_result(self, result: ValidationResult, ctx: NoOutputWorkflowContext) -> None:
         """Collect validation results. It comes from the sub-workflow emitted WorkflowCompletionEvent's data field."""
         status_icon = "✅" if result.is_valid else "❌"
         print(f"📥 {status_icon} Validation result: {result.email} -> {result.reason}")

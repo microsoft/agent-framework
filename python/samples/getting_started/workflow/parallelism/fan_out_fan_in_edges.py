@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from agent_framework import (  # Core chat primitives to build LLM requests
     AgentExecutor,  # Wraps an LLM agent for use inside a workflow
@@ -11,6 +10,7 @@ from agent_framework import (  # Core chat primitives to build LLM requests
     AgentRunEvent,  # Tracing event for agent execution steps
     ChatMessage,  # Chat message structure
     Executor,  # Base class for custom Python executors
+    NoOutputWorkflowContext,
     Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
     WorkflowCompletedEvent,  # Terminal event carrying the final result
@@ -75,7 +75,7 @@ class AggregateInsights(Executor):
         self._expert_ids = expert_ids
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: NoOutputWorkflowContext) -> None:
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:

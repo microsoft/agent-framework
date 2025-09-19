@@ -10,6 +10,7 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessage,
+    NoOutputWorkflowContext,
     Role,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -139,14 +140,14 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+async def finalize_and_send(response: AgentExecutorResponse, ctx: NoOutputWorkflowContext) -> None:
     """Validate the drafted reply and complete the workflow with a terminal event."""
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
     await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {parsed.response}"))
 
 
 @executor(id="handle_spam")
-async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None]) -> None:
+async def handle_spam(detection: DetectionResult, ctx: NoOutputWorkflowContext) -> None:
     """Emit a completion event describing why the email was marked as spam."""
     if detection.is_spam:
         await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {detection.reason}"))

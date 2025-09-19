@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from agent_framework import (
     AgentExecutor,
@@ -11,6 +10,7 @@ from agent_framework import (
     AgentRunEvent,
     ChatMessage,
     Executor,
+    NoOutputWorkflowContext,
     Role,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -71,7 +71,7 @@ class AggregateInsights(Executor):
         self._expert_ids = expert_ids
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: NoOutputWorkflowContext) -> None:
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:

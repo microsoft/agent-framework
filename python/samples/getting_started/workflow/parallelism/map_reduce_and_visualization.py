@@ -5,11 +5,11 @@ import asyncio
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any
 
 import aiofiles
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
+    NoOutputWorkflowContext,
     WorkflowBuilder,  # Fluent graph builder for executors and edges
     WorkflowCompletedEvent,  # Terminal event that carries final output
     WorkflowContext,  # Per run context with shared state and messaging
@@ -249,7 +249,7 @@ class CompletionExecutor(Executor):
     """Joins all reducer outputs and emits the final completion event."""
 
     @handler
-    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext[Any]) -> None:
+    async def complete(self, data: list[ReduceCompleted], ctx: NoOutputWorkflowContext) -> None:
         """Collect reducer output file paths and publish a terminal event."""
         await ctx.add_event(WorkflowCompletedEvent(data=[result.file_path for result in data]))
 

@@ -31,7 +31,7 @@ from ._events import (
 )
 from ._runner_context import _decode_checkpoint_value
 from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext
+from ._workflow_context import NoOutputWorkflowContext, WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,9 @@ class Executor(AFBaseModel):
                 await context.add_event(completed_event)
                 return
 
-            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            handler: (
+                Callable[[Any, WorkflowContext[Any]], Any] | Callable[[Any, NoOutputWorkflowContext], Any] | None
+            ) = None
             for message_type in self._handlers:
                 if is_instance_of(message, message_type):
                     handler = self._handlers[message_type]
@@ -364,14 +366,9 @@ ExecutorT = TypeVar("ExecutorT", bound="Executor")
 
 
 def handler(
-    func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-) -> (
-    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]
-    | Callable[
-        [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]],
-        Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-    ]
-):
+    func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]
+    | Callable[[ExecutorT, Any, NoOutputWorkflowContext], Awaitable[Any]],
+) -> Callable[[ExecutorT, Any, WorkflowContext[Any] | NoOutputWorkflowContext], Awaitable[Any]]:
     """Decorator to register a handler for an executor.
 
     Args:
@@ -388,6 +385,10 @@ def handler(
         @handler
         async def handle_data(self, message: dict, ctx: WorkflowContext[str | int]) -> None:
             ...
+
+        @handler
+        async def handle_data(self, message: dict, ctx: NoOutputWorkflowContext) -> None:
+            ...
     """
 
     def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> list[type[Any]]:
@@ -397,26 +398,28 @@ def handler(
         - WorkflowContext[str] -> [str]
         - WorkflowContext[str | int] -> [str, int]
         - WorkflowContext[Union[str, int]] -> [str, int]
-        - WorkflowContext -> [] (unknown)
+        - NoOutputWorkflowContext -> []
         """
-        # If no annotation or not parameterized, return empty list
+        if ctx_annotation is NoOutputWorkflowContext:
+            return []
+
+        # If no annotation or not parameterized, raise
         try:
             origin = get_origin(ctx_annotation)
         except Exception:
             origin = None
 
-        # If annotation is unsubscripted WorkflowContext, nothing to infer
+        # If annotation is unsubscripted WorkflowContext, unable to infer the type
         if origin is None:
-            # Might be the class itself or Any; try simple check by name to avoid import cycles
-            return []
+            raise ValueError("Unable to infer output types from context annotation")
 
         # Expecting WorkflowContext[T]
-        if origin is not WorkflowContext:
-            return []
+        if origin is not WorkflowContext and origin is not NoOutputWorkflowContext:
+            raise ValueError("Context of the handler must be WorkflowContext or NoOutputWorkflowContext")
 
         args = get_args(ctx_annotation)
         if not args:
-            return []
+            raise ValueError("WorkflowContext is not subscribed.")
 
         t = args[0]
         # If t is a Union, flatten it
@@ -435,8 +438,9 @@ def handler(
         return [t]
 
     def decorator(
-        func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-    ) -> Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]:
+        func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]
+        | Callable[[ExecutorT, Any, NoOutputWorkflowContext], Awaitable[Any]],
+    ) -> Callable[[ExecutorT, Any, WorkflowContext[Any] | NoOutputWorkflowContext], Awaitable[Any]]:
         # Extract the message type from a handler function.
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
@@ -450,15 +454,13 @@ def handler(
 
         ctx_annotation = params[2].annotation
         if ctx_annotation is inspect.Parameter.empty:
-            # Allow missing ctx annotation, but we can't infer outputs
-            inferred_output_types: list[type[Any]] = []
-        else:
-            inferred_output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
+            raise ValueError("Handler's third parameter must have a type annotation")
+        inferred_output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
 
         @functools.wraps(func)
-        async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext[Any]) -> Any:
+        async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext[Any] | NoOutputWorkflowContext) -> Any:
             """Wrapper function to call the handler."""
-            return await func(self, message, ctx)
+            return await func(self, message, ctx)  # type:ignore
 
         # Preserve the original function signature for introspection during validation
         with contextlib.suppress(AttributeError, TypeError):
@@ -467,7 +469,7 @@ def handler(
         wrapper._handler_spec = {  # type: ignore
             "name": func.__name__,
             "message_type": message_type,
-            # Keep output_types in spec for validators, inferred from WorkflowContext[T]
+            # Keep output_types in spec for validators, inferred from WorkflowContext[T] or NoOutputWorkflowContext
             "output_types": inferred_output_types,
         }
 

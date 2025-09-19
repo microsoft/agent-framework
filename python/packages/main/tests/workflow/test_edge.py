@@ -13,8 +13,8 @@ from agent_framework import (
     Executor,
     InProcRunnerContext,
     Message,
+    NoOutputWorkflowContext,
     SharedState,
-    WorkflowContext,
     handler,
 )
 from agent_framework._workflow._edge import (
@@ -98,7 +98,7 @@ class MockExecutor(Executor):
     last_message: Any = None
 
     @handler
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
+    async def mock_handler(self, message: MockMessage, ctx: NoOutputWorkflowContext) -> None:
         """A mock handler that does nothing."""
         self.call_count += 1
         self.last_message = message
@@ -111,7 +111,7 @@ class MockExecutorSecondary(Executor):
     last_message: Any = None
 
     @handler
-    async def mock_handler_secondary(self, message: MockMessageSecondary, ctx: WorkflowContext) -> None:
+    async def mock_handler_secondary(self, message: MockMessageSecondary, ctx: NoOutputWorkflowContext) -> None:
         """A secondary mock handler that does nothing."""
         self.call_count += 1
         self.last_message = message
@@ -124,7 +124,7 @@ class MockAggregator(Executor):
     last_message: Any = None
 
     @handler
-    async def mock_aggregator_handler(self, message: list[MockMessage], ctx: WorkflowContext) -> None:
+    async def mock_aggregator_handler(self, message: list[MockMessage], ctx: NoOutputWorkflowContext) -> None:
         """A mock aggregator handler that does nothing."""
         self.call_count += 1
         self.last_message = message

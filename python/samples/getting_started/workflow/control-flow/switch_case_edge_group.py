@@ -13,6 +13,7 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     Case,  # Case entry for a switch-case edge group
     ChatMessage,
     Default,  # Default branch when no cases match
+    NoOutputWorkflowContext,
     Role,
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowCompletedEvent,  # Terminal event for successful completion
@@ -124,14 +125,14 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+async def finalize_and_send(response: AgentExecutorResponse, ctx: NoOutputWorkflowContext) -> None:
     # Terminal step for the drafting branch. Emit a completion event with the reply.
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
     await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {parsed.response}"))
 
 
 @executor(id="handle_spam")
-async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None]) -> None:
+async def handle_spam(detection: DetectionResult, ctx: NoOutputWorkflowContext) -> None:
     # Spam path terminal. Include the detector's rationale.
     if detection.spam_decision == "Spam":
         await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {detection.reason}"))
@@ -140,7 +141,7 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None]) ->
 
 
 @executor(id="handle_uncertain")
-async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[None]) -> None:
+async def handle_uncertain(detection: DetectionResult, ctx: NoOutputWorkflowContext) -> None:
     # Uncertain path terminal. Surface the original content to aid human review.
     if detection.spam_decision == "Uncertain":
         email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")

@@ -35,8 +35,8 @@ _FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
 )
 
 
-class WorkflowContext(Generic[T_Out]):
-    """Context for executors in a workflow.
+class NoOutputWorkflowContext:
+    """Context for executors that don't intend to output any message.
 
     This class is used to provide a way for executors to interact with the workflow
     context and shared state, while preventing direct access to the runtime context.
@@ -74,29 +74,6 @@ class WorkflowContext(Generic[T_Out]):
 
         if not self._source_executor_ids:
             raise ValueError("source_executor_ids cannot be empty. At least one source executor ID is required.")
-
-    async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
-        """Send a message to the workflow context.
-
-        Args:
-            message: The message to send. This must conform to the output type(s) declared on this context.
-            target_id: The ID of the target executor to send the message to.
-                       If None, the message will be sent to all target executors.
-        """
-        # Create publishing span (inherits current trace context automatically)
-        with workflow_tracer.create_sending_span(type(message).__name__, target_id) as span:
-            # Create Message wrapper
-            msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
-
-            # Inject current trace context if tracing enabled
-            if workflow_tracer.enabled and span and span.is_recording():
-                trace_context: dict[str, str] = {}
-                inject(trace_context)  # Inject current trace context for message propagation
-
-                msg.trace_contexts = [trace_context]
-                msg.source_span_ids = [format(span.get_span_context().span_id, "016x")]
-
-            await self._runner_context.send_message(msg)
 
     async def add_event(self, event: WorkflowEvent) -> None:
         """Add an event to the workflow context."""
@@ -157,3 +134,34 @@ class WorkflowContext(Generic[T_Out]):
         if hasattr(self._runner_context, "get_state"):
             return await self._runner_context.get_state(self._executor_id)  # type: ignore[return-value]
         return None
+
+
+class WorkflowContext(NoOutputWorkflowContext, Generic[T_Out]):
+    """Context for executors that intend to output messages.
+
+    This class is used to provide a way for executors to interact with the workflow
+    context and shared state, while preventing direct access to the runtime context.
+    """
+
+    async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
+        """Send a message to the workflow context.
+
+        Args:
+            message: The message to send. This must conform to the output type(s) declared on this context.
+            target_id: The ID of the target executor to send the message to.
+                    If None, the message will be sent to all target executors.
+        """
+        # Create publishing span (inherits current trace context automatically)
+        with workflow_tracer.create_sending_span(type(message).__name__, target_id) as span:
+            # Create Message wrapper
+            msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
+
+            # Inject current trace context if tracing enabled
+            if workflow_tracer.enabled and span and span.is_recording():
+                trace_context: dict[str, str] = {}
+                inject(trace_context)  # Inject current trace context for message propagation
+
+                msg.trace_contexts = [trace_context]
+                msg.source_span_ids = [format(span.get_span_context().span_id, "016x")]
+
+            await self._runner_context.send_message(msg)

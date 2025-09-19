@@ -574,39 +574,6 @@ def test_validation_enum_usage() -> None:
     assert ValidationTypeEnum.EDGE_DUPLICATION.value == "EDGE_DUPLICATION"
 
 
-def test_handler_ctx_missing_annotation_raises() -> None:
-    class BadExecutor(Executor):
-        @handler
-        async def handle(self, message: str, ctx) -> None:  # type: ignore[no-untyped-def]
-            pass
-
-    start = StringExecutor(id="s")
-    bad = BadExecutor(id="b")
-
-    with pytest.raises(HandlerOutputAnnotationError) as exc:
-        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
-
-    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
-    assert "missing type annotation" in str(exc.value)
-
-
-def test_handler_ctx_unsubscripted_workflow_context_raises() -> None:
-    class BadExecutor(Executor):
-        @handler
-        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # type: ignore # missing T
-            pass
-
-    start = StringExecutor(id="s")
-    bad = BadExecutor(id="b")
-
-    with pytest.raises(HandlerOutputAnnotationError) as exc:
-        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
-
-    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
-    # Message should mention missing T or WorkflowContext[None]
-    assert "WorkflowContext[None]" in str(exc.value) or "missing" in str(exc.value).lower()
-
-
 def test_handler_ctx_invalid_t_out_entries_raises() -> None:
     class BadExecutor(Executor):
         @handler

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, executor
+from agent_framework import NoOutputWorkflowContext, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, executor
 
 """
 Sample: Foundational sequential workflow with streaming using function-style executors.
@@ -37,7 +37,7 @@ async def to_upper_case(text: str, ctx: WorkflowContext[str]) -> None:
 
 
 @executor(id="reverse_text_executor")
-async def reverse_text(text: str, ctx: WorkflowContext[str]) -> None:
+async def reverse_text(text: str, ctx: NoOutputWorkflowContext) -> None:
     """Reverse the input and complete the workflow with the final result.
 
     Concepts:

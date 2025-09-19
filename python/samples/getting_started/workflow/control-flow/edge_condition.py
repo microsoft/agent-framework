@@ -9,6 +9,7 @@ from agent_framework import (  # Core chat primitives used to build requests
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
     AgentExecutorResponse,  # Output from an AgentExecutor
     ChatMessage,
+    NoOutputWorkflowContext,
     Role,
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
     WorkflowCompletedEvent,  # Event we emit at the end to signal completion
@@ -96,14 +97,14 @@ def get_condition(expected_result: bool):
 
 
 @executor(id="send_email")
-async def handle_email_response(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+async def handle_email_response(response: AgentExecutorResponse, ctx: NoOutputWorkflowContext) -> None:
     # Downstream of the email assistant. Parse a validated EmailResponse and emit a completion event.
     email_response = EmailResponse.model_validate_json(response.agent_run_response.text)
     await ctx.add_event(WorkflowCompletedEvent(f"Email sent:\n{email_response.response}"))
 
 
 @executor(id="handle_spam")
-async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: NoOutputWorkflowContext) -> None:
     # Spam path. Confirm the DetectionResult and finish with the reason. Guard against accidental non spam input.
     detection = DetectionResult.model_validate_json(response.agent_run_response.text)
     if detection.is_spam:
