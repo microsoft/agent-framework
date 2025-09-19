@@ -98,6 +98,170 @@ class TestChatAgentClassBasedMiddleware:
 class TestChatAgentFunctionBasedMiddleware:
     """Test cases for function-based middleware integration with ChatAgent."""
 
+    async def test_agent_middleware_with_pre_termination(self, chat_client: "MockChatClient") -> None:
+        """Test that agent middleware can terminate execution before calling next()."""
+        execution_order: list[str] = []
+
+        class PreTerminationMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_order.append("middleware_before")
+                context.terminate = True
+                # We call next() but since terminate=True, subsequent middleware and handler should not execute
+                await next(context)
+                execution_order.append("middleware_after")
+
+        # Create ChatAgent with terminating middleware
+        middleware = PreTerminationMiddleware()
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+
+        # Execute the agent with multiple messages
+        messages = [
+            ChatMessage(role=Role.USER, text="message1"),
+            ChatMessage(role=Role.USER, text="message2"),  # This should not be processed due to termination
+        ]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+        assert not response.messages  # No messages should be in response due to pre-termination
+        assert execution_order == ["middleware_before", "middleware_after"]  # Middleware still completes
+        assert chat_client.call_count == 0  # No calls should be made due to termination
+
+    async def test_agent_middleware_with_post_termination(self, chat_client: "MockChatClient") -> None:
+        """Test that agent middleware can terminate execution after calling next()."""
+        execution_order: list[str] = []
+
+        class PostTerminationMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_order.append("middleware_before")
+                await next(context)
+                execution_order.append("middleware_after")
+                context.terminate = True
+
+        # Create ChatAgent with terminating middleware
+        middleware = PostTerminationMiddleware()
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+
+        # Execute the agent with multiple messages
+        messages = [
+            ChatMessage(role=Role.USER, text="message1"),
+            ChatMessage(role=Role.USER, text="message2"),
+        ]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) == 1
+        assert response.messages[0].role == Role.ASSISTANT
+        assert "test response" in response.messages[0].text
+
+        # Verify middleware execution order
+        assert execution_order == ["middleware_before", "middleware_after"]
+        assert chat_client.call_count == 1
+
+    async def test_function_middleware_with_pre_termination(self, chat_client: "MockChatClient") -> None:
+        """Test that function middleware can terminate execution before calling next()."""
+        execution_order: list[str] = []
+
+        class PreTerminationFunctionMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                next: Callable[[FunctionInvocationContext], Awaitable[None]],
+            ) -> None:
+                execution_order.append("middleware_before")
+                context.terminate = True
+                # We call next() but since terminate=True, subsequent middleware and handler should not execute
+                await next(context)
+                execution_order.append("middleware_after")
+
+        # Create a message to start the conversation
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+
+        # Set up chat client to return a function call
+        chat_client.responses = [
+            ChatResponse(
+                messages=[
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        contents=[
+                            FunctionCallContent(call_id="test_call", name="test_function", arguments={"text": "test"})
+                        ],
+                    )
+                ]
+            )
+        ]
+
+        # Create the test function with the expected signature
+        def test_function(text: str) -> str:
+            execution_order.append("function_called")
+            return "test_result"
+
+        # Create ChatAgent with function middleware and test function
+        middleware = PreTerminationFunctionMiddleware()
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+
+        # Execute the agent
+        await agent.run(messages)
+
+        # Verify that function was not called and only middleware executed
+        assert execution_order == ["middleware_before", "middleware_after"]
+        assert "function_called" not in execution_order
+        assert execution_order == ["middleware_before", "middleware_after"]
+
+    async def test_function_middleware_with_post_termination(self, chat_client: "MockChatClient") -> None:
+        """Test that function middleware can terminate execution after calling next()."""
+        execution_order: list[str] = []
+
+        class PostTerminationFunctionMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                next: Callable[[FunctionInvocationContext], Awaitable[None]],
+            ) -> None:
+                execution_order.append("middleware_before")
+                await next(context)
+                execution_order.append("middleware_after")
+                context.terminate = True
+
+        # Create a message to start the conversation
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+
+        # Set up chat client to return a function call
+        chat_client.responses = [
+            ChatResponse(
+                messages=[
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        contents=[
+                            FunctionCallContent(call_id="test_call", name="test_function", arguments={"text": "test"})
+                        ],
+                    )
+                ]
+            )
+        ]
+
+        # Create the test function with the expected signature
+        def test_function(text: str) -> str:
+            execution_order.append("function_called")
+            return "test_result"
+
+        # Create ChatAgent with function middleware and test function
+        middleware = PostTerminationFunctionMiddleware()
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+
+        # Execute the agent
+        response = await agent.run(messages)
+
+        # Verify that function was called and middleware executed
+        assert response is not None
+        assert "function_called" in execution_order
+        assert execution_order == ["middleware_before", "function_called", "middleware_after"]
+
     async def test_function_based_agent_middleware_with_chat_agent(self, chat_client: "MockChatClient") -> None:
         """Test function-based agent middleware with ChatAgent."""
         execution_order: list[str] = []

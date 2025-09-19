@@ -38,6 +38,8 @@ class AgentRunContext:
                 to see the actual execution result or can be set to override the execution result.
                 For non-streaming: should be AgentRunResponse
                 For streaming: should be AsyncIterable[AgentRunResponseUpdate]
+        terminate: A flag indicating whether to terminate execution after current middleware.
+                When set to True, execution will stop as soon as control returns to framework.
     """
 
     agent: "AgentProtocol"
@@ -45,6 +47,7 @@ class AgentRunContext:
     is_streaming: bool = False
     metadata: dict[str, Any] = field(default_factory=lambda: {})
     result: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None
+    terminate: bool = False
 
 
 @dataclass
@@ -57,12 +60,15 @@ class FunctionInvocationContext:
         metadata: Metadata dictionary for sharing data between function middleware.
         result: Function execution result. Can be observed after calling next()
                 to see the actual execution result or can be set to override the execution result.
+        terminate: A flag indicating whether to terminate execution after current middleware.
+                When set to True, execution will stop as soon as control returns to framework.
     """
 
     function: "AIFunction[Any, Any]"
     arguments: "BaseModel"
     metadata: dict[str, Any] = field(default_factory=lambda: {})
     result: Any = None
+    terminate: bool = False
 
 
 class AgentMiddleware(ABC):
@@ -271,6 +277,10 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middlewares):
 
                 async def final_wrapper(c: AgentRunContext) -> None:
+                    # If terminate was set, skip execution
+                    if c.terminate:
+                        return
+
                     # Execute actual handler and populate context for observability
                     result = await final_handler(c)
                     result_container["result"] = result
@@ -282,6 +292,10 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             next_handler = create_next_handler(index + 1)
 
             async def current_handler(c: AgentRunContext) -> None:
+                # If terminate is set, don't continue the pipeline
+                if c.terminate:
+                    return
+
                 await middleware.process(c, next_handler)
                 # After middleware execution, check if response was overridden
                 if c.result is not None and isinstance(c.result, AgentRunResponse):
@@ -337,6 +351,10 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middlewares):
 
                 async def final_wrapper(c: AgentRunContext) -> None:  # noqa: RUF029
+                    # If terminate was set, skip execution
+                    if c.terminate:
+                        return
+
                     # Execute actual handler and populate context for observability
                     result = final_handler(c)
                     result_container["result_stream"] = result
@@ -349,6 +367,9 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
 
             async def current_handler(c: AgentRunContext) -> None:
                 await middleware.process(c, next_handler)
+                # If terminate is set, don't continue the pipeline
+                if c.terminate:
+                    return
 
             return current_handler
 
@@ -424,8 +445,8 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
 
         # Custom final handler that handles pre-existing results
         async def function_final_handler(c: FunctionInvocationContext) -> Any:
-            # If result was set before calling next(), skip execution
-            if c.result is not None:
+            # If terminate was set, skip execution and return the result (which might be None)
+            if c.terminate:
                 return c.result
             # Execute actual handler and populate context for observability
             return await final_handler(c)
@@ -445,6 +466,10 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
 
     This decorator adds middleware functionality to any agent class.
     It wraps the run() and run_stream() methods to provide middleware execution.
+
+    The middleware execution can be terminated at any point by setting the
+    context.terminate property to True. Once set, the pipeline will stop executing
+    further middleware as soon as control returns to the pipeline.
 
     Args:
         agent_class: The agent class to add middleware support to.
