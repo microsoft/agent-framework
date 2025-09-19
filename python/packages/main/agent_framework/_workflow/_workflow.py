@@ -787,6 +787,7 @@ class WorkflowBuilder:
         """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
         self._edge_groups: list[EdgeGroup] = []
         self._executors: dict[str, Executor] = {}
+        self._duplicate_executor_ids: set[str] = set()
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = max_iterations
@@ -800,7 +801,11 @@ class WorkflowBuilder:
 
     def _add_executor(self, executor: Executor) -> str:
         """Add an executor to the map and return its ID."""
-        self._executors[executor.id] = executor
+        existing = self._executors.get(executor.id)
+        if existing is not None and existing is not executor:
+            self._duplicate_executor_ids.add(executor.id)
+        else:
+            self._executors[executor.id] = executor
         return executor.id
 
     def _maybe_wrap_agent(self, candidate: Executor | AgentProtocol) -> Executor:
@@ -1022,8 +1027,9 @@ class WorkflowBuilder:
             self._start_executor = wrapped
             # Ensure the start executor is present in the executor map so validation succeeds
             # even if no edges are added yet, or before edges wrap the same agent again.
-            if wrapped.id not in self._executors:
-                self._executors[wrapped.id] = wrapped
+            existing = self._executors.get(wrapped.id)
+            if existing is not wrapped:
+                self._add_executor(wrapped)
         return self
 
     def set_max_iterations(self, max_iterations: int) -> Self:
@@ -1074,7 +1080,12 @@ class WorkflowBuilder:
                     )
 
                 # Perform validation before creating the workflow
-                validate_workflow_graph(self._edge_groups, self._executors, self._start_executor)
+                validate_workflow_graph(
+                    self._edge_groups,
+                    self._executors,
+                    self._start_executor,
+                    duplicate_executor_ids=tuple(self._duplicate_executor_ids),
+                )
 
                 # Add validation completed event
                 workflow_tracer.add_build_event("build.validation_completed")
