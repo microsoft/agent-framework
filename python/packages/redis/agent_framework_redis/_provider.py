@@ -6,7 +6,7 @@ import sys
 from collections.abc import MutableSequence, Sequence
 from functools import reduce
 from operator import and_
-from typing import Any, Literal, cast, Optional
+from typing import Any, Literal, cast
 
 from agent_framework import ChatMessage, Context, ContextProvider, Role, TextContent
 from agent_framework.exceptions import (
@@ -41,31 +41,31 @@ class RedisProvider(ContextProvider):
     prefix: str = "context"
 
     # Redis vectorizer configuration (optional, injected by client)
-    redis_vectorizer: Optional[BaseVectorizer] = None
-    vector_field_name: Optional[str] = None
-    vector_algorithm: Optional[Literal["flat", "hnsw"]] = None
-    vector_distance_metric: Optional[Literal["cosine", "ip", "l2"]] = None
+    redis_vectorizer: BaseVectorizer | None = None
+    vector_field_name: str | None = None
+    vector_algorithm: Literal["flat", "hnsw"] | None = None
+    vector_distance_metric: Literal["cosine", "ip", "l2"] | None = None
 
     # Partition fields (indexed for filtering)
-    application_id: Optional[str] = None
-    agent_id: Optional[str] = None
-    user_id: Optional[str] = None
-    thread_id: Optional[str] = None
+    application_id: str | None = None
+    agent_id: str | None = None
+    user_id: str | None = None
+    thread_id: str | None = None
     scope_to_per_operation_thread_id: bool = False
 
     # Prompt and runtime
     context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT
     redis_index: Any = None
     overwrite_index: bool = False
-    _per_operation_thread_id: Optional[str] = None
+    _per_operation_thread_id: str | None = None
     _token_escaper: TokenEscaper = TokenEscaper()
-    _conversation_id: Optional[str] = None
+    _conversation_id: str | None = None
     _index_initialized: bool = False
-    _schema_dict: Optional[dict[str, Any]] = None
+    _schema_dict: dict[str, Any] | None = None
 
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization hook to set up computed fields after Pydantic initialization.
-        
+
         This is called automatically by Pydantic after the model is initialized.
         """
         # Create Redis index using the cached schema_dict property
@@ -78,7 +78,7 @@ class RedisProvider(ContextProvider):
             # Get vector configuration from vectorizer if available
             vector_dims = self.redis_vectorizer.dims if self.redis_vectorizer is not None else None
             vector_datatype = self.redis_vectorizer.dtype if self.redis_vectorizer is not None else None
-            
+
             self._schema_dict = self._build_schema_dict(
                 index_name=self.index_name,
                 prefix=self.prefix,
@@ -111,7 +111,7 @@ class RedisProvider(ContextProvider):
         prefix: str,
         vector_field_name: str | None,
         vector_dims: int | None,
-        vector_datatype: Literal["float32", "float16", "bfloat16"] | None,
+        vector_datatype: str | None,
         vector_algorithm: Literal["flat", "hnsw"] | None,
         vector_distance_metric: Literal["cosine", "ip", "l2"] | None,
     ) -> dict[str, Any]:
@@ -173,9 +173,9 @@ class RedisProvider(ContextProvider):
 
     async def _ensure_index(self) -> None:
         """Initialize the search index.
-        
+
         - Connect to existing index if it exists and schema matches
-        - Create new index if it doesn't exist  
+        - Create new index if it doesn't exist
         - Overwrite if requested via overwrite_index=True
         - Validate schema compatibility to prevent accidental data loss
         """
@@ -184,36 +184,34 @@ class RedisProvider(ContextProvider):
 
         # Check if index already exists
         index_exists = await self.redis_index.exists()
-        
+
         if not self.overwrite_index and index_exists:
             # Validate schema compatibility before connecting
             await self._validate_schema_compatibility()
-        
+
         # Create the index (will connect to existing or create new)
         await self.redis_index.create(overwrite=self.overwrite_index, drop=False)
-        
+
         self._index_initialized = True
 
     async def _validate_schema_compatibility(self) -> None:
         """Validate that existing index schema matches current configuration.
-        
+
         Raises ServiceInitializationError if schemas don't match, with helpful guidance.
         """
         # Get existing index schema
-        existing_index = await AsyncSearchIndex.from_existing(
-            self.index_name, 
-            redis_url=self.redis_url
-        )
-        
+        existing_index = await AsyncSearchIndex.from_existing(self.index_name, redis_url=self.redis_url)
+
         # Compare schemas by converting both to dictionaries
         existing_schema = existing_index.schema.to_dict()
         current_schema = self.schema_dict
-        
+
         if existing_schema != current_schema:
             raise ServiceInitializationError(
                 f"Existing Redis index '{self.index_name}' schema does not match the current configuration. "
                 "This could lead to data corruption or query failures. "
-                "Set overwrite_index=True to rebuild the index with the new schema (this will preserve data but may cause temporary downtime)."
+                "Set overwrite_index=True to rebuild the index with the new schema "
+                "(this will preserve data but may cause temporary downtime)."
             )
 
     async def _add(

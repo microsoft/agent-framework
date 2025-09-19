@@ -7,15 +7,13 @@ import numpy as np
 import pytest
 from agent_framework import ChatMessage, Role
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework_redis import RedisProvider
+from pydantic import ValidationError
 from redisvl.utils.vectorize import CustomTextVectorizer
 
+from agent_framework_redis import RedisProvider
 
+CUSTOM_VECTORIZER = CustomTextVectorizer(embed=lambda x: [1.0, 2.0, 3.0], dtype="float32")
 
-CUSTOM_VECTORIZER = CustomTextVectorizer(
-    embed=lambda x: [1.0, 2.0, 3.0],
-    dtype="float32"
-)
 
 @pytest.fixture
 def mock_index() -> AsyncMock:
@@ -39,18 +37,20 @@ def mock_index() -> AsyncMock:
 def patch_index_from_dict(mock_index: AsyncMock):
     with patch("agent_framework_redis._provider.AsyncSearchIndex") as mock_cls:
         mock_cls.from_dict = MagicMock(return_value=mock_index)
-        
+
         # Mock from_existing to return a mock with matching schema by default
         # This prevents schema validation errors in tests that don't specifically test schema validation
         async def mock_from_existing(index_name, redis_url):
             mock_existing = AsyncMock()
             # Return a schema that will match whatever the provider generates
             # This is a bit of a hack, but allows existing tests to continue working
-            mock_existing.schema.to_dict = MagicMock(side_effect=lambda: mock_cls.from_dict.call_args[0][0] if mock_cls.from_dict.call_args else {})
+            mock_existing.schema.to_dict = MagicMock(
+                side_effect=lambda: mock_cls.from_dict.call_args[0][0] if mock_cls.from_dict.call_args else {}
+            )
             return mock_existing
-        
+
         mock_cls.from_existing = AsyncMock(side_effect=mock_from_existing)
-        
+
         yield mock_cls
 
 
@@ -362,12 +362,10 @@ class TestRedisProviderSchemaVectors:
 
     # Raises when redis_vectorizer is not the correct type
     def test_init_invalid_vectorizer(self, patch_index_from_dict):  # noqa: ARG002
-        from agent_framework.exceptions import ServiceInvalidRequestError
-
         class DummyVectorizer:
             pass
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             RedisProvider(user_id="u1", redis_vectorizer=DummyVectorizer(), vector_field_name="vec")
 
 
@@ -378,12 +376,12 @@ class TestEnsureIndex:
         # Mock index doesn't exist, so it will be created
         mock_index.exists = AsyncMock(return_value=False)
         provider = RedisProvider(user_id="u1", overwrite_index=False)
-        
+
         assert provider._index_initialized is False
         await provider._ensure_index()
         assert mock_index.create.await_count == 1
         assert provider._index_initialized is True
-        
+
         # Second call should not create again due to _index_initialized flag
         await provider._ensure_index()
         assert mock_index.create.await_count == 1
@@ -393,9 +391,9 @@ class TestEnsureIndex:
     async def test_ensure_index_with_overwrite_true(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=True)
         provider = RedisProvider(user_id="u1", overwrite_index=True)
-        
+
         await provider._ensure_index()
-        
+
         # Should call create with overwrite=True, drop=False
         mock_index.create.assert_called_once_with(overwrite=True, drop=False)
 
@@ -404,9 +402,9 @@ class TestEnsureIndex:
     async def test_ensure_index_create_if_missing(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=False)
         provider = RedisProvider(user_id="u1", overwrite_index=False)
-        
+
         await provider._ensure_index()
-        
+
         # Should call create with overwrite=False, drop=False
         mock_index.create.assert_called_once_with(overwrite=False, drop=False)
 
@@ -415,13 +413,13 @@ class TestEnsureIndex:
     async def test_ensure_index_schema_validation_success(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=True)
         provider = RedisProvider(user_id="u1", overwrite_index=False)
-        
+
         # Mock existing index with matching schema
         expected_schema = provider.schema_dict
         patch_index_from_dict.from_existing.return_value.schema.to_dict.return_value = expected_schema
-        
+
         await provider._ensure_index()
-        
+
         # Should validate schema and proceed to create
         patch_index_from_dict.from_existing.assert_called_once_with("context", redis_url="redis://localhost:6379")
         mock_index.create.assert_called_once_with(overwrite=False, drop=False)
@@ -431,20 +429,20 @@ class TestEnsureIndex:
     async def test_ensure_index_schema_validation_failure(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=True)
         provider = RedisProvider(user_id="u1", overwrite_index=False)
-        
+
         # Override the mock to return a different schema after provider is created
         async def mock_from_existing_different(index_name, redis_url):
             mock_existing = AsyncMock()
             mock_existing.schema.to_dict = MagicMock(return_value={"different": "schema"})
             return mock_existing
-        
+
         patch_index_from_dict.from_existing = AsyncMock(side_effect=mock_from_existing_different)
-        
+
         with pytest.raises(ServiceInitializationError) as exc:
             await provider._ensure_index()
-        
+
         assert "schema does not match" in str(exc.value)
         assert "overwrite_index=True" in str(exc.value)
-        
+
         # Should not call create when schema validation fails
         mock_index.create.assert_not_called()
