@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any, Union, get_args, get_origin
+from types import UnionType
+from typing import Any, get_args, get_origin
 
 
-def is_instance_of(data: Any, target_type: type) -> bool:
+def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     """Check if the data is an instance of the target type.
 
     Args:
@@ -26,15 +27,18 @@ def is_instance_of(data: Any, target_type: type) -> bool:
 
     # Case 2: target_type is Optional[T] or Union[T1, T2, ...]
     # Optional[T] is really just as Union[T, None]
-    if origin is Union:
+    if origin is UnionType:
         return any(is_instance_of(data, arg) for arg in args)
 
     # Case 3: target_type is a generic type
     if origin in [list, set]:
-        return isinstance(data, origin) and all(is_instance_of(item, args[0]) for item in data)  # type: ignore
+        return isinstance(data, origin) and all(any(is_instance_of(item, arg) for arg in args) for item in data)  # type: ignore
 
     # Case 4: target_type is a tuple
     if origin is tuple:
+        if len(args) == 2 and args[1] is Ellipsis:  # Tuple[T, ...] case
+            element_type = args[0]
+            return isinstance(data, tuple) and all(is_instance_of(item, element_type) for item in data)
         if len(args) == 1 and args[0] is Ellipsis:  # Tuple[...] case
             return isinstance(data, tuple)
         return (

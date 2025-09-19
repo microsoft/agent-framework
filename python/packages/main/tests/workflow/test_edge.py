@@ -129,6 +129,26 @@ class MockAggregator(Executor):
         self.call_count += 1
         self.last_message = message
 
+    @handler
+    async def mock_aggregator_handler_secondary(
+        self,
+        message: list[MockMessageSecondary],
+        ctx: WorkflowContext,
+    ) -> None:
+        """A mock aggregator handler that does nothing."""
+        self.call_count += 1
+        self.last_message = message
+
+    @handler
+    async def mock_aggregator_handler_combine(
+        self,
+        message: list[MockMessage | MockMessageSecondary],
+        ctx: WorkflowContext,
+    ) -> None:
+        """A mock aggregator handler that does nothing."""
+        self.call_count += 1
+        self.last_message = message
+
 
 # region Edge
 
@@ -1110,6 +1130,37 @@ async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter) -> None:
     assert span.attributes.get("edge_group.type") == "FanInEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is False
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value
+
+
+async def test_fan_in_edge_group_with_multiple_message_types() -> None:
+    source1 = MockExecutor(id="source_executor_1")
+    source2 = MockExecutor(id="source_executor_2")
+    target = MockAggregator(id="target_executor")
+
+    edge_group = FanInEdgeGroup(source_ids=[source1.id, source2.id], target_id=target.id)
+
+    executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+
+    success = await edge_runner.send_message(
+        Message(data=data, source_id=source1.id),
+        shared_state,
+        ctx,
+    )
+    assert success
+
+    data2 = MockMessageSecondary(data="test")
+    success = await edge_runner.send_message(
+        Message(data=data2, source_id=source2.id),
+        shared_state,
+        ctx,
+    )
+    assert success
 
 
 # endregion FanInEdgeGroup
