@@ -79,12 +79,12 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
-    <File Path="../workflows/DeepResearch.yaml" />
-    <File Path="../workflows/HumanInLoop.yaml" />
-    <File Path="../workflows/Marketing.yaml" />
-    <File Path="../workflows/MathChat.yaml" />
-    <File Path="../workflows/README.md" />
-    <File Path="../workflows/wttr.json" />
+    <File Path="../workflow-samples/DeepResearch.yaml" />
+    <File Path="../workflow-samples/HumanInLoop.yaml" />
+    <File Path="../workflow-samples/Marketing.yaml" />
+    <File Path="../workflow-samples/MathChat.yaml" />
+    <File Path="../workflow-samples/README.md" />
+    <File Path="../workflow-samples/wttr.json" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/SharedStates/">
     <Project Path="samples/GettingStarted/Workflows/SharedStates/SharedStates.csproj" />
