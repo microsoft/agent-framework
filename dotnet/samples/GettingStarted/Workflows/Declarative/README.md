@@ -66,7 +66,7 @@ This will create the agents used in the sample workflows in your Azure Foundry P
 ## Execution
 
 Run the demo from the console by specifying a path to a declarative (YAML) workflow file.  
-The repository has example workflows available in the root [`/workflows`](../../../../../workflows) folder.
+The repository has example workflows available in the root [`/workflow-samples`](../../../../../workflow-samples) folder.
 
 1. From the root of the repository, navigate the console to the project folder:
 
