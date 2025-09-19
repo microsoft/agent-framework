@@ -30,7 +30,6 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedFileContent,
     HostedFileSearchTool,
-    HostedImageGenerationTool,
     HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
@@ -678,19 +677,19 @@ def test_create_response_content_with_mcp_approval_request() -> None:
     assert req.function_call.additional_properties["server_label"] == "My_MCP"
 
 
-def test_tools_to_response_tools_with_hosted_image_generation() -> None:
-    """Test that HostedImageGenerationTool is converted to the correct response tool dict."""
+def test_tools_to_response_tools_with_raw_image_generation() -> None:
+    """Test that raw image_generation tool dict is handled correctly with parameter mapping."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    # Test with base parameters only
-    tool = HostedImageGenerationTool(
-        description="Generate images",
-        size="1536x1024",
-        quality="high",
-        format="webp",
-        compression=75,
-        background="transparent",
-    )
+    # Test with raw tool dict using user-friendly parameter names
+    tool = {
+        "type": "image_generation",
+        "size": "1536x1024",
+        "quality": "high",
+        "format": "webp",  # Will be mapped to output_format
+        "compression": 75,  # Will be mapped to output_compression
+        "background": "transparent",
+    }
 
     resp_tools = client._tools_to_response_tools([tool])
     assert isinstance(resp_tools, list)
@@ -707,18 +706,19 @@ def test_tools_to_response_tools_with_hosted_image_generation() -> None:
     assert image_tool["output_compression"] == 75
 
 
-def test_tools_to_response_tools_with_hosted_image_generation_openai_params() -> None:
-    """Test HostedImageGenerationTool with OpenAI-specific parameters."""
+def test_tools_to_response_tools_with_raw_image_generation_openai_responses_params() -> None:
+    """Test raw image_generation tool with OpenAI-specific parameters."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
     # Test with OpenAI-specific parameters
-    tool = HostedImageGenerationTool(
-        size="1024x1024",
-        model="gpt-image-1",
-        input_fidelity="high",
-        moderation="strict",
-        partial_images=True,
-    )
+    tool = {
+        "type": "image_generation",
+        "size": "1024x1024",
+        "model": "gpt-image-1",
+        "input_fidelity": "high",
+        "moderation": "strict",
+        "partial_images": 2,  # Should be integer 0-3
+    }
 
     resp_tools = client._tools_to_response_tools([tool])
     assert isinstance(resp_tools, list)
@@ -727,20 +727,23 @@ def test_tools_to_response_tools_with_hosted_image_generation_openai_params() ->
     image_tool = resp_tools[0]
     assert isinstance(image_tool, dict)
     assert image_tool["type"] == "image_generation"
-    assert image_tool["size"] == "1024x1024"
+
+    # Cast to dict for easier access to ImageGeneration-specific fields
+    tool_dict = dict(image_tool)
+    assert tool_dict["size"] == "1024x1024"
     # Check OpenAI-specific parameters are included
-    assert image_tool["model"] == "gpt-image-1"
-    assert image_tool["input_fidelity"] == "high"
-    assert image_tool["moderation"] == "strict"
-    assert image_tool["partial_images"] is True
+    assert tool_dict["model"] == "gpt-image-1"
+    assert tool_dict["input_fidelity"] == "high"
+    assert tool_dict["moderation"] == "strict"
+    assert tool_dict["partial_images"] == 2
 
 
-def test_tools_to_response_tools_with_hosted_image_generation_minimal() -> None:
-    """Test HostedImageGenerationTool with minimal configuration."""
+def test_tools_to_response_tools_with_raw_image_generation_minimal() -> None:
+    """Test raw image_generation tool with minimal configuration."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
 
-    # Test with minimal parameters
-    tool = HostedImageGenerationTool()
+    # Test with minimal parameters (just type)
+    tool = {"type": "image_generation"}
 
     resp_tools = client._tools_to_response_tools([tool])
     assert isinstance(resp_tools, list)
@@ -749,6 +752,8 @@ def test_tools_to_response_tools_with_hosted_image_generation_minimal() -> None:
     image_tool = resp_tools[0]
     assert isinstance(image_tool, dict)
     assert image_tool["type"] == "image_generation"
+    # Should only have the type parameter when created with minimal config
+    assert len(image_tool) == 1
     # Only type should be present, no other parameters
     assert len(image_tool) == 1
 
@@ -1406,12 +1411,12 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
 
 
 @skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_hosted_image_generation_tool():
-    """Test OpenAI Responses Client agent with HostedImageGenerationTool through OpenAIResponsesClient."""
+async def test_openai_responses_client_agent_raw_image_generation_tool():
+    """Test OpenAI Responses Client agent with raw image_generation tool through OpenAIResponsesClient."""
     async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can generate images.",
-        tools=[HostedImageGenerationTool(size="1024x1024", quality="low", format="png")],
+        tools=[{"type": "image_generation", "size": "1024x1024", "quality": "low", "format": "png"}],
     ) as agent:
         # Test image generation functionality
         response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")

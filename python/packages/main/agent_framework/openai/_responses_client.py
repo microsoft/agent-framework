@@ -30,7 +30,6 @@ from .._tools import (
     AIFunction,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
@@ -270,59 +269,102 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 else None,
                             )
                         )
-                    case HostedImageGenerationTool():
-                        image_tool: dict[str, Any] = {"type": "image_generation"}
 
-                        # Handle base parameters as direct attributes
-                        if tool.size is not None:
-                            image_tool["size"] = tool.size
-                        if tool.quality is not None:
-                            image_tool["quality"] = tool.quality
-                        if tool.background is not None:
-                            image_tool["background"] = tool.background
-
-                        # Map developer-friendly parameter names to OpenAI API names
-                        if tool.format is not None:
-                            image_tool["output_format"] = tool.format
-                        if tool.compression is not None:
-                            image_tool["output_compression"] = tool.compression
-
-                        # Handle OpenAI Responses-specific parameters
-                        openai_param_names = [
-                            "model",
-                            "moderation",
-                            "partial_images",
-                            "input_fidelity",
-                            "input_image_mask",
-                        ]
-                        for param in openai_param_names:
-                            value = getattr(tool, param, None)
-                            if value is not None:
-                                # Validate OpenAI Responses-specific parameters
-                                if param == "partial_images" and (not isinstance(value, int) or not (0 <= value <= 3)):
-                                    raise ValueError("partial_images must be an integer between 0 and 3")
-                                if param == "input_fidelity" and value not in ("high", "low"):
-                                    raise ValueError("input_fidelity must be 'high' or 'low'")
-                                if param == "input_image_mask":
-                                    if not isinstance(value, dict):
-                                        raise ValueError("input_image_mask must be a dictionary")
-                                    # Validate that it has at least one of the required fields
-                                    if not any(key in value for key in ["file_id", "image_url"]):
-                                        raise ValueError(
-                                            "input_image_mask must contain at least one of 'file_id' or 'image_url'"
-                                        )
-                                    # Validate field types if present
-                                    if "file_id" in value and not isinstance(value["file_id"], str):
-                                        raise ValueError("input_image_mask.file_id must be a string")
-                                    if "image_url" in value and not isinstance(value["image_url"], str):
-                                        raise ValueError("input_image_mask.image_url must be a string")
-                                image_tool[param] = value
-
-                        response_tools.append(image_tool)
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:
-                response_tools.append(tool if isinstance(tool, dict) else dict(tool))
+                # Handle raw dictionary tools
+                tool_dict = tool if isinstance(tool, dict) else dict(tool)
+
+                # Special handling for image_generation tools
+                if tool_dict.get("type") == "image_generation":
+                    # Create a copy to avoid modifying the original
+                    mapped_tool = tool_dict.copy()
+
+                    # Map user-friendly parameter names to OpenAI API parameter names
+                    parameter_mapping = {
+                        "format": "output_format",
+                        "compression": "output_compression",
+                    }
+
+                    for user_param, api_param in parameter_mapping.items():
+                        if user_param in mapped_tool:
+                            # Map the parameter name and remove the old one
+                            mapped_tool[api_param] = mapped_tool.pop(user_param)
+
+                    # Validate all OpenAI image generation parameters
+
+                    # Background validation
+                    if "background" in mapped_tool:
+                        value = mapped_tool["background"]
+                        if value not in ("transparent", "opaque", "auto"):
+                            raise ValueError("background must be one of: 'transparent', 'opaque', 'auto'")
+
+                    # Input fidelity validation
+                    if "input_fidelity" in mapped_tool:
+                        value = mapped_tool["input_fidelity"]
+                        if value not in ("high", "low"):
+                            raise ValueError("input_fidelity must be 'high' or 'low'")
+
+                    # Input image mask validation
+                    if "input_image_mask" in mapped_tool:
+                        value = mapped_tool["input_image_mask"]
+                        if not isinstance(value, dict):
+                            raise ValueError("input_image_mask must be a dictionary")
+                        # Validate that it has at least one of the required fields
+                        if not any(key in value for key in ["file_id", "image_url"]):
+                            raise ValueError("input_image_mask must contain at least one of 'file_id' or 'image_url'")
+                        # Validate field types if present
+                        if "file_id" in value and not isinstance(value["file_id"], str):
+                            raise ValueError("input_image_mask.file_id must be a string")
+                        if "image_url" in value and not isinstance(value["image_url"], str):
+                            raise ValueError("input_image_mask.image_url must be a string")
+
+                    # Model validation
+                    if "model" in mapped_tool:
+                        value = mapped_tool["model"]
+                        if not isinstance(value, str):
+                            raise ValueError("model must be a string")
+
+                    # Moderation validation
+                    if "moderation" in mapped_tool:
+                        value = mapped_tool["moderation"]
+                        if not isinstance(value, str):
+                            raise ValueError("moderation must be a string")
+
+                    # Output compression validation
+                    if "output_compression" in mapped_tool:
+                        value = mapped_tool["output_compression"]
+                        if not isinstance(value, int) or not (1 <= value <= 100):
+                            raise ValueError("output_compression must be an integer between 1 and 100")
+
+                    # Output format validation
+                    if "output_format" in mapped_tool:
+                        value = mapped_tool["output_format"]
+                        if value not in ("png", "webp", "jpeg"):
+                            raise ValueError("output_format must be one of: 'png', 'webp', 'jpeg'")
+
+                    # Partial images validation
+                    if "partial_images" in mapped_tool:
+                        value = mapped_tool["partial_images"]
+                        if not isinstance(value, int) or not (0 <= value <= 3):
+                            raise ValueError("partial_images must be an integer between 0 and 3")
+
+                    # Quality validation
+                    if "quality" in mapped_tool:
+                        value = mapped_tool["quality"]
+                        if value not in ("low", "medium", "high", "auto"):
+                            raise ValueError("quality must be one of: 'low', 'medium', 'high', 'auto'")
+
+                    # Size validation
+                    if "size" in mapped_tool:
+                        value = mapped_tool["size"]
+                        if value not in ("1024x1024", "1024x1536", "1536x1024", "auto"):
+                            raise ValueError("size must be one of: '1024x1024', '1024x1536', '1536x1024', 'auto'")
+
+                    response_tools.append(mapped_tool)
+                else:
+                    response_tools.append(tool_dict)
         return response_tools
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:

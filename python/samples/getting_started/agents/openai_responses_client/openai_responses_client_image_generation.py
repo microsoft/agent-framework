@@ -12,7 +12,7 @@ except ImportError:
     Image = None  # type: ignore
     pil_available = False
 
-from agent_framework import DataContent, HostedImageGenerationTool, UriContent
+from agent_framework import DataContent, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -43,18 +43,19 @@ async def main() -> None:
     agent = OpenAIResponsesClient().create_agent(
         instructions="You are a helpful AI that can generate images.",
         tools=[
-            HostedImageGenerationTool(
+            {
+                "type": "image_generation",
                 # Core parameters
-                size="1536x1024",  # Landscape format (instead of default 1024x1024)
-                background="transparent",  # Transparent background
-                quality="low",  # Low quality generation
-                format="webp",
-                compression=85,
-            )
+                "size": "1024x1024",
+                "background": "transparent",
+                "quality": "high",
+                "format": "webp",
+                "compression": 85,
+            }
         ],
     )
 
-    query = "Generate a soccer team badge."
+    query = "Generate a nice beach scenery with blue skies in summer time."
     print(f"User: {query}")
     print("Generating image with parameters: landscape, transparent, low quality, WebP format...")
 

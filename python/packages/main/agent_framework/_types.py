@@ -2108,14 +2108,6 @@ class AgentRunResponse(AFBaseModel):
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
-        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None:
-            try:
-                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            except ValidationError as ex:
-                logger.debug("Failed to parse value from agent run response text: %s", ex)
-
 
 # region AgentRunResponseUpdate
 
