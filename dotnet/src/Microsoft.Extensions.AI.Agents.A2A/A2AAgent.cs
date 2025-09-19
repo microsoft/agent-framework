@@ -56,6 +56,14 @@ internal sealed class A2AAgent : AIAgent
     public override sealed AgentThread GetNewThread()
         => new A2AAgentThread();
 
+    /// <summary>
+    /// Get a new <see cref="AgentThread"/> instance using an existing context id, to continue that conversation.
+    /// </summary>
+    /// <param name="contextId">The context id to continue.</param>
+    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
+    public AgentThread GetNewThread(string contextId)
+        => new A2AAgentThread() { ContextId = contextId };
+
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new A2AAgentThread(serializedThread, jsonSerializerOptions);

@@ -19,54 +19,6 @@ public class ChatClientAgentThread : AgentThread
     private IChatMessageStore? _messageStore;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class with an existing service managed thread ID.
-    /// </summary>
-    /// <param name="aIContextProvider">An <see cref="AIContextProvider"/> which will be used to provide additional context to the AI model before each invocation.</param>
-    public ChatClientAgentThread(AIContextProvider aIContextProvider)
-    {
-        this.AIContextProvider = Throw.IfNull(aIContextProvider);
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class with an existing service managed thread ID.
-    /// </summary>
-    /// <param name="conversationId">The ID of the underlying service thread to support cases where the chat history is stored by the agent service.</param>
-    /// <param name="aIContextProvider">An optional <see cref="AIContextProvider"/> which will be used to provide additional context to the AI model before each invocation.</param>
-    public ChatClientAgentThread(string conversationId, AIContextProvider? aIContextProvider = null)
-    {
-        this.ConversationId = Throw.IfNullOrWhitespace(conversationId);
-        this.AIContextProvider = aIContextProvider;
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class with a a message store
-    /// </summary>
-    /// <param name="messageStore">The <see cref="IChatMessageStore"/> used by this thread, for cases where messages should be stored in a custom location.</param>
-    /// <param name="aIContextProvider">An optional <see cref="AIContextProvider"/> which will be used to provide additional context to the AI model before each invocation.</param>
-    public ChatClientAgentThread(IChatMessageStore messageStore, AIContextProvider? aIContextProvider = null)
-    {
-        this.MessageStore = Throw.IfNull(messageStore);
-        this.AIContextProvider = aIContextProvider;
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class with an in-memory message store and a list of initial messages.
-    /// </summary>
-    /// <param name="messages">The messages to initialize the thread with.</param>
-    /// <param name="aIContextProvider">An optional <see cref="AIContextProvider"/> which will be used to provide additional context to the AI model before each invocation.</param>
-    public ChatClientAgentThread(IEnumerable<ChatMessage> messages, AIContextProvider? aIContextProvider = null)
-    {
-        var messageStore = new InMemoryChatMessageStore();
-        foreach (var message in messages)
-        {
-            messageStore.Add(message);
-        }
-
-        this.MessageStore = messageStore;
-        this.AIContextProvider = aIContextProvider;
-    }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class.
     /// </summary>
     internal ChatClientAgentThread()

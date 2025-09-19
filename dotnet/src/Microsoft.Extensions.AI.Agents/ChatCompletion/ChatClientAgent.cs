@@ -243,6 +243,22 @@ public sealed class ChatClientAgent : AIAgent
             AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
         };
 
+    /// <summary>
+    /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
+    /// </summary>
+    /// <param name="conversationId">The conversation id to continue.</param>
+    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
+    /// <remarks>
+    /// Note that any <see cref="AgentThread"/> created with this method will only work with <see cref="ChatClientAgent"/> instances that support storing
+    /// chat history in the underlying service provided by the <see cref="IChatClient"/>.
+    /// </remarks>
+    public AgentThread GetNewThread(string conversationId)
+        => new ChatClientAgentThread()
+        {
+            ConversationId = conversationId,
+            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
+        };
+
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {

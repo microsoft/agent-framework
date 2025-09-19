@@ -9,14 +9,6 @@ namespace Microsoft.Extensions.AI.Agents.CopilotStudio;
 /// </summary>
 public class CopilotStudioAgentThread : ServiceIdAgentThread
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CopilotStudioAgentThread"/> class with the provided conversation ID.
-    /// </summary>
-    /// <param name="conversationId">The ID for the current conversation with the Copilot Studio agent.</param>
-    public CopilotStudioAgentThread(string conversationId) : base(conversationId)
-    {
-    }
-
     internal CopilotStudioAgentThread()
     {
     }

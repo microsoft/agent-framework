@@ -44,6 +44,14 @@ public class CopilotStudioAgent : AIAgent
     public override sealed AgentThread GetNewThread()
         => new CopilotStudioAgentThread();
 
+    /// <summary>
+    /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
+    /// </summary>
+    /// <param name="conversationId">The conversation id to continue.</param>
+    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
+    public AgentThread GetNewThread(string conversationId)
+        => new CopilotStudioAgentThread() { ConversationId = conversationId };
+
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);

@@ -9,14 +9,6 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 /// </summary>
 public class A2AAgentThread : ServiceIdAgentThread
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="A2AAgentThread"/> class with the provided A2A context ID.
-    /// </summary>
-    /// <param name="contextId">The ID for the current conversation with the A2A agent.</param>
-    public A2AAgentThread(string contextId) : base(contextId)
-    {
-    }
-
     internal A2AAgentThread()
     {
     }
