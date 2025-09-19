@@ -307,6 +307,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         # other settings
         if chat_options.store:
             options_dict["store"] = True
+        else:
+            options_dict["store"] = False
         if chat_options.conversation_id:
             options_dict["previous_response_id"] = chat_options.conversation_id
         if chat_options.ai_model_id is None:
