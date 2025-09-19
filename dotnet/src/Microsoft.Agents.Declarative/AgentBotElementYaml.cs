@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
@@ -34,11 +35,13 @@ internal static class AgentBotElementYaml
             throw new InvalidDataException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(GptComponentMetadata)}.");
         }
 
+        var botDefinition = WrapGptComponentMetadataWithBot(agentDefinition);
+
         // Use PowerFx to evaluate the expressions in the agent definition.
-        SemanticModel semanticModel = agentDefinition.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
+        SemanticModel semanticModel = botDefinition.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
         var environmentVariables = semanticModel.GetAllEnvironmentVariablesReferencedInTheBot();
 
-        return agentDefinition;
+        return botDefinition.Descendants().OfType<GptComponentMetadata>().First();
     }
 
     #region private
@@ -55,22 +58,37 @@ internal static class AgentBotElementYaml
         public bool IsTenantFeatureEnabled(string featureName, bool defaultValue) => defaultValue;
     }
 
-    public static TDialog WrapWithBot<TDialog>(this TDialog dialog) where TDialog : DialogBase
+    public static BotDefinition WrapGptComponentMetadataWithBot(this GptComponentMetadata element)
     {
-        BotDefinition bot
-            = new BotDefinition.Builder
+        var botBuilder =
+            new BotDefinition.Builder
             {
                 Components =
+                {
+                    new GptComponent.Builder
                     {
-                        new DialogComponent.Builder
-                        {
-                            SchemaName = dialog.HasSchemaName ? dialog.SchemaName : "default-schema",
-                            Dialog = dialog.ToBuilder(),
-                        }
+                        SchemaName = "default-schema",
+                        Metadata = element.ToBuilder(),
                     }
-            }.Build();
+                }
+            };
 
-        return bot.Descendants().OfType<TDialog>().First();
+        for (int i = 0; i < 5; i++)
+        {
+            botBuilder.EnvironmentVariables.Add(new EnvironmentVariableDefinition.Builder()
+            {
+                SchemaName = $"Variable-{i}",
+                Id = Guid.NewGuid(),
+                DisplayName = $"Variable-{i}",
+                DefaultValue = $"DefaultValue-{i}",
+                ValueComponent = new EnvironmentVariableValue.Builder()
+                {
+                    Value = $"Value-{i}"
+                }
+            });
+        }
+
+        return botBuilder.Build();
     }
     #endregion
 }

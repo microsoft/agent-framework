@@ -227,7 +227,10 @@ public static class RecordDataValueExtensions
     {
         Throw.IfNull(tool);
 
-        return new HostedFileSearchTool();
+        return new HostedFileSearchTool()
+        {
+            Inputs = tool.GetHostedVectorStoreContents(),
+        };
     }
 
     /// <summary>
@@ -264,10 +267,90 @@ public static class RecordDataValueExtensions
         {
             ServerDescription = serverDescription,
             AllowedTools = allowedTools,
-            // TODO: add support for these properties
-            // ApprovalMode =
-            // Headers =
+            ApprovalMode = tool.GetHostedMcpServerToolApprovalMode(),
+            Headers = tool.GetHeaders(),
         };
+    }
+
+    /// <summary>
+    /// Retrieves the 'vector_store_ids' property from a <see cref="RecordDataValue"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="RecordDataValue"/></param>
+    internal static IList<AIContent> GetHostedVectorStoreContents(this RecordDataValue tool)
+    {
+        Throw.IfNull(tool);
+
+        var vectorStoreIds = tool.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("vector_store_ids"))?.Values;
+        if (vectorStoreIds is null)
+        {
+            return Array.Empty<HostedVectorStoreContent>();
+        }
+
+        return ((IEnumerable<RecordDataValue>)vectorStoreIds)
+            .Select(vsi => vsi.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("Value"))?.Value)
+            .Where(vsi => !string.IsNullOrWhiteSpace(vsi))
+            .Select(vsi => (AIContent)new HostedVectorStoreContent(vsi!))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Retrieves the 'require_approval' property from a <see cref="RecordDataValue"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="RecordDataValue"/></param>
+    internal static HostedMcpServerToolApprovalMode GetHostedMcpServerToolApprovalMode(this RecordDataValue tool)
+    {
+        Throw.IfNull(tool);
+
+        var requireApproval = tool.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("require_approval"))?.Value;
+        return requireApproval?.ToUpperInvariant() switch
+        {
+            "ALWAYS" => HostedMcpServerToolApprovalMode.AlwaysRequire,
+            "NEVER" => tool.GetHostedMcpServerToolRequireSpecificApprovalMode(),
+            _ => throw new ArgumentOutOfRangeException(nameof(tool), $"Unknown value for require_approval: {requireApproval}"),
+        };
+    }
+
+    /// <summary>
+    /// Retrieves the 'allowed_tools' property from a <see cref="RecordDataValue"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="RecordDataValue"/></param>
+    internal static HostedMcpServerToolApprovalMode GetHostedMcpServerToolRequireSpecificApprovalMode(this RecordDataValue tool)
+    {
+        Throw.IfNull(tool);
+
+        var allowedTools = tool.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("allowed_tools"))?.Values;
+        if (allowedTools is null)
+        {
+            return HostedMcpServerToolApprovalMode.NeverRequire;
+        }
+
+        var tools = ((IEnumerable<RecordDataValue>)allowedTools)
+            .Select(vsi => vsi.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("Value"))?.Value)
+            .Where(vsi => !string.IsNullOrWhiteSpace(vsi))
+            .Select(vsi => vsi!)
+            .ToList();
+
+        return HostedMcpServerToolApprovalMode.RequireSpecific(null, tools);
+    }
+
+    /// <summary>
+    /// Retrieves the 'headers' property from a <see cref="RecordDataValue"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="RecordDataValue"/></param>
+    internal static IDictionary<string, string>? GetHeaders(this RecordDataValue tool)
+    {
+        Throw.IfNull(tool);
+
+        var headers = tool.GetPropertyOrNull<RecordDataValue>(InitializablePropertyPath.Create("headers"));
+        if (headers is null)
+        {
+            return null;
+        }
+
+        return headers.Properties.ToDictionary(
+            kvp => kvp.Key,
+            kvp => kvp.Value?.ToString() ?? string.Empty
+        );
     }
 
     #region private
