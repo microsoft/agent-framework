@@ -2,12 +2,15 @@
 
 import contextlib
 import functools
+import importlib
 import inspect
+import logging
 import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from textwrap import shorten
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, get_args, get_origin, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, Union, cast, get_args, get_origin, overload
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -17,6 +20,7 @@ from pydantic import Field
 from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
 from agent_framework._pydantic import AFBaseModel
 
+from ._checkpoint import WorkflowCheckpoint
 from ._events import (
     AgentRunEvent,
     AgentRunUpdateEvent,
@@ -25,10 +29,38 @@ from ._events import (
     RequestInfoEvent,
     _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
 )
+from ._runner_context import _decode_checkpoint_value
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
+logger = logging.getLogger(__name__)
+
 # region Executor
+
+
+@dataclass
+class PendingRequestDetails:
+    """Lightweight information about a pending request captured in a checkpoint."""
+
+    request_id: str
+    prompt: str | None = None
+    draft: str | None = None
+    iteration: int | None = None
+    source_executor_id: str | None = None
+    original_request: "RequestInfoMessage | dict[str, Any] | None" = None
+
+
+@dataclass
+class WorkflowCheckpointSummary:
+    """Human-readable summary of a workflow checkpoint."""
+
+    checkpoint_id: str
+    iteration_count: int
+    targets: list[str]
+    executor_states: list[str]
+    status: str
+    draft_preview: str | None
+    pending_requests: list[PendingRequestDetails]
 
 
 class Executor(AFBaseModel):
@@ -37,23 +69,23 @@ class Executor(AFBaseModel):
     # Provide a default so static analyzers (e.g., pyright) don't require passing `id`.
     # Runtime still sets a concrete value in __init__.
     id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
+        ...,
         min_length=1,
         description="Unique identifier for the executor",
     )
     type_: str = Field(default="", alias="type", description="The type of executor, corresponding to the class name")
 
-    def __init__(self, id: str | None = None, **kwargs: Any) -> None:
+    def __init__(self, id: str, **kwargs: Any) -> None:
         """Initialize the executor with a unique identifier.
 
         Args:
-            id: A unique identifier for the executor. If None, a new ID will be generated
-                following the format <class_name>/<uuid>.
+            id: A unique identifier for the executor.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        executor_id = f"{self.__class__.__name__}/{uuid.uuid4()}" if id is None else id
+        if not id:
+            raise ValueError("Executor ID must be a non-empty string.")
 
-        kwargs.update({"id": executor_id})
+        kwargs.update({"id": id})
         if "type" not in kwargs and "type_" not in kwargs:
             kwargs["type_"] = self.__class__.__name__
 
@@ -677,17 +709,15 @@ class RequestInfoExecutor(Executor):
     a response is provided externally, it emits the response as a message.
     """
 
-    def __init__(self, id: str | None = None):
-        """Initialize the RequestInfoExecutor with an optional custom ID.
+    _PENDING_SHARED_STATE_KEY: ClassVar[str] = "_af_pending_request_info"
+
+    def __init__(self, id: str):
+        """Initialize the RequestInfoExecutor with a unique ID.
 
         Args:
-            id: Optional custom ID for this RequestInfoExecutor. If not provided,
-                a unique ID will be generated.
+            id: Unique ID for this RequestInfoExecutor.
         """
-        import uuid
-
-        executor_id = id or f"request_info_{uuid.uuid4().hex[:8]}"
-        super().__init__(id=executor_id)
+        super().__init__(id=id)
         self._request_events: dict[str, RequestInfoEvent] = {}
         self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
 
@@ -703,6 +733,7 @@ class RequestInfoExecutor(Executor):
             request_data=message,
         )
         self._request_events[message.request_id] = event
+        await self._record_pending_request_snapshot(message, source_executor_id, ctx)
         await ctx.add_event(event)
 
     @handler
@@ -748,10 +779,13 @@ class RequestInfoExecutor(Executor):
             response_data: The data returned in the response.
             ctx: The workflow context for sending the response.
         """
-        if request_id not in self._request_events:
+        event = self._request_events.get(request_id)
+        if event is None:
+            event = await self._rehydrate_request_event(request_id, ctx)
+        if event is None:
             raise ValueError(f"No request found with ID: {request_id}")
 
-        event = self._request_events.pop(request_id)
+        self._request_events.pop(request_id, None)
 
         # Check if this was a forwarded sub-workflow request
         if request_id in self._sub_workflow_contexts:
@@ -778,6 +812,472 @@ class RequestInfoExecutor(Executor):
             )
 
             await ctx.send_message(correlated_response, target_id=event.source_executor_id)
+
+        await self._clear_pending_request_snapshot(request_id, ctx)
+
+    async def _record_pending_request_snapshot(
+        self,
+        request: RequestInfoMessage,
+        source_executor_id: str,
+        ctx: WorkflowContext[Any],
+    ) -> None:
+        snapshot = self._build_request_snapshot(request, source_executor_id)
+
+        pending = await self._load_pending_request_state(ctx)
+        pending[request.request_id] = snapshot
+        await self._persist_pending_request_state(pending, ctx)
+
+    async def _clear_pending_request_snapshot(self, request_id: str, ctx: WorkflowContext[Any]) -> None:
+        pending = await self._load_pending_request_state(ctx)
+        if request_id not in pending:
+            return
+
+        pending.pop(request_id, None)
+        await self._persist_pending_request_state(pending, ctx)
+
+    async def _load_pending_request_state(self, ctx: WorkflowContext[Any]) -> dict[str, Any]:
+        try:
+            existing = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to read pending request state: {exc}")
+            return {}
+
+        if not isinstance(existing, dict) or existing is None:
+            if existing not in (None, {}):
+                logger.warning(
+                    f"RequestInfoExecutor {self.id} encountered non-dict pending state "
+                    f"({type(existing).__name__}); resetting."
+                )
+            return {}
+
+        return dict(existing)
+
+    async def _persist_pending_request_state(self, pending: dict[str, Any], ctx: WorkflowContext[Any]) -> None:
+        await self._safe_set_shared_state(ctx, pending)
+        await self._safe_set_runner_state(ctx, pending)
+
+    async def _safe_set_shared_state(self, ctx: WorkflowContext[Any], pending: dict[str, Any]) -> None:
+        try:
+            await ctx.set_shared_state(self._PENDING_SHARED_STATE_KEY, pending)
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to update shared pending state: {exc}")
+
+    async def _safe_set_runner_state(self, ctx: WorkflowContext[Any], pending: dict[str, Any]) -> None:
+        try:
+            await ctx.set_state({"pending_requests": pending})
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to update runner state with pending requests: {exc}")
+
+    def _build_request_snapshot(
+        self,
+        request: RequestInfoMessage,
+        source_executor_id: str,
+    ) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
+            "request_id": request.request_id,
+            "source_executor_id": source_executor_id,
+            "request_type": f"{type(request).__module__}:{type(request).__name__}",
+            "summary": repr(request),
+        }
+
+        details = self._serialise_request_details(request)
+        if details:
+            snapshot["details"] = details
+            for key in ("prompt", "draft", "iteration"):
+                if key in details and key not in snapshot:
+                    snapshot[key] = details[key]
+
+        return snapshot
+
+    def _serialise_request_details(self, request: RequestInfoMessage) -> dict[str, Any] | None:
+        if is_dataclass(request):
+            data = self._make_json_safe(asdict(request))
+            if isinstance(data, dict):
+                return cast(dict[str, Any], data)
+            return None
+
+        model_dump = getattr(request, "model_dump", None)
+        if callable(model_dump):
+            try:
+                dump = self._make_json_safe(model_dump(mode="json"))
+            except TypeError:
+                dump = self._make_json_safe(model_dump())
+            if isinstance(dump, dict):
+                return cast(dict[str, Any], dump)
+            return None
+
+        attrs = getattr(request, "__dict__", None)
+        if isinstance(attrs, dict):
+            cleaned = self._make_json_safe(attrs)
+            if isinstance(cleaned, dict):
+                return cast(dict[str, Any], cleaned)
+
+        return None
+
+    def _make_json_safe(self, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Mapping):
+            safe_dict: dict[str, Any] = {}
+            for key, val in value.items():
+                safe_dict[str(key)] = self._make_json_safe(val)
+            return safe_dict
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return [self._make_json_safe(item) for item in value]
+        return repr(value)
+
+    async def has_pending_request(self, request_id: str, ctx: WorkflowContext[Any]) -> bool:
+        if request_id in self._request_events or request_id in self._sub_workflow_contexts:
+            return True
+        snapshot = await self._get_pending_request_snapshot(request_id, ctx)
+        return snapshot is not None
+
+    async def _rehydrate_request_event(
+        self,
+        request_id: str,
+        ctx: WorkflowContext[Any],
+    ) -> RequestInfoEvent | None:
+        snapshot = await self._get_pending_request_snapshot(request_id, ctx)
+        if snapshot is None:
+            return None
+
+        source_executor_id = snapshot.get("source_executor_id")
+        if not isinstance(source_executor_id, str) or not source_executor_id:
+            return None
+
+        request = self._construct_request_from_snapshot(snapshot)
+        if request is None:
+            return None
+
+        event = RequestInfoEvent(
+            request_id=request_id,
+            source_executor_id=source_executor_id,
+            request_type=type(request),
+            request_data=request,
+        )
+        self._request_events[request_id] = event
+        return event
+
+    async def _get_pending_request_snapshot(self, request_id: str, ctx: WorkflowContext[Any]) -> dict[str, Any] | None:
+        pending = await self._collect_pending_request_snapshots(ctx)
+        snapshot = pending.get(request_id)
+        if snapshot is None:
+            return None
+        return snapshot
+
+    async def _collect_pending_request_snapshots(self, ctx: WorkflowContext[Any]) -> dict[str, dict[str, Any]]:
+        combined: dict[str, dict[str, Any]] = {}
+
+        try:
+            shared_pending = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to read shared pending state during rehydrate: {exc}")
+            shared_pending = None
+
+        if isinstance(shared_pending, dict):
+            for key, value in shared_pending.items():
+                if isinstance(key, str) and isinstance(value, dict):
+                    combined[key] = cast(dict[str, Any], value)
+
+        try:
+            state = await ctx.get_state()
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to read runner state during rehydrate: {exc}")
+            state = None
+
+        if isinstance(state, dict):
+            state_pending = state.get("pending_requests")
+            if isinstance(state_pending, dict):
+                for key, value in state_pending.items():
+                    if isinstance(key, str) and isinstance(value, dict) and key not in combined:
+                        combined[key] = cast(dict[str, Any], value)
+
+        return combined
+
+    def _construct_request_from_snapshot(self, snapshot: dict[str, Any]) -> RequestInfoMessage | None:
+        details_raw = snapshot.get("details")
+        details: dict[str, Any] = cast(dict[str, Any], details_raw) if isinstance(details_raw, dict) else {}
+
+        request_cls: type[RequestInfoMessage] = RequestInfoMessage
+        request_type_str = snapshot.get("request_type")
+        if isinstance(request_type_str, str) and ":" in request_type_str:
+            module_name, class_name = request_type_str.split(":", 1)
+            try:
+                module = importlib.import_module(module_name)
+                candidate = getattr(module, class_name)
+                if isinstance(candidate, type) and issubclass(candidate, RequestInfoMessage):
+                    request_cls = candidate
+            except Exception as exc:
+                logger.warning(f"RequestInfoExecutor {self.id} could not import {module_name}.{class_name}: {exc}")
+                request_cls = RequestInfoMessage
+
+        request: RequestInfoMessage | None = self._instantiate_request(request_cls, details)
+
+        if request is None and request_cls is not RequestInfoMessage:
+            request = self._instantiate_request(RequestInfoMessage, details)
+
+        if request is None:
+            logger.warning(
+                f"RequestInfoExecutor {self.id} could not reconstruct request "
+                f"{request_type_str or RequestInfoMessage.__name__} from snapshot keys {sorted(details.keys())}"
+            )
+            return None
+
+        for key, value in details.items():
+            if key == "request_id":
+                continue
+            try:
+                setattr(request, key, value)
+            except Exception as exc:
+                logger.debug(
+                    f"RequestInfoExecutor {self.id} could not set attribute {key} on {type(request).__name__}: {exc}"
+                )
+                continue
+
+        snapshot_request_id = snapshot.get("request_id")
+        if isinstance(snapshot_request_id, str) and snapshot_request_id:
+            try:
+                request.request_id = snapshot_request_id
+            except Exception as exc:
+                logger.debug(
+                    f"RequestInfoExecutor {self.id} could not apply snapshot "
+                    f"request_id to {type(request).__name__}: {exc}"
+                )
+
+        return request
+
+    def _instantiate_request(
+        self,
+        request_cls: type[RequestInfoMessage],
+        details: dict[str, Any],
+    ) -> RequestInfoMessage | None:
+        try:
+            model_validate = getattr(request_cls, "model_validate", None)
+            if callable(model_validate):
+                return cast(RequestInfoMessage, model_validate(details))
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                f"RequestInfoExecutor {self.id} validation failed for {request_cls.__name__} via model_validate: {exc}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"RequestInfoExecutor {self.id} encountered unexpected error during "
+                f"{request_cls.__name__}.model_validate: {exc}"
+            )
+
+        if is_dataclass(request_cls):
+            try:
+                field_names = {f.name for f in fields(request_cls)}
+                ctor_kwargs = {name: details[name] for name in field_names if name in details}
+                return request_cls(**ctor_kwargs)  # type: ignore[call-arg]
+            except (TypeError, ValueError) as exc:
+                logger.debug(
+                    f"RequestInfoExecutor {self.id} could not instantiate dataclass "
+                    f"{request_cls.__name__} with snapshot data: {exc}"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"RequestInfoExecutor {self.id} encountered unexpected error "
+                    f"constructing dataclass {request_cls.__name__}: {exc}"
+                )
+
+        try:
+            instance = request_cls()  # type: ignore[call-arg]
+        except Exception as exc:
+            logger.warning(
+                f"RequestInfoExecutor {self.id} could not instantiate {request_cls.__name__} without arguments: {exc}"
+            )
+            return None
+
+        for key, value in details.items():
+            if key == "request_id":
+                continue
+            try:
+                setattr(instance, key, value)
+            except Exception as exc:
+                logger.debug(
+                    f"RequestInfoExecutor {self.id} could not set attribute {key} on "
+                    f"{request_cls.__name__} during instantiation: {exc}"
+                )
+                continue
+
+        return instance
+
+    @staticmethod
+    def pending_requests_from_checkpoint(
+        checkpoint: WorkflowCheckpoint,
+        *,
+        request_executor_ids: Iterable[str] | None = None,
+    ) -> list[PendingRequestDetails]:
+        executor_filter: set[str] | None = None
+        if request_executor_ids is not None:
+            executor_filter = {str(value) for value in request_executor_ids}
+
+        pending: dict[str, PendingRequestDetails] = {}
+
+        shared_map = checkpoint.shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)
+        if isinstance(shared_map, Mapping):
+            for request_id, snapshot in shared_map.items():
+                RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
+
+        for state in checkpoint.executor_states.values():
+            if not isinstance(state, Mapping):
+                continue
+            inner = state.get("pending_requests")
+            if isinstance(inner, Mapping):
+                for request_id, snapshot in inner.items():
+                    RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
+
+        for source_id, message_list in checkpoint.messages.items():
+            if executor_filter is not None and source_id not in executor_filter:
+                continue
+            if not isinstance(message_list, list):
+                continue
+            for message in message_list:
+                if not isinstance(message, Mapping):
+                    continue
+                payload = _decode_checkpoint_value(message.get("data"))
+                RequestInfoExecutor._merge_message_payload(pending, payload, message)
+
+        return list(pending.values())
+
+    @staticmethod
+    def checkpoint_summary(
+        checkpoint: WorkflowCheckpoint,
+        *,
+        request_executor_ids: Iterable[str] | None = None,
+        preview_width: int = 70,
+    ) -> WorkflowCheckpointSummary:
+        targets = sorted(checkpoint.messages.keys())
+        executor_states = sorted(checkpoint.executor_states.keys())
+        pending = RequestInfoExecutor.pending_requests_from_checkpoint(
+            checkpoint, request_executor_ids=request_executor_ids
+        )
+
+        draft_preview: str | None = None
+        for entry in pending:
+            if entry.draft:
+                draft_preview = shorten(entry.draft, width=preview_width, placeholder="…")
+                break
+
+        status = "idle"
+        if pending:
+            status = "awaiting human response"
+        elif not checkpoint.messages and "finalise" in executor_states:
+            status = "completed"
+        elif checkpoint.messages:
+            status = "awaiting next superstep"
+        elif request_executor_ids is not None and any(tid in targets for tid in request_executor_ids):
+            status = "awaiting request delivery"
+
+        return WorkflowCheckpointSummary(
+            checkpoint_id=checkpoint.checkpoint_id,
+            iteration_count=checkpoint.iteration_count,
+            targets=targets,
+            executor_states=executor_states,
+            status=status,
+            draft_preview=draft_preview,
+            pending_requests=pending,
+        )
+
+    @staticmethod
+    def _merge_snapshot(
+        pending: dict[str, PendingRequestDetails],
+        request_id: str,
+        snapshot: Any,
+    ) -> None:
+        if not request_id or not isinstance(snapshot, Mapping):
+            return
+
+        details = pending.setdefault(request_id, PendingRequestDetails(request_id=request_id))
+
+        RequestInfoExecutor._apply_update(
+            details,
+            prompt=snapshot.get("prompt"),
+            draft=snapshot.get("draft"),
+            iteration=snapshot.get("iteration"),
+            source_executor_id=snapshot.get("source_executor_id"),
+        )
+
+        extra = snapshot.get("details")
+        if isinstance(extra, Mapping):
+            RequestInfoExecutor._apply_update(
+                details,
+                prompt=extra.get("prompt"),
+                draft=extra.get("draft"),
+                iteration=extra.get("iteration"),
+            )
+
+    @staticmethod
+    def _merge_message_payload(
+        pending: dict[str, PendingRequestDetails],
+        payload: Any,
+        raw_message: Mapping[str, Any],
+    ) -> None:
+        if isinstance(payload, RequestResponse):
+            request_id = payload.request_id or RequestInfoExecutor._get_field(payload.original_request, "request_id")
+            if not request_id:
+                return
+            details = pending.setdefault(request_id, PendingRequestDetails(request_id=request_id))
+            RequestInfoExecutor._apply_update(
+                details,
+                prompt=RequestInfoExecutor._get_field(payload.original_request, "prompt"),
+                draft=RequestInfoExecutor._get_field(payload.original_request, "draft"),
+                iteration=RequestInfoExecutor._get_field(payload.original_request, "iteration"),
+                source_executor_id=raw_message.get("source_id"),
+                original_request=payload.original_request,
+            )
+        elif isinstance(payload, RequestInfoMessage):
+            request_id = getattr(payload, "request_id", None)
+            if not request_id:
+                return
+            details = pending.setdefault(request_id, PendingRequestDetails(request_id=request_id))
+            RequestInfoExecutor._apply_update(
+                details,
+                prompt=getattr(payload, "prompt", None),
+                draft=getattr(payload, "draft", None),
+                iteration=getattr(payload, "iteration", None),
+                source_executor_id=raw_message.get("source_id"),
+                original_request=payload,
+            )
+
+    @staticmethod
+    def _apply_update(
+        details: PendingRequestDetails,
+        *,
+        prompt: Any = None,
+        draft: Any = None,
+        iteration: Any = None,
+        source_executor_id: Any = None,
+        original_request: Any = None,
+    ) -> None:
+        if prompt and not details.prompt:
+            details.prompt = str(prompt)
+        if draft and not details.draft:
+            details.draft = str(draft)
+        if iteration is not None and details.iteration is None:
+            coerced = RequestInfoExecutor._coerce_int(iteration)
+            if coerced is not None:
+                details.iteration = coerced
+        if source_executor_id and not details.source_executor_id:
+            details.source_executor_id = str(source_executor_id)
+        if original_request is not None and details.original_request is None:
+            details.original_request = original_request
+
+    @staticmethod
+    def _get_field(obj: Any, key: str) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, Mapping):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 # endregion: Request Info Executor
@@ -840,7 +1340,11 @@ class AgentExecutor(Executor):
             exec_id = id
         else:
             agent_name = agent.name
-            exec_id = str(agent_name) if agent_name else f"executor_{uuid.uuid4()}"
+            if agent_name:
+                exec_id = str(agent_name)
+            else:
+                logger.warning("Agent has no name, using fallback ID 'executor_unnamed'")
+                exec_id = "executor_unnamed"
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
@@ -952,12 +1456,12 @@ class WorkflowExecutor(Executor):
 
     workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
 
-    def __init__(self, workflow: "Workflow", id: str | None = None, **kwargs: Any):
+    def __init__(self, workflow: "Workflow", id: str, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
             workflow: The workflow to execute as a sub-workflow.
-            id: Optional unique identifier for this executor.
+            id: Unique identifier for this executor.
             **kwargs: Additional keyword arguments passed to the parent constructor.
         """
         kwargs.update({"workflow": workflow})

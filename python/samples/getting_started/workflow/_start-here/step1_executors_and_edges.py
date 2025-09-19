@@ -50,7 +50,7 @@ Prerequisites
 # - Compute a result
 # - Forward that result to downstream node(s) using ctx.send_message(result)
 class UpperCase(Executor):
-    def __init__(self, id: str | None = None):
+    def __init__(self, id: str):
         super().__init__(id=id)
 
     @handler
