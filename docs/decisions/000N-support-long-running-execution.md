@@ -1246,9 +1246,9 @@ if(response.Status is {} status)
 
 **Con:** Duplicated property `ConversationId`.
 
-##### 6.1.3 Continuation Token
+##### 6.1.3 Continuation Token of System.ClientModel.ContinuationToken Type
 
-This option suggests using `ContinuationToken` to encapsulate all properties required for long-running operations.
+This option suggests using `System.ClientModel.ContinuationToken` to encapsulate all properties required for long-running operations.
 The continuation token will be returned by chat clients as part of the `ChatResponse` and `ChatResponseUpdate` responses to indicate that
 the response is part of a long-running execution. A null value of the property will indicate that the response is not part of a long-running execution.
 Chat clients will accept a non-null value of the property to indicate that callers want to get the status and result of an existing long-running execution.
@@ -1322,6 +1322,41 @@ Console.WriteLine(response.Text);
 ```
 
 **Pro:** No proliferation of long-running operation properties in the `ChatOptions` class, including the `Status` property.
+
+##### 6.1.4 Continuation Token of String Type
+
+This options is similar to the previous one but suggests using a string type for the continuation token instead of the `System.ClientModel.ContinuationToken` type.
+
+```csharp
+internal sealed class LongRunContinuationToken
+{
+    public LongRunContinuationToken(string responseId)
+    {
+        this.ResponseId = responseId;
+    }
+
+    public string ResponseId { get; set; }
+
+    public int? SequenceNumber { get; set; }
+
+    public static LongRunContinuationToken Deserialize(string json)
+    {
+        Throw.IfNullOrEmpty(json);
+
+        var token = JsonSerializer.Deserialize<LongRunContinuationToken>(json, OpenAIJsonContext2.Default.LongRunContinuationToken)
+            ?? throw new InvalidOperationException("Failed to deserialize LongRunContinuationToken.");
+
+        return token;
+    }
+
+    public string Serialize()
+    {
+        return JsonSerializer.Serialize(this, OpenAIJsonContext2.Default.LongRunContinuationToken);
+    }
+}
+```
+
+**Pro:** No dependency on the `System.ClientModel` package.
 
 #### 6.2 Overloads of GetResponseAsync and GetStreamingResponseAsync
 
@@ -1582,8 +1617,9 @@ can be configured to always use long-running execution mode.
    - Start, update, get status, and get result of long-running operations will be handled by the existing `Get{Streaming}ResponseAsync` methods of the `IChatClient`.
    - Cancellation of long-running operations will be handled by a new `CancelResponseAsync` method of a new `ICancelableChatClient` interface.
    - Deletion is skipped for now and can be implemented later if needed, following the same approach as cancellation.
- - Option "**3.2: One Method to Get Status and Result" is selected.
+ - Option "**3.2: One Method to Get Status and Result**" is selected.
  - Option "**4.2. As Properties Of ChatResponse**" is selected.
+ - Option "**6.1.4 Continuation Token of String Type**" is selected.
 
 ### Long-Running Operations Support for AF Agents
 TBD
