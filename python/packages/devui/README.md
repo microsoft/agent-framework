@@ -3,7 +3,7 @@
 A lightweight, standalone sample app interface for running entities (agents/workflows) in the Microsoft Agent Framework supporting both **directory-based discovery** and **in-memory entity registration**.
 
 > [!IMPORTANT]
-> This is simply a **sample app** to help you get started with the Agent Framework. It is **not** intended for production use. For production, you should build your own custom interface and API server using the Agent Framework SDK.
+> DevUI is a **sample app** to help you get started with the Agent Framework. It is **not** intended for production use. For production, or for features beyond what is provided in this sample app, it is recommended that you build your own custom interface and API server using the Agent Framework SDK.
 
 ![DevUI Screenshot](./docs/devuiscreen.png)
 
@@ -113,8 +113,14 @@ Options:
 ## Key Endpoints
 
 - `GET /v1/entities` - List discovered agents/workflows
-- `POST /v1/responses` - Execute agent/workflow
+- `GET /v1/entities/{entity_id}/info` - Get detailed entity information
+- `POST /v1/responses` - Execute agent/workflow (streaming or sync)
 - `GET /health` - Health check
+- `POST /v1/threads` - Create thread for agent (optional)
+- `GET /v1/threads?agent_id={id}` - List threads for agent
+- `GET /v1/threads/{thread_id}` - Get thread info
+- `DELETE /v1/threads/{thread_id}` - Delete thread
+- `GET /v1/threads/{thread_id}/messages` - Get thread messages
 
 ## Implementation
 
