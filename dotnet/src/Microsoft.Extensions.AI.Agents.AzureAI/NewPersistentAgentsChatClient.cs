@@ -133,7 +133,6 @@ namespace Azure.AI.Agents.Persistent
                 {
                     // There was an active run; we need to cancel it before starting a new run.
                     await _client!.Runs.CancelRunAsync(threadId, threadRun.Id, cancellationToken).ConfigureAwait(false);
-                    threadRun = null;
                 }
 
                 // Now create a new run and stream the results.
@@ -319,7 +318,7 @@ namespace Azure.AI.Agents.Persistent
                     // But if they haven't, the only way we can provide our tools is via an override, whereas we'd really like to
                     // just add them. To handle that, we'll get all of the agent's tools and add them to the override list
                     // along with our tools.
-                    if (runOptions.OverrideTools is null || !runOptions.OverrideTools.Any())
+                    if (runOptions.OverrideTools?.Any() is not true)
                     {
                         toolDefinitions.AddRange(_agent.Tools);
                     }
@@ -452,7 +451,7 @@ namespace Azure.AI.Agents.Persistent
                             runOptions.ResponseFormat = BinaryData.FromString("""{ "type": "json_object" }""");
                         }
                     }
-                    else if (options.ResponseFormat is ChatResponseFormatText textFormat)
+                    else if (options.ResponseFormat is ChatResponseFormatText)
                     {
                         runOptions.ResponseFormat = BinaryData.FromString("""{ "type": "text" }""");
                     }
@@ -707,7 +706,7 @@ namespace Azure.AI.Agents.Persistent
 
         public static void AssertNull<T>(T value, string name, string? message = null)
         {
-            if (value != null)
+            if (value is not null)
             {
                 throw new ArgumentException(message ?? "Value must be null.", name);
             }

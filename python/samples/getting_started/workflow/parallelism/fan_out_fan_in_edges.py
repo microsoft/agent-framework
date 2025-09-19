@@ -4,19 +4,20 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import ChatMessage, Role  # Core chat primitives to build LLM requests
-from agent_framework.azure import AzureChatClient  # Client wrapper for Azure OpenAI chat models
-from agent_framework.workflow import (
+from agent_framework import (  # Core chat primitives to build LLM requests
     AgentExecutor,  # Wraps an LLM agent for use inside a workflow
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # The structured result returned by an AgentExecutor
     AgentRunEvent,  # Tracing event for agent execution steps
+    ChatMessage,  # Chat message structure
     Executor,  # Base class for custom Python executors
+    Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
     WorkflowCompletedEvent,  # Terminal event carrying the final result
     WorkflowContext,  # Per run context and event bus
     handler,  # Decorator to mark an Executor method as invokable
 )
+from agent_framework.azure import AzureChatClient  # Client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 
 """
@@ -42,7 +43,7 @@ class DispatchToExperts(Executor):
     """Dispatches the incoming prompt to all expert agent executors for parallel processing (fan out)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "dispatch_to_experts")
         self._expert_ids = expert_ids
 
     @handler
@@ -70,7 +71,7 @@ class AggregateInsights(Executor):
     """Aggregates expert agent responses into a single consolidated result (fan in)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "aggregate_insights")
         self._expert_ids = expert_ids
 
     @handler

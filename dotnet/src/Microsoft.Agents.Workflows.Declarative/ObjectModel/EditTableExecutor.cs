@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
@@ -13,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class EditTableExecutor(EditTable model, DeclarativeWorkflowState state) : DeclarativeActionExecutor<EditTable>(model, state)
+internal sealed class EditTableExecutor(EditTable model, WorkflowFormulaState state) : DeclarativeActionExecutor<EditTable>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -22,7 +23,7 @@ internal sealed class EditTableExecutor(EditTable model, DeclarativeWorkflowStat
         FormulaValue table = this.State.Get(variablePath);
         if (table is not TableValue tableValue)
         {
-            throw this.Exception($"Require '{variablePath.Format()}' to be a table, not: '{table.GetType().Name}'.");
+            throw this.Exception($"Require '{variablePath}' to be a table, not: '{table.GetType().Name}'.");
         }
 
         TableChangeType changeType = this.Model.ChangeType.Value;
@@ -30,14 +31,14 @@ internal sealed class EditTableExecutor(EditTable model, DeclarativeWorkflowStat
         {
             case TableChangeType.Add:
                 ValueExpression addItemValue = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
-                EvaluationResult<DataValue> addResult = this.State.ExpressionEngine.GetValue(addItemValue);
+                EvaluationResult<DataValue> addResult = this.State.Evaluator.GetValue(addItemValue);
                 RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), addResult.Value.ToFormula());
                 await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
                 await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
                 break;
             case TableChangeType.Remove:
                 ValueExpression removeItemValue = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
-                EvaluationResult<DataValue> removeResult = this.State.ExpressionEngine.GetValue(removeItemValue);
+                EvaluationResult<DataValue> removeResult = this.State.Evaluator.GetValue(removeItemValue);
                 if (removeResult.Value is TableDataValue removeItemTable)
                 {
                     await tableValue.RemoveAsync(removeItemTable?.Values.Select(row => row.ToRecordValue()), all: true, cancellationToken).ConfigureAwait(false);

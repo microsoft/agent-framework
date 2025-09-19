@@ -29,11 +29,9 @@ public class HandoffsTests
     }
 
     [Fact]
-    public void StartWith_NullAgent_ThrowsArgumentNullException()
-    {
+    public void StartWith_NullAgent_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>("initialAgent", () => Handoffs.StartWith(null!));
-    }
 
     [Fact]
     public void Add_ValidSourceAndTargets_AddsHandoffRelationships()
@@ -80,7 +78,7 @@ public class HandoffsTests
         var handoffs = Handoffs.StartWith(sourceAgent);
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>("targets", () => handoffs.Add(sourceAgent, (AIAgent[])null!));
+        Assert.Throws<ArgumentNullException>("targets", () => handoffs.Add(sourceAgent, null!));
     }
 
     [Fact]
@@ -90,17 +88,17 @@ public class HandoffsTests
         var sourceAgent = CreateAgent("source", "Source agent");
         var targetAgent = CreateAgent("target", "Target agent");
         var handoffs = Handoffs.StartWith(sourceAgent);
-        var customReason = "Custom handoff reason";
+        const string CustomReason = "Custom handoff reason";
 
         // Act
-        var result = handoffs.Add(sourceAgent, targetAgent, customReason);
+        var result = handoffs.Add(sourceAgent, targetAgent, CustomReason);
 
         // Assert
         Assert.Same(handoffs, result);
         Assert.True(handoffs.Targets.ContainsKey(sourceAgent));
         var target = handoffs.Targets[sourceAgent].Single();
         Assert.Equal(targetAgent, target.Target);
-        Assert.Equal(customReason, target.Reason);
+        Assert.Equal(CustomReason, target.Reason);
     }
 
     [Fact]
@@ -122,7 +120,7 @@ public class HandoffsTests
         var handoffs = Handoffs.StartWith(sourceAgent);
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>("target", () => handoffs.Add(sourceAgent, (AIAgent)null!, "reason"));
+        Assert.Throws<ArgumentNullException>("target", () => handoffs.Add(sourceAgent, null!, "reason"));
     }
 
     [Fact]
@@ -159,15 +157,15 @@ public class HandoffsTests
         // Arrange
         var agent = CreateAgent("agent1", "Test agent");
         var handoffs = Handoffs.StartWith(agent);
-        var orchestrationName = "Test Orchestration";
+        const string OrchestrationName = "Test Orchestration";
 
         // Act
-        var orchestration = handoffs.Build(orchestrationName);
+        var orchestration = handoffs.Build(OrchestrationName);
 
         // Assert
         Assert.NotNull(orchestration);
         Assert.IsType<HandoffOrchestration>(orchestration);
-        Assert.Equal(orchestrationName, orchestration.Name);
+        Assert.Equal(OrchestrationName, orchestration.Name);
     }
 
     [Fact]
@@ -196,9 +194,9 @@ public class HandoffsTests
         var sourceAgent1 = CreateAgent("source1", "Source agent 1");
         var sourceAgent2 = CreateAgent("source2", "Source agent 2");
         var targetAgent = CreateAgent("target", "Target agent");
-        var handoffs = Handoffs.StartWith(sourceAgent1);
-        handoffs.Add(sourceAgent1, targetAgent);
-        handoffs.Add(sourceAgent2, targetAgent);
+        var handoffs = Handoffs.StartWith(sourceAgent1)
+            .Add(sourceAgent1, targetAgent)
+            .Add(sourceAgent2, targetAgent);
         var readOnlyDict = (IReadOnlyDictionary<AIAgent, IEnumerable<Handoffs.HandoffTarget>>)handoffs;
 
         // Act
@@ -236,9 +234,9 @@ public class HandoffsTests
         var sourceAgent1 = CreateAgent("source1", "Source agent 1");
         var sourceAgent2 = CreateAgent("source2", "Source agent 2");
         var targetAgent = CreateAgent("target", "Target agent");
-        var handoffs = Handoffs.StartWith(sourceAgent1);
-        handoffs.Add(sourceAgent1, targetAgent);
-        handoffs.Add(sourceAgent2, targetAgent);
+        var handoffs = Handoffs.StartWith(sourceAgent1)
+            .Add(sourceAgent1, targetAgent)
+            .Add(sourceAgent2, targetAgent);
         var readOnlyCollection = (IReadOnlyCollection<KeyValuePair<AIAgent, IEnumerable<Handoffs.HandoffTarget>>>)handoffs;
 
         // Act
@@ -383,22 +381,20 @@ public class HandoffsTests
     {
         // Arrange
         var agent = CreateAgent("agent1", "Test agent");
-        var reason = "Custom reason";
+        const string Reason = "Custom reason";
 
         // Act
-        var target = new Handoffs.HandoffTarget(agent, reason);
+        var target = new Handoffs.HandoffTarget(agent, Reason);
 
         // Assert
         Assert.Equal(agent, target.Target);
-        Assert.Equal(reason, target.Reason);
+        Assert.Equal(Reason, target.Reason);
     }
 
     [Fact]
-    public void HandoffTarget_Constructor_WithNullTarget_ThrowsArgumentNullException()
-    {
+    public void HandoffTarget_Constructor_WithNullTarget_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new Handoffs.HandoffTarget(null!));
-    }
 
     [Fact]
     public void HandoffTarget_Constructor_WithAgentWithoutDescriptionOrName_ThrowsInvalidOperationException()
@@ -604,7 +600,6 @@ public class HandoffsTests
                 Name = name,
                 Description = description,
             };
-        ChatClientAgent mockAgent = new(mockClient.Object, options);
-        return mockAgent;
+        return new(mockClient.Object, options);
     }
 }

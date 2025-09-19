@@ -73,6 +73,9 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 10
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
 # region Helpers
 
+ArgsT = TypeVar("ArgsT", bound=BaseModel)
+ReturnT = TypeVar("ReturnT")
+
 
 def _parse_inputs(
     inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None",
@@ -121,13 +124,10 @@ def _parse_inputs(
 class ToolProtocol(Protocol):
     """Represents a generic tool that can be specified to an AI service.
 
-    Attributes:
+    Parameters:
         name: The name of the tool.
         description: A description of the tool.
         additional_properties: Additional properties associated with the tool.
-
-    Methods:
-        parameters: The parameters accepted by the tool, in a json schema format.
     """
 
     name: str
@@ -140,10 +140,6 @@ class ToolProtocol(Protocol):
     def __str__(self) -> str:
         """Return a string representation of the tool."""
         ...
-
-
-ArgsT = TypeVar("ArgsT", bound=BaseModel)
-ReturnT = TypeVar("ReturnT")
 
 
 class BaseTool(AFBaseModel):
@@ -516,11 +512,20 @@ def ai_function(
     In order to add descriptions to parameters, in your function signature,
     use the `Annotated` type from `typing` and the `Field` class from `pydantic`:
 
-            from typing import Annotated
+    Example:
 
+        .. code-block:: python
+
+            from typing import Annotated
             from pydantic import Field
 
-            <field_name>: Annotated[<type>, Field(description="<description>")]
+
+            def ai_function_example(
+                arg1: Annotated[str, Field(description="The first argument")],
+                arg2: Annotated[int, Field(description="The second argument")],
+            ) -> str:
+                # An example function that takes two arguments and returns a string.
+                return f"arg1: {arg1}, arg2: {arg2}"
 
     Args:
         func: The function to wrap. If None, returns a decorator.
@@ -571,6 +576,7 @@ async def _auto_invoke_function(
     tool_map: dict[str, AIFunction[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
+    middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
 ) -> "Contents":
     """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
     from ._types import FunctionResultContent
@@ -585,14 +591,43 @@ async def _auto_invoke_function(
     merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
     args = tool.input_model.model_validate(merged_args)
     exception = None
-    try:
-        function_result = await tool.invoke(
+
+    # Execute through middleware pipeline if available
+    if middleware_pipeline and hasattr(middleware_pipeline, "has_middlewares") and middleware_pipeline.has_middlewares:
+        from ._middleware import FunctionInvocationContext
+
+        middleware_context = FunctionInvocationContext(
+            function=tool,
             arguments=args,
-            tool_call_id=function_call_content.call_id,
-        )  # type: ignore[arg-type]
-    except Exception as ex:
-        exception = ex
-        function_result = None
+        )
+
+        async def final_function_handler(context_obj: Any) -> Any:
+            return await tool.invoke(
+                arguments=context_obj.arguments,
+                tool_call_id=function_call_content.call_id,
+            )
+
+        try:
+            function_result = await middleware_pipeline.execute(
+                function=tool,
+                arguments=args,
+                context=middleware_context,
+                final_handler=final_function_handler,
+            )
+        except Exception as ex:
+            exception = ex
+            function_result = None
+    else:
+        # No middleware - execute directly
+        try:
+            function_result = await tool.invoke(
+                arguments=args,
+                tool_call_id=function_call_content.call_id,
+            )  # type: ignore[arg-type]
+        except Exception as ex:
+            exception = ex
+            function_result = None
+
     return FunctionResultContent(
         call_id=function_call_content.call_id,
         exception=exception,
@@ -626,6 +661,7 @@ async def execute_function_calls(
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
     | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
 ) -> list["Contents"]:
     tool_map = _get_tool_map(tools)
     # Run all function calls concurrently
@@ -636,6 +672,7 @@ async def execute_function_calls(
             tool_map=tool_map,
             sequence_index=seq_idx,
             request_index=attempt_idx,
+            middleware_pipeline=middleware_pipeline,
         )
         for seq_idx, function_call in enumerate(function_calls)
     ])
@@ -701,11 +738,14 @@ def _handle_function_calls_response(
                 if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
                     tools = chat_options.tools
                 if function_calls and tools:
+                    # Extract function middleware pipeline from kwargs if available
+                    middleware_pipeline = kwargs.get("_function_middleware_pipeline")
                     function_results = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
+                        middleware_pipeline=middleware_pipeline,
                     )
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_results)  # type: ignore[call-overload]
@@ -810,11 +850,14 @@ def _handle_function_calls_streaming_response(
                     tools = chat_options.tools
 
                 if function_calls and tools:
+                    # Extract function middleware pipeline from kwargs if available
+                    middleware_pipeline = kwargs.get("_function_middleware_pipeline")
                     function_results = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
                         tools=tools,  # type: ignore[reportArgumentType]
+                        middleware_pipeline=middleware_pipeline,
                     )
                     function_result_msg = ChatMessage(role="tool", contents=function_results)
                     yield ChatResponseUpdate(contents=function_results, role="tool")

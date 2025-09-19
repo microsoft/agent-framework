@@ -8,6 +8,7 @@ using System.Dynamic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
@@ -24,6 +25,7 @@ internal static class FormulaValueExtensions
         value switch
         {
             null => FormulaValue.NewBlank(),
+            UnassignedValue => FormulaValue.NewBlank(),
             FormulaValue formulaValue => formulaValue,
             bool booleanValue => FormulaValue.New(booleanValue),
             int decimalValue => FormulaValue.New(decimalValue),
@@ -69,8 +71,8 @@ internal static class FormulaValueExtensions
             DateTimeValue datetimeValue => DateTimeDataValue.Create(datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)),
             TimeValue timeValue => TimeDataValue.Create(timeValue.Value),
             StringValue stringValue => StringDataValue.Create(stringValue.Value),
-            BlankValue blankValue => DataValue.Blank(),
-            VoidValue voidValue => DataValue.Blank(),
+            BlankValue => DataValue.Blank(),
+            VoidValue => DataValue.Blank(),
             RecordValue recordValue => recordValue.ToRecord(),
             TableValue tableValue => tableValue.ToTable(),
             _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
@@ -139,10 +141,10 @@ internal static class FormulaValueExtensions
         };
 
     public static TableDataValue ToTable(this TableValue value) =>
-        TableDataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToRecord()).ToImmutableArray());
+        DataValue.TableFromRecords(value.Rows.Select(row => row.Value.ToRecord()).ToImmutableArray());
 
     public static RecordDataValue ToRecord(this RecordValue value) =>
-        RecordDataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()).ToImmutableArray());
+        DataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()));
 
     private static RecordValue ToRecord(this IDictionary value)
     {
@@ -227,7 +229,7 @@ internal static class FormulaValueExtensions
             GuidValue guidValue => JsonValue.Create(guidValue.Value),
             RecordValue recordValue => recordValue.ToJson(),
             TableValue tableValue => tableValue.ToJson(),
-            BlankValue blankValue => JsonValue.Create(string.Empty),
+            BlankValue => JsonValue.Create(string.Empty),
             _ => $"[{value.GetType().Name}]",
         };
 

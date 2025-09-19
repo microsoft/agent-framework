@@ -6,13 +6,14 @@ using Microsoft.Agents.Workflows.Declarative.Entities;
 using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class QuestionExecutor(Question model, DeclarativeWorkflowState state) :
+internal sealed class QuestionExecutor(Question model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<Question>(model, state)
 {
     public static class Steps
@@ -40,16 +41,16 @@ internal sealed class QuestionExecutor(Question model, DeclarativeWorkflowState 
 
         InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
         bool hasValue = this.State.Get(variable.Path) is BlankValue;
-        bool alwaysPrompt = this.State.ExpressionEngine.GetValue(this.Model.AlwaysPrompt).Value;
+        bool alwaysPrompt = this.State.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
 
         bool proceed = !alwaysPrompt || hasValue;
         if (proceed)
         {
-            SkipQuestionMode mode = this.State.ExpressionEngine.GetValue(this.Model.SkipQuestionMode).Value;
+            SkipQuestionMode mode = this.State.Evaluator.GetValue(this.Model.SkipQuestionMode).Value;
             proceed =
                 mode switch
                 {
-                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => !(await this._hasExecuted.ReadAsync(context).ConfigureAwait(false)),
+                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => !await this._hasExecuted.ReadAsync(context).ConfigureAwait(false),
                     SkipQuestionMode.AlwaysSkipIfVariableHasValue => hasValue,
                     SkipQuestionMode.AlwaysAsk => true,
                     _ => true,
@@ -117,12 +118,13 @@ internal sealed class QuestionExecutor(Question model, DeclarativeWorkflowState 
 
     private async ValueTask PromptAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        long repeatCount = this.State.ExpressionEngine.GetValue(this.Model.RepeatCount).Value;
+        long repeatCount = this.State.Evaluator.GetValue(this.Model.RepeatCount).Value;
         int actualCount = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         if (actualCount >= repeatCount)
         {
             ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
-            DataValue defaultValue = this.State.ExpressionEngine.GetValue(defaultValueExpression).Value;
+            DataValue defaultValue = this.State.Evaluator.GetValue(defaultValueExpression).Value;
+            await this.AssignAsync(this.Model.Variable?.Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim())).ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
@@ -140,6 +142,6 @@ internal sealed class QuestionExecutor(Question model, DeclarativeWorkflowState 
             return string.Empty;
         }
 
-        return this.State.Format(messageActivity.Text).Trim();
+        return this.State.Engine.Format(messageActivity.Text).Trim();
     }
 }

@@ -10,13 +10,13 @@ using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.Reflection;
 
-internal struct MessageHandlerInfo
+internal readonly struct MessageHandlerInfo
 {
     public Type InType { get; init; }
-    public Type? OutType { get; init; } = null;
+    public Type? OutType { get; init; }
 
     public MethodInfo HandlerInfo { get; init; }
-    public Func<object, ValueTask<object?>>? Unwrapper { get; init; } = null;
+    public Func<object, ValueTask<object?>>? Unwrapper { get; init; }
 
     public MessageHandlerInfo(MethodInfo handlerInfo)
     {
@@ -67,7 +67,7 @@ internal struct MessageHandlerInfo
 
         async ValueTask<CallResult> InvokeHandlerAsync(object message, IWorkflowContext workflowContext)
         {
-            bool expectingVoid = resultType == null || resultType == typeof(void);
+            bool expectingVoid = resultType is null || resultType == typeof(void);
 
             try
             {
@@ -86,14 +86,14 @@ internal struct MessageHandlerInfo
                         $"{maybeValueTask?.GetType().Name ?? "null"}.");
                 }
 
-                Debug.Assert(resultType != null, "Expected resultType to be non-null when not expecting void.");
-                if (unwrapper == null)
+                Debug.Assert(resultType is not null, "Expected resultType to be non-null when not expecting void.");
+                if (unwrapper is null)
                 {
                     throw new InvalidOperationException(
                         $"Handler method is expected to return ValueTask<{resultType!.Name}>, but no unwrapper is available.");
                 }
 
-                if (maybeValueTask == null)
+                if (maybeValueTask is null)
                 {
                     throw new InvalidOperationException(
                         $"Handler method returned null, but a ValueTask<{resultType!.Name}> was expected.");
@@ -101,7 +101,7 @@ internal struct MessageHandlerInfo
 
                 object? result = await unwrapper(maybeValueTask).ConfigureAwait(false);
 
-                if (checkType && result != null && !resultType.IsInstanceOfType(result))
+                if (checkType && result is not null && !resultType.IsInstanceOfType(result))
                 {
                     throw new InvalidOperationException(
                         $"Handler method returned an incompatible type: expected {resultType.Name}, got {result.GetType().Name}.");
@@ -126,11 +126,11 @@ internal struct MessageHandlerInfo
         where TExecutor : ReflectingExecutor<TExecutor>
     {
         MethodInfo handlerMethod = this.HandlerInfo;
-        return MessageHandlerInfo.Bind(InvokeHandler, checkType, this.OutType, this.Unwrapper);
+        return Bind(InvokeHandler, checkType, this.OutType, this.Unwrapper);
 
         object? InvokeHandler(object message, IWorkflowContext workflowContext)
         {
-            return handlerMethod.Invoke(executor, new object[] { message, workflowContext });
+            return handlerMethod.Invoke(executor, [message, workflowContext]);
         }
     }
 }

@@ -2,8 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Linq;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -23,7 +23,7 @@ internal sealed class DeclarativeWorkflowModel
 
     public int GetDepth(string? nodeId)
     {
-        if (nodeId == null)
+        if (nodeId is null)
         {
             return 0;
         }
@@ -89,7 +89,8 @@ internal sealed class DeclarativeWorkflowModel
 
     public void ConnectNodes(WorkflowBuilder workflowBuilder)
     {
-        foreach (ModelNode node in this.Nodes.Values.ToImmutableArray())
+        // Push `Values` into array to avoid modification during iteration.
+        foreach (ModelNode node in this.Nodes.Values.ToArray())
         {
             if (node.CompletionHandler is not null)
             {
@@ -111,15 +112,7 @@ internal sealed class DeclarativeWorkflowModel
             workflowBuilder.AddEdge(GetExecutorIsh(link.Source), GetExecutorIsh(targetNode), link.Condition);
         }
 
-        ExecutorIsh GetExecutorIsh(ModelNode node)
-        {
-            if (node.Port is not null)
-            {
-                return node.Port;
-            }
-
-            return node.Executor;
-        }
+        static ExecutorIsh GetExecutorIsh(ModelNode node) => node.Port ?? (ExecutorIsh)node.Executor;
     }
 
     private ModelNode DefineNode(Executor executor, ModelNode? parentNode = null, Action? completionHandler = null)
@@ -147,7 +140,7 @@ internal sealed class DeclarativeWorkflowModel
             return null;
         }
 
-        while (itemId != null)
+        while (itemId is not null)
         {
             if (!this.Nodes.TryGetValue(itemId, out ModelNode? itemNode))
             {
@@ -179,7 +172,7 @@ internal sealed class DeclarativeWorkflowModel
 
         public List<ModelNode> Children { get; } = [];
 
-        public int Depth => this.Parent?.Depth + 1 ?? 0;
+        public int Depth => (this.Parent?.Depth + 1) ?? 0;
 
         public Action? CompletionHandler => completionHandler;
     }

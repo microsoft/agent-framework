@@ -2,38 +2,37 @@
 
 import asyncio
 import base64
-import io
-
-try:
-    from PIL import Image
-
-    pil_available = True
-except ImportError:
-    Image = None  # type: ignore
-    pil_available = False
 
 from agent_framework import DataContent, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
 
-def display_image(data_uri: str) -> None:
-    """Display an image from a data URI using PIL if available."""
-    if not pil_available or Image is None:
-        print("Image generated! Install PIL to display: pip install Pillow")
-        return
-
+def show_image_info(data_uri: str) -> None:
+    """Display information about the generated image."""
     try:
-        # Extract base64 data and create PIL Image
-        base64_data = data_uri.split(",", 1)[1] if data_uri.startswith("data:image/") else data_uri
-        image_bytes = base64.b64decode(base64_data)
-        image = Image.open(io.BytesIO(image_bytes))
+        # Extract format and size info from data URI
+        if data_uri.startswith("data:image/"):
+            format_info = data_uri.split(";")[0].split("/")[1]
+            base64_data = data_uri.split(",", 1)[1]
+            image_bytes = base64.b64decode(base64_data)
+            size_kb = len(image_bytes) / 1024
 
-        # Display the image and format information
-        image.show()
-        print(f"Image displayed! Size: {image.size}, Format: {image.format}")
+            print(" Image successfully generated!")
+            print(f"   Format: {format_info.upper()}")
+            print(f"   Size: {size_kb:.1f} KB")
+            print(f"   Data URI length: {len(data_uri)} characters")
+            print("")
+            print(" To save and view the image:")
+            print('   1. Install Pillow: "pip install pillow" or "uv add pillow"')
+            print("   2. Use the data URI in your code to save/display the image")
+            print("   3. Or copy the base64 data to an online base64 image decoder")
+        else:
+            print(f" Image URL generated: {data_uri}")
+            print(" You can open this URL in a browser to view the image")
 
     except Exception as e:
-        print(f"Error displaying image: {e}")
+        print(f" Error processing image data: {e}")
+        print(" Image generated but couldn't parse details")
 
 
 async def main() -> None:
@@ -48,7 +47,7 @@ async def main() -> None:
                 # Core parameters
                 "size": "1024x1024",
                 "background": "transparent",
-                "quality": "high",
+                "quality": "low",
                 "format": "webp",
                 "compression": 85,
             }
@@ -62,11 +61,11 @@ async def main() -> None:
     result = await agent.run(query)
     print(f"Agent: {result.text}")
 
-    # Display the generated image
+    # Show information about the generated image
     for message in result.messages:
         for content in message.contents:
             if isinstance(content, (DataContent, UriContent)) and content.uri:
-                display_image(content.uri)
+                show_image_info(content.uri)
                 break
 
 

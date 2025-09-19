@@ -75,10 +75,10 @@ public static class Program
         // After the email assistant writes a response, it will be sent to the send email executor
         .AddEdge(emailAssistantExecutor, sendEmailExecutor)
         // Save the analysis result to the database if summary is not needed
-        .AddEdge(
+        .AddEdge<AnalysisResult>(
             emailAnalysisExecutor,
             databaseAccessExecutor,
-            condition: analysisResult => analysisResult is AnalysisResult result && result.EmailLength <= LongEmailThreshold)
+            condition: analysisResult => analysisResult?.EmailLength <= LongEmailThreshold)
         // Save the analysis result to the database with summary
         .AddEdge(emailSummaryExecutor, databaseAccessExecutor);
         var workflow = builder.Build<ChatMessage>();
@@ -107,21 +107,21 @@ public static class Program
     /// Creates a partitioner for routing messages based on the analysis result.
     /// </summary>
     /// <returns>A function that takes an analysis result and returns the target partitions.</returns>
-    private static Func<object?, int, IEnumerable<int>> GetPartitioner()
+    private static Func<AnalysisResult?, int, IEnumerable<int>> GetPartitioner()
     {
         return (analysisResult, targetCount) =>
         {
-            if (analysisResult is AnalysisResult result)
+            if (analysisResult is not null)
             {
-                if (result.spamDecision == SpamDecision.Spam)
+                if (analysisResult.spamDecision == SpamDecision.Spam)
                 {
                     return [0]; // Route to spam handler
                 }
-                else if (result.spamDecision == SpamDecision.NotSpam)
+                else if (analysisResult.spamDecision == SpamDecision.NotSpam)
                 {
                     List<int> targets = [1]; // Route to the email assistant
 
-                    if (result.EmailLength > LongEmailThreshold)
+                    if (analysisResult.EmailLength > LongEmailThreshold)
                     {
                         targets.Add(2); // Route to the email summarizer too
                     }
@@ -141,61 +141,40 @@ public static class Program
     /// Create an email analysis agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email analysis</returns>
-    private static ChatClientAgent GetEmailAnalysisAgent(IChatClient chatClient)
-    {
-        string instructions = "You are a spam detection assistant that identifies spam emails.";
-        var agentOptions = new ChatClientAgentOptions(instructions: instructions)
+    private static ChatClientAgent GetEmailAnalysisAgent(IChatClient chatClient) =>
+        new(chatClient, new ChatClientAgentOptions(instructions: "You are a spam detection assistant that identifies spam emails.")
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
-                    schema: AIJsonUtilities.CreateJsonSchema(typeof(AnalysisResult))
-                )
+                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(AnalysisResult)))
             }
-        };
-
-        return new ChatClientAgent(chatClient, agentOptions);
-    }
+        });
 
     /// <summary>
     /// Creates an email assistant agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email assistance</returns>
-    private static ChatClientAgent GetEmailAssistantAgent(IChatClient chatClient)
-    {
-        string instructions = "You are an email assistant that helps users draft responses to emails with professionalism.";
-        var agentOptions = new ChatClientAgentOptions(instructions: instructions)
+    private static ChatClientAgent GetEmailAssistantAgent(IChatClient chatClient) =>
+        new(chatClient, new ChatClientAgentOptions(instructions: "You are an email assistant that helps users draft responses to emails with professionalism.")
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
-                    schema: AIJsonUtilities.CreateJsonSchema(typeof(EmailResponse))
-                )
+                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(EmailResponse)))
             }
-        };
-
-        return new ChatClientAgent(chatClient, agentOptions);
-    }
+        });
 
     /// <summary>
     /// Creates an agent that summarizes emails.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email summarization</returns>
-    private static ChatClientAgent GetEmailSummaryAgent(IChatClient chatClient)
-    {
-        string instructions = "You are an assistant that helps users summarize emails.";
-        var agentOptions = new ChatClientAgentOptions(instructions: instructions)
+    private static ChatClientAgent GetEmailSummaryAgent(IChatClient chatClient) =>
+        new(chatClient, new ChatClientAgentOptions(instructions: "You are an assistant that helps users summarize emails.")
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
-                    schema: AIJsonUtilities.CreateJsonSchema(typeof(EmailSummary))
-                )
+                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(EmailSummary)))
             }
-        };
-
-        return new ChatClientAgent(chatClient, agentOptions);
-    }
+        });
 }
 
 internal static class EmailStateConstants
@@ -271,7 +250,7 @@ internal sealed class EmailAnalysisExecutor : ReflectingExecutor<EmailAnalysisEx
             EmailId = Guid.NewGuid().ToString(),
             EmailContent = message.Text
         };
-        await context.QueueStateUpdateAsync<Email>(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope);
+        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope);
 
         // Invoke the agent
         var response = await this._emailAnalysisAgent.RunAsync(message);
@@ -335,10 +314,8 @@ internal sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor
     /// <summary>
     /// Simulate the sending of an email.
     /// </summary>
-    public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context)
-    {
+    public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context) =>
         await context.AddEventAsync(new WorkflowCompletedEvent($"Email sent: {message.Response}"));
-    }
 }
 
 /// <summary>
@@ -437,7 +414,7 @@ internal sealed class DatabaseAccessExecutor() : ReflectingExecutor<DatabaseAcce
     public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context)
     {
         // 1. Save the email content
-        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope);
+        await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope);
         await Task.Delay(100); // Simulate database access delay
 
         // 2. Save the analysis result

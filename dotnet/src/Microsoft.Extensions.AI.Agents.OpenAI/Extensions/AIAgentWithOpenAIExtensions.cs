@@ -36,15 +36,14 @@ public static class AIAgentWithOpenAIExtensions
     /// This method converts the OpenAI chat messages to the Microsoft Extensions AI format using the appropriate conversion method,
     /// runs the agent with the converted message collection, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
     /// </remarks>
-    public static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<OpenAI.Chat.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
         var response = await agent.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
 
-        var chatCompletion = response.AsChatCompletion();
-        return chatCompletion;
+        return response.AsChatCompletion();
     }
 
     /// <summary>
@@ -63,7 +62,7 @@ public static class AIAgentWithOpenAIExtensions
     /// This method converts the OpenAI chat messages to the Microsoft Extensions AI format using the appropriate conversion method,
     /// runs the agent, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
     /// </remarks>
-    public static AsyncCollectionResult<StreamingChatCompletionUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<OpenAI.Chat.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static AsyncCollectionResult<StreamingChatCompletionUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(messages);

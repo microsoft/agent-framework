@@ -3,19 +3,20 @@
 import asyncio
 from enum import Enum
 
-from agent_framework import ChatMessage, Role
-from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import (
+from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    ChatMessage,
     Executor,
     ExecutorCompletedEvent,
+    Role,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
+from agent_framework.azure import AzureChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -49,7 +50,7 @@ class GuessNumberExecutor(Executor):
 
     def __init__(self, bound: tuple[int, int], id: str | None = None):
         """Initialize the executor with a target number."""
-        super().__init__(id=id)
+        super().__init__(id=id or "guess_number")
         self._lower = bound[0]
         self._upper = bound[1]
 
@@ -82,7 +83,7 @@ class SubmitToJudgeAgent(Executor):
     """Send the numeric guess to a judge agent which replies ABOVE/BELOW/MATCHED."""
 
     def __init__(self, judge_agent_id: str, target: int, id: str | None = None):
-        super().__init__(id=id)
+        super().__init__(id=id or "submit_to_judge")
         self._judge_agent_id = judge_agent_id
         self._target = target
 

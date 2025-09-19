@@ -16,13 +16,12 @@ public class ReflectingExecutor<
     ] TExecutor
     > : Executor where TExecutor : ReflectingExecutor<TExecutor>
 {
-    /// <inheritdoc cref="Executor.Executor(string?, ExecutorOptions?)"/>
+    /// <inheritdoc cref="Executor(string?, ExecutorOptions?)"/>
     protected ReflectingExecutor(string? id = null, ExecutorOptions? options = null) : base(id, options)
-    { }
+    {
+    }
 
     /// <inheritdoc />
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-    {
-        return routeBuilder.ReflectHandlers<TExecutor>(this);
-    }
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.ReflectHandlers(this);
 }

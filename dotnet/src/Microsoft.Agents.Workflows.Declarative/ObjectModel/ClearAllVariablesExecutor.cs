@@ -10,34 +10,30 @@ using Microsoft.Bot.ObjectModel.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, DeclarativeWorkflowState state)
+internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, WorkflowFormulaState state)
     : DeclarativeActionExecutor<ClearAllVariables>(model, state)
 {
     protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.ExpressionEngine.GetValue<VariablesToClearWrapper>(this.Model.Variables);
+        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.Evaluator.GetValue(this.Model.Variables);
 
         variablesResult.Value.Handle(new ScopeHandler(this.Id, this.State));
 
         return default;
     }
 
-    private sealed class ScopeHandler(string executorId, DeclarativeWorkflowState state) : IEnumVariablesToClearHandler
+    private sealed class ScopeHandler(string executorId, WorkflowFormulaState state) : IEnumVariablesToClearHandler
     {
-        public void HandleAllGlobalVariables()
-        {
+        public void HandleAllGlobalVariables() =>
             this.ClearAll(VariableScopeNames.Global);
-        }
 
         public void HandleConversationHistory()
         {
             // Not supported....
         }
 
-        public void HandleConversationScopedVariables()
-        {
-            this.ClearAll(WorkflowScopes.DefaultScopeName);
-        }
+        public void HandleConversationScopedVariables() =>
+            this.ClearAll(WorkflowFormulaState.DefaultScopeName);
 
         public void HandleUnknownValue()
         {
@@ -51,7 +47,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Declara
 
         private void ClearAll(string scope)
         {
-            state.Reset(scope);
+            state.ResetAll(scope);
             Debug.WriteLine(
                 $"""
                  STATE: {this.GetType().Name} [{executorId}]

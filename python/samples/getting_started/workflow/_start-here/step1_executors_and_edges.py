@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework.workflow import (
+from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -50,7 +50,7 @@ Prerequisites
 # - Compute a result
 # - Forward that result to downstream node(s) using ctx.send_message(result)
 class UpperCase(Executor):
-    def __init__(self, id: str | None = None):
+    def __init__(self, id: str):
         super().__init__(id=id)
 
     @handler
@@ -104,11 +104,14 @@ async def main():
     # provides the WorkflowCompletedEvent emitted by the terminal node.
     events = await workflow.run("hello world")
     print(events.get_completed_event())
+    # Summarize the final run state (e.g., COMPLETED)
+    print("Final state:", events.get_final_state())
 
     """
     Sample Output:
 
     WorkflowCompletedEvent(data=DLROW OLLEH)
+    Final state: WorkflowRunState.COMPLETED
     """
 
 

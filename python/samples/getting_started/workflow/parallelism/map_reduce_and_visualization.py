@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import aiofiles
-from agent_framework.workflow import (
+from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent graph builder for executors and edges
     WorkflowCompletedEvent,  # Terminal event that carries final output
@@ -61,7 +61,7 @@ class Split(Executor):
 
     def __init__(self, map_executor_ids: list[str], id: str | None = None):
         """Store mapper ids so we can assign non overlapping ranges per mapper."""
-        super().__init__(id)
+        super().__init__(id=id or "split")
         self._map_executor_ids = map_executor_ids
 
     @handler
@@ -145,7 +145,7 @@ class Shuffle(Executor):
 
     def __init__(self, reducer_ids: list[str], id: str | None = None):
         """Remember reducer ids so we can partition work deterministically."""
-        super().__init__(id)
+        super().__init__(id=id or "shuffle")
         self._reducer_ids = reducer_ids
 
     @handler
@@ -296,7 +296,7 @@ async def main():
         svg_file = viz.export(format="svg")
         print(f"SVG file saved to: {svg_file}")
     except ImportError:
-        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework-workflow[viz]")
+        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz]")
 
     # Step 3: Open the text file and read its content.
     async with aiofiles.open(os.path.join(DIR, "resources", "long_text.txt"), "r") as f:

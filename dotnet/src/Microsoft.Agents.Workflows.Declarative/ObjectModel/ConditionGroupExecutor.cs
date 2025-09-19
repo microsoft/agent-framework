@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 
@@ -27,7 +28,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         public static string Else(ConditionGroup model) => model.ElseActions.Id.Value ?? $"{model.Id}_Else";
     }
 
-    public ConditionGroupExecutor(ConditionGroup model, DeclarativeWorkflowState state)
+    public ConditionGroupExecutor(ConditionGroup model, WorkflowFormulaState state)
         : base(model, state)
     {
     }
@@ -46,9 +47,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         return string.Equals(Steps.Else(this.Model), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
     {
         for (int index = 0; index < this.Model.Conditions.Length; ++index)
         {
@@ -58,7 +57,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
                 continue; // Skip if no condition is defined
             }
 
-            EvaluationResult<bool> expressionResult = this.State.ExpressionEngine.GetValue(conditionItem.Condition);
+            EvaluationResult<bool> expressionResult = this.State.Evaluator.GetValue(conditionItem.Condition);
             if (expressionResult.Value)
             {
                 return Steps.Item(this.Model, conditionItem);
@@ -68,8 +67,6 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         return Steps.Else(this.Model);
     }
 
-    public async ValueTask DoneAsync(IWorkflowContext context, ExecutorResultMessage _, CancellationToken cancellationToken)
-    {
+    public async ValueTask DoneAsync(IWorkflowContext context, ExecutorResultMessage _, CancellationToken cancellationToken) =>
         await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
-    }
 }

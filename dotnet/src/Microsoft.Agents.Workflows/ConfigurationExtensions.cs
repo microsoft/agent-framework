@@ -3,7 +3,7 @@
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// Extensions methods for creating Configured objects
+/// Provides extensions methods for creating <see cref="Configured{TSubject}"/> objects
 /// </summary>
 public static class ConfigurationExtensions
 {

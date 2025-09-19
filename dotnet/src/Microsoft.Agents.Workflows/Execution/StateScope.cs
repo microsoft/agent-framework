@@ -4,14 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class StateScope
+internal sealed class StateScope
 {
-    private readonly Dictionary<string, object> _stateData = new();
+    private readonly Dictionary<string, PortableValue> _stateData = [];
     public ScopeId ScopeId { get; }
 
     public StateScope(ScopeId scopeId)
@@ -30,15 +29,32 @@ internal class StateScope
         return new(keys);
     }
 
+    public bool Contains<T>(string key)
+    {
+        Throw.IfNullOrEmpty(key);
+        if (this._stateData.TryGetValue(key, out PortableValue? value))
+        {
+            return value.Is<T>();
+        }
+
+        return false;
+    }
+
+    public bool ContainsKey(string key)
+    {
+        Throw.IfNullOrEmpty(key);
+        return this._stateData.ContainsKey(key);
+    }
+
     public ValueTask<T?> ReadStateAsync<T>(string key)
     {
         Throw.IfNullOrEmpty(key);
-        if (this._stateData.TryGetValue(key, out object? value) && value is T typedValue)
+        if (this._stateData.TryGetValue(key, out PortableValue? value))
         {
-            return new ValueTask<T?>(typedValue);
+            return new(value.As<T>());
         }
 
-        return new ValueTask<T?>((T?)default);
+        return new((T?)default);
     }
 
     public ValueTask WriteStateAsync(Dictionary<string, List<StateUpdate>> updates)
@@ -47,7 +63,7 @@ internal class StateScope
 
         foreach (string key in updates.Keys)
         {
-            if (updates == null || updates[key].Count == 0)
+            if (updates is null || updates[key].Count == 0)
             {
                 continue;
             }
@@ -64,28 +80,28 @@ internal class StateScope
             }
             else
             {
-                this._stateData[key] = update.Value!;
+                this._stateData[key] = new PortableValue(update.Value!);
             }
         }
 
         return default;
     }
 
-    public IEnumerable<KeyValuePair<string, ExportedState>> ExportStates()
+    public IEnumerable<KeyValuePair<string, PortableValue>> ExportStates()
     {
         return this._stateData.Keys.Select(WrapStates);
 
-        KeyValuePair<string, ExportedState> WrapStates(string key)
+        KeyValuePair<string, PortableValue> WrapStates(string key)
         {
-            return new(key, new(this._stateData[key]));
+            return new(key, this._stateData[key]);
         }
     }
 
-    public void ImportState(string key, ExportedState state)
+    public void ImportState(string key, PortableValue state)
     {
         Throw.IfNullOrEmpty(key);
         Throw.IfNull(state);
 
-        this._stateData[key] = state.Value;
+        this._stateData[key] = state;
     }
 }

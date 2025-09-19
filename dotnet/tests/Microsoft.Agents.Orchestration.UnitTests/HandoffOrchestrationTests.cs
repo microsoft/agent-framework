@@ -136,9 +136,7 @@ public sealed class HandoffOrchestrationTests : IDisposable
                 .Build();
 
         ChatClientAgentOptions agentOptions = new() { Name = name, Description = description };
-        ChatClientAgent mockAgent = new(chatClient, agentOptions);
-
-        return mockAgent;
+        return new(chatClient, agentOptions);
     }
 
     private static class Responses

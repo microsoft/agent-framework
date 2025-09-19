@@ -6,18 +6,19 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 
-internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationMessages model, WorkflowAgentProvider agentProvider, DeclarativeWorkflowState state) :
+internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationMessages model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<RetrieveConversationMessages>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        string conversationId = this.State.ExpressionEngine.GetValue(Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}")).Value;
+        string conversationId = this.State.Evaluator.GetValue(Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}")).Value;
 
         ChatMessage[] messages = await agentProvider.GetMessagesAsync(
             conversationId,
@@ -39,7 +40,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
             return null;
         }
 
-        long limit = this.State.ExpressionEngine.GetValue(this.Model.Limit).Value;
+        long limit = this.State.Evaluator.GetValue(this.Model.Limit).Value;
         return Convert.ToInt32(Math.Min(limit, 100));
     }
 
@@ -50,7 +51,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
             return null;
         }
 
-        return this.State.ExpressionEngine.GetValue(messagExpression).Value;
+        return this.State.Evaluator.GetValue(messagExpression).Value;
     }
 
     private bool IsDescending()
@@ -60,7 +61,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
             return false;
         }
 
-        AgentMessageSortOrderWrapper sortOrderWrapper = this.State.ExpressionEngine.GetValue(this.Model.SortOrder).Value;
+        AgentMessageSortOrderWrapper sortOrderWrapper = this.State.Evaluator.GetValue(this.Model.SortOrder).Value;
 
         return sortOrderWrapper.Value == AgentMessageSortOrder.NewestFirst;
     }

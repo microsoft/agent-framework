@@ -4,20 +4,21 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import ChatMessage, Role
-from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import (
+from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentRunEvent,
+    ChatMessage,
     Executor,
+    Role,
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowViz,
     handler,
 )
+from agent_framework.azure import AzureChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -31,7 +32,7 @@ What it does:
 Prerequisites:
 - Azure AI/ Azure OpenAI for `AzureChatClient` agents.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
-- For visualization export: `pip install agent-framework-workflow[viz]` and install GraphViz binaries.
+- For visualization export: `pip install agent-framework[viz]` and install GraphViz binaries.
 """
 
 
@@ -39,7 +40,7 @@ class DispatchToExperts(Executor):
     """Dispatches the incoming prompt to all expert agent executors (fan-out)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "dispatch_to_experts")
         self._expert_ids = expert_ids
 
     @handler
@@ -66,7 +67,7 @@ class AggregateInsights(Executor):
     """Aggregates expert agent responses into a single consolidated result (fan-in)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "aggregate_insights")
         self._expert_ids = expert_ids
 
     @handler
@@ -161,7 +162,7 @@ async def main() -> None:
         svg_file = viz.export(format="svg")
         print(f"SVG file saved to: {svg_file}")
     except ImportError:
-        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework-workflow[viz]")
+        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz]")
 
     # 3) Run with a single prompt
     completion: WorkflowCompletedEvent | None = None

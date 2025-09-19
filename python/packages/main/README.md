@@ -50,10 +50,10 @@ You can also override environment variables by explicitly passing configuration 
 from agent_framework.azure import AzureChatClient
 
 chat_client = AzureChatClient(
-    api_key=...,
-    endpoint=...,
-    deployment_name=...,
-    api_version=...,
+    api_key="",
+    endpoint="",
+    deployment_name="",
+    api_version="",
 )
 ```
 

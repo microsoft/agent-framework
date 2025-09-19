@@ -81,10 +81,6 @@ include = "../../shared_tasks.toml"
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_runtime"
 test = "pytest --cov=agent_framework_runtime --cov-report=term-missing:skip-covered tests"
 
-[tool.uv.build-backend]
-module-name = "agent_framework_runtime"
-module-root = ""
-
 [build-system]
-requires = ["uv_build>=0.8.2,<0.9.0"]
-build-backend = "uv_build"
+requires = ["flit-core >= 3.9,<4.0"]
+build-backend = "flit_core.buildapi"

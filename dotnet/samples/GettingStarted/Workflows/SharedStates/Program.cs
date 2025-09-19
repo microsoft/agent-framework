@@ -30,10 +30,10 @@ public static class Program
         var aggregate = new AggregationExecutor();
 
         // Build the workflow by connecting executors sequentially
-        WorkflowBuilder builder = new(fileRead);
-        builder.AddFanOutEdge(fileRead, targets: [wordCount, paragraphCount]);
-        builder.AddFanInEdge(aggregate, sources: [wordCount, paragraphCount]);
-        var workflow = builder.Build<string>();
+        var workflow = new WorkflowBuilder(fileRead)
+            .AddFanOutEdge(fileRead, targets: [wordCount, paragraphCount])
+            .AddFanInEdge(aggregate, sources: [wordCount, paragraphCount])
+            .Build<string>();
 
         // Execute the workflow with input data
         Run run = await InProcessExecution.RunAsync(workflow, "Lorem_Ipsum.txt");
@@ -63,7 +63,7 @@ internal sealed class FileReadExecutor() : ReflectingExecutor<FileReadExecutor>(
         string fileContent = Resources.Read(message);
         // Store file content in a shared state for access by other executors
         string fileID = Guid.NewGuid().ToString();
-        await context.QueueStateUpdateAsync<string>(fileID, fileContent, scopeName: FileContentStateConstants.FileContentStateScope);
+        await context.QueueStateUpdateAsync(fileID, fileContent, scopeName: FileContentStateConstants.FileContentStateScope);
 
         return fileID;
     }

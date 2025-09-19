@@ -31,8 +31,5 @@
     private string? requestId;
     private bool ShowRequestId => !string.IsNullOrEmpty(requestId);
 
-    protected override void OnInitialized()
-    {
-        requestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
-    }
+    protected override void OnInitialized() => requestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
 }

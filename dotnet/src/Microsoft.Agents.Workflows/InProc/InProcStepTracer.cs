@@ -10,11 +10,11 @@ namespace Microsoft.Agents.Workflows.InProc;
 
 internal sealed class InProcStepTracer : IStepTracer
 {
-    private int _nextStepNumber = 0;
+    private int _nextStepNumber;
 
     public int StepNumber => this._nextStepNumber - 1;
-    public bool StateUpdated { get; private set; } = false;
-    public CheckpointInfo? Checkpoint { get; private set; } = null;
+    public bool StateUpdated { get; private set; }
+    public CheckpointInfo? Checkpoint { get; private set; }
 
     public HashSet<string> Instantiated { get; } = [];
     public HashSet<string> Activated { get; } = [];
@@ -60,32 +60,33 @@ internal sealed class InProcStepTracer : IStepTracer
         });
     }
 
-    public SuperStepCompletedEvent Complete(bool nextStepHasActions, bool hasPendingRequests)
+    public SuperStepCompletedEvent Complete(bool nextStepHasActions, bool hasPendingRequests) => new(this.StepNumber, new SuperStepCompletionInfo(this.Activated, this.Instantiated)
     {
-        return new SuperStepCompletedEvent(this.StepNumber, new SuperStepCompletionInfo(this.Activated, this.Instantiated)
-        {
-            HasPendingMessages = nextStepHasActions,
-            HasPendingRequests = hasPendingRequests,
-            StateUpdated = this.StateUpdated,
-            Checkpoint = this.Checkpoint,
-        });
-    }
+        HasPendingMessages = nextStepHasActions,
+        HasPendingRequests = hasPendingRequests,
+        StateUpdated = this.StateUpdated,
+        Checkpoint = this.Checkpoint,
+    });
 
     public override string ToString()
     {
         StringBuilder sb = new();
+
         if (this.Instantiated.Count != 0)
         {
-            sb.Append("Instantiated: ");
-            sb.Append(string.Join(", ", this.Instantiated.OrderBy(id => id, StringComparer.Ordinal)));
-            sb.AppendLine();
+            sb.Append("Instantiated: ").Append(string.Join(", ", this.Instantiated.OrderBy(id => id, StringComparer.Ordinal)));
         }
+
         if (this.Activated.Count != 0)
         {
-            sb.Append("Activated: ");
-            sb.Append(string.Join(", ", this.Activated.OrderBy(id => id, StringComparer.Ordinal)));
-            sb.AppendLine();
+            if (sb.Length != 0)
+            {
+                sb.AppendLine();
+            }
+
+            sb.Append("Activated: ").Append(string.Join(", ", this.Activated.OrderBy(id => id, StringComparer.Ordinal)));
         }
+
         return sb.ToString();
     }
 }

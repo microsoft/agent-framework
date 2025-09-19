@@ -8,10 +8,10 @@ using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class EdgeMap
+internal sealed class EdgeMap
 {
-    private readonly Dictionary<EdgeConnection, object> _edgeRunners = new();
-    private readonly Dictionary<EdgeConnection, FanInEdgeState> _fanInState = new();
+    private readonly Dictionary<EdgeId, object> _edgeRunners = [];
+    private readonly Dictionary<EdgeId, FanInEdgeState> _fanInState = [];
     private readonly Dictionary<string, InputEdgeRunner> _portEdgeRunners;
     private readonly InputEdgeRunner _inputRunner;
     private readonly IStepTracer? _stepTracer;
@@ -24,20 +24,20 @@ internal class EdgeMap
     {
         foreach (Edge edge in workflowEdges.Values.SelectMany(e => e))
         {
-            object edgeRunner = edge.EdgeType switch
+            object edgeRunner = edge.Kind switch
             {
-                Edge.Type.Direct => new DirectEdgeRunner(runContext, edge.DirectEdgeData!),
-                Edge.Type.FanOut => new FanOutEdgeRunner(runContext, edge.FanOutEdgeData!),
-                Edge.Type.FanIn => new FanInEdgeRunner(runContext, edge.FanInEdgeData!),
-                _ => throw new NotSupportedException($"Unsupported edge type: {edge.EdgeType}")
+                EdgeKind.Direct => new DirectEdgeRunner(runContext, edge.DirectEdgeData!),
+                EdgeKind.FanOut => new FanOutEdgeRunner(runContext, edge.FanOutEdgeData!),
+                EdgeKind.FanIn => new FanInEdgeRunner(runContext, edge.FanInEdgeData!),
+                _ => throw new NotSupportedException($"Unsupported edge type: {edge.Kind}")
             };
 
             if (edgeRunner is FanInEdgeRunner fanInRunner)
             {
-                this._fanInState[edge.Data.Connection] = fanInRunner.CreateState();
+                this._fanInState[edge.Data.Id] = fanInRunner.CreateState();
             }
 
-            this._edgeRunners[edge.Data.Connection] = edgeRunner;
+            this._edgeRunners[edge.Data.Id] = edgeRunner;
         }
 
         this._portEdgeRunners = workflowPorts.ToDictionary(
@@ -51,14 +51,14 @@ internal class EdgeMap
 
     public async ValueTask<IEnumerable<object?>> InvokeEdgeAsync(Edge edge, string sourceId, MessageEnvelope message)
     {
-        EdgeConnection connection = edge.Data.Connection;
-        if (!this._edgeRunners.TryGetValue(connection, out object? edgeRunner))
+        EdgeId id = edge.Data.Id;
+        if (!this._edgeRunners.TryGetValue(id, out object? edgeRunner))
         {
             throw new InvalidOperationException($"Edge {edge} not found in the edge map.");
         }
 
         IEnumerable<object?> edgeResults;
-        switch (edge.EdgeType)
+        switch (edge.Kind)
         {
             // We know the corresponding EdgeRunner type given the FlowEdge EdgeType, as
             // established in the EdgeMap() ctor; this avoid doing an as-cast inside of
@@ -66,24 +66,24 @@ internal class EdgeMap
             // in FanIn/Out cases)
             // TODO: Once we have a fixed interface, if it is reasonably generalizable
             // between the Runners, we can normalize it behind an IFace.
-            case Edge.Type.Direct:
+            case EdgeKind.Direct:
             {
-                DirectEdgeRunner runner = (DirectEdgeRunner)this._edgeRunners[connection];
+                DirectEdgeRunner runner = (DirectEdgeRunner)edgeRunner;
                 edgeResults = await runner.ChaseAsync(message, this._stepTracer).ConfigureAwait(false);
                 break;
             }
 
-            case Edge.Type.FanOut:
+            case EdgeKind.FanOut:
             {
-                FanOutEdgeRunner runner = (FanOutEdgeRunner)this._edgeRunners[connection];
+                FanOutEdgeRunner runner = (FanOutEdgeRunner)edgeRunner;
                 edgeResults = await runner.ChaseAsync(message, this._stepTracer).ConfigureAwait(false);
                 break;
             }
 
-            case Edge.Type.FanIn:
+            case EdgeKind.FanIn:
             {
-                FanInEdgeState state = this._fanInState[connection];
-                FanInEdgeRunner runner = (FanInEdgeRunner)this._edgeRunners[connection];
+                FanInEdgeState state = this._fanInState[id];
+                FanInEdgeRunner runner = (FanInEdgeRunner)edgeRunner;
                 edgeResults = [await runner.ChaseAsync(sourceId, message, state, this._stepTracer).ConfigureAwait(false)];
                 break;
             }
@@ -104,43 +104,45 @@ internal class EdgeMap
 
     public async ValueTask<IEnumerable<object?>> InvokeResponseAsync(ExternalResponse response)
     {
-        if (!this._portEdgeRunners.TryGetValue(response.Port.Id, out InputEdgeRunner? portRunner))
+        if (!this._portEdgeRunners.TryGetValue(response.PortInfo.PortId, out InputEdgeRunner? portRunner))
         {
-            throw new InvalidOperationException($"Port {response.Port.Id} not found in the edge map.");
+            throw new InvalidOperationException($"Port {response.PortInfo.PortId} not found in the edge map.");
         }
 
         return [await portRunner.ChaseAsync(new MessageEnvelope(response), this._stepTracer).ConfigureAwait(false)];
     }
 
-    internal ValueTask<Dictionary<EdgeConnection, ExportedState>> ExportStateAsync()
+    internal ValueTask<Dictionary<EdgeId, PortableValue>> ExportStateAsync()
     {
-        Dictionary<EdgeConnection, ExportedState> exportedStates = new();
+        Dictionary<EdgeId, PortableValue> exportedStates = [];
 
         // Right now there is only fan-in state
-        foreach (EdgeConnection connection in this._fanInState.Keys)
+        foreach (EdgeId id in this._fanInState.Keys)
         {
-            FanInEdgeState state = this._fanInState[connection];
-            exportedStates[connection] = new ExportedState(state);
+            FanInEdgeState state = this._fanInState[id];
+            exportedStates[id] = new PortableValue(state);
         }
 
-        return new ValueTask<Dictionary<EdgeConnection, ExportedState>>(exportedStates);
+        return new(exportedStates);
     }
 
     internal ValueTask ImportStateAsync(Checkpoint checkpoint)
     {
-        Dictionary<EdgeConnection, ExportedState> importedState = checkpoint.EdgeState;
+        Dictionary<EdgeId, PortableValue> importedState = checkpoint.EdgeStateData;
 
         this._fanInState.Clear();
-        foreach (EdgeConnection connection in importedState.Keys)
+        foreach (EdgeId id in importedState.Keys)
         {
-            ExportedState exportedState = importedState[connection];
-            if (exportedState.Value is FanInEdgeState fanInState)
+            PortableValue exportedState = importedState[id];
+
+            FanInEdgeState? fanInState = exportedState.As<FanInEdgeState>();
+            if (fanInState is not null)
             {
-                this._fanInState[connection] = fanInState;
+                this._fanInState[id] = fanInState;
             }
             else
             {
-                throw new InvalidOperationException($"Unsupported exported state type: {exportedState.GetType()} for connection {connection}");
+                throw new InvalidOperationException($"Unsupported exported state type: {exportedState.GetType()}; {id}");
             }
         }
 
