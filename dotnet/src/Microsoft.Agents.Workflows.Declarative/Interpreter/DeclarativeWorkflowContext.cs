@@ -87,7 +87,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         }
 
         bool isManagedScope =
-            ManagedScopes.Contains(Throw.IfNull(scopeName)) ||
+            ManagedScopes.Contains(scopeName) ||
             (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal));
 
         return value switch
