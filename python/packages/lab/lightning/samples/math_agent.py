@@ -175,8 +175,8 @@ def main():
 
     from datasets import Dataset  # type: ignore
 
-    train_dataset = Dataset.from_parquet("data/train.parquet").to_list()
-    val_dataset = Dataset.from_parquet("data/test_mini.parquet").to_list()
+    train_dataset: list[MathProblem] = Dataset.from_parquet("data/train.parquet").to_list()
+    val_dataset: list[MathProblem] = Dataset.from_parquet("data/test_mini.parquet").to_list()
 
     print("First 5 rows of train dataset:")
     print(train_dataset[:5])
