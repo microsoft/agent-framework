@@ -22,7 +22,7 @@ from typing import (
 )
 
 from opentelemetry import metrics
-from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, ValidationError, create_model, field_validator
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, create_model, field_validator
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
@@ -239,9 +239,24 @@ class HostedWebSearchTool(BaseTool):
 class HostedImageGenerationTool(BaseTool):
     """Represents an image generation tool that can be specified to an AI service to enable it to generate images."""
 
+    # Allow extra fields for provider-specific parameters
+    model_config = ConfigDict(extra="allow")
+
+    # Image generation parameters
+    size: Literal["1024x1024", "1536x1024", "1024x1536", "auto"] | None = None
+    quality: Literal["low", "medium", "high", "auto"] | None = None
+    format: Literal["png", "jpeg", "webp"] | None = None
+    compression: int | None = None
+    background: Literal["transparent", "opaque", "auto"] | None = None
+
     def __init__(
         self,
         description: str | None = None,
+        size: Literal["1024x1024", "1536x1024", "1024x1536", "auto"] | None = None,
+        quality: Literal["low", "medium", "high", "auto"] | None = None,
+        format: Literal["png", "jpeg", "webp"] | None = None,
+        compression: int | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
@@ -249,19 +264,63 @@ class HostedImageGenerationTool(BaseTool):
 
         Args:
             description: A description of the tool.
+            size: Image dimensions. Defaults to "auto".
+                - "1024x1024": Square format
+                - "1536x1024": Landscape format
+                - "1024x1536": Portrait format
+                - "auto": Model automatically selects best size based on prompt
+            quality: Rendering quality. Defaults to "auto".
+                - "low": Low quality, fastest generation
+                - "medium": Medium quality
+                - "high": High quality, slower generation
+                - "auto": Model automatically selects best quality based on prompt
+            format: File output format. Defaults to "png".
+                - "png": PNG format (default)
+                - "jpeg": JPEG format
+                - "webp": WebP format
+            compression: Compression level (0-100%) for JPEG and WebP formats only.
+                Higher values mean more compression (smaller file, lower quality).
+                Only applicable when format is "jpeg" or "webp".
+            background: Background type. Defaults to "auto". (only supported by 'gpt-image-1' and with png and webp)
+                - "transparent": Transparent background
+                - "opaque": Opaque background
+                - "auto": Model automatically selects based on prompt
             additional_properties: Additional properties associated with the tool.
             **kwargs: Additional keyword arguments to pass to the base class.
+                Provider-specific parameters can be passed as kwargs.
         """
+        # Validate compression parameter
+        if compression is not None:
+            if not isinstance(compression, int) or not (0 <= compression <= 100):
+                raise ValueError("compression must be an integer between 0 and 100")
+            if format not in ("jpeg", "webp"):
+                raise ValueError("compression parameter only applies to 'jpeg' and 'webp' formats")
+
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedImageGenerationTool and cannot be set.")
+
+        # Pass all parameters to the parent class
         args: dict[str, Any] = {
             "name": "image_generation",
+            "size": size,
+            "quality": quality,
+            "format": format,
+            "compression": compression,
+            "background": background,
         }
+
         if description is not None:
             args["description"] = description
         if additional_properties is not None:
             args["additional_properties"] = additional_properties
-        if "name" in kwargs:
-            raise ValueError("The 'name' argument is reserved for the HostedImageGenerationTool and cannot be set.")
-        super().__init__(**args, **kwargs)
+
+        super().__init__(**args)
+
+        # Handle OpenAI-specific parameters as attributes
+        openai_params = ["model", "moderation", "partial_images", "input_fidelity", "input_image_mask"]
+        for param in openai_params:
+            if param in kwargs:
+                setattr(self, param, kwargs[param])
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):

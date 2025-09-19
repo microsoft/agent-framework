@@ -271,7 +271,54 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             )
                         )
                     case HostedImageGenerationTool():
-                        response_tools.append({"type": "image_generation"})
+                        image_tool: dict[str, Any] = {"type": "image_generation"}
+
+                        # Handle base parameters as direct attributes
+                        if tool.size is not None:
+                            image_tool["size"] = tool.size
+                        if tool.quality is not None:
+                            image_tool["quality"] = tool.quality
+                        if tool.background is not None:
+                            image_tool["background"] = tool.background
+
+                        # Map developer-friendly parameter names to OpenAI API names
+                        if tool.format is not None:
+                            image_tool["output_format"] = tool.format
+                        if tool.compression is not None:
+                            image_tool["output_compression"] = tool.compression
+
+                        # Handle OpenAI Responses-specific parameters
+                        openai_param_names = [
+                            "model",
+                            "moderation",
+                            "partial_images",
+                            "input_fidelity",
+                            "input_image_mask",
+                        ]
+                        for param in openai_param_names:
+                            value = getattr(tool, param, None)
+                            if value is not None:
+                                # Validate OpenAI Responses-specific parameters
+                                if param == "partial_images" and (not isinstance(value, int) or not (0 <= value <= 3)):
+                                    raise ValueError("partial_images must be an integer between 0 and 3")
+                                if param == "input_fidelity" and value not in ("high", "low"):
+                                    raise ValueError("input_fidelity must be 'high' or 'low'")
+                                if param == "input_image_mask":
+                                    if not isinstance(value, dict):
+                                        raise ValueError("input_image_mask must be a dictionary")
+                                    # Validate that it has at least one of the required fields
+                                    if not any(key in value for key in ["file_id", "image_url"]):
+                                        raise ValueError(
+                                            "input_image_mask must contain at least one of 'file_id' or 'image_url'"
+                                        )
+                                    # Validate field types if present
+                                    if "file_id" in value and not isinstance(value["file_id"], str):
+                                        raise ValueError("input_image_mask.file_id must be a string")
+                                    if "image_url" in value and not isinstance(value["image_url"], str):
+                                        raise ValueError("input_image_mask.image_url must be a string")
+                                image_tool[param] = value
+
+                        response_tools.append(image_tool)
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:
@@ -640,7 +687,27 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         uri = item.result
                         if not uri.startswith("data:"):
                             # Raw base64 string - convert to proper data URI format
-                            uri = f"data:image/png;base64,{uri}"
+                            # Detect format from base64 data
+                            import base64
+
+                            try:
+                                # Decode a small portion to detect format
+                                decoded_data = base64.b64decode(uri[:100])  # First ~75 bytes should be enough
+                                if decoded_data.startswith(b"\x89PNG"):
+                                    format_type = "png"
+                                elif decoded_data.startswith(b"\xff\xd8\xff"):
+                                    format_type = "jpeg"
+                                elif decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
+                                    format_type = "webp"
+                                elif decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
+                                    format_type = "gif"
+                                else:
+                                    # Default to png if format cannot be detected
+                                    format_type = "png"
+                            except Exception:
+                                # Fallback to png if decoding fails
+                                format_type = "png"
+                            uri = f"data:image/{format_type};base64,{uri}"
                         contents.append(
                             DataContent(
                                 uri=uri,

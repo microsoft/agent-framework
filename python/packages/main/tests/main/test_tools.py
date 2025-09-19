@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from agent_framework import (
     AIFunction,
     HostedCodeInterpreterTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     ToolProtocol,
     ai_function,
@@ -624,3 +625,86 @@ def test_hosted_mcp_tool_with_dict_of_allowed_tools():
             url="https://mcp.example",
             allowed_tools={"toolA": "Tool A", "toolC": "Tool C"},
         )
+
+
+# region HostedImageGenerationTool tests
+
+
+def test_hosted_image_generation_tool_default():
+    """Test HostedImageGenerationTool with default parameters."""
+    tool = HostedImageGenerationTool()
+
+    assert tool.name == "image_generation"
+    assert tool.description == ""
+    assert tool.additional_properties is None
+    assert tool.size is None
+    assert tool.quality is None
+    assert tool.format is None
+    assert tool.compression is None
+    assert tool.background is None
+
+
+def test_hosted_image_generation_tool_with_all_parameters():
+    """Test HostedImageGenerationTool with all parameters specified."""
+    tool = HostedImageGenerationTool(
+        description="Generate high-quality images",
+        size="1536x1024",
+        quality="high",
+        format="webp",
+        compression=75,
+        background="transparent",
+        additional_properties={"version": "2.0"},
+    )
+
+    assert tool.name == "image_generation"
+    assert tool.description == "Generate high-quality images"
+    assert tool.size == "1536x1024"
+    assert tool.quality == "high"
+    assert tool.format == "webp"
+    assert tool.compression == 75
+    assert tool.background == "transparent"
+    assert tool.additional_properties == {"version": "2.0"}
+    assert str(tool) == "HostedImageGenerationTool(name=image_generation, description=Generate high-quality images)"
+
+
+def test_hosted_image_generation_tool_compression_validation_invalid_range():
+    """Test HostedImageGenerationTool compression validation with invalid range."""
+    with pytest.raises(ValueError, match="compression must be an integer between 0 and 100"):
+        HostedImageGenerationTool(compression=150, format="jpeg")
+
+    with pytest.raises(ValueError, match="compression must be an integer between 0 and 100"):
+        HostedImageGenerationTool(compression=-10, format="webp")
+
+
+def test_hosted_image_generation_tool_compression_validation_invalid_format():
+    """Test HostedImageGenerationTool compression validation with invalid format."""
+    with pytest.raises(ValueError, match="compression parameter only applies to 'jpeg' and 'webp' formats"):
+        HostedImageGenerationTool(compression=50, format="png")
+
+
+def test_hosted_image_generation_tool_with_openai_kwargs():
+    """Test HostedImageGenerationTool with OpenAI-specific parameters via kwargs."""
+    tool = HostedImageGenerationTool(
+        size="1024x1024",
+        model="gpt-image-1",
+        input_fidelity="high",
+        moderation="strict",
+        partial_images=True,
+    )
+
+    assert tool.size == "1024x1024"
+    # Check that OpenAI Responses-specific parameters are set as attributes
+    assert hasattr(tool, "model")
+    assert tool.model == "gpt-image-1"  # type: ignore
+    assert hasattr(tool, "input_fidelity")
+    assert tool.input_fidelity == "high"  # type: ignore
+    assert hasattr(tool, "moderation")
+    assert tool.moderation == "strict"  # type: ignore
+    assert hasattr(tool, "partial_images")
+    assert tool.partial_images is True  # type: ignore
+
+
+def test_hosted_image_generation_tool_reserved_name_validation():
+    """Test HostedImageGenerationTool validation of reserved 'name' parameter."""
+    with pytest.raises(ValueError, match="The 'name' argument is reserved for the HostedImageGenerationTool"):
+        HostedImageGenerationTool(name="custom_name")

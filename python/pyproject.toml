@@ -10,7 +10,6 @@ dependencies = [
     "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-workflow",
-    "pillow>=11.3.0",
 ]
 
 [dependency-groups]

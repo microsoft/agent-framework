@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, ChatMessage, TextContent, UriContent
+from agent_framework import ChatMessage, TextContent, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -10,8 +10,7 @@ async def main():
     print("=== OpenAI Responses Agent with Image Analysis ===")
 
     # 1. Create an OpenAI Responses agent with vision capabilities
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    agent = OpenAIResponsesClient().create_agent(
         name="VisionAgent",
         instructions="You are a helpful agent that can analyze images.",
     )

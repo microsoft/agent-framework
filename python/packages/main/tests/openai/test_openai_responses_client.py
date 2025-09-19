@@ -30,6 +30,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedFileContent,
     HostedFileSearchTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
@@ -675,6 +676,81 @@ def test_create_response_content_with_mcp_approval_request() -> None:
     assert req.function_call.name == "do_sensitive_action"
     assert req.function_call.arguments == {"arg": 1}
     assert req.function_call.additional_properties["server_label"] == "My_MCP"
+
+
+def test_tools_to_response_tools_with_hosted_image_generation() -> None:
+    """Test that HostedImageGenerationTool is converted to the correct response tool dict."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test with base parameters only
+    tool = HostedImageGenerationTool(
+        description="Generate images",
+        size="1536x1024",
+        quality="high",
+        format="webp",
+        compression=75,
+        background="transparent",
+    )
+
+    resp_tools = client._tools_to_response_tools([tool])
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+
+    image_tool = resp_tools[0]
+    assert isinstance(image_tool, dict)
+    assert image_tool["type"] == "image_generation"
+    assert image_tool["size"] == "1536x1024"
+    assert image_tool["quality"] == "high"
+    assert image_tool["background"] == "transparent"
+    # Check parameter name mapping
+    assert image_tool["output_format"] == "webp"
+    assert image_tool["output_compression"] == 75
+
+
+def test_tools_to_response_tools_with_hosted_image_generation_openai_params() -> None:
+    """Test HostedImageGenerationTool with OpenAI-specific parameters."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test with OpenAI-specific parameters
+    tool = HostedImageGenerationTool(
+        size="1024x1024",
+        model="gpt-image-1",
+        input_fidelity="high",
+        moderation="strict",
+        partial_images=True,
+    )
+
+    resp_tools = client._tools_to_response_tools([tool])
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+
+    image_tool = resp_tools[0]
+    assert isinstance(image_tool, dict)
+    assert image_tool["type"] == "image_generation"
+    assert image_tool["size"] == "1024x1024"
+    # Check OpenAI-specific parameters are included
+    assert image_tool["model"] == "gpt-image-1"
+    assert image_tool["input_fidelity"] == "high"
+    assert image_tool["moderation"] == "strict"
+    assert image_tool["partial_images"] is True
+
+
+def test_tools_to_response_tools_with_hosted_image_generation_minimal() -> None:
+    """Test HostedImageGenerationTool with minimal configuration."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test with minimal parameters
+    tool = HostedImageGenerationTool()
+
+    resp_tools = client._tools_to_response_tools([tool])
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+
+    image_tool = resp_tools[0]
+    assert isinstance(image_tool, dict)
+    assert image_tool["type"] == "image_generation"
+    # Only type should be present, no other parameters
+    assert len(image_tool) == 1
 
 
 def test_create_streaming_response_content_with_mcp_approval_request() -> None:
@@ -1327,6 +1403,42 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
             term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
         )
         assert contains_relevant_content or len(response.text.strip()) > 10
+
+
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_hosted_image_generation_tool():
+    """Test OpenAI Responses Client agent with HostedImageGenerationTool through OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can generate images.",
+        tools=[HostedImageGenerationTool(size="1024x1024", quality="low", format="png")],
+    ) as agent:
+        # Test image generation functionality
+        response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")
+
+        assert isinstance(response, AgentRunResponse)
+
+        # For image generation, we expect to get some response content
+        # This could be DataContent with image data, UriContent
+        assert response.messages is not None and len(response.messages) > 0
+
+        # Check that we have some kind of content in the response
+        total_contents = sum(len(message.contents) for message in response.messages)
+        assert total_contents > 0, f"Expected some content in response messages, got {total_contents} contents"
+
+        # Verify we got image content - look for DataContent with URI starting with "data:image"
+        image_content_found = False
+        for message in response.messages:
+            for content in message.contents:
+                uri = getattr(content, "uri", None)
+                if uri and uri.startswith("data:image"):
+                    image_content_found = True
+                    break
+            if image_content_found:
+                break
+
+        # The test passes if we got image content (which we did based on the visible base64 output)
+        assert image_content_found, "Expected to find image content in response"
 
 
 @skip_if_openai_integration_tests_disabled

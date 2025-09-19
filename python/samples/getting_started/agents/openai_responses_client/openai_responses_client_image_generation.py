@@ -12,7 +12,7 @@ except ImportError:
     Image = None  # type: ignore
     pil_available = False
 
-from agent_framework import ChatAgent, DataContent, HostedImageGenerationTool, UriContent
+from agent_framework import DataContent, HostedImageGenerationTool, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -28,9 +28,9 @@ def display_image(data_uri: str) -> None:
         image_bytes = base64.b64decode(base64_data)
         image = Image.open(io.BytesIO(image_bytes))
 
-        # Display the image
+        # Display the image and format information
         image.show()
-        print(f"Image displayed! Size: {image.size}")
+        print(f"Image displayed! Size: {image.size}, Format: {image.format}")
 
     except Exception as e:
         print(f"Error displaying image: {e}")
@@ -39,14 +39,24 @@ def display_image(data_uri: str) -> None:
 async def main() -> None:
     print("=== OpenAI Responses Image Generation Agent Example ===")
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    # Create an agent with customized image generation options
+    agent = OpenAIResponsesClient().create_agent(
         instructions="You are a helpful AI that can generate images.",
-        tools=[HostedImageGenerationTool()],
+        tools=[
+            HostedImageGenerationTool(
+                # Core parameters
+                size="1536x1024",  # Landscape format (instead of default 1024x1024)
+                background="transparent",  # Transparent background
+                quality="low",  # Low quality generation
+                format="webp",
+                compression=85,
+            )
+        ],
     )
 
     query = "Generate a soccer team badge."
     print(f"User: {query}")
+    print("Generating image with parameters: landscape, transparent, low quality, WebP format...")
 
     result = await agent.run(query)
     print(f"Agent: {result.text}")

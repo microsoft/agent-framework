@@ -2026,6 +2026,7 @@ class AgentRunResponse(AFBaseModel):
     response_id: str | None = None
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
     usage_details: UsageDetails | None = None
+    value: Any | None = None
     raw_representation: Any | None = None
     additional_properties: dict[str, Any] | None = None
 
@@ -2035,6 +2036,7 @@ class AgentRunResponse(AFBaseModel):
         response_id: str | None = None,
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | None = None,
+        value: Any | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -2046,6 +2048,7 @@ class AgentRunResponse(AFBaseModel):
         response_id: The ID of the chat response.
         created_at: A timestamp for the chat response.
         usage_details: The usage details for the chat response.
+        value: The structured output of the agent run response, if applicable.
         additional_properties: Any additional properties associated with the chat response.
         raw_representation: The raw representation of the chat response from an underlying implementation.
         **kwargs: Additional properties to set on the response.
@@ -2062,6 +2065,7 @@ class AgentRunResponse(AFBaseModel):
             response_id=response_id,  # type: ignore[reportCallIssue]
             created_at=created_at,  # type: ignore[reportCallIssue]
             usage_details=usage_details,  # type: ignore[reportCallIssue]
+            value=value,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             **kwargs,
@@ -2103,6 +2107,14 @@ class AgentRunResponse(AFBaseModel):
 
     def __str__(self) -> str:
         return self.text
+
+    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
+        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
+        if self.value is None:
+            try:
+                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            except ValidationError as ex:
+                logger.debug("Failed to parse value from agent run response text: %s", ex)
 
 
 # region AgentRunResponseUpdate
