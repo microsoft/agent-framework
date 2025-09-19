@@ -182,6 +182,7 @@ class OtelAttr(str, Enum):
     WORKFLOW_RUN_SPAN = "workflow.run"
     WORKFLOW_STARTED = "workflow.started"
     WORKFLOW_COMPLETED = "workflow.completed"
+    WORKFLOW_ERROR = "workflow.error"
     # Workflow Build attributes
     BUILD_STARTED = "build.started"
     BUILD_VALIDATION_COMPLETED = "build.validation_completed"
@@ -496,17 +497,21 @@ class OtelSettings(AFBaseSettings):
         from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
         from opentelemetry.sdk.metrics.view import DropAggregation, View
         from opentelemetry.sdk.trace import TracerProvider
+
+        # Use SimpleSpanProcessor for in-memory exporter (tests) so spans are
+        # exported synchronously and immediately available via
+        # InMemorySpanExporter.get_finished_spans(). For all other exporters
+        # keep using the BatchSpanProcessor behavior.
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
         from opentelemetry.trace import set_tracer_provider
 
         # Tracing
         if not self._tracer_provider:
             self._tracer_provider = TracerProvider(resource=self.resource)
-        [
-            self._tracer_provider.add_span_processor(BatchSpanProcessor(exporter))  # type: ignore[func-returns-value]
-            for exporter in exporters
-            if isinstance(exporter, SpanExporter)
-        ]
+        for exporter in exporters:
+            if not isinstance(exporter, SpanExporter):
+                continue
+            self._tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
         # setting global tracer provider, other libaries can use this,
         # but if another global tracer provider is already set this will not override it.
         # Internal AF functions should use OTEL_SETTINGS.tracer_provider to get the correct tracer provider.

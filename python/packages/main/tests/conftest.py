@@ -40,7 +40,7 @@ def otel_settings(
     return patched_otel_settings
 
 
-@fixture()
+@fixture(scope="function", autouse=True)
 def patched_otel_settings(monkeypatch) -> "OtelSettings":  # type: ignore
     """Fixture to remove environment variables for OtelSettings."""
 

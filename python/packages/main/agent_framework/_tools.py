@@ -21,7 +21,7 @@ from typing import (
     runtime_checkable,
 )
 
-from opentelemetry import metrics
+from opentelemetry.metrics import Histogram
 from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, ValidationError, create_model, field_validator
 
 from ._logging import get_logger
@@ -358,6 +358,16 @@ class HostedFileSearchTool(BaseTool):
         super().__init__(**args, **kwargs)
 
 
+def _default_histogram() -> Histogram:
+    """Get the default histogram for function invocation duration."""
+    return get_meter().create_histogram(
+        name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+        unit=OtelAttr.DURATION_UNIT,
+        description="Measures the duration of a function's execution",
+        explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
+    )
+
+
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """A AITool that is callable as code.
 
@@ -371,14 +381,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
     func: Callable[..., Awaitable[ReturnT] | ReturnT]
     input_model: type[ArgsT]
-    _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
-        default_factory=lambda: get_meter().create_histogram(
-            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
-            unit=OtelAttr.DURATION_UNIT,
-            description="Measures the duration of a function's execution",
-            explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
-        )
-    )
+    _invocation_duration_histogram: Histogram = PrivateAttr(default_factory=_default_histogram)
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""

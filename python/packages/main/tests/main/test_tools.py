@@ -98,8 +98,9 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
         return x + y
 
     # Mock the tracer and span
+    mock_tracer = Mock()
     with (
-        patch("agent_framework.observability.tracer"),
+        patch("agent_framework.observability.get_tracer", return_value=mock_tracer),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
@@ -157,7 +158,7 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
     args_model = pydantic_test_tool.input_model(x=5, y=10)
 
     with (
-        patch("agent_framework.observability.tracer"),
+        patch("agent_framework.observability.get_tracer"),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
@@ -203,7 +204,7 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
         raise ValueError("Test exception for telemetry")
 
     with (
-        patch("agent_framework.observability.tracer"),
+        patch("agent_framework.observability.get_tracer"),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):
@@ -248,7 +249,7 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
         return x * y
 
     with (
-        patch("agent_framework.observability.tracer"),
+        patch("agent_framework.observability.get_tracer"),
         # the span creation uses a form of deepcopy, so need to mock that way
         patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
     ):

@@ -98,7 +98,7 @@ class FanInAggregator(Executor):
         return self._processed_messages
 
 
-async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter) -> None:
     """Test creation and attributes of all span types (workflow, processing, sending)."""
     # Create a mock workflow object
     mock_workflow = cast(
@@ -165,11 +165,13 @@ async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter:
     assert sending_span.attributes.get("message.destination_executor_id") == "target-789"
 
 
-async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> None:
     """Test trace context propagation and handling in messages and executors."""
     shared_state = SharedState()
     ctx = InProcRunnerContext()
     executor = MockExecutor("test-executor")
+
+    span_exporter.clear()
 
     # Test trace context propagation in messages
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
@@ -212,7 +214,8 @@ async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMem
     assert processing_span.attributes.get("message.type") == "str"
 
 
-async def test_trace_context_disabled_when_tracing_disabled() -> None:
+@pytest.mark.parametrize("enable_workflow_otel", [False], indirect=True)
+async def test_trace_context_disabled_when_tracing_disabled(enable_workflow_otel) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
     shared_state = SharedState()
@@ -237,7 +240,7 @@ async def test_trace_context_disabled_when_tracing_disabled() -> None:
     assert message.source_span_id is None
 
 
-async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test end-to-end tracing including workflow build, execution, and span linking with fan-in edges."""
     # Create executors for fan-in scenario
     executor1 = MockExecutor("executor1")
@@ -361,7 +364,7 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     assert len(aggregator_span.links) >= 2, f"Expected at least 2 links, got {len(aggregator_span.links)}"
 
 
-async def test_workflow_error_handling_in_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that workflow errors are properly recorded in traces."""
 
     class FailingExecutor(Executor):
@@ -430,7 +433,7 @@ async def test_message_trace_context_serialization() -> None:
     assert restored_msg.source_span_ids == ["span123"]  # Test new format
 
 
-async def test_workflow_build_error_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that build errors are properly recorded in build spans."""
 
     # Test validation error by not setting start executor

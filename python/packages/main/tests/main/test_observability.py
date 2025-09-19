@@ -104,7 +104,7 @@ def test_index_key_constant():
 def test_start_span_basic():
     """Test starting a span with basic function info."""
     mock_tracer = Mock()
-    with patch("agent_framework.observability.tracer", mock_tracer):
+    with patch("agent_framework.observability.get_tracer", return_value=mock_tracer):
         mock_span = Mock()
         mock_tracer.start_as_current_span.return_value = mock_span
 
@@ -136,7 +136,7 @@ def test_start_span_basic():
 def test_start_span_with_tool_call_id():
     """Test starting a span with tool_call_id."""
     mock_tracer = Mock()
-    with patch("agent_framework.observability.tracer", mock_tracer):
+    with patch("agent_framework.observability.get_tracer", return_value=mock_tracer):
         mock_span = CopyingMock()
         mock_tracer.start_as_current_span.return_value = mock_span
 
@@ -364,7 +364,7 @@ def test_agent_decorator_with_partial_methods():
 
 
 @pytest.fixture
-def mock_chat_client_agent():
+def mock_chat_agent():
     """Create a mock chat client agent for testing."""
 
     class MockChatClientAgent:
@@ -394,10 +394,10 @@ def mock_chat_client_agent():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_agent_instrumentation_enabled(mock_chat_client_agent: AgentProtocol, otel_settings):
+async def test_agent_instrumentation_enabled(mock_chat_agent: AgentProtocol, otel_settings):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
-    agent = use_agent_telemetry(mock_chat_client_agent)()
+    agent = use_agent_telemetry(mock_chat_agent)()
 
     with (
         patch("agent_framework.observability.use_span") as mock_use_span,
@@ -412,10 +412,10 @@ async def test_agent_instrumentation_enabled(mock_chat_client_agent: AgentProtoc
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
-    mock_chat_client_agent: AgentProtocol, otel_settings
+    mock_chat_agent: AgentProtocol, otel_settings
 ):
     """Test agent streaming telemetry through the use_agent_telemetry decorator."""
-    agent = use_agent_telemetry(mock_chat_client_agent)()
+    agent = use_agent_telemetry(mock_chat_agent)()
 
     with (
         patch("agent_framework.observability._get_span") as mock_get_span,
@@ -439,15 +439,15 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
             mock_capture_messages.assert_not_called()
 
 
-async def test_agent_run_with_exception_handling(mock_chat_client_agent: AgentProtocol):
+async def test_agent_run_with_exception_handling(mock_chat_agent: AgentProtocol):
     """Test agent run with exception handling."""
 
     async def run_with_error(self, messages=None, *, thread=None, **kwargs):
         raise RuntimeError("Agent run error")
 
-    mock_chat_client_agent.run = run_with_error
+    mock_chat_agent.run = run_with_error
 
-    agent = use_agent_telemetry(mock_chat_client_agent)()
+    agent = use_agent_telemetry(mock_chat_agent)()
 
     from opentelemetry.trace import Span
 

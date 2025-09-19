@@ -310,6 +310,13 @@ class Workflow(AFBaseModel):
                 with _framework_event_origin():
                     failed_status = WorkflowStatusEvent(WorkflowRunState.FAILED)
                 yield failed_status
+                span.add_event(
+                    name=OtelAttr.WORKFLOW_ERROR,
+                    attributes={
+                        "error.message": str(exc),
+                        "error.type": type(exc).__name__,
+                    },
+                )
                 capture_exception(span, exception=exc)
                 raise
 
