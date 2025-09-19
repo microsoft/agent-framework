@@ -1017,10 +1017,12 @@ public readonly struct AsyncRunStatus : IEquatable<AsyncRunStatus>
 The streaming API may return an UpdateId identifying a particular update within a streamed response. 
 This UpdateId should be available together with RunId to callers, allowing them to resume a long-running execution identified 
 by the RunId from the last received update, identified by the UpdateId.
-TBD: Explore this further if the option is selected.
 
 #### 4.2. As Properties Of ChatResponse
-TBD
+
+This option suggests adding properties related to long-running operations directly to the `ChatResponse` and `ChatResponseUpdate` classes rather 
+than using a separate content class for that. See section "6. Model To Support Long-Running Operations" for more details.
+
 
 ### 5. Streaming Support
 
@@ -1580,6 +1582,8 @@ can be configured to always use long-running execution mode.
    - Start, update, get status, and get result of long-running operations will be handled by the existing `Get{Streaming}ResponseAsync` methods of the `IChatClient`.
    - Cancellation of long-running operations will be handled by a new `CancelResponseAsync` method of a new `ICancelableChatClient` interface.
    - Deletion is skipped for now and can be implemented later if needed, following the same approach as cancellation.
+ - Option "**3.2: One Method to Get Status and Result" is selected.
+ - Option "**4.2. As Properties Of ChatResponse**" is selected.
 
 ### Long-Running Operations Support for AF Agents
 TBD
