@@ -484,13 +484,34 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
 
     def _build_middleware_pipelines(
-        middlewares: Middleware | list[Middleware] | None,
+        agent_level_middlewares: Middleware | list[Middleware] | None,
+        run_level_middlewares: Middleware | list[Middleware] | None = None,
     ) -> tuple[AgentMiddlewarePipeline, FunctionMiddlewarePipeline]:
-        """Build fresh agent and function middleware pipelines from the provided middleware list."""
-        if not middlewares:
+        """Build fresh agent and function middleware pipelines from the provided middleware lists.
+
+        Args:
+            agent_level_middlewares: Agent-level middleware (executed first)
+            run_level_middlewares: Run-level middleware (executed after agent middleware)
+        """
+        # Merge middleware lists: agent middleware first, then run middleware
+        combined_middlewares: list[Middleware] = []
+
+        if agent_level_middlewares:
+            if isinstance(agent_level_middlewares, list):
+                combined_middlewares.extend(agent_level_middlewares)  # type: ignore[arg-type]
+            else:
+                combined_middlewares.append(agent_level_middlewares)
+
+        if run_level_middlewares:
+            if isinstance(run_level_middlewares, list):
+                combined_middlewares.extend(run_level_middlewares)  # type: ignore[arg-type]
+            else:
+                combined_middlewares.append(run_level_middlewares)
+
+        if not combined_middlewares:
             return AgentMiddlewarePipeline(), FunctionMiddlewarePipeline()
 
-        middleware_list: list[Middleware] = middlewares if isinstance(middlewares, list) else [middlewares]  # type: ignore
+        middleware_list = combined_middlewares
 
         # Separate agent and function middleware using isinstance checks
         agent_middlewares: list[AgentMiddleware | AgentMiddlewareCallable] = []
@@ -538,12 +559,13 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Middleware-enabled run method."""
-        # Build fresh middleware pipelines from current middleware collection
-        current_middleware = getattr(self, "middleware", None)
-        agent_pipeline, function_pipeline = _build_middleware_pipelines(current_middleware)
+        # Build fresh middleware pipelines from current middleware collection and run-level middleware
+        agent_middleware = getattr(self, "middleware", None)
+        agent_pipeline, function_pipeline = _build_middleware_pipelines(agent_middleware, middleware)
 
         # Add function middleware pipeline to kwargs if available
         if function_pipeline.has_middlewares:
@@ -579,12 +601,13 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Middleware-enabled run_stream method."""
-        # Build fresh middleware pipelines from current middleware collection
-        current_middleware = getattr(self, "middleware", None)
-        agent_pipeline, function_pipeline = _build_middleware_pipelines(current_middleware)
+        # Build fresh middleware pipelines from current middleware collection and run-level middleware
+        agent_middleware = getattr(self, "middleware", None)
+        agent_pipeline, function_pipeline = _build_middleware_pipelines(agent_middleware, middleware)
 
         # Add function middleware pipeline to kwargs if available
         if function_pipeline.has_middlewares:

@@ -797,7 +797,7 @@ class TestMiddlewareDynamicRebuild:
         agent.middleware = [middleware2]
 
         # Second streaming execution - should use only middleware2
-        updates: list[AgentRunResponseUpdate] = []
+        updates = []
         async for update in agent.run_stream("Test stream message 2"):
             updates.append(update)
 
@@ -829,3 +829,291 @@ class TestMiddlewareDynamicRebuild:
         # Second execution - should reflect new order
         await agent.run("Test message 2")
         assert execution_log == ["second_start", "first_start", "first_end", "second_end"]
+
+
+class TestRunLevelMiddleware:
+    """Test cases for run-level middleware functionality."""
+
+    class TrackingAgentMiddleware(AgentMiddleware):
+        """Test middleware that tracks execution."""
+
+        def __init__(self, name: str, execution_log: list[str]):
+            self.name = name
+            self.execution_log = execution_log
+
+        async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+            self.execution_log.append(f"{self.name}_start")
+            await next(context)
+            self.execution_log.append(f"{self.name}_end")
+
+    async def test_run_level_middleware_isolation(self, chat_client: "MockChatClient") -> None:
+        """Test that run-level middleware is isolated between multiple runs."""
+        execution_log: list[str] = []
+
+        # Create agent without any agent-level middleware
+        agent = ChatAgent(chat_client=chat_client)
+
+        # Create run-level middleware
+        run_middleware1 = self.TrackingAgentMiddleware("run1", execution_log)
+        run_middleware2 = self.TrackingAgentMiddleware("run2", execution_log)
+
+        # First run with run_middleware1
+        await agent.run("Test message 1", middleware=[run_middleware1])
+        assert execution_log == ["run1_start", "run1_end"]
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Second run with run_middleware2 - should not see run_middleware1
+        await agent.run("Test message 2", middleware=[run_middleware2])
+        assert execution_log == ["run2_start", "run2_end"]
+        assert "run1_start" not in execution_log
+        assert "run1_end" not in execution_log
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Third run with no middleware - should not see any middleware execution
+        await agent.run("Test message 3")
+        assert execution_log == []
+
+        # Clear execution log
+        execution_log.clear()
+
+        # Fourth run with both run middlewares - should see both
+        await agent.run("Test message 4", middleware=[run_middleware1, run_middleware2])
+        assert execution_log == ["run1_start", "run2_start", "run2_end", "run1_end"]
+
+    async def test_agent_plus_run_middleware_execution_order(self, chat_client: "MockChatClient") -> None:
+        """Test that agent middleware executes first, followed by run middleware."""
+        execution_log: list[str] = []
+        metadata_log: list[str] = []
+
+        class MetadataAgentMiddleware(AgentMiddleware):
+            def __init__(self, name: str):
+                self.name = name
+
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_log.append(f"{self.name}_start")
+                # Set metadata to pass information to run middleware
+                context.metadata[f"{self.name}_key"] = f"{self.name}_value"
+                await next(context)
+                execution_log.append(f"{self.name}_end")
+
+        class MetadataRunMiddleware(AgentMiddleware):
+            def __init__(self, name: str):
+                self.name = name
+
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_log.append(f"{self.name}_start")
+                # Read metadata set by agent middleware
+                for key, value in context.metadata.items():
+                    metadata_log.append(f"{self.name}_reads_{key}:{value}")
+                # Set run-level metadata
+                context.metadata[f"{self.name}_key"] = f"{self.name}_value"
+                await next(context)
+                execution_log.append(f"{self.name}_end")
+
+        # Create agent with agent-level middleware
+        agent_middleware = MetadataAgentMiddleware("agent")
+        agent = ChatAgent(chat_client=chat_client, middleware=[agent_middleware])
+
+        # Create run-level middleware
+        run_middleware = MetadataRunMiddleware("run")
+
+        # Execute with both agent and run middleware
+        await agent.run("Test message", middleware=[run_middleware])
+
+        # Verify execution order: agent middleware wraps run middleware
+        expected_order = ["agent_start", "run_start", "run_end", "agent_end"]
+        assert execution_log == expected_order
+
+        # Verify that run middleware can read agent middleware metadata
+        assert "run_reads_agent_key:agent_value" in metadata_log
+
+    async def test_run_level_middleware_non_streaming(self, chat_client: "MockChatClient") -> None:
+        """Test run-level middleware with non-streaming execution."""
+        execution_log: list[str] = []
+
+        # Create agent without agent-level middleware
+        agent = ChatAgent(chat_client=chat_client)
+
+        # Create run-level middleware
+        run_middleware = self.TrackingAgentMiddleware("run_nonstream", execution_log)
+
+        # Execute non-streaming with run middleware
+        response = await agent.run("Test non-streaming", middleware=[run_middleware])
+
+        # Verify response is correct
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].role == Role.ASSISTANT
+        assert "test response" in response.messages[0].text
+
+        # Verify middleware was executed
+        assert execution_log == ["run_nonstream_start", "run_nonstream_end"]
+
+    async def test_run_level_middleware_streaming(self, chat_client: "MockChatClient") -> None:
+        """Test run-level middleware with streaming execution."""
+        execution_log: list[str] = []
+        streaming_flags: list[bool] = []
+
+        class StreamingTrackingMiddleware(AgentMiddleware):
+            def __init__(self, name: str):
+                self.name = name
+
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_log.append(f"{self.name}_start")
+                streaming_flags.append(context.is_streaming)
+                await next(context)
+                execution_log.append(f"{self.name}_end")
+
+        # Create agent without agent-level middleware
+        agent = ChatAgent(chat_client=chat_client)
+
+        # Set up mock streaming responses
+        chat_client.streaming_responses = [
+            [
+                ChatResponseUpdate(contents=[TextContent(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+            ]
+        ]
+
+        # Create run-level middleware
+        run_middleware = StreamingTrackingMiddleware("run_stream")
+
+        # Execute streaming with run middleware
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
+            updates.append(update)
+
+        # Verify streaming response
+        assert len(updates) == 2
+        assert updates[0].text == "Stream"
+        assert updates[1].text == " response"
+
+        # Verify middleware was executed with correct streaming flag
+        assert execution_log == ["run_stream_start", "run_stream_end"]
+        assert streaming_flags == [True]  # Context should indicate streaming
+
+    async def test_agent_and_run_level_both_agent_and_function_middleware(self, chat_client: "MockChatClient") -> None:
+        """Test complete scenario with agent and function middleware at both agent-level and run-level."""
+        execution_log: list[str] = []
+
+        # Agent-level middleware
+        class AgentLevelAgentMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_log.append("agent_level_agent_start")
+                context.metadata["agent_level_agent"] = "processed"
+                await next(context)
+                execution_log.append("agent_level_agent_end")
+
+        class AgentLevelFunctionMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                next: Callable[[FunctionInvocationContext], Awaitable[None]],
+            ) -> None:
+                execution_log.append("agent_level_function_start")
+                context.metadata["agent_level_function"] = "processed"
+                await next(context)
+                execution_log.append("agent_level_function_end")
+
+        # Run-level middleware
+        class RunLevelAgentMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_log.append("run_level_agent_start")
+                # Verify agent-level middleware metadata is available
+                assert "agent_level_agent" in context.metadata
+                context.metadata["run_level_agent"] = "processed"
+                await next(context)
+                execution_log.append("run_level_agent_end")
+
+        class RunLevelFunctionMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                next: Callable[[FunctionInvocationContext], Awaitable[None]],
+            ) -> None:
+                execution_log.append("run_level_function_start")
+                # Verify agent-level function middleware metadata is available
+                assert "agent_level_function" in context.metadata
+                context.metadata["run_level_function"] = "processed"
+                await next(context)
+                execution_log.append("run_level_function_end")
+
+        # Create tool function for testing function middleware
+        def test_tool(message: str) -> str:
+            execution_log.append("tool_executed")
+            return f"Tool response: {message}"
+
+        # Set up mock to return a function call first, then a regular response
+        function_call_response = ChatResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[
+                        FunctionCallContent(
+                            call_id="test_call",
+                            name="test_tool",
+                            arguments='{"message": "test"}',
+                        )
+                    ],
+                )
+            ]
+        )
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
+        chat_client.responses = [function_call_response, final_response]
+
+        # Create agent with agent-level middleware
+        agent = ChatAgent(
+            chat_client=chat_client,
+            middleware=[AgentLevelAgentMiddleware(), AgentLevelFunctionMiddleware()],
+            tools=[test_tool],
+        )
+
+        # Execute with run-level middleware
+        response = await agent.run(
+            "Test message",
+            middleware=[RunLevelAgentMiddleware(), RunLevelFunctionMiddleware()],
+        )
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert chat_client.call_count == 2  # Function call + final response
+
+        expected_order = [
+            "agent_level_agent_start",
+            "run_level_agent_start",
+            "agent_level_function_start",
+            "run_level_function_start",
+            "tool_executed",
+            "run_level_function_end",
+            "agent_level_function_end",
+            "run_level_agent_end",
+            "agent_level_agent_end",
+        ]
+        assert execution_log == expected_order
+
+        # Verify function call and result are in the response
+        all_contents = [content for message in response.messages for content in message.contents]
+        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
+        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+
+        assert len(function_calls) == 1
+        assert len(function_results) == 1
+        assert function_calls[0].name == "test_tool"
+        assert function_results[0].call_id == function_calls[0].call_id
+        assert function_results[0].result is not None
+        assert "Tool response: test" in str(function_results[0].result)
