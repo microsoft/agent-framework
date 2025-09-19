@@ -222,12 +222,6 @@ support for long-running operations without breaking existing functionality.
 
      <sup>1</sup> The CancelResponseAsync method returns `Canceled` status, but a subsequent call to GetResponseStreamingAsync returns 
      an enumerable that can be iterated over to get the rest of the response until it completes.
-
-  - Store = false
-    
-    When the Store option is set to false and background mode is enabled, the method call `CreateResponseStreamingAsync` returns a response with an Id and status `Queued`.
-    A subsequent call to `GetStreamingResponseAsync` with the response id returns an HTTP 400 error: "An error occurred while processing your request.
-    You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID wfr_0... in your message."
   
 </details>
 
@@ -375,12 +369,12 @@ Based on the analysis of existing APIs that support long-running operations (suc
 the following operations are used for working with long-running operations:
 - Common operations:
   - **Start Long-Running Execution**: Initiates a long-running operation and returns its Id.
-  - **Get Status of Long-Running Execution**: This method is used to retrieve the status of a long-running operation.
+  - **Get Status of Long-Running Execution**: This method retrieves the status of a long-running operation.
   - **Get Result of Long-Running Execution**: Retrieves the result of a long-running operation.
 - Uncommon operations:
-  - **Update Long-Running Execution**: This method is used to update a long-running operation, such as adding new messages or modifying existing ones.
-  - **Cancel Long-Running Execution**: This method is used to cancel a long-running operation.
-  - **Delete Long-Running Execution**: This method is used to delete a long-running operation.
+  - **Update Long-Running Execution**: This method updates a long-running operation, such as adding new messages or modifying existing ones.
+  - **Cancel Long-Running Execution**: This method cancels a long-running operation.
+  - **Delete Long-Running Execution**: This method deletes a long-running operation.
 
 To support these operations by `IChatClient` implementations, the following options are available:
 - **1.1 New IAsyncChatClient Interface for All Long-Running Execution Operations**
@@ -1128,8 +1122,6 @@ Sequence of updates from Azure AI Foundry Agents API to answer the question "Wha
 | run_1  | step_2  | RunStepCompleted  | Completed      | -           | -               | InProgress                |                                                   |
 | run_1  | -       | RunCompleted      | Completed      | -           | -               | Completed                 |                                                   |
 
-To be continued...
-
 ### 6. Model To Support Long-Running Operations
 
 To support long-running operations, the following values need to be returned by the GetResponseAsync and GetStreamingResponseAsync methods:
@@ -1380,7 +1372,75 @@ if(response.Status is {} status && chatClient.GetService<ILongRunningChatClient>
 
 ## Long-Running Operations Support for AF Agents
 
-TBD
+### 1. Methods for Working with Long-Running Operations
+
+The design for supporting long-running executions by agents is very similar to that for chat clients because it is based on 
+the same analysis of existing APIs and anticipated consumption patterns.
+
+#### 1.1 Run{Streaming}Async Methods for Common Operations and the Update Operation + New Method Per Uncommon Operation
+
+This option suggests using the existing `Run{Streaming}Async` methods of the `AIAgent` interface implementations to start, get results, and update long-running operations.
+
+For cancellation and deletion of long-running operations, new methods will be added to the `AIAgent` interface implementations.
+
+```csharp
+public abstract class AIAgent
+{
+    // Existing methods...
+    public Task<AgentRunResponse> RunAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) { ... }
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) { ... }
+
+    // New methods for uncommon operations
+    public virtual Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<AgentRunResponse?>(null);
+    }
+
+    public virtual Task<AgentRunResponse?> DeleteRunAsync(string id, AgentDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<AgentRunResponse?>(null);
+    }
+}
+
+// Agent that supports update and cancellation
+public class CustomAgent : AIAgent
+{
+    public override async Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        var response = await this.client.CancelRunAsync(id, options?.Thread?.ConversationId);
+
+        return ConvertToAgentRunResponse(response); 
+    }
+
+    // No overload for DeleteRunAsync as it's not supported by the underlying API
+}
+
+// Usage
+AIAgent agent = new CustomAgent();
+
+AgentThread thread = agent.GetNewThread();
+
+AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
+
+response = await agent.CancelRunAsync(response.ResponseId, new AgentCancelRunOptions { Thread = thread });
+```
+
+In case an agent supports either or both cancellation and deletion of long-running operations, it will override the corresponding methods.
+Otherwise, it won't override them, and the base implementations will return null by default.
+
+Some agents, for example Azure AI Foundry Agents, require the thread identifier to cancel a run. To accommodate this requirement, the `CancelRunAsync` method
+accepts an optional `AgentCancelRunOptions` parameter that allows callers to specify the thread associated with the run they want to cancel.
+
+```csharp
+public class AgentCancelRunOptions
+{
+    public AgentThread? Thread { get; set; }
+}
+```
+
+Similar design considerations can be applied to the `DeleteRunAsync` method and the `AgentDeleteRunOptions` class.
+
+Having options in the method signatures allows for future extensibility; however, they can be added later if needed to the method overloads.
 
 ## Decision Outcome
 
