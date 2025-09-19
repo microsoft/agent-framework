@@ -190,6 +190,9 @@ def test_workflow_viz_graphviz_binary_not_found():
     """Test that missing graphviz binary raises ImportError with helpful message."""
     import unittest.mock
 
+    # Skip test if graphviz package is not available
+    pytest.importorskip("graphviz")
+
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
@@ -203,6 +206,7 @@ def test_workflow_viz_graphviz_binary_not_found():
 
         # Import the ExecutableNotFound exception for the test
         from graphviz.backend.execute import ExecutableNotFound
+
         mock_source.render.side_effect = ExecutableNotFound("failed to execute PosixPath('dot')")
 
         # Test that the proper ImportError is raised with helpful message
