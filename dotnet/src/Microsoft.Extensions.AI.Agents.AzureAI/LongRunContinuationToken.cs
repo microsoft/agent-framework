@@ -22,7 +22,7 @@ internal sealed class LongRunContinuationToken : ContinuationToken
 
     public static LongRunContinuationToken Deserialize(string json)
     {
-        json = Throw.IfNullOrEmpty(json);
+        Throw.IfNullOrEmpty(json);
 
         var token = JsonSerializer.Deserialize<LongRunContinuationToken>(json, JsonContext.Default.LongRunContinuationToken)
             ?? throw new InvalidOperationException("Failed to deserialize LongRunContinuationToken.");

@@ -33,7 +33,6 @@
     <!-- Newtonsoft (Required by CosmosClient) -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.4" />
-    <PackageVersion Include="System.ClientModel" Version="1.6.1" />
     <!-- System.* -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="9.0.9" />

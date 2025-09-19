@@ -17,7 +17,7 @@ internal sealed class LongRunContinuationToken
 
     public static LongRunContinuationToken Deserialize(string json)
     {
-        json = Throw.IfNullOrEmpty(json);
+        Throw.IfNullOrEmpty(json);
 
         var token = JsonSerializer.Deserialize<LongRunContinuationToken>(json, A2AJsonContext.Default.LongRunContinuationToken)
             ?? throw new InvalidOperationException("Failed to deserialize LongRunContinuationToken.");
