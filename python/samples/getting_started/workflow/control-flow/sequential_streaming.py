@@ -13,7 +13,7 @@ The second reverses the text and completes the workflow. Events are printed as t
 Purpose:
 Show how to declare executors with the @executor decorator, connect them with WorkflowBuilder,
 pass intermediate values using ctx.send_message, and signal completion with ctx.add_event by emitting a
-WorkflowCompletedEvent. Demonstrate how streaming exposes ExecutorInvokeEvent and WorkflowCompletedEvent
+WorkflowCompletedEvent. Demonstrate how streaming exposes ExecutorInvokedEvent and WorkflowCompletedEvent
 for observability.
 
 Prerequisites:
@@ -72,9 +72,9 @@ async def main():
     """
     Sample Output:
 
-    Event: ExecutorInvokeEvent(executor_id=upper_case_executor)
+    Event: ExecutorInvokedEvent(executor_id=upper_case_executor)
     Event: ExecutorCompletedEvent(executor_id=upper_case_executor)
-    Event: ExecutorInvokeEvent(executor_id=reverse_text_executor)
+    Event: ExecutorInvokedEvent(executor_id=reverse_text_executor)
     Event: WorkflowCompletedEvent(data=DLROW OLLEH)
     Event: ExecutorCompletedEvent(executor_id=reverse_text_executor)
     Workflow completed with result: DLROW OLLEH

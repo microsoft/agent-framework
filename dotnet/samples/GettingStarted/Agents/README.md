@@ -38,7 +38,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Exposing a simple agent as MCP tool](./Agent_Step10_AsMcpTool/)|This sample demonstrates how to expose an agent as an MCP tool|
 |[Using images with a simple agent](./Agent_Step11_UsingImages/)|This sample demonstrates how to use image multi-modality with an AI agent|
 |[Exposing a simple agent as a function tool](./Agent_Step12_AsFunctionTool/)|This sample demonstrates how to expose an agent as a function tool|
-|[Using memory with an agent](./Agent_Step12_Memory/)|This sample demonstrates how to create a simple memory component and use it with an agent|
+|[Using memory with an agent](./Agent_Step13_Memory/)|This sample demonstrates how to create a simple memory component and use it with an agent|
 
 ## Running the samples from the console
 

@@ -22,30 +22,15 @@ public class RepresentationTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-        {
+        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
-        }
 
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-        {
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
-        }
     }
 
     private static InputPort TestInputPort =>
         InputPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
-
-    private static List<T> ListAggregator<T>(List<T>? current, T incoming)
-    {
-        if (current is null)
-        {
-            return [incoming];
-        }
-
-        current.Add(incoming);
-        return current;
-    }
 
     private static async ValueTask RunExecutorishInfoMatchTestAsync(ExecutorIsh target)
     {
@@ -59,19 +44,19 @@ public class RepresentationTests
     public async Task Test_Executorish_InfosAsync()
     {
         int testsRun = 0;
-        await RunExecutorishTest(new TestExecutor());
-        await RunExecutorishTest(TestInputPort);
-        await RunExecutorishTest(new TestAgent());
+        await RunExecutorishTestAsync(new TestExecutor());
+        await RunExecutorishTestAsync(TestInputPort);
+        await RunExecutorishTestAsync(new TestAgent());
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
-        await RunExecutorishTest(function.AsExecutor("FunctionExecutor"));
+        await RunExecutorishTestAsync(function.AsExecutor("FunctionExecutor"));
 
         if (Enum.GetValues(typeof(ExecutorIsh.Type)).Length > testsRun + 1)
         {
             Assert.Fail("Not all ExecutorIsh types were tested.");
         }
 
-        async ValueTask RunExecutorishTest(ExecutorIsh executorish)
+        async ValueTask RunExecutorishTestAsync(ExecutorIsh executorish)
         {
             await RunExecutorishInfoMatchTestAsync(executorish);
             testsRun++;
@@ -92,9 +77,7 @@ public class RepresentationTests
         await RunExecutorishInfoMatchTestAsync(outputCollector);
     }
 
-    private static string Source(string id) => $"Source/{id}";
     private static string Source(int id) => $"Source/{id}";
-    private static string Sink(string id) => $"Sink/{id}";
     private static string Sink(int id) => $"Sink/{id}";
 
     private static Func<object?, bool> Condition() => Condition<object>();
@@ -156,7 +139,7 @@ public class RepresentationTests
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge4, expect: false); // Identity matters
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge5, expect: false);
 
-        void RunEdgeInfoMatchTest(Edge edge, Edge? comparatorEdge = null, bool expect = true)
+        static void RunEdgeInfoMatchTest(Edge edge, Edge? comparatorEdge = null, bool expect = true)
         {
             comparatorEdge ??= edge;
 
@@ -180,7 +163,7 @@ public class RepresentationTests
 
         RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance, Step2EntryPoint.WorkflowInstance, expect: false);
 
-        void RunWorkflowInfoMatchTest<TInput>(Workflow<TInput> workflow, Workflow<TInput>? comparator = null, bool expect = true)
+        static void RunWorkflowInfoMatchTest<TInput>(Workflow<TInput> workflow, Workflow<TInput>? comparator = null, bool expect = true)
         {
             comparator ??= workflow;
 

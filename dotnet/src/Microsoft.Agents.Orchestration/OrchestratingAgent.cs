@@ -129,7 +129,7 @@ public abstract partial class OrchestratingAgent : AIAgent
         CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cancellationToken = cts.Token;
 
-        JsonElement? checkpoint = await this.ReadCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
+        JsonElement? checkpoint = await ReadCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
         Task<AgentRunResponse> completion = checkpoint is null ?
             this.RunCoreAsync(readonlyCollectionMessages, context, cancellationToken) :
             this.ResumeCoreAsync(checkpoint.Value, readonlyCollectionMessages, context, cancellationToken);
@@ -207,7 +207,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="context">The context for the orchestrating operation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A Task that completes when the asynchronous operation quiesces.</returns>
-    protected async Task WriteCheckpointAsync(JsonElement state, OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected static async Task WriteCheckpointAsync(JsonElement state, OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(context);
 
@@ -236,7 +236,7 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// <param name="context">The context for the orchestrating operation.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>The loaded state, or null if it doesn't exist.</returns>
-    protected async ValueTask<JsonElement?> ReadCheckpointAsync(OrchestratingAgentContext context, CancellationToken cancellationToken)
+    protected static async ValueTask<JsonElement?> ReadCheckpointAsync(OrchestratingAgentContext context, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(context);
 
@@ -276,10 +276,10 @@ public abstract partial class OrchestratingAgent : AIAgent
     [LoggerMessage(Level = LogLevel.Trace, Message = "{Orchestration} completed agent '{Agent}' ('{Id}')")]
     private static partial void LogOrchestrationSubagentCompleted(ILogger logger, string orchestration, string id, string agent);
 
-    private protected void LogOrchestrationSubagentRunning(OrchestratingAgentContext context, AIAgent agent) =>
+    private protected static void LogOrchestrationSubagentRunning(OrchestratingAgentContext context, AIAgent agent) =>
         LogOrchestrationSubagentRunning(context.Logger, context.ToString(), context.Id, agent.DisplayName);
 
-    private protected void LogOrchestrationSubagentCompleted(OrchestratingAgentContext context, AIAgent agent) =>
+    private protected static void LogOrchestrationSubagentCompleted(OrchestratingAgentContext context, AIAgent agent) =>
         LogOrchestrationSubagentCompleted(context.Logger, context.ToString(), context.Id, agent.DisplayName);
 
     private static async Task LogCompletionAsync(ILogger logger, OrchestratingAgentContext context, Task<AgentRunResponse> completion)

@@ -76,8 +76,7 @@ public class OpenAIChatClientAgent : AIAgent
     {
         var response = await this.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
 
-        var chatCompletion = response.AsChatCompletion();
-        return chatCompletion;
+        return response.AsChatCompletion();
     }
 
     /// <inheritdoc/>

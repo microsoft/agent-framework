@@ -17,13 +17,8 @@ public class SuperStepEvent(int stepNumber, object? data = null) : WorkflowEvent
     public int StepNumber => stepNumber;
 
     /// <inheritdoc/>
-    public override string ToString()
-    {
-        if (this.Data != null)
-        {
-            return $"{this.GetType().Name}(Step = {this.StepNumber}, Data: {this.Data.GetType()} = {this.Data})";
-        }
-
-        return $"{this.GetType().Name}(Step = {this.StepNumber})";
-    }
+    public override string ToString() =>
+        this.Data is not null ?
+            $"{this.GetType().Name}(Step = {this.StepNumber}, Data: {this.Data.GetType()} = {this.Data})" :
+            $"{this.GetType().Name}(Step = {this.StepNumber})";
 }

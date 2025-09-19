@@ -13,7 +13,7 @@ namespace Microsoft.Extensions.AI.Agents.UnitTests;
 /// </summary>
 public class CopilotStudioAgentTests
 {
-    private CopilotClient CreateTestCopilotClient()
+    private static CopilotClient CreateTestCopilotClient()
     {
         // Create mock dependencies for CopilotClient
         var mockSettings = new Mock<ConnectionSettings>();
@@ -33,7 +33,7 @@ public class CopilotStudioAgentTests
     public void GetService_RequestingCopilotClient_ReturnsCopilotClient()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act
@@ -51,7 +51,7 @@ public class CopilotStudioAgentTests
     public void GetService_RequestingAIAgentMetadata_ReturnsMetadata()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act
@@ -71,7 +71,7 @@ public class CopilotStudioAgentTests
     public void GetService_RequestingUnknownServiceType_ReturnsNull()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act
@@ -88,7 +88,7 @@ public class CopilotStudioAgentTests
     public void GetService_WithServiceKey_ReturnsNull()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act
@@ -105,7 +105,7 @@ public class CopilotStudioAgentTests
     public void GetService_RequestingCopilotStudioAgentType_ReturnsBaseImplementation()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act
@@ -123,7 +123,7 @@ public class CopilotStudioAgentTests
     public void GetService_RequestingAIAgentType_ReturnsBaseImplementation()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act
@@ -141,7 +141,7 @@ public class CopilotStudioAgentTests
     public void GetService_RequestingCopilotClientWithServiceKey_CallsBaseFirstThenDerivedLogic()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act - Request CopilotClient with a service key (base.GetService will return null due to serviceKey)
@@ -159,7 +159,7 @@ public class CopilotStudioAgentTests
     public void GetService_RequestingAIAgentMetadata_ReturnsConsistentMetadata()
     {
         // Arrange
-        var client = this.CreateTestCopilotClient();
+        var client = CreateTestCopilotClient();
         var agent = new CopilotStudioAgent(client, NullLoggerFactory.Instance);
 
         // Act

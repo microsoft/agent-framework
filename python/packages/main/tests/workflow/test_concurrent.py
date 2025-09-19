@@ -126,3 +126,17 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
     assert completed is not None
     assert isinstance(completed.data, str)
     assert completed.data == "One | Two"
+
+
+def test_concurrent_custom_aggregator_uses_callback_name_for_id() -> None:
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    def summarize(results: list[AgentExecutorResponse]) -> str:  # type: ignore[override]
+        return str(len(results))
+
+    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize).build()
+
+    assert "summarize" in wf.executors
+    aggregator = wf.executors["summarize"]
+    assert aggregator.id == "summarize"

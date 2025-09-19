@@ -33,6 +33,7 @@
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
   </Folder>
@@ -78,12 +79,12 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
-    <File Path="../workflows/DeepResearch.yaml" />
-    <File Path="../workflows/HumanInLoop.yaml" />
-    <File Path="../workflows/Marketing.yaml" />
-    <File Path="../workflows/MathChat.yaml" />
-    <File Path="../workflows/README.md" />
-    <File Path="../workflows/wttr.json" />
+    <File Path="../workflow-samples/DeepResearch.yaml" />
+    <File Path="../workflow-samples/HumanInLoop.yaml" />
+    <File Path="../workflow-samples/Marketing.yaml" />
+    <File Path="../workflow-samples/MathChat.yaml" />
+    <File Path="../workflow-samples/README.md" />
+    <File Path="../workflow-samples/wttr.json" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/SharedStates/">
     <Project Path="samples/GettingStarted/Workflows/SharedStates/SharedStates.csproj" />
@@ -108,6 +109,7 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/02_Streaming/02_Streaming.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />
   </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/" />
   <Folder Name="/Samples/SemanticKernelMigration/AzureAIFoundry/">

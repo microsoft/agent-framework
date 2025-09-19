@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData) :
+internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData) :
     EdgeRunner<FanInEdgeData>(runContext, edgeData)
 {
     private IWorkflowContext BoundContext { get; } = runContext.Bind(edgeData.SinkId);
@@ -15,13 +15,12 @@ internal class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData edgeData
 
     public ValueTask<IEnumerable<object?>> ChaseAsync(string sourceId, MessageEnvelope envelope, FanInEdgeState state, IStepTracer? tracer)
     {
-        if (envelope.TargetId != null && this.EdgeData.SinkId != envelope.TargetId)
+        if (envelope.TargetId is not null && this.EdgeData.SinkId != envelope.TargetId)
         {
             // This message is not for us.
             return new([]);
         }
 
-        object message = envelope.Message;
         IEnumerable<MessageEnvelope>? releasedMessages = state.ProcessMessage(sourceId, envelope);
         if (releasedMessages is null)
         {

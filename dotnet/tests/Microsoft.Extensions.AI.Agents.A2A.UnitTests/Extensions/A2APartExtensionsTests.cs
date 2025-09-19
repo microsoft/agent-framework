@@ -63,8 +63,8 @@ public sealed class A2APartExtensionsTests
     public void ToAIContent_WithFilePartWithFileWithUri_ReturnsHostedFileContent()
     {
         // Arrange
-        var uri = "https://example.com/file.txt";
-        var filePart = new FilePart { File = new FileWithUri { Uri = uri } };
+        const string Uri = "https://example.com/file.txt";
+        var filePart = new FilePart { File = new FileWithUri { Uri = Uri } };
 
         // Act
         var result = filePart.ToAIContent();
@@ -74,7 +74,7 @@ public sealed class A2APartExtensionsTests
         Assert.Equal(filePart, result.RawRepresentation);
 
         var hostedFileContent = Assert.IsType<HostedFileContent>(result);
-        Assert.Equal(uri, hostedFileContent.FileId);
+        Assert.Equal(Uri, hostedFileContent.FileId);
         Assert.Null(hostedFileContent.AdditionalProperties);
     }
 
@@ -85,12 +85,10 @@ public sealed class A2APartExtensionsTests
         var customPart = new MockPart();
 
         // Act & Assert
-        var exception = Assert.Throws<NotSupportedException>(() => customPart.ToAIContent());
+        var exception = Assert.Throws<NotSupportedException>(customPart.ToAIContent);
         Assert.Equal("Part type 'MockPart' is not supported.", exception.Message);
     }
 
     // Mock class for testing unsupported scenarios
-    private sealed class MockPart : Part
-    {
-    }
+    private sealed class MockPart : Part;
 }

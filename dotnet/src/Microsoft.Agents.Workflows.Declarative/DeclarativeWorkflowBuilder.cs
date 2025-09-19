@@ -31,7 +31,7 @@ public static class DeclarativeWorkflowBuilder
         where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(workflowFile);
-        return Build<TInput>(yamlReader, options, inputTransform);
+        return Build(yamlReader, options, inputTransform);
     }
 
     /// <summary>

@@ -4,7 +4,6 @@
 
 using System;
 using System.Diagnostics;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -13,7 +12,6 @@ using System.Threading.Tasks;
 using System.Web;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
@@ -30,10 +28,7 @@ using var sharedHandler = new SocketsHttpHandler
 };
 using var httpClient = new HttpClient(sharedHandler);
 
-var consoleLoggerFactory = LoggerFactory.Create(builder =>
-{
-    builder.AddConsole();
-});
+var consoleLoggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
 
 // Create SSE client transport for the MCP server
 var serverUrl = "http://localhost:7071/";
@@ -59,7 +54,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools.Select(mcpTool => (AITool)mcpTool)]);
+     .CreateAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Get current weather alerts for New York?"));
@@ -92,8 +87,8 @@ static async Task<string?> HandleAuthorizationUrlAsync(Uri authorizationUrl, Uri
         var code = query["code"];
         var error = query["error"];
 
-        string responseHtml = "<html><body><h1>Authentication complete</h1><p>You can close this window now.</p></body></html>";
-        byte[] buffer = Encoding.UTF8.GetBytes(responseHtml);
+        const string ResponseHtml = "<html><body><h1>Authentication complete</h1><p>You can close this window now.</p></body></html>";
+        byte[] buffer = Encoding.UTF8.GetBytes(ResponseHtml);
         context.Response.ContentLength64 = buffer.Length;
         context.Response.ContentType = "text/html";
         context.Response.OutputStream.Write(buffer, 0, buffer.Length);

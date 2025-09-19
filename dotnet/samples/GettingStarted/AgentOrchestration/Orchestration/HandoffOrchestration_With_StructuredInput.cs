@@ -22,18 +22,18 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
 
         // Define the agents
         ChatClientAgent triageAgent =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "Given a GitHub issue, triage it.",
                 name: "TriageAgent",
                 description: "An agent that triages GitHub issues");
         ChatClientAgent pythonAgent =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "You are an agent that handles Python related GitHub issues.",
                 name: "PythonAgent",
                 description: "An agent that handles Python related issues",
                 functions: githubAddLabelFunction);
         ChatClientAgent dotnetAgent =
-            this.CreateAgent(
+            CreateAgent(
                 instructions: "You are an agent that handles .NET related GitHub issues.",
                 name: "DotNetAgent",
                 description: "An agent that handles .NET related issues",
@@ -51,7 +51,7 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
                     .Add(triageAgent, [dotnetAgent, pythonAgent]))
             {
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
+                ResponseCallback = monitor.ResponseCallbackAsync,
             };
 
         GithubIssue input =
@@ -105,9 +105,6 @@ public class HandoffOrchestration_With_StructuredInput(ITestOutputHelper output)
     {
         public Dictionary<string, string[]> Labels { get; } = [];
 
-        public void AddLabels(string issueId, params string[] labels)
-        {
-            this.Labels[issueId] = labels;
-        }
+        public void AddLabels(string issueId, params string[] labels) => this.Labels[issueId] = labels;
     }
 }

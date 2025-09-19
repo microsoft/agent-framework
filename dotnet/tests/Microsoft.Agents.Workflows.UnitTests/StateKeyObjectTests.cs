@@ -88,7 +88,7 @@ public class StateKeyObjectTests
         ValidateMatch(sharedScope2Key, privateScope1, expectedStrict: false, expectedLoose: false);
         ValidateMatch(sharedScope2Key, privateScope2, expectedStrict: false, expectedLoose: false);
 
-        void ValidateMatch(UpdateKey key, ScopeId scope, bool expectedStrict, bool expectedLoose)
+        static void ValidateMatch(UpdateKey key, ScopeId scope, bool expectedStrict, bool expectedLoose)
         {
             key.IsMatchingScope(scope, strict: true).Should().Be(expectedStrict);
             key.IsMatchingScope(scope, strict: false).Should().Be(expectedLoose);

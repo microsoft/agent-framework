@@ -6,7 +6,7 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace Microsoft.Agents.Workflows.Checkpointing;
 
-internal class JsonMarshaller : IWireMarshaller<JsonElement>
+internal sealed class JsonMarshaller : IWireMarshaller<JsonElement>
 {
     private readonly JsonSerializerOptions _internalOptions;
     private readonly JsonSerializerOptions? _externalOptions;
@@ -26,7 +26,7 @@ internal class JsonMarshaller : IWireMarshaller<JsonElement>
     {
         if (!this._internalOptions.TryGetTypeInfo(type, out JsonTypeInfo? typeInfo))
         {
-            if (this._externalOptions == null ||
+            if (this._externalOptions is null ||
                 !this._externalOptions.TryGetTypeInfo(type, out typeInfo))
             {
                 throw new InvalidOperationException($"No JSON type info is available for type '{type}'.");
@@ -44,13 +44,8 @@ internal class JsonMarshaller : IWireMarshaller<JsonElement>
 
     public TValue Marshal<TValue>(JsonElement data)
     {
-        Type type = typeof(TValue);
-        object? value = JsonSerializer.Deserialize(data, this.LookupTypeInfo(type));
-
-        if (value is null)
-        {
+        object value = data.Deserialize(this.LookupTypeInfo(typeof(TValue))) ??
             throw new InvalidOperationException($"Could not deserialize the value as the expected type {typeof(TValue)}.");
-        }
 
         if (value is TValue typedValue)
         {
@@ -62,12 +57,8 @@ internal class JsonMarshaller : IWireMarshaller<JsonElement>
 
     public object Marshal(Type targetType, JsonElement data)
     {
-        object? value = JsonSerializer.Deserialize(data, this.LookupTypeInfo(targetType));
-
-        if (value is null)
-        {
+        object value = data.Deserialize(this.LookupTypeInfo(targetType)) ??
             throw new InvalidOperationException($"Could not deserialize the value as the expected type {targetType}.");
-        }
 
         if (targetType.IsInstanceOfType(value))
         {

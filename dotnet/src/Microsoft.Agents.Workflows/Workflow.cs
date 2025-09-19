@@ -17,9 +17,9 @@ public class Workflow
     /// <summary>
     /// A dictionary of executor providers, keyed by executor ID.
     /// </summary>
-    internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = new();
+    internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = [];
 
-    internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = new();
+    internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
 
     /// <summary>
     /// Gets the collection of edges grouped by their source node identifier.
@@ -32,7 +32,7 @@ public class Workflow
         );
     }
 
-    internal Dictionary<string, InputPort> Ports { get; init; } = new();
+    internal Dictionary<string, InputPort> Ports { get; init; } = [];
 
     /// <summary>
     /// Gets the collection of external request ports, keyed by their ID.

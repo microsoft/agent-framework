@@ -36,7 +36,8 @@ public class FunctionExecutor<TInput>(Func<TInput, IWorkflowContext, Cancellatio
     /// </summary>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
     public FunctionExecutor(Action<TInput, IWorkflowContext, CancellationToken> handlerSync) : this(WrapAction(handlerSync))
-    { }
+    {
+    }
 }
 
 /// <summary>
@@ -61,12 +62,15 @@ public class FunctionExecutor<TInput, TOutput>(Func<TInput, IWorkflowContext, Ca
             return new ValueTask<TOutput>(result);
         }
     }
+
     /// <inheritdoc/>
     public override ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context) => handlerAsync(message, context, default);
+
     /// <summary>
     /// Creates a new instance of the <see cref="FunctionExecutor{TInput,TOutput}"/> class.
     /// </summary>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
     public FunctionExecutor(Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync) : this(WrapFunc(handlerSync))
-    { }
+    {
+    }
 }

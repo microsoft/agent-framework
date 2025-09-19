@@ -185,10 +185,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             if choice.finish_reason:
                 finish_reason = FinishReason(value=choice.finish_reason)
             contents: list[Contents] = []
-            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
-                contents.extend(parsed_tool_calls)
             if text_content := self._parse_text_from_choice(choice):
                 contents.append(text_content)
+            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
+                contents.extend(parsed_tool_calls)
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -354,8 +354,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                         args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
                 case FunctionResultContent():
                     args["tool_call_id"] = content.call_id
-                    if content.result:
+                    if content.result is not None:
                         args["content"] = prepare_function_call_results(content.result)
+                    elif content.exception is not None:
+                        # Send the exception message to the model
+                        # Otherwise we won't have any channels to talk to OpenAI
+                        # TODO(yuge): This should ideally be customizable
+                        args["content"] = "Error: " + str(content.exception)
                 case _:
                     if "content" not in args:
                         args["content"] = []

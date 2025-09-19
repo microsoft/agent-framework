@@ -39,21 +39,15 @@ public static class ExecutorIshConfigurationExtensions
         return new ExecutorIsh(configured.Super<TExecutor, Executor, TOptions>(), typeof(TExecutor), ExecutorIsh.Type.Executor);
     }
 
-    private static ExecutorIsh ToExecutorIsh<TInput>(this FunctionExecutor<TInput> executor, Delegate raw)
-    {
-        return new ExecutorIsh(Configured.FromInstance(executor, raw: raw)
+    private static ExecutorIsh ToExecutorIsh<TInput>(this FunctionExecutor<TInput> executor, Delegate raw) => new(Configured.FromInstance(executor, raw: raw)
                                          .Super<FunctionExecutor<TInput>, Executor>(),
                                typeof(FunctionExecutor<TInput>),
                                ExecutorIsh.Type.Function);
-    }
 
-    private static ExecutorIsh ToExecutorIsh<TInput, TOutput>(this FunctionExecutor<TInput, TOutput> executor, Delegate raw)
-    {
-        return new ExecutorIsh(Configured.FromInstance(executor, raw: raw)
+    private static ExecutorIsh ToExecutorIsh<TInput, TOutput>(this FunctionExecutor<TInput, TOutput> executor, Delegate raw) => new(Configured.FromInstance(executor, raw: raw)
                                          .Super<FunctionExecutor<TInput, TOutput>, Executor>(),
                                typeof(FunctionExecutor<TInput, TOutput>),
                                ExecutorIsh.Type.Function);
-    }
 
     /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
@@ -141,7 +135,7 @@ public sealed class ExecutorIsh :
         this._idValue = Throw.IfNull(id);
     }
 
-    internal ExecutorIsh(Configured<Executor> configured, System.Type configuredExecutorType, ExecutorIsh.Type type)
+    internal ExecutorIsh(Configured<Executor> configured, System.Type configuredExecutorType, Type type)
     {
         this.ExecutorType = type;
         this._configuredExecutor = configured;
@@ -256,73 +250,42 @@ public sealed class ExecutorIsh :
     /// Defines an implicit conversion from a string to an <see cref="ExecutorIsh"/> instance.
     /// </summary>
     /// <param name="id">The string ID to convert to an <see cref="ExecutorIsh"/>.</param>
-    public static implicit operator ExecutorIsh(string id)
-    {
-        return new ExecutorIsh(id);
-    }
+    public static implicit operator ExecutorIsh(string id) => new(id);
 
     /// <inheritdoc/>
-    public bool Equals(ExecutorIsh? other)
-    {
-        return other is not null &&
-               other.Id == this.Id;
-    }
+    public bool Equals(ExecutorIsh? other) =>
+        other is not null && other.Id == this.Id;
 
     /// <inheritdoc/>
-    public bool Equals(IIdentified? other)
-    {
-        return other is not null &&
-               other.Id == this.Id;
-    }
+    public bool Equals(IIdentified? other) =>
+        other is not null && other.Id == this.Id;
 
     /// <inheritdoc/>
-    public bool Equals(string? other)
-    {
-        return other is not null &&
-               other == this.Id;
-    }
+    public bool Equals(string? other) =>
+        other is not null && other == this.Id;
 
     /// <inheritdoc/>
-    public override bool Equals(object? obj)
-    {
-        if (obj is null)
+    public override bool Equals(object? obj) =>
+        obj switch
         {
-            return false;
-        }
-
-        if (obj is ExecutorIsh ish)
-        {
-            return this.Equals(ish);
-        }
-        else if (obj is IIdentified identified)
-        {
-            return this.Equals(identified);
-        }
-        else if (obj is string str)
-        {
-            return this.Equals(str);
-        }
-
-        return false;
-    }
-
-    /// <inheritdoc/>
-    public override int GetHashCode()
-    {
-        return this.Id.GetHashCode();
-    }
-
-    /// <inheritdoc/>
-    public override string ToString()
-    {
-        return this.ExecutorType switch
-        {
-            Type.Unbound => $"'{this.Id}':<unbound>",
-            Type.Executor => $"'{this.Id}':{this._configuredExecutorType!.Name}",
-            Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
-            Type.Agent => $"{this.Id}':AIAgent(@{this._aiAgentValue!.GetType().Name})",
-            Type.Function => $"'{this.Id}':{this._configuredExecutorType!.Name}",
-            _ => $"'{this.Id}':<unknown[{this.ExecutorType}]>"
+            null => false,
+            ExecutorIsh ish => this.Equals(ish),
+            IIdentified identified => this.Equals(identified),
+            string str => this.Equals(str),
+            _ => false
         };
-    }
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => this.Id.GetHashCode();
+
+    /// <inheritdoc/>
+    public override string ToString() => this.ExecutorType switch
+    {
+        Type.Unbound => $"'{this.Id}':<unbound>",
+        Type.Executor => $"'{this.Id}':{this._configuredExecutorType!.Name}",
+        Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
+        Type.Agent => $"{this.Id}':AIAgent(@{this._aiAgentValue!.GetType().Name})",
+        Type.Function => $"'{this.Id}':{this._configuredExecutorType!.Name}",
+        _ => $"'{this.Id}':<unknown[{this.ExecutorType}]>"
+    };
 }

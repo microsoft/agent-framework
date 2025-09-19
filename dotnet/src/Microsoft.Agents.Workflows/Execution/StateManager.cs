@@ -9,10 +9,10 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class StateManager
+internal sealed class StateManager
 {
-    private readonly Dictionary<ScopeId, StateScope> _scopes = new();
-    private readonly Dictionary<UpdateKey, StateUpdate> _queuedUpdates = new();
+    private readonly Dictionary<ScopeId, StateScope> _scopes = [];
+    private readonly Dictionary<UpdateKey, StateUpdate> _queuedUpdates = [];
 
     private StateScope GetOrCreateScope(ScopeId scopeId)
     {
@@ -125,15 +125,14 @@ internal class StateManager
     }
 
     public ValueTask WriteStateAsync<T>(string executorId, string? scopeName, string key, T value)
-        => this.WriteStateAsync<T>(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key, value);
+        => this.WriteStateAsync(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key, value);
 
     public ValueTask WriteStateAsync<T>(ScopeId scopeId, string key, T value)
     {
         Throw.IfNullOrEmpty(key);
 
         UpdateKey stateKey = new(scopeId, key);
-        StateUpdate update = StateUpdate.Update(key, value);
-        this._queuedUpdates[stateKey] = update;
+        this._queuedUpdates[stateKey] = StateUpdate.Update(key, value);
 
         return default;
     }
@@ -169,7 +168,7 @@ internal class StateManager
             stateUpdates.Add(this._queuedUpdates[key]);
         }
 
-        if (tracer != null && (updatesByScope.Count > 0))
+        if (tracer is not null && (updatesByScope.Count > 0))
         {
             tracer.TraceStatePublished();
         }

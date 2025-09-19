@@ -16,14 +16,10 @@ internal sealed class AsyncStreamingUpdateCollectionResult : AsyncCollectionResu
 
     public override ContinuationToken? GetContinuationToken(ClientResult page) => null;
 
-    public override IAsyncEnumerable<ClientResult> GetRawPagesAsync()
-    {
-#pragma warning disable CA2000 // Dispose objects before losing scope
-        return AsyncEnumerable.Repeat(ClientResult.FromValue(this._updates, new StreamingUpdatePipelineResponse(this._updates)), 1);
-#pragma warning restore CA2000 // Dispose objects before losing scope
-    }
+    public override IAsyncEnumerable<ClientResult> GetRawPagesAsync() =>
+        AsyncEnumerable.Repeat(ClientResult.FromValue(this._updates, new StreamingUpdatePipelineResponse(this._updates)), 1);
 
-    protected async override IAsyncEnumerable<StreamingChatCompletionUpdate> GetValuesFromPageAsync(ClientResult page)
+    protected override async IAsyncEnumerable<StreamingChatCompletionUpdate> GetValuesFromPageAsync(ClientResult page)
     {
         var updates = ((ClientResult<IAsyncEnumerable<AgentRunResponseUpdate>>)page).Value;
 
