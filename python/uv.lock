@@ -28,7 +28,7 @@ members = [
     "agent-framework-copilotstudio",
     "agent-framework-foundry",
     "agent-framework-lab-gaia",
-    "agent-framework-lab-lighting",
+    "agent-framework-lab-lightning",
     "agent-framework-mem0",
     "agent-framework-project",
     "agent-framework-runtime",
@@ -175,9 +175,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agent-framework-lab-lighting"
+name = "agent-framework-lab-lightning"
 version = "0.1.0b1"
-source = { editable = "packages/lab/lighting" }
+source = { editable = "packages/lab/lightning" }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
