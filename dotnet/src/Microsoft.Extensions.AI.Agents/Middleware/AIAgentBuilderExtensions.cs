@@ -22,7 +22,11 @@ public static class AIAgentBuilderExtensions
     /// returns a <see cref="Task"/> that completes when the callback finished processing.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance, allowing for further configuration of the pipeline.</returns>
     public static AIAgentBuilder UseRunningContext(this AIAgentBuilder builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
-        => Use(Throw.IfNull(builder), callback);
+    {
+        _ = Throw.IfNull(builder);
+        _ = Throw.IfNull(callback);
+        return Use(builder, callback);
+    }
 
     /// <summary>
     /// Adds a middleware to the AI agent pipeline that intercepts and processes agent running invocation operations.
@@ -33,8 +37,11 @@ public static class AIAgentBuilderExtensions
     /// returns a <see cref="Task"/> that completes when the callback finished processing.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance, allowing for further configuration of the pipeline.</returns>
     public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callback)
-        => Throw.IfNull(builder)
-            .Use((innerAgent, _) => new RunningMiddlewareAgent(innerAgent, callback));
+    {
+        _ = Throw.IfNull(builder);
+        _ = Throw.IfNull(callback);
+        return builder.Use((innerAgent, _) => new RunningMiddlewareAgent(innerAgent, callback));
+    }
 
     /// <summary>
     /// Adds a middleware to the AI agent pipeline that intercepts and processes <see cref="AIFunction"/> invocations.
@@ -45,7 +52,20 @@ public static class AIAgentBuilderExtensions
     /// invocation.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
     public static AIAgentBuilder UseFunctionInvocationContext(this AIAgentBuilder builder, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callback)
-        => Use(Throw.IfNull(builder), callback);
+    {
+        _ = Throw.IfNull(builder);
+        _ = Throw.IfNull(callback);
+        return builder.Use((innerAgent, _) =>
+        {
+            // Function calling requires a ChatClientAgent inner agent.
+            if (innerAgent.GetService<ChatClientAgent>() is null)
+            {
+                throw new InvalidOperationException($"The {nameof(FunctionCallMiddlewareAgent)} can only be used with agents that are decorations of a {nameof(ChatClientAgent)}.");
+            }
+
+            return new FunctionCallMiddlewareAgent(innerAgent, callback);
+        });
+    }
 
     /// <summary>
     /// Adds a middleware to the AI agent pipeline that intercepts and processes <see cref="AIFunction"/> invocations.
@@ -56,15 +76,18 @@ public static class AIAgentBuilderExtensions
     /// invocation.</param>
     /// <returns>The <see cref="AIAgentBuilder"/> instance with the middleware added.</returns>
     public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callback)
-        => Throw.IfNull(builder)
-            .Use((innerAgent, _) =>
+    {
+        _ = Throw.IfNull(builder);
+        _ = Throw.IfNull(callback);
+        return builder.Use((innerAgent, _) =>
+        {
+            // Function calling requires a ChatClientAgent inner agent.
+            if (innerAgent.GetService<ChatClientAgent>() is null)
             {
-                // Function calling requires a ChatClientAgent inner agent.
-                if (innerAgent.GetService<ChatClientAgent>() is null)
-                {
-                    throw new InvalidOperationException($"The {nameof(FunctionCallMiddlewareAgent)} can only be used with agents that are based on {nameof(ChatClientAgent)}.");
-                }
+                throw new InvalidOperationException($"The {nameof(FunctionCallMiddlewareAgent)} can only be used with agents that are decorations of a {nameof(ChatClientAgent)}.");
+            }
 
-                return new FunctionCallMiddlewareAgent(innerAgent, callback);
-            });
+            return new FunctionCallMiddlewareAgent(innerAgent, callback);
+        });
+    }
 }
