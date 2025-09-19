@@ -203,3 +203,5 @@ data_gaia_hub/
 **/data_gaia_hub/
 python/packages/lab/gaia/**/*.jsonl
 
+# Lightning data directories
+python/packages/lab/lightning/**/data/
