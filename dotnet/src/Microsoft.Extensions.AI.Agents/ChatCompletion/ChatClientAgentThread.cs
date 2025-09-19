@@ -90,7 +90,7 @@ public class ChatClientAgentThread : AgentThread
     public string? ConversationId
     {
         get => this._conversationId;
-        set
+        internal set
         {
             if (string.IsNullOrWhiteSpace(this._conversationId) && string.IsNullOrWhiteSpace(value))
             {
@@ -129,7 +129,7 @@ public class ChatClientAgentThread : AgentThread
     public IChatMessageStore? MessageStore
     {
         get => this._messageStore;
-        set
+        internal set
         {
             if (this._messageStore is null && value is null)
             {
