@@ -65,7 +65,7 @@ class OllamaChatClient(BaseChatClient):
         Args:
             host: The Ollama server host URL. If not provided, the default host will be used.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
-            chat_model_id: The Ollama chat model ID to use.If not provided, the default model will be used.
+            chat_model_id: The Ollama chat model ID to use. If not provided, the default model will be used.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
         """
