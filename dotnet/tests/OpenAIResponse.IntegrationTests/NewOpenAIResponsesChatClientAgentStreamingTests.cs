@@ -30,8 +30,6 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions
             {
-                // Should we allow enabling long-running responses for agents via options?
-                // Or only at initialization?
                 AllowLongRunningResponses = enableLongRunningResponses
             },
         };
@@ -64,53 +62,25 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         }
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RunStreamingAsync_WithLongRunningResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
-    {
-        // Arrange
-        using var agent = CreateAIAgent(enableLongRunningResponses: enableLongRunningResponses);
-
-        string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
-
-        // Act
-        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
-        {
-            firstContinuationToken ??= update.ContinuationToken;
-
-            responseText += update;
-            lastContinuationToken = update.ContinuationToken;
-        }
-
-        // Assert
-        Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
-
-        if (enableLongRunningResponses)
-        {
-            Assert.NotNull(firstContinuationToken);
-            Assert.Null(lastContinuationToken);
-        }
-        else
-        {
-            Assert.Null(firstContinuationToken);
-            Assert.Null(lastContinuationToken);
-        }
-    }
-
     [Fact]
     public async Task RunStreamingAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync()
     {
-        using var agent = CreateAIAgent(enableLongRunningResponses: true);
+        using var agent = CreateAIAgent();
 
         // Part 1: Start the background run and get the first part of the response.
         string? firstContinuationToken = null;
         string? lastContinuationToken = null;
         string responseText = "";
 
-        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
+        await foreach (var update in agent.RunStreamingAsync("What is the capital of France?", options: options))
         {
             responseText += update;
 
@@ -125,11 +95,7 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         Assert.NotNull(responseText);
 
         // Part 2: Continue getting the rest of the response from the saved point represented by the continuation token.
-        ChatClientAgentRunOptions options = new()
-        {
-            ChatOptions = new NewChatOptions(),
-            ContinuationToken = firstContinuationToken
-        };
+        options.ContinuationToken = firstContinuationToken;
 
         AgentRunResponseUpdate? firstUpdate = null;
 
@@ -153,13 +119,21 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
     {
         List<AITool> tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: false, tools: tools);
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = false
+            }
+        };
+
+        using var agent = CreateAIAgent(tools: tools);
 
         // Arrange
         string responseText = "";
 
         // Act
-        await foreach (var update in agent.RunStreamingAsync("What time is it?"))
+        await foreach (var update in agent.RunStreamingAsync("What time is it?", options: options))
         {
             responseText += update;
 
@@ -175,12 +149,19 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
     {
         List<AITool> tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: true, tools: tools);
+        using var agent = CreateAIAgent(tools: tools);
 
-        // Part 1: Start the background run.
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
         string responseText = "";
 
-        await foreach (var update in agent.RunStreamingAsync("What time is it?"))
+        await foreach (var update in agent.RunStreamingAsync("What time is it?", options: options))
         {
             responseText += update;
         }
@@ -196,11 +177,19 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
             AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
         ];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: true, tools: tools);
+        using var agent = CreateAIAgent(tools: tools);
 
         string responseText = "";
 
-        await foreach (var update in agent.RunStreamingAsync("What's the weather in Paris right now? Include the time."))
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
+        await foreach (var update in agent.RunStreamingAsync("What's the weather in Paris right now? Include the time.", options: options))
         {
             responseText += update;
         }
@@ -214,14 +203,22 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
     {
         List<AITool> tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: true, tools: tools);
+        using var agent = CreateAIAgent(tools: tools);
 
         // Part 1: Start the background run.
         string responseText = "";
         string? firstContinuationToken = null;
         string? lastContinuationToken = null;
 
-        await foreach (var update in agent.RunStreamingAsync("What time is it?"))
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
+        await foreach (var update in agent.RunStreamingAsync("What time is it?", options: options))
         {
             responseText += update;
 
@@ -236,11 +233,7 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         Assert.NotNull(responseText);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        ChatClientAgentRunOptions options = new()
-        {
-            ChatOptions = new NewChatOptions(),
-            ContinuationToken = firstContinuationToken
-        };
+        options.ContinuationToken = firstContinuationToken;
 
         await foreach (var update in agent.RunStreamingAsync([], options: options))
         {
@@ -261,14 +254,22 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
             AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
         ];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: true, tools: tools);
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
+        using var agent = CreateAIAgent(tools: tools);
 
         // Part 1: Start the background run.
         string responseText = "";
         string? firstContinuationToken = null;
         string? lastContinuationToken = null;
 
-        await foreach (var update in agent.RunStreamingAsync("What's the weather in Paris right now? Include the time."))
+        await foreach (var update in agent.RunStreamingAsync("What's the weather in Paris right now? Include the time.", options: options))
         {
             responseText += update;
 
@@ -283,11 +284,7 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         Assert.NotNull(responseText);
 
         // Part 2: Continue getting the rest of the response from the saved point
-        ChatClientAgentRunOptions options = new()
-        {
-            ChatOptions = new NewChatOptions(),
-            ContinuationToken = firstContinuationToken
-        };
+        options.ContinuationToken = firstContinuationToken;
 
         await foreach (var update in agent.RunStreamingAsync([], options: options))
         {
@@ -355,10 +352,18 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
     [Fact]
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
-        using var agent = CreateAIAgent(enableLongRunningResponses: true);
+        using var agent = CreateAIAgent();
 
         // Arrange
-        IAsyncEnumerable<AgentRunResponseUpdate> streamingResponse = agent.RunStreamingAsync("What is the capital of France?");
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
+        IAsyncEnumerable<AgentRunResponseUpdate> streamingResponse = agent.RunStreamingAsync("What is the capital of France?", options: options);
 
         var update = (await streamingResponse.ElementAtAsync(0));
 
@@ -371,11 +376,11 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         Assert.NotNull(response.ResponseId);
     }
 
-    private static AIAgentTestProxy CreateAIAgent(bool? enableLongRunningResponses = null, string? name = "HelpfulAssistant", string? instructions = "You are a helpful assistant.", IList<AITool>? tools = null)
+    private static AIAgentTestProxy CreateAIAgent(string? name = "HelpfulAssistant", string? instructions = "You are a helpful assistant.", IList<AITool>? tools = null)
     {
         var openAIResponseClient = new OpenAIClient(s_config.ApiKey).GetOpenAIResponseClient(s_config.ChatModelId);
 
-        var chatClient = new NewFunctionInvokingChatClient(openAIResponseClient.AsNewIChatClient(enableLongRunningResponses));
+        var chatClient = new NewFunctionInvokingChatClient(openAIResponseClient.AsNewIChatClient());
 
         var aiAgent = new ChatClientAgent(
             chatClient,

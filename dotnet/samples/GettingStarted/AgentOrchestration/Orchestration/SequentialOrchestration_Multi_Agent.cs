@@ -42,8 +42,8 @@ public class SequentialOrchestration_Multi_Agent(ITestOutputHelper output) : Orc
                 compose a compelling marketing copy (like a newsletter section) that highlights these points.
                 Output should be short (around 150 words), output just the copy as a single text block.
                 """,
-                description: "An agent that writes a marketing copy based on the extracted concepts.",
-                enableLongRuns: true);
+                description: "An agent that writes a marketing copy based on the extracted concepts."
+                /*enableLongRuns: true*/);
         AIAgent editorAgent =
             openAIClient.GetAssistantClient().CreateAIAgent(
                 model,

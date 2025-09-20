@@ -40,20 +40,14 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
     /// <summary>The underlying <see cref="OpenAIResponseClient" />.</summary>
     private readonly OpenAIResponseClient _responseClient;
 
-    /// <summary>Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</summary>
-    private readonly bool? _enableLongRunningResponses;
-
     /// <summary>Initializes a new instance of the <see cref="OpenAIResponsesChatClient"/> class for the specified <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The underlying client.</param>
-    /// <param name="enableLongRunningResponses">Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient, bool? enableLongRunningResponses = null)
+    public NewOpenAIResponsesChatClient(OpenAIResponseClient responseClient)
     {
         _ = Throw.IfNull(responseClient);
 
         _responseClient = responseClient;
-
-        _enableLongRunningResponses = enableLongRunningResponses;
 
         // https://github.com/openai/openai-dotnet/issues/662
         // Update to avoid reflection once OpenAIResponseClient.Model is exposed publicly.
@@ -985,7 +979,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
     }
 
     /// <summary>Determines whether long-running responses mode is enabled or not.</summary>
-    private bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
+    private static bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
     {
         // If specified in options, use that.
         if (options is NewChatOptions { AllowLongRunningResponses: { } allowLongRunningResponses })
@@ -993,8 +987,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
             return allowLongRunningResponses;
         }
 
-        // Otherwise, use the value specified at initialization
-        return _enableLongRunningResponses ?? false;
+        return false;
     }
 }
 

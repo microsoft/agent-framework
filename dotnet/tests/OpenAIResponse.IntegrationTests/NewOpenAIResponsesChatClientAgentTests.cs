@@ -51,47 +51,26 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         }
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RunAsync_WithLongRunningResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
-    {
-        // Arrange
-        using var agent = CreateAIAgent(enableLongRunningResponses: enableLongRunningResponses);
-
-        // Act
-        AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
-
-        // Assert
-        Assert.NotNull(response);
-
-        if (enableLongRunningResponses)
-        {
-            Assert.NotNull(response.ContinuationToken);
-        }
-        else
-        {
-            Assert.Null(response.ContinuationToken);
-            Assert.Contains("Paris", response.Text);
-        }
-    }
-
     [Fact]
     public async Task RunAsync_HavingReturnedInitialResponse_AllowsCallerToPollAsync()
     {
-        using var agent = CreateAIAgent(enableLongRunningResponses: true);
+        using var agent = CreateAIAgent();
+
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
 
         // Part 1: Start the background run.
-        AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
+        AgentRunResponse response = await agent.RunAsync("What is the capital of France?", options: options);
 
         Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         int attempts = 0;
-        ChatClientAgentRunOptions options = new()
-        {
-            ChatOptions = new NewChatOptions()
-        };
 
         while (response.ContinuationToken is { } token && ++attempts < 5)
         {
@@ -111,12 +90,20 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
     public async Task RunAsync_WithFunctionCalling_AndLongRunningResponsesDisabled_CallsFunctionAsync()
     {
         // Arrange
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = false
+            }
+        };
+
         IList<AITool> tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: false, tools: tools);
+        using var agent = CreateAIAgent(tools: tools);
 
         // Act
-        AgentRunResponse response = await agent.RunAsync("What time is it?");
+        AgentRunResponse response = await agent.RunAsync("What time is it?", options: options);
 
         // Assert
         Assert.Contains("5:43", response.Text);
@@ -127,21 +114,24 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
     public async Task RunAsync_WithOneFunction_HavingReturnedInitialResponse_AllowsCallerPollAsync()
     {
         // Part 1: Start the background run.
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
         IList<AITool> tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: true, tools: tools);
+        using var agent = CreateAIAgent(tools: tools);
 
-        AgentRunResponse response = await agent.RunAsync("What time is it?");
+        AgentRunResponse response = await agent.RunAsync("What time is it?", options: options);
 
         Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         int attempts = 0;
-
-        ChatClientAgentRunOptions options = new()
-        {
-            ChatOptions = new NewChatOptions()
-        };
 
         while (response.ContinuationToken is { } token && ++attempts < 5)
         {
@@ -160,25 +150,28 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
     [Fact]
     public async Task RunAsync_WithTwoFunctions_HavingReturnedInitialResponse_AllowsCallerPollAsync()
     {
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
+
         IList<AITool> tools = [
             AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
             AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
         ];
 
-        using var agent = CreateAIAgent(enableLongRunningResponses: true, tools: tools);
+        using var agent = CreateAIAgent(tools: tools);
 
         // Part 1: Start the background run.
-        AgentRunResponse response = await agent.RunAsync("What's the weather in Paris right now? Include the time.");
+        AgentRunResponse response = await agent.RunAsync("What's the weather in Paris right now? Include the time.", options: options);
 
         Assert.NotNull(response.ContinuationToken);
 
         // Part 2: Poll for completion.
         int attempts = 0;
-
-        ChatClientAgentRunOptions options = new()
-        {
-            ChatOptions = new NewChatOptions()
-        };
 
         while (response.ContinuationToken is { } token && ++attempts < 10)
         {
@@ -199,9 +192,17 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
     public async Task CancelRunAsync_WhenCalled_CancelsRunAsync()
     {
         // Arrange
-        using var agent = CreateAIAgent(enableLongRunningResponses: true);
+        ChatClientAgentRunOptions options = new()
+        {
+            ChatOptions = new NewChatOptions()
+            {
+                AllowLongRunningResponses = true
+            }
+        };
 
-        AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
+        using var agent = CreateAIAgent();
+
+        AgentRunResponse response = await agent.RunAsync("What is the capital of France?", options: options);
 
         // Act
         AgentRunResponse? cancelResponse = await agent.CancelRunAsync(response.ResponseId!);
@@ -210,11 +211,11 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         Assert.NotNull(cancelResponse);
     }
 
-    private static AIAgentTestProxy CreateAIAgent(bool? enableLongRunningResponses = null, string? name = "HelpfulAssistant", string? instructions = "You are a helpful assistant.", IList<AITool>? tools = null)
+    private static AIAgentTestProxy CreateAIAgent(string? name = "HelpfulAssistant", string? instructions = "You are a helpful assistant.", IList<AITool>? tools = null)
     {
         var openAIResponseClient = new OpenAIClient(s_config.ApiKey).GetOpenAIResponseClient(s_config.ChatModelId);
 
-        var chatClient = new NewFunctionInvokingChatClient(openAIResponseClient.AsNewIChatClient(enableLongRunningResponses));
+        var chatClient = new NewFunctionInvokingChatClient(openAIResponseClient.AsNewIChatClient());
 
         var aiAgent = new ChatClientAgent(
             chatClient,

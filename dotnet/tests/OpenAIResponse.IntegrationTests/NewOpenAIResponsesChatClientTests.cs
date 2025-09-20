@@ -61,35 +61,6 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         }
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task GetResponseAsync_WithLongRunningResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
-    {
-        // Arrange
-        using IChatClient client = this._openAIResponseClient
-            .AsNewIChatClient(enableLongRunningResponses: enableLongRunningResponses)
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
-
-        // Act
-        NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?");
-
-        // Assert
-        Assert.NotNull(response);
-
-        if (enableLongRunningResponses)
-        {
-            Assert.NotNull(response.ContinuationToken);
-        }
-        else
-        {
-            Assert.Null(response.ContinuationToken);
-            Assert.Contains("Paris", response.Text);
-        }
-    }
-
     [Fact]
     public async Task GetResponseAsync_HavingReturnedInitialResponse_AllowsCallerToPollAsync()
     {

@@ -42,11 +42,8 @@ namespace Azure.AI.Agents.Persistent
         /// <summary>Lazily-retrieved agent instance. Used for its properties.</summary>
         private PersistentAgent? _agent;
 
-        /// <summary>Enables long-running responses mode for the chat client, if set to <see langword="true"/>.</summary>
-        private readonly bool? _enableLongRunningResponses;
-
         /// <summary>Initializes a new instance of the <see cref="PersistentAgentsChatClient"/> class for the specified <see cref="PersistentAgentsClient"/>.</summary>
-        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null, bool? enableLongRunningResponses = null)
+        public NewPersistentAgentsChatClient(PersistentAgentsClient client, string agentId, string? defaultThreadId = null)
         {
             Argument.AssertNotNull(client, nameof(client));
             Argument.AssertNotNullOrWhiteSpace(agentId, nameof(agentId));
@@ -54,7 +51,6 @@ namespace Azure.AI.Agents.Persistent
             _client = client;
             _agentId = agentId;
             _defaultThreadId = defaultThreadId;
-            _enableLongRunningResponses = enableLongRunningResponses;
 
             _metadata = new(ProviderName);
         }
@@ -232,7 +228,7 @@ namespace Azure.AI.Agents.Persistent
                             RawRepresentation = ru,
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
-                            ContinuationToken = this.GetContinuationToken(responseId, threadId, runStatus, options)
+                            ContinuationToken = GetContinuationToken(responseId, threadId, runStatus, options)
                         };
 
                         if (ru.Value.Usage is { } usage)
@@ -275,7 +271,7 @@ namespace Azure.AI.Agents.Persistent
                             MessageId = responseId,
                             RawRepresentation = mcu,
                             ResponseId = responseId,
-                            ContinuationToken = this.GetContinuationToken(responseId!, threadId!, runStatus, options),
+                            ContinuationToken = GetContinuationToken(responseId!, threadId!, runStatus, options),
                         };
 
                         // Add any annotations from the text update. The OpenAI Assistants API does not support passing these back
@@ -327,7 +323,7 @@ namespace Azure.AI.Agents.Persistent
                             RawRepresentation = update,
                             ResponseId = responseId,
                             Role = ChatRole.Assistant,
-                            ContinuationToken = this.GetContinuationToken(responseId!, threadId!, runStatus, options, stepId),
+                            ContinuationToken = GetContinuationToken(responseId!, threadId!, runStatus, options, stepId),
                         };
 
                         yield return updateToReturn;
@@ -337,9 +333,9 @@ namespace Azure.AI.Agents.Persistent
             }
         }
 
-        private string? GetContinuationToken(string runId, string threadId, RunStatus status, ChatOptions? options, string? stepId = null, bool? throwIfOperationCancelled = true)
+        private static string? GetContinuationToken(string runId, string threadId, RunStatus status, ChatOptions? options, string? stepId = null, bool? throwIfOperationCancelled = true)
         {
-            if (!this.IsLongRunningResponsesModeEnabled(options))
+            if (!IsLongRunningResponsesModeEnabled(options))
             {
                 return null;
             }
@@ -686,7 +682,7 @@ namespace Azure.AI.Agents.Persistent
         }
 
         /// <summary>Determines whether long-running responses mode is enabled or not.</summary>
-        private bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
+        private static bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
         {
             // If specified in options, use that.
             if (options is NewChatOptions { AllowLongRunningResponses: { } allowLongRunningResponses })
@@ -694,8 +690,7 @@ namespace Azure.AI.Agents.Persistent
                 return allowLongRunningResponses;
             }
 
-            // Otherwise, use the value specified at initialization
-            return _enableLongRunningResponses ?? false;
+            return false;
         }
 
         private async IAsyncEnumerable<ChatResponseUpdate> GetRunUpdatesAsync(ThreadRun run, bool streamingCall, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -806,7 +801,7 @@ namespace Azure.AI.Agents.Persistent
                 RawRepresentation = message ?? step as object ?? run,
                 ResponseId = run.Id,
                 Role = message?.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant,
-                ContinuationToken = this.GetContinuationToken(run.Id, run.ThreadId, run.Status, options, step?.Id, throwIfOperationCancelled),
+                ContinuationToken = GetContinuationToken(run.Id, run.ThreadId, run.Status, options, step?.Id, throwIfOperationCancelled),
             };
 
             if (run.Usage is { } usage)

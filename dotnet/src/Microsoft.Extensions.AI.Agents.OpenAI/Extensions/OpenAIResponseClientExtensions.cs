@@ -29,10 +29,9 @@ public static class OpenAIResponseClientExtensions
     /// <param name="description">Optional description of the agent's capabilities and purpose.</param>
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <param name="enableLongRuns">Specifies whether long runs are enabled for this client.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(this OpenAIResponseClient client, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null, bool? enableLongRuns = null)
+    public static AIAgent CreateAIAgent(this OpenAIResponseClient client, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
 
@@ -47,8 +46,7 @@ public static class OpenAIResponseClientExtensions
                     Tools = tools,
                 }
             },
-            loggerFactory,
-            enableLongRuns);
+            loggerFactory);
     }
 
     /// <summary>
@@ -57,24 +55,22 @@ public static class OpenAIResponseClientExtensions
     /// <param name="client">The <see cref="OpenAIResponseClient" /> to use for the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <param name="enableLongRuns">Specifies whether long runs are enabled for this client.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(this OpenAIResponseClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null, bool? enableLongRuns = null)
+    public static AIAgent CreateAIAgent(this OpenAIResponseClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
         Throw.IfNull(options);
 
 #pragma warning disable CA2000 // Dispose objects before losing scope
-        return new ChatClientAgent(client.AsNewIChatClient(enableLongRuns), options, loggerFactory);
+        return new ChatClientAgent(client.AsNewIChatClient(), options, loggerFactory);
 #pragma warning restore CA2000 // Dispose objects before losing scope
     }
 
     /// <summary>Gets an <see cref="IChatClient"/> for use with this <see cref="OpenAIResponseClient"/>.</summary>
     /// <param name="responseClient">The client.</param>
-    /// <param name="enableLongRunningResponses">Specifies whether long-running responses are enabled for this client.</param>
     /// <returns>An <see cref="IChatClient"/> that can be used to converse via the <see cref="OpenAIResponseClient"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
-    public static IChatClient AsNewIChatClient(this OpenAIResponseClient responseClient, bool? enableLongRunningResponses = null) =>
-        new NewOpenAIResponsesChatClient(responseClient, enableLongRunningResponses);
+    public static IChatClient AsNewIChatClient(this OpenAIResponseClient responseClient) =>
+        new NewOpenAIResponsesChatClient(responseClient);
 }

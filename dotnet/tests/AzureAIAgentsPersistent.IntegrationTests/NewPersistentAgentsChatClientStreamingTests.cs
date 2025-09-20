@@ -58,42 +58,6 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         }
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task GetStreamingResponseAsync_WithLongRunningResponsesEnabledAtInitialization_ReturnsExpectedResponseAsync(bool enableLongRunningResponses)
-    {
-        // Arrange
-        using var client = await CreateChatClientAsync(enableLongRunningResponses);
-
-        string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
-
-        // Act
-        await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?").Select(u => (NewChatResponseUpdate)u))
-        {
-            firstContinuationToken ??= update.ContinuationToken;
-
-            responseText += update;
-            lastContinuationToken = update.ContinuationToken;
-        }
-
-        // Assert
-        Assert.Contains("Paris", responseText, StringComparison.OrdinalIgnoreCase);
-
-        if (enableLongRunningResponses)
-        {
-            Assert.NotNull(firstContinuationToken);
-            Assert.Null(lastContinuationToken);
-        }
-        else
-        {
-            Assert.Null(firstContinuationToken);
-            Assert.Null(lastContinuationToken);
-        }
-    }
-
     [Fact]
     public async Task GetStreamingResponseAsync_HavingReturnedInitialResponse_AllowsToContinueItAsync()
     {
@@ -362,7 +326,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         Assert.NotNull(response);
     }
 
-    private static async Task<IChatClient> CreateChatClientAsync(bool? enableLongRunningResponses = null)
+    private static async Task<IChatClient> CreateChatClientAsync()
     {
         PersistentAgentsClient persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
 
@@ -371,7 +335,7 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             name: "LongRunningExecutionAgent",
             instructions: "You are a helpful assistant.");
 
-        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id, enableLongRunningResponses: enableLongRunningResponses);
+        var persistentChatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentResponse.Value.Id);
 
         var functionInvokingChatClient = new NewFunctionInvokingChatClient(persistentChatClient);
 
