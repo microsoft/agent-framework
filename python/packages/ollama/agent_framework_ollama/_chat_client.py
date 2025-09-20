@@ -3,7 +3,7 @@
 import json
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from itertools import chain
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
     AIFunction,
@@ -31,7 +31,6 @@ from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Image as OllamaImage
 from ollama._types import Message as OllamaMessage
-from pydantic import ValidationError
 
 
 class OllamaSettings(AFBaseSettings):
@@ -44,6 +43,7 @@ class OllamaSettings(AFBaseSettings):
 
 
 logger = get_logger("agent_framework.ollama")
+TOllamaChatClient = TypeVar("TOllamaChatClient", bound="OllamaChatClient")
 
 
 @use_function_invocation
@@ -57,6 +57,8 @@ class OllamaChatClient(BaseChatClient):
         host: str | None = None,
         client: AsyncClient | None = None,
         chat_model_id: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Initialize an Ollama Chat client.
 
@@ -64,11 +66,17 @@ class OllamaChatClient(BaseChatClient):
             host: The Ollama server host URL. If not provided, the default host will be used.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
             chat_model_id: The Ollama chat model ID to use.If not provided, the default model will be used.
+            env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
+            env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
         """
-        try:
-            ollama_settings = OllamaSettings(host=host, chat_model_id=chat_model_id)
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Ollama settings.", ex) from ex
+        ollama_settings = OllamaSettings(
+            host=host, chat_model_id=chat_model_id, env_file_encoding=env_file_encoding, env_file_path=env_file_path
+        )
+
+        if ollama_settings.chat_model_id is None:
+            raise ServiceInitializationError(
+                "Ollama chat model ID must be provided via chat_model_id or OLLAMA_CHAT_MODEL_ID environment variable."
+            )
 
         client = client or AsyncClient(host=ollama_settings.host)
 
@@ -104,7 +112,7 @@ class OllamaChatClient(BaseChatClient):
         )
 
         async for part in response_object:
-            yield self._ollama_to_agent_framework_message_parser(part)
+            yield self._ollama_to_agent_framework_message(part)
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
@@ -129,11 +137,11 @@ class OllamaChatClient(BaseChatClient):
         return options_dict
 
     def _prepare_chat_history_for_request(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
-        list_of_list = [self._agent_framework_to_ollama_message_parser(msg) for msg in messages]
+        list_of_list = [self._agent_framework_to_ollama_message(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
-    def _agent_framework_to_ollama_message_parser(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _agent_framework_to_ollama_message(self, message: ChatMessage) -> list[OllamaMessage]:
         messages: list[OllamaMessage] = []
         for content in message.contents:
             match content:
@@ -166,11 +174,11 @@ class OllamaChatClient(BaseChatClient):
                         images=[OllamaImage(value=content.uri)],
                     )
                 case _:
-                    raise ServiceInvalidRequestError(f"Unsupported content type: {type(content)}")
+                    raise ServiceInvalidRequestError(f"Unsupported content type: {type(content)} for Ollama client.")
             messages.append(ollama_message)
         return messages
 
-    def _ollama_to_agent_framework_message_parser(self, response: OllamaChatResponse) -> ChatResponseUpdate:
+    def _ollama_to_agent_framework_message(self, response: OllamaChatResponse) -> ChatResponseUpdate:
         contents: list[Contents] = []
         if response.message.content:
             contents.append(TextContent(text=response.message.content))
@@ -203,7 +211,28 @@ class OllamaChatClient(BaseChatClient):
                     case AIFunction():
                         chat_tools.append(tool.to_json_schema_spec())
                     case _:
-                        logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
+                        raise ServiceInvalidRequestError(f"Unsupported tool type: {type(tool)} for Ollama client.")
             else:
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return chat_tools
+
+    @classmethod
+    def from_dict(cls: type[TOllamaChatClient], settings: dict[str, Any]) -> TOllamaChatClient:
+        """Initialize an Ollama service from a dictionary of settings.
+
+        Args:
+            settings: A dictionary of settings for the service.
+                should contain keys: service_id, and optionally:
+                ad_auth, ad_token_provider, default_headers
+        """
+        return cls(
+            chat_model_id=settings.get("chat_model_id"),
+            host=settings.get("host"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the configuration to a dictionary."""
+        return {
+            "host": str(self.client._client.base_url),
+            "chat_model_id": self.chat_model_id,
+        }
