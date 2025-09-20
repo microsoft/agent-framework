@@ -57,14 +57,14 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
 async def test_executor_failed_event_emitted_on_direct_execute():
     failing = FailingExecutor(id="f")
     ctx = InProcRunnerContext()
-    wf_ctx: WFContext[None] = WFContext(
-        executor_id=failing.id,
-        source_executor_ids=["START"],
-        shared_state=SharedState(),
-        runner_context=ctx,
-    )
+    shared_state = SharedState()
     with pytest.raises(RuntimeError, match="boom"):
-        await failing.execute(0, wf_ctx)
+        await failing.execute(
+            0,
+            ["START"],        # source_executor_ids
+            shared_state,     # shared_state
+            ctx,              # runner_context
+        )
     drained = await ctx.drain_events()
     failed = [e for e in drained if isinstance(e, ExecutorFailedEvent)]
     assert failed

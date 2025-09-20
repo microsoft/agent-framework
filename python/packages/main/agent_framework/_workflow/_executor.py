@@ -28,9 +28,10 @@ from ._events import (
     RequestInfoEvent,
     _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
 )
-from ._runner_context import _decode_checkpoint_value
+from ._runner_context import RunnerContext, _decode_checkpoint_value
+from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext, infer_output_types_from_ctx_annotation
+from ._workflow_context import WorkflowContext, WorkflowOutputContext, infer_output_types_from_ctx_annotation
 
 logger = logging.getLogger(__name__)
 
@@ -102,21 +103,43 @@ class Executor(AFBaseModel):
                 "or @intercepts_request decorator."
             )
 
-    async def execute(self, message: Any, context: WorkflowContext[Any]) -> None:
-        """Execute the executor with a given message and context.
+    async def execute(
+        self,
+        message: Any,
+        source_executor_ids: list[str],
+        shared_state: SharedState,
+        runner_context: RunnerContext,
+        trace_contexts: list[dict[str, str]] | None = None,
+        source_span_ids: list[str] | None = None,
+    ) -> None:
+        """Execute the executor with a given message and context parameters.
 
         Args:
             message: The message to be processed by the executor.
-            context: The workflow context in which the executor operates.
+            source_executor_ids: The IDs of the source executors that sent messages to this executor.
+            shared_state: The shared state for the workflow.
+            runner_context: The runner context that provides methods to send messages and events.
+            trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
+            source_span_ids: Optional source span IDs from multiple sources for linking.
 
         Returns:
             An awaitable that resolves to the result of the execution.
         """
+        # Create the appropriate WorkflowContext based on handler specs
+        context = self._create_context_for_message(
+            message=message,
+            source_executor_ids=source_executor_ids,
+            shared_state=shared_state,
+            runner_context=runner_context,
+            trace_contexts=trace_contexts,
+            source_span_ids=source_span_ids,
+        )
+
         # Create processing span for tracing (gracefully handles disabled tracing)
         from ._telemetry import workflow_tracer
 
-        source_trace_contexts = getattr(context, "_trace_contexts", None)
-        source_span_ids = getattr(context, "_source_span_ids", None)
+        source_trace_contexts = trace_contexts
+        source_span_ids_for_tracing = source_span_ids
 
         # Handle case where Message wrapper is passed instead of raw data
         from ._runner_context import Message
@@ -129,7 +152,7 @@ class Executor(AFBaseModel):
             self.__class__.__name__,
             type(message).__name__,
             source_trace_contexts=source_trace_contexts,
-            source_span_ids=source_span_ids,
+            source_span_ids=source_span_ids_for_tracing,
         ):
             # Lazy registration for SubWorkflowRequestInfo if we have interceptors
             if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
@@ -176,6 +199,61 @@ class Executor(AFBaseModel):
             with _framework_event_origin():
                 completed_event = ExecutorCompletedEvent(self.id)
             await context.add_event(completed_event)
+
+    def _create_context_for_message(
+        self,
+        message: Any,
+        source_executor_ids: list[str],
+        shared_state: SharedState,
+        runner_context: RunnerContext,
+        trace_contexts: list[dict[str, str]] | None = None,
+        source_span_ids: list[str] | None = None,
+    ) -> WorkflowContext[Any]:
+        """Create the appropriate WorkflowContext based on handler specs for the given message type.
+
+        Args:
+            message: The message to be processed to find the matching handler.
+            source_executor_ids: The IDs of the source executors that sent messages to this executor.
+            shared_state: The shared state for the workflow.
+            runner_context: The runner context that provides methods to send messages and events.
+            trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
+            source_span_ids: Optional source span IDs from multiple sources for linking.
+
+        Returns:
+            WorkflowContext[Any] or WorkflowOutputContext[Any] based on the matching handler's specs.
+        """
+        # Find the handler spec that matches the message type
+        from typing import get_origin
+
+        ctx_annotation = None
+        for spec in self._handler_specs:
+            message_type = spec.get("message_type")
+            if message_type is not None and is_instance_of(message, message_type):
+                ctx_annotation = spec.get("ctx_annotation")
+                break
+
+        # If ctx_annotation indicates WorkflowOutputContext, create that
+        if ctx_annotation is not None:
+            origin = get_origin(ctx_annotation)
+            if origin is WorkflowOutputContext:
+                return WorkflowOutputContext(
+                    executor_id=self.id,
+                    source_executor_ids=source_executor_ids,
+                    shared_state=shared_state,
+                    runner_context=runner_context,
+                    trace_contexts=trace_contexts,
+                    source_span_ids=source_span_ids,
+                )
+
+        # Default to WorkflowContext
+        return WorkflowContext(
+            executor_id=self.id,
+            source_executor_ids=source_executor_ids,
+            shared_state=shared_state,
+            runner_context=runner_context,
+            trace_contexts=trace_contexts,
+            source_span_ids=source_span_ids,
+        )
 
     def _discover_handlers(self) -> None:
         """Discover message handlers and request interceptors in the executor class."""

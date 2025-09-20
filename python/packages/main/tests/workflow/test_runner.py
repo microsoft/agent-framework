@@ -77,12 +77,9 @@ async def test_runner_run_until_convergence():
     result: int | None = None
     await executor_a.execute(
         MockMessage(data=0),
-        WorkflowContext(
-            executor_id=executor_a.id,
-            source_executor_ids=["START"],
-            shared_state=shared_state,
-            runner_context=ctx,
-        ),
+        ["START"],        # source_executor_ids
+        shared_state,     # shared_state
+        ctx,              # runner_context
     )
     async for event in runner.run_until_convergence():
         assert isinstance(event, WorkflowEvent)
@@ -112,12 +109,9 @@ async def test_runner_run_until_convergence_not_completed():
 
     await executor_a.execute(
         MockMessage(data=0),
-        WorkflowContext(
-            executor_id=executor_a.id,
-            source_executor_ids=["START"],
-            shared_state=shared_state,
-            runner_context=ctx,
-        ),
+        ["START"],        # source_executor_ids
+        shared_state,     # shared_state
+        ctx,              # runner_context
     )
     with pytest.raises(RuntimeError, match="Runner did not converge after 5 iterations."):
         async for event in runner.run_until_convergence():
@@ -143,12 +137,9 @@ async def test_runner_already_running():
 
     await executor_a.execute(
         MockMessage(data=0),
-        WorkflowContext(
-            executor_id=executor_a.id,
-            source_executor_ids=["START"],
-            shared_state=shared_state,
-            runner_context=ctx,
-        ),
+        ["START"],        # source_executor_ids
+        shared_state,     # shared_state
+        ctx,              # runner_context
     )
 
     with pytest.raises(RuntimeError, match="Runner is already running."):
