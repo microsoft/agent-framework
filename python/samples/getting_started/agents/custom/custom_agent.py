@@ -14,6 +14,23 @@ from agent_framework import (
     TextContent,
 )
 
+"""
+Custom Agent Implementation Example
+
+This sample demonstrates how to implement a custom agent by extending the BaseAgent class.
+Custom agents provide complete control over the agent's behavior and capabilities, allowing
+developers to create specialized agents that don't rely on chat clients.
+
+This approach is useful when you need to:
+- Implement agents with custom logic that doesn't involve LLM interactions
+- Create agents that integrate with specialized APIs or services
+- Build agents with deterministic behaviors
+- Implement new agent types for the Microsoft Agent Framework
+
+The EchoAgent example shows the minimal requirements for implementing a custom agent,
+including both streaming and non-streaming response handling.
+"""
+
 
 class EchoAgent(BaseAgent):
     """A simple custom agent that echoes user messages with a prefix.
@@ -144,92 +161,11 @@ class EchoAgent(BaseAgent):
             await self._notify_thread_of_new_messages(thread, complete_response)
 
 
-class ReversalAgent(BaseAgent):
-    """A custom agent that reverses user input text.
-    
-    This demonstrates another custom agent implementation with different behavior.
-    """
-
-    async def run(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AgentRunResponse:
-        """Execute the agent and return a complete response with reversed text.
-
-        Args:
-            messages: The message(s) to process.
-            thread: The conversation thread (optional).
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            An AgentRunResponse containing the reversed text.
-        """
-        # Normalize input messages to a list
-        normalized_messages = self._normalize_messages(messages)
-        
-        if not normalized_messages:
-            response_text = "Send me some text and I'll reverse it for you!"
-        else:
-            # Reverse the text of the last user message
-            last_message = normalized_messages[-1]
-            if last_message.text:
-                response_text = f"Reversed: {last_message.text[::-1]}"
-            else:
-                response_text = "I can only reverse text messages."
-
-        response_message = ChatMessage(
-            role=Role.ASSISTANT,
-            contents=[TextContent(text=response_text)]
-        )
-
-        # Notify the thread of new messages if provided
-        if thread is not None:
-            await self._notify_thread_of_new_messages(thread, normalized_messages)
-            await self._notify_thread_of_new_messages(thread, response_message)
-
-        return AgentRunResponse(messages=[response_message])
-
-    async def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Execute the agent and yield streaming response updates with reversed text.
-
-        Args:
-            messages: The message(s) to process.
-            thread: The conversation thread (optional).
-            **kwargs: Additional keyword arguments.
-
-        Yields:
-            AgentRunResponseUpdate objects containing chunks of the response.
-        """
-        # For the streaming version, we'll get the complete response first
-        # and then stream it character by character
-        response = await self.run(messages, thread=thread, **kwargs)
-        
-        if response.messages:
-            response_text = response.messages[0].text or ""
-            
-            # Stream the response character by character
-            for char in response_text:
-                yield AgentRunResponseUpdate(
-                    contents=[TextContent(text=char)],
-                    role=Role.ASSISTANT,
-                )
-                await asyncio.sleep(0.05)  # Small delay for streaming effect
-
-
 async def main() -> None:
-    """Demonstrates how to use custom agents."""
-    print("=== Custom Agent Examples ===\n")
+    """Demonstrates how to use the custom EchoAgent."""
+    print("=== Custom Agent Example ===\n")
 
-    # Example 1: EchoAgent
+    # Create EchoAgent
     print("--- EchoAgent Example ---")
     echo_agent = EchoAgent(
         name="EchoBot",
@@ -256,28 +192,7 @@ async def main() -> None:
             print(chunk.text, end="", flush=True)
     print()
 
-    # Example 2: ReversalAgent
-    print("\n--- ReversalAgent Example ---")
-    reversal_agent = ReversalAgent(
-        name="TextReverser",
-        description="An agent that reverses text messages"
-    )
-    
-    query3 = "Hello World"
-    print(f"\nUser: {query3}")
-    result = await reversal_agent.run(query3)
-    print(f"Agent: {result.messages[0].text}")
-    
-    # Test streaming reversal
-    query4 = "Python is awesome"
-    print(f"\nUser: {query4}")
-    print("Agent: ", end="", flush=True)
-    async for chunk in reversal_agent.run_stream(query4):
-        if chunk.text:
-            print(chunk.text, end="", flush=True)
-    print()
-
-    # Example 3: Using with threads
+    # Example with threads
     print("\n--- Using Custom Agent with Thread ---")
     thread = echo_agent.get_new_thread()
     
