@@ -34,6 +34,7 @@ from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowFailedEvent,
+    WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
@@ -66,6 +67,14 @@ class WorkflowRunResult(list[WorkflowEvent]):
     def __init__(self, events: list[WorkflowEvent], status_events: list[WorkflowStatusEvent] | None = None) -> None:
         super().__init__(events)
         self._status_events: list[WorkflowStatusEvent] = status_events or []
+
+    def get_outputs(self) -> list[Any]:
+        """Get all outputs from the workflow run result.
+
+        Returns:
+            A list of outputs produced by the workflow during its execution.
+        """
+        return [event.output for event in self if isinstance(event, WorkflowOutputEvent)]
 
     def get_completed_event(self) -> WorkflowCompletedEvent | None:
         """Get the completed event from the workflow run result.

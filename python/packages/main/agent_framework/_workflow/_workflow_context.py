@@ -55,12 +55,14 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     if origin is not WorkflowContext and origin is not WorkflowOutputContext:
         return [], []
 
-    args = get_args(ctx_annotation)
+    args = list(get_args(ctx_annotation))
     if not args:
         return [], []
 
     if origin is WorkflowContext:
         # WorkflowContext[T] -> output_types from T, no workflow output types
+        if not args:
+            return [], []
         t = args[0]
         t_origin = get_origin(t)
         if t is Any:
@@ -107,9 +109,7 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
         t_w_out_origin = get_origin(t_w_out)
         if t_w_out is not Any and t_w_out is not type(None):
             if t_w_out_origin in (Union, UnionType):
-                workflow_output_types = [
-                    arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None)
-                ]
+                workflow_output_types = [arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None)]
             else:
                 workflow_output_types = [t_w_out]
 

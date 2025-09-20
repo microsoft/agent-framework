@@ -9,11 +9,9 @@ if TYPE_CHECKING:
 from pydantic import Field
 
 from ._events import (
-    ExecutorEvent,
-    RequestInfoEvent,
-    WorkflowOutputEvent,
+    WorkflowErrorEvent,
+    WorkflowFailedEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
 )
 from ._executor import Executor, RequestInfoMessage, SubWorkflowRequestInfo, SubWorkflowResponse, handler
 from ._workflow_context import WorkflowContext
@@ -82,60 +80,110 @@ class WorkflowExecutor(Executor):
         """
         # Skip SubWorkflowResponse and SubWorkflowRequestInfo - they have specific handlers
         if isinstance(input_data, (SubWorkflowResponse, SubWorkflowRequestInfo)):
+            logger.debug(f"WorkflowExecutor {self.id} ignoring input of type {type(input_data)}")
             return
 
         # Track this execution
         self._active_executions += 1
 
-        try:
-            # Run the sub-workflow and collect all events
-            events = [event async for event in self.workflow.run_stream(input_data)]
+        logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id} execution")
 
-            # Process events in single iteration
-            request_count = 0
-            workflow_completed = False
+        # Run the sub-workflow and collect all events
+        result = await self.workflow.run(input_data)
 
-            for event in events:
-                if isinstance(event, WorkflowOutputEvent):
-                    # Sub-workflow yielded output - send it to parent
-                    await ctx.send_message(event.output)
+        logger.debug(
+            f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} execution completed with {len(result)} events"
+        )
 
-                elif isinstance(event, RequestInfoEvent):
-                    # Sub-workflow needs external information
-                    request_count += 1
-                    # Track the pending request
-                    self._pending_requests[event.request_id] = event.data
+        # Initialize response accumulation for this execution
+        self._collected_responses = {}
 
-                    # Wrap request with routing context and send to parent
-                    if not isinstance(event.data, RequestInfoMessage):
-                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-                    wrapped_request = SubWorkflowRequestInfo(
-                        request_id=event.request_id,
-                        sub_workflow_id=self.id,
-                        data=event.data,
-                    )
+        # Process the workflow result using shared logic
+        await self._process_workflow_result(result, ctx)
 
-                    await ctx.send_message(wrapped_request)
+    async def _process_workflow_result(self, result: Any, ctx: WorkflowContext[Any]) -> None:
+        """Process the result from a workflow execution.
 
-                elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.COMPLETED:
-                    # Check if workflow is completed
-                    workflow_completed = True
+        This method handles the common logic for processing outputs, request info events,
+        and final states that is shared between process_workflow and handle_response.
 
-            # Initialize response accumulation for this execution
-            self._expected_response_count = request_count
-            self._collected_responses = {}
+        Args:
+            result: The workflow execution result.
+            ctx: The workflow context.
+        """
+        # Collect all events from the workflow
+        request_info_events = result.get_request_info_events()
+        outputs = result.get_outputs()
+        final_state = result.get_final_state()
+        logger.debug(
+            f"WorkflowExecutor {self.id} processing workflow result with "
+            f"{len(outputs)} outputs and {len(request_info_events)} request info events, "
+            f"final state: {final_state}"
+        )
 
-            # Handle completion if workflow completed
-            if workflow_completed:
-                self._active_executions -= 1
-                return  # Exit after completion
+        # Process outputs
+        for output in outputs:
+            await ctx.send_message(output)
 
-        except Exception as e:
-            # Sub-workflow failed - create error event
-            error_event = ExecutorEvent(executor_id=self.id, data={"error": str(e), "type": "sub_workflow_error"})
-            await ctx.add_event(error_event)
+        # Process request info events
+        for event in request_info_events:
+            # Track the pending request
+            self._pending_requests[event.request_id] = event.data
+            # Wrap request with routing context and send to parent
+            if not isinstance(event.data, RequestInfoMessage):
+                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+            wrapped_request = SubWorkflowRequestInfo(
+                request_id=event.request_id,
+                sub_workflow_id=self.id,
+                data=event.data,
+            )
+            await ctx.send_message(wrapped_request)
+
+        # Update expected response count for next batch of requests
+        self._expected_response_count = len(request_info_events)
+
+        # Handle final state
+        if final_state == WorkflowRunState.COMPLETED:
             self._active_executions -= 1
-            raise
+        elif final_state == WorkflowRunState.FAILED:
+            # Find the WorkflowFailedEvent.
+            failed_events = [e for e in result if isinstance(e, WorkflowFailedEvent)]
+            if failed_events:
+                failed_event = failed_events[0]
+                error_type = failed_event.details.error_type
+                error_message = failed_event.details.message
+                exception = Exception(
+                    f"Sub-workflow {self.workflow.id} failed with error: {error_type} - {error_message}"
+                )
+                error_event = WorkflowErrorEvent(
+                    data=exception,
+                )
+                await ctx.add_event(error_event)
+                self._active_executions -= 1
+        elif final_state == WorkflowRunState.IDLE:
+            # Sub-workflow is idle - nothing more to do now
+            logger.debug(f"Sub-workflow {self.workflow.id} is idle with {self._active_executions} active executions")
+            self._active_executions -= 1  # Treat idle as completion for now
+        elif final_state == WorkflowRunState.CANCELLED:
+            # Sub-workflow was cancelled - treat as completion
+            logger.debug(
+                f"Sub-workflow {self.workflow.id} was cancelled with {self._active_executions} active executions"
+            )
+            self._active_executions -= 1
+        elif final_state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS:
+            # Sub-workflow is still running with pending requests
+            logger.debug(
+                f"Sub-workflow {self.workflow.id} is still in progress with {len(request_info_events)} "
+                f"pending requests with {self._active_executions} active executions"
+            )
+        elif final_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+            # Sub-workflow is idle but has pending requests
+            logger.debug(
+                f"Sub-workflow {self.workflow.id} is idle with pending requests: "
+                f"{len(request_info_events)} with {self._active_executions} active executions"
+            )
+        else:
+            raise RuntimeError(f"Unexpected final state: {final_state}")
 
     @handler
     async def handle_response(
@@ -155,6 +203,9 @@ class WorkflowExecutor(Executor):
         # Check if we have this pending request
         pending_requests = getattr(self, "_pending_requests", {})
         if response.request_id not in pending_requests:
+            logger.warning(
+                f"WorkflowExecutor {self.id} received response for unknown request_id: {response.request_id}, ignoring"
+            )
             return
 
         # Remove the request from pending list
@@ -175,40 +226,8 @@ class WorkflowExecutor(Executor):
         responses_to_send = dict(self._collected_responses)
         self._collected_responses.clear()  # Clear for next batch
 
-        result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
+        # Resume the sub-workflow with all collected responses
+        result = await self.workflow.send_responses(responses_to_send)
 
-        # Process events in single iteration
-        new_request_count = 0
-        workflow_completed = False
-
-        for event in result_events:
-            if isinstance(event, WorkflowOutputEvent):
-                # Sub-workflow yielded output - send it to parent
-                await ctx.send_message(event.output)
-
-            elif isinstance(event, RequestInfoEvent):
-                # Sub-workflow sent more requests - prepare for next batch
-                new_request_count += 1
-                self._pending_requests[event.request_id] = event.data
-
-                # Send the new request to parent
-                if not isinstance(event.data, RequestInfoMessage):
-                    raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-                wrapped_request = SubWorkflowRequestInfo(
-                    request_id=event.request_id,
-                    sub_workflow_id=self.id,
-                    data=event.data,
-                )
-                await ctx.send_message(wrapped_request)
-
-            elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.COMPLETED:
-                # Check if workflow is completed
-                workflow_completed = True
-
-        # Handle completion if workflow completed
-        if workflow_completed:
-            self._active_executions -= 1
-            return
-
-        # Update expected count for next batch of requests
-        self._expected_response_count = new_request_count
+        # Process the workflow result using shared logic
+        await self._process_workflow_result(result, ctx)
