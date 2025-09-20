@@ -444,10 +444,13 @@ class WorkflowGraphValidator:
         target_executor = self._executors[edge.target_id]
 
         # Get output types from source executor
-        source_output_types = self._get_executor_output_types(source_executor)
+        source_output_types = list(source_executor.output_types)
+        # Also include intercepted request types as potential outputs
+        # since @intercepts_request methods can forward requests
+        source_output_types.extend(source_executor.request_types)
 
         # Get input types from target executor
-        target_input_types = self._get_executor_input_types(target_executor)
+        target_input_types = target_executor.input_types
 
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
@@ -506,61 +509,6 @@ class WorkflowGraphValidator:
                 target_input_types,
             )
 
-    def _get_executor_output_types(self, executor: Executor) -> list[type[Any]]:
-        """Extract output types from an executor's message handlers.
-
-        Args:
-            executor: The executor to analyze
-
-        Returns:
-            list of types that this executor can output
-        """
-        output_types: list[type[Any]] = []
-
-        for attr_name in dir(executor.__class__):
-            if attr_name.startswith("_"):
-                continue
-            try:
-                attr = getattr(executor.__class__, attr_name)
-                if callable(attr) and hasattr(attr, "_handler_spec"):
-                    handler_spec = attr._handler_spec  # type: ignore
-                    handler_output_types = handler_spec.get("output_types", [])
-                    output_types.extend(handler_output_types)
-            except AttributeError:
-                # Skip attributes that may not be accessible
-                continue
-
-        # Also include intercepted request types as potential outputs
-        # since @intercepts_request methods can forward requests
-        if hasattr(executor, "_request_interceptors"):
-            for request_type in executor._request_interceptors:
-                if isinstance(request_type, type):
-                    output_types.append(request_type)
-
-        # Include output types from handler specs
-        if hasattr(executor, "_handler_specs"):
-            for spec in executor._handler_specs:
-                handler_output_types = spec.get("output_types", [])
-                output_types.extend(handler_output_types)
-
-        return output_types
-
-    def _get_executor_input_types(self, executor: Executor) -> list[type[Any]]:
-        """Extract input types from an executor's message handlers.
-
-        Args:
-            executor: The executor to analyze
-
-        Returns:
-            list of types that this executor can handle as input
-        """
-        input_types: list[type[Any]] = []
-
-        # Access the private _handlers attribute to get input types
-        if hasattr(executor, "_handlers"):
-            input_types.extend(executor._handlers.keys())  # type: ignore
-
-        return input_types
 
     # endregion
 
@@ -657,7 +605,7 @@ class WorkflowGraphValidator:
         which might lead to unexpected behavior.
         """
         for executor_id, executor in self._executors.items():
-            input_types = self._get_executor_input_types(executor)
+            input_types = executor.input_types
 
             # Check for duplicate input types
             seen_types: set[type[Any]] = set()

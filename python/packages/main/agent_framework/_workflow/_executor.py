@@ -401,6 +401,21 @@ class Executor(AFBaseModel):
 
         return list(output_types)
 
+    @property
+    def request_types(self) -> list[type[Any]]:
+        """Get the list of request types that this executor can intercept via @intercepts_request.
+
+        Returns:
+            A list of the request types that this executor's interceptors can handle.
+        """
+        request_types: list[type[Any]] = []
+
+        for request_type in self._request_interceptors:
+            if isinstance(request_type, type):
+                request_types.append(request_type)
+
+        return request_types
+
 
 # endregion: Executor
 
