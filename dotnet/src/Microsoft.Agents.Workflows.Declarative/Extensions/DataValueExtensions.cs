@@ -14,7 +14,7 @@ internal static class DataValueExtensions
         value switch
         {
             null => FormulaValue.NewBlank(),
-            BlankDataValue => BlankValue.NewBlank(),
+            BlankDataValue => FormulaValue.NewBlank(),
             BooleanDataValue boolValue => FormulaValue.New(boolValue.Value),
             NumberDataValue numberValue => FormulaValue.New(numberValue.Value),
             FloatDataValue floatValue => FormulaValue.New(floatValue.Value),

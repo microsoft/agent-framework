@@ -64,10 +64,10 @@ public class MessageConverterTests
             {
                 MessageId = "test-id",
                 Role = MessageRole.User,
-                Parts = new List<Part>
-                {
+                Parts =
+                [
                     new TextPart { Text = "Hello, world!" }
-                }
+                ]
             }
         };
 
@@ -116,13 +116,13 @@ public class MessageConverterTests
             {
                 MessageId = "user-msg",
                 Role = MessageRole.User,
-                Parts = new List<Part> { new TextPart { Text = "User message" } }
+                Parts = [new TextPart { Text = "User message" }]
             },
             new()
             {
                 MessageId = "agent-msg",
                 Role = MessageRole.Agent,
-                Parts = new List<Part> { new TextPart { Text = "Agent response" } }
+                Parts = [new TextPart { Text = "Agent response" }]
             }
         };
 
@@ -151,7 +151,7 @@ public class MessageConverterTests
             {
                 MessageId = "valid-msg",
                 Role = MessageRole.User,
-                Parts = new List<Part> { new TextPart { Text = "Valid message" } }
+                Parts = [new TextPart { Text = "Valid message" }]
             },
             new()
             {
@@ -232,7 +232,7 @@ public class MessageConverterTests
         var unsupportedContent = new DataContent(new byte[] { 1, 2, 3 }, "image/png");
         var chatMessage = new ChatMessage(ChatRole.User, [unsupportedContent]);
 
-        var exception = Assert.Throws<NotSupportedException>(() => chatMessage.ToA2AMessage());
+        var exception = Assert.Throws<NotSupportedException>(chatMessage.ToA2AMessage);
         Assert.Contains("Content type 'DataContent' is not supported", exception.Message);
     }
 
@@ -257,7 +257,7 @@ public class MessageConverterTests
         {
             MessageId = "test",
             Role = MessageRole.User,
-            Parts = new List<Part> { new TextPart { Text = "Test" } }
+            Parts = [new TextPart { Text = "Test" }]
         };
 
         var result = new List<Message> { message }.ToChatMessages();
@@ -273,7 +273,7 @@ public class MessageConverterTests
         {
             MessageId = "test",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Test" } }
+            Parts = [new TextPart { Text = "Test" }]
         };
 
         var result = new List<Message> { message }.ToChatMessages();
@@ -289,7 +289,7 @@ public class MessageConverterTests
         {
             MessageId = "test",
             Role = (MessageRole)999, // Unknown role
-            Parts = new List<Part> { new TextPart { Text = "Test" } }
+            Parts = [new TextPart { Text = "Test" }]
         };
 
         var result = new List<Message> { message }.ToChatMessages();
@@ -346,7 +346,7 @@ public class MessageConverterTests
         {
             MessageId = "test",
             Role = MessageRole.User,
-            Parts = new List<Part> { textPart }
+            Parts = [textPart]
         };
 
         var result = new List<Message> { message }.ToChatMessages();
@@ -374,7 +374,7 @@ public class MessageConverterTests
         {
             MessageId = "test",
             Role = MessageRole.User,
-            Parts = new List<Part> { textPart }
+            Parts = [textPart]
         };
 
         var result = new List<Message> { message }.ToChatMessages();
@@ -395,7 +395,7 @@ public class MessageConverterTests
         {
             MessageId = "test",
             Role = MessageRole.User,
-            Parts = new List<Part> { filePart }
+            Parts = [filePart]
         };
 
         var exception = Assert.Throws<NotSupportedException>(() => new List<Message> { message }.ToChatMessages());
@@ -410,7 +410,7 @@ public class MessageConverterTests
         {
             MessageId = "test",
             Role = MessageRole.User,
-            Parts = new List<Part> { dataPart }
+            Parts = [dataPart]
         };
 
         var exception = Assert.Throws<NotSupportedException>(() => new List<Message> { message }.ToChatMessages());
@@ -429,7 +429,7 @@ public class MessageConverterTests
         {
             MessageId = "test-id",
             Role = MessageRole.User,
-            Parts = new List<Part> { new TextPart { Text = "Test" } },
+            Parts = [new TextPart { Text = "Test" }],
             Metadata = metadata
         };
 
@@ -449,7 +449,7 @@ public class MessageConverterTests
         {
             MessageId = "test-id",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Test response" } }
+            Parts = [new TextPart { Text = "Test response" }]
         };
 
         var result = new List<Message> { message }.ToChatMessages();
@@ -465,7 +465,7 @@ public class MessageConverterTests
         {
             MessageId = "test-id",
             Role = MessageRole.User,
-            Parts = new List<Part>() // Empty list
+            Parts = [] // Empty list
         };
 
         var result = new List<Message> { message }.ToChatMessages();
@@ -502,7 +502,7 @@ public class MessageConverterTests
         {
             MessageId = "test-id",
             Role = MessageRole.User,
-            Parts = new List<Part> { new TextPart { Text = "Test" } },
+            Parts = [new TextPart { Text = "Test" }],
             Metadata = null
         };
 
@@ -519,8 +519,8 @@ public class MessageConverterTests
         {
             MessageId = "test-id",
             Role = MessageRole.User,
-            Parts = new List<Part> { new TextPart { Text = "Test" } },
-            Metadata = new Dictionary<string, JsonElement>()
+            Parts = [new TextPart { Text = "Test" }],
+            Metadata = []
         };
 
         var result = new List<Message> { message }.ToChatMessages();

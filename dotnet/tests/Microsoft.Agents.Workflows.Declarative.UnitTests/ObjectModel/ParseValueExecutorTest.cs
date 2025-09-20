@@ -14,7 +14,7 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public async Task ParseTable()
+    public async Task ParseTableAsync()
     {
         // Arrange
         RecordDataType.Builder recordBuilder =
@@ -27,73 +27,73 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
             };
         ParseValue model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ParseTable)),
+                this.FormatDisplayName(nameof(ParseTableAsync)),
                 recordBuilder,
                 @"{ ""key1"": ""val1"" }");
 
         // Act
         ParseValueExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyState("Target", FormulaValue.NewRecordFromFields(new NamedValue("key1", FormulaValue.New("val1"))));
     }
 
     [Fact]
-    public async Task ParseBoolean()
+    public async Task ParseBooleanAsync()
     {
         // Arrange
         ParseValue model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ParseTable)),
+                this.FormatDisplayName(nameof(ParseTableAsync)),
                 new BooleanDataType.Builder(),
                 "True");
 
         // Act
         ParseValueExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyState("Target", FormulaValue.New(true));
     }
 
     [Fact]
-    public async Task ParseNumber()
+    public async Task ParseNumberAsync()
     {
         // Arrange
         ParseValue model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ParseNumber)),
+                this.FormatDisplayName(nameof(ParseNumberAsync)),
                 new NumberDataType.Builder(),
                 "42");
 
         // Act
         ParseValueExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyState("Target", FormulaValue.New(42));
     }
 
     [Fact]
-    public async Task ParseString()
+    public async Task ParseStringAsync()
     {
         // Arrange
         ParseValue model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ParseString)),
+                this.FormatDisplayName(nameof(ParseStringAsync)),
                 new StringDataType.Builder(),
                 "Hello, World!");
 
         // Act
         ParseValueExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyState("Target", FormulaValue.New("Hello, World!"));
     }
 
@@ -109,8 +109,6 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
                 Value = new ValueExpression.Builder(ValueExpression.Literal(StringDataValue.Create(sourceText))),
             };
 
-        ParseValue model = this.AssignParent<ParseValue>(actionBuilder);
-
-        return model;
+        return AssignParent<ParseValue>(actionBuilder);
     }
 }

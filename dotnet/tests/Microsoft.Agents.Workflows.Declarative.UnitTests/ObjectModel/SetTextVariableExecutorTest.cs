@@ -14,42 +14,42 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public async Task SetLiteralValue()
+    public async Task SetLiteralValueAsync()
     {
         // Arrange
         SetTextVariable model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(SetLiteralValue)),
+                this.FormatDisplayName(nameof(SetLiteralValueAsync)),
                 FormatVariablePath("TextVar"),
                 "Text variable value");
 
         // Act
         SetTextVariableExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyState("TextVar", FormulaValue.New("Text variable value"));
     }
 
     [Fact]
-    public async Task UpdateExistingValue()
+    public async Task UpdateExistingValueAsync()
     {
         // Arrange
         this.State.Set("TextVar", FormulaValue.New("Old value"));
 
         SetTextVariable model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(UpdateExistingValue)),
+                this.FormatDisplayName(nameof(UpdateExistingValueAsync)),
                 FormatVariablePath("TextVar"),
                 "New value");
 
         // Act
         SetTextVariableExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyState("TextVar", FormulaValue.New("New value"));
     }
 
@@ -64,8 +64,6 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
                 Value = TemplateLine.Parse(textValue),
             };
 
-        SetTextVariable model = this.AssignParent<SetTextVariable>(actionBuilder);
-
-        return model;
+        return AssignParent<SetTextVariable>(actionBuilder);
     }
 }

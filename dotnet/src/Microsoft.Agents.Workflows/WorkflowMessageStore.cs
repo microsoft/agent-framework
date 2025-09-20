@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -9,21 +10,41 @@ using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows;
 
-internal class WorkflowMessageStore : IChatMessageStore
+internal sealed class WorkflowMessageStore : IChatMessageStore
 {
-    private int _bookmark = 0;
-    private readonly List<ChatMessage> _chatMessages = new();
+    private int _bookmark;
+    private readonly List<ChatMessage> _chatMessages = [];
 
-    internal class StoreState
+    public WorkflowMessageStore()
+    {
+    }
+
+    public WorkflowMessageStore(JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (serializedStoreState.ValueKind is not JsonValueKind.Object)
+        {
+            throw new ArgumentException("The provided JsonElement must be a json object", nameof(serializedStoreState));
+        }
+
+        StoreState? state =
+            serializedStoreState.Deserialize(
+                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+
+        if (state?.Messages is not null)
+        {
+            this._chatMessages.AddRange(state.Messages);
+        }
+
+        this._bookmark = state?.Bookmark ?? 0;
+    }
+
+    internal sealed class StoreState
     {
         public int Bookmark { get; set; }
-        public IList<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
+        public IList<ChatMessage> Messages { get; set; } = [];
     }
 
-    internal void AddMessages(params ChatMessage[] messages)
-    {
-        this._chatMessages.AddRange(messages);
-    }
+    internal void AddMessages(params ChatMessage[] messages) => this._chatMessages.AddRange(messages);
 
     public Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
@@ -32,10 +53,7 @@ internal class WorkflowMessageStore : IChatMessageStore
         return Task.CompletedTask;
     }
 
-    public Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
-    {
-        return Task.FromResult<IEnumerable<ChatMessage>>(this._chatMessages.AsReadOnly());
-    }
+    public Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken) => Task.FromResult<IEnumerable<ChatMessage>>(this._chatMessages.AsReadOnly());
 
     public IEnumerable<ChatMessage> GetFromBookmark()
     {
@@ -45,35 +63,7 @@ internal class WorkflowMessageStore : IChatMessageStore
         }
     }
 
-    public void UpdateBookmark()
-    {
-        this._bookmark = this._chatMessages.Count;
-    }
-
-    public ValueTask DeserializeStateAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        if (serializedStoreState is null)
-        {
-            return default;
-        }
-
-        object? maybeState =
-            JsonSerializer.Deserialize(
-                serializedStoreState.Value,
-                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
-
-        if (maybeState is not StoreState state)
-        {
-            throw new JsonException("Invalid state format for WorkflowMessageStore.");
-        }
-
-        this._chatMessages.Clear();
-        this._chatMessages.AddRange(state.Messages);
-
-        this._bookmark = state.Bookmark;
-
-        return default;
-    }
+    public void UpdateBookmark() => this._bookmark = this._chatMessages.Count;
 
     public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {

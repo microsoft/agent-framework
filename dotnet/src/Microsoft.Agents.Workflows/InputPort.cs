@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows;
 /// <param name="Id"></param>
 /// <param name="Request"></param>
 /// <param name="Response"></param>
-public record InputPort(string Id, Type Request, Type Response)
+public sealed record InputPort(string Id, Type Request, Type Response)
 {
     /// <summary>
     /// Creates a new <see cref="InputPort"/> instance configured for the specified request and response types.

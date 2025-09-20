@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from dataclasses import dataclass
+from typing import Any
+
 import pytest
 
 from agent_framework import (
@@ -14,9 +17,11 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowEventSource,
     WorkflowFailedEvent,
     WorkflowRunResult,
     WorkflowRunState,
+    WorkflowStartedEvent,
     WorkflowStatusEvent,
     handler,
 )
@@ -41,9 +46,12 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
             events.append(ev)
 
     # Workflow-level failure and FAILED status should be surfaced
-    assert any(isinstance(e, WorkflowFailedEvent) for e in events)
+    failed_events = [e for e in events if isinstance(e, WorkflowFailedEvent)]
+    assert failed_events
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed_events)
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.FAILED
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
 
 
 async def test_executor_failed_event_emitted_on_direct_execute():
@@ -58,7 +66,9 @@ async def test_executor_failed_event_emitted_on_direct_execute():
     with pytest.raises(RuntimeError, match="boom"):
         await failing.execute(0, wf_ctx)
     drained = await ctx.drain_events()
-    assert any(isinstance(e, ExecutorFailedEvent) for e in drained)
+    failed = [e for e in drained if isinstance(e, ExecutorFailedEvent)]
+    assert failed
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed)
 
 
 class Requester(Executor):
@@ -99,6 +109,19 @@ async def test_completed_status_streaming():
     # Last status should be COMPLETED
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.COMPLETED
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
+
+
+async def test_started_and_completed_event_origins():
+    c = Completer(id="c-origin")
+    wf = WorkflowBuilder().set_start_executor(c).build()
+    events = [ev async for ev in wf.run_stream("payload")]
+
+    started = next(e for e in events if isinstance(e, WorkflowStartedEvent))
+    assert started.origin is WorkflowEventSource.FRAMEWORK
+
+    completed = next(e for e in events if isinstance(e, WorkflowCompletedEvent))
+    assert completed.origin is WorkflowEventSource.EXECUTOR
 
 
 async def test_non_streaming_final_state_helpers():
@@ -135,3 +158,59 @@ async def test_run_includes_status_events_idle_with_requests():
     assert len(timeline) >= 3
     assert timeline[-2].state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
     assert timeline[-1].state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+
+@dataclass
+class SnapshotRequest(RequestInfoMessage):
+    prompt: str = ""
+    draft: str = ""
+    iteration: int = 0
+
+
+class SnapshotRequester(Executor):
+    """Executor that emits a rich RequestInfoMessage for persistence tests."""
+
+    def __init__(self, id: str, prompt: str, draft: str) -> None:
+        super().__init__(id=id)
+        self._prompt = prompt
+        self._draft = draft
+
+    @handler
+    async def ask(self, _: str, ctx: WorkflowContext[SnapshotRequest]) -> None:  # pragma: no cover - simple helper
+        await ctx.send_message(SnapshotRequest(prompt=self._prompt, draft=self._draft, iteration=1))
+
+
+async def test_request_info_executor_tracks_pending_requests_via_shared_state():
+    prompt = "Review the launch copy"
+    draft = "Limited edition grinder now $249"
+    requester = SnapshotRequester(id="snapshot_req", prompt=prompt, draft=draft)
+    request_info = RequestInfoExecutor(id="request_info")
+
+    wf = WorkflowBuilder().set_start_executor(requester).add_edge(requester, request_info).build()
+
+    events = [event async for event in wf.run_stream("start")]
+    assert any(isinstance(event, RequestInfoEvent) for event in events)
+
+    pending_map: dict[str, Any] = await wf._shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)  # type: ignore[reportPrivateUsage]
+    assert isinstance(pending_map, dict)
+    assert len(pending_map) == 1
+    snapshot: dict[str, Any] = next(iter(pending_map.values()))
+    assert snapshot["prompt"] == prompt
+    assert snapshot["draft"] == draft
+    assert snapshot.get("iteration") == 1
+
+    request_id: str = snapshot["request_id"]
+
+    request_info_resume = RequestInfoExecutor(id="request_info_resume")
+    resume_context: WFContext[Any] = WFContext(
+        executor_id=request_info_resume.id,
+        source_executor_ids=[wf.__class__.__name__],
+        shared_state=wf._shared_state,  # type: ignore[reportPrivateUsage]
+        runner_context=wf._runner_context,  # type: ignore[reportPrivateUsage]
+    )
+
+    await request_info_resume.handle_response("approve", request_id, resume_context)
+
+    updated_pending: dict[str, Any] = await wf._shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)  # type: ignore[reportPrivateUsage]
+    assert isinstance(updated_pending, dict)
+    assert request_id not in updated_pending

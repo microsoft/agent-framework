@@ -273,7 +273,6 @@ async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMem
     assert processing_span.attributes.get("message.type") == "str"
 
 
-@pytest.mark.asyncio
 async def test_trace_context_disabled_when_tracing_disabled() -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
@@ -299,7 +298,6 @@ async def test_trace_context_disabled_when_tracing_disabled() -> None:
     assert message.source_span_id is None
 
 
-@pytest.mark.asyncio
 async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test end-to-end tracing including workflow build, execution, and span linking with fan-in edges."""
     # Create executors for fan-in scenario
@@ -424,7 +422,6 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     assert len(aggregator_span.links) >= 2, f"Expected at least 2 links, got {len(aggregator_span.links)}"
 
 
-@pytest.mark.asyncio
 async def test_workflow_error_handling_in_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test that workflow errors are properly recorded in traces."""
 
@@ -460,7 +457,6 @@ async def test_workflow_error_handling_in_tracing(tracing_enabled: Any, span_exp
     assert workflow_span.status.status_code.name == "ERROR"
 
 
-@pytest.mark.asyncio
 async def test_message_trace_context_serialization() -> None:
     """Test that message trace context is properly serialized/deserialized."""
     ctx = InProcRunnerContext()
@@ -495,7 +491,6 @@ async def test_message_trace_context_serialization() -> None:
     assert restored_msg.source_span_ids == ["span123"]  # Test new format
 
 
-@pytest.mark.asyncio
 async def test_workflow_build_error_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
     """Test that build errors are properly recorded in build spans."""
 

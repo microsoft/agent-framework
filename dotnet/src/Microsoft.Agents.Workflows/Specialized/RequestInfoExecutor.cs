@@ -7,7 +7,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Specialized;
 
-internal class RequestInfoExecutor : Executor
+internal sealed class RequestInfoExecutor : Executor
 {
     private InputPort Port { get; }
     private IExternalRequestSink? RequestSink { get; set; }
@@ -20,7 +20,7 @@ internal class RequestInfoExecutor : Executor
     };
 
     private readonly bool _allowWrapped;
-    public RequestInfoExecutor(InputPort port, bool allowWrapped = true) : base(port.Id, RequestInfoExecutor.DefaultOptions)
+    public RequestInfoExecutor(InputPort port, bool allowWrapped = true) : base(port.Id, DefaultOptions)
     {
         this.Port = port;
 
@@ -30,25 +30,22 @@ internal class RequestInfoExecutor : Executor
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
         routeBuilder = routeBuilder
-                  // Handle incoming requests (as raw request payloads)
-                  .AddHandler(this.Port.Request, this.HandleAsync)
-                  .AddHandler(typeof(object), this.HandleAsync);
+            // Handle incoming requests (as raw request payloads)
+            .AddHandler(this.Port.Request, this.HandleAsync)
+            .AddHandler(typeof(object), this.HandleAsync);
 
         if (this._allowWrapped)
         {
             routeBuilder = routeBuilder
-                  .AddHandler<ExternalRequest, ExternalRequest>((request, context) => this.HandleAsync(request.Data, context));
+                .AddHandler<ExternalRequest, ExternalRequest>((request, context) => this.HandleAsync(request.Data, context));
         }
 
         return routeBuilder
-                  // Handle incoming responses (as wrapped Response object)
-                  .AddHandler<ExternalResponse, ExternalResponse>(this.HandleAsync);
+            // Handle incoming responses (as wrapped Response object)
+            .AddHandler<ExternalResponse, ExternalResponse>(this.HandleAsync);
     }
 
-    internal void AttachRequestSink(IExternalRequestSink requestSink)
-    {
-        this.RequestSink = Throw.IfNull(requestSink);
-    }
+    internal void AttachRequestSink(IExternalRequestSink requestSink) => this.RequestSink = Throw.IfNull(requestSink);
 
     public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context)
     {
@@ -65,14 +62,12 @@ internal class RequestInfoExecutor : Executor
         Throw.IfNull(message);
         Throw.IfNull(message.Data);
 
-        if (!this.Port.Response.IsAssignableFrom(message.Data.GetType()))
-        {
+        object data = message.DataAs(this.Port.Response) ??
             throw new InvalidOperationException(
-                $"Message type {message.Data.GetType().Name} is not assignable to the response type {this.Port.Response.Name} of input port {this.Port.Id}.");
-        }
+                $"Message type {message.Data.TypeId} is not assignable to the response type {this.Port.Response.Name} of input port {this.Port.Id}.");
 
         await context.SendMessageAsync(message).ConfigureAwait(false);
-        await context.SendMessageAsync(message.Data).ConfigureAwait(false);
+        await context.SendMessageAsync(data).ConfigureAwait(false);
 
         return message;
     }

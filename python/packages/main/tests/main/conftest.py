@@ -105,6 +105,9 @@ class MockChatClient:
 
     def __init__(self) -> None:
         self.additional_properties: dict[str, Any] = {}
+        self.call_count: int = 0
+        self.responses: list[ChatResponse] = []
+        self.streaming_responses: list[list[ChatResponseUpdate]] = []
 
     async def get_response(
         self,
@@ -112,6 +115,9 @@ class MockChatClient:
         **kwargs: Any,
     ) -> ChatResponse:
         logger.debug(f"Running custom chat client, with: {messages=}, {kwargs=}")
+        self.call_count += 1
+        if self.responses:
+            return self.responses.pop(0)
         return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
 
     async def get_streaming_response(
@@ -120,8 +126,13 @@ class MockChatClient:
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         logger.debug(f"Running custom chat client stream, with: {messages=}, {kwargs=}")
-        yield ChatResponseUpdate(text=TextContent(text="test streaming response "), role="assistant")
-        yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
+        self.call_count += 1
+        if self.streaming_responses:
+            for update in self.streaming_responses.pop(0):
+                yield update
+        else:
+            yield ChatResponseUpdate(text=TextContent(text="test streaming response "), role="assistant")
+            yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
 
 
 class MockBaseChatClient(BaseChatClient):

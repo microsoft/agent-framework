@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// Helper methods for creating <see cref="Configured{TSubject}"/> instances.
+/// Provides methods for creating <see cref="Configured{TSubject}"/> instances.
 /// </summary>
 public static class Configured
 {
@@ -29,20 +29,20 @@ public static class Configured
     {
         if (subject is IIdentified identified)
         {
-            if (id != null && identified.Id != id)
+            if (id is not null && identified.Id != id)
             {
                 throw new ArgumentException($"Provided ID '{id}' does not match subject's ID '{identified.Id}'.", nameof(id));
             }
 
-            return new Configured<TSubject>((_) => new(subject), id: identified.Id, raw: raw ?? subject);
+            return new Configured<TSubject>(_ => new(subject), id: identified.Id, raw: raw ?? subject);
         }
 
-        if (id == null)
+        if (id is null)
         {
             throw new ArgumentNullException(nameof(id), "ID must be provided when the subject does not implement IIdentified.");
         }
 
-        return new Configured<TSubject>((_) => new(subject), id, raw: raw ?? subject);
+        return new Configured<TSubject>(_ => new(subject), id, raw: raw ?? subject);
     }
 }
 
@@ -56,7 +56,7 @@ public static class Configured
 public class Configured<TSubject>(Func<Config, ValueTask<TSubject>> factoryAsync, string id, object? raw = null)
 {
     /// <summary>
-    /// The raw representation of the configured object, if any.
+    /// Gets the raw representation of the configured object, if any.
     /// </summary>
     public object? Raw => raw;
 
@@ -137,7 +137,7 @@ public class Configured<TSubject, TOptions>(Func<Config<TOptions>, ValueTask<TSu
 
             TSubject subject = await this.FactoryAsync(this.Configuration).ConfigureAwait(false);
 
-            if (this.Id != null && subject is IIdentified identified && identified.Id != this.Id)
+            if (this.Id is not null && subject is IIdentified identified && identified.Id != this.Id)
             {
                 throw new InvalidOperationException($"Created instance ID '{identified.Id}' does not match configured ID '{this.Id}'.");
             }

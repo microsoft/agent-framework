@@ -33,12 +33,12 @@ public class InProcessStateTests
 
             for (int i = 0; i < stateActions.Length; i++)
             {
-                result[i] = CreateWrapperAsync(stateActions[i]);
+                result[i] = CreateWrapper(stateActions[i]);
             }
 
             return result;
 
-            Func<TurnToken, IWorkflowContext, CancellationToken, ValueTask<TurnToken>> CreateWrapperAsync(Func<TState?, TState?> action)
+            Func<TurnToken, IWorkflowContext, CancellationToken, ValueTask<TurnToken>> CreateWrapper(Func<TState?, TState?> action)
             {
                 return
                     async (turn, context, cancellation) =>
@@ -68,7 +68,7 @@ public class InProcessStateTests
         => currState => currState.HasValue ? currState + 1 : defaultValue;
 
     private static Func<int?, int?> ValidateState(int expectedValue, string? because = null, params object[] becauseArgs)
-        => (int? currState) =>
+        => currState =>
            {
                currState.Should().Be(expectedValue, because, becauseArgs);
 
@@ -76,7 +76,7 @@ public class InProcessStateTests
            };
 
     private static Func<object?, bool> MaxTurns(int maxTurns)
-        => (object? maybeTurn) => maybeTurn is not TurnToken turn || turn.Count < maxTurns;
+        => maybeTurn => maybeTurn is not TurnToken turn || turn.Count < maxTurns;
 
     [Fact]
     public async Task InProcessRun_StateShouldPersist_NotCheckpointedAsync()
@@ -127,7 +127,7 @@ public class InProcessStateTests
                 .AddEdge(writer, validator, MaxTurns(4))
                 .AddEdge(validator, writer, MaxTurns(4)).Build<TurnToken>();
 
-        Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync(workflow, new(), new CheckpointManager());
+        Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync(workflow, new(), CheckpointManager.Default);
 
         checkpointed.Checkpoints.Should().HaveCount(6);
         checkpointed.Run.Status.Should().Be(RunStatus.Idle);

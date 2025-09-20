@@ -8,23 +8,21 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
-internal class TestingExecutor<TIn, TOut> : Executor, IDisposable
+internal abstract class TestingExecutor<TIn, TOut> : Executor, IDisposable
 {
     private readonly bool _loop;
     private readonly Func<TIn, IWorkflowContext, CancellationToken, ValueTask<TOut>>[] _actions;
-    private readonly HashSet<CancellationToken> _linkedTokens = new();
+    private readonly HashSet<CancellationToken> _linkedTokens = [];
     private CancellationTokenSource _internalCts = new();
 
-    public TestingExecutor(string? id = null, bool loop = false, params Func<TIn, IWorkflowContext, CancellationToken, ValueTask<TOut>>[] actions) : base(id)
+    protected TestingExecutor(string? id = null, bool loop = false, params Func<TIn, IWorkflowContext, CancellationToken, ValueTask<TOut>>[] actions) : base(id)
     {
         this._loop = loop;
         this._actions = actions;
     }
 
-    public void UnlinkCancellation(CancellationToken token)
-    {
+    public void UnlinkCancellation(CancellationToken token) =>
         this._linkedTokens.Remove(token);
-    }
 
     public void LinkCancellation(CancellationToken token)
     {
@@ -34,18 +32,14 @@ internal class TestingExecutor<TIn, TOut> : Executor, IDisposable
         tokenSource.Dispose();
     }
 
-    public void SetCancel()
-    {
+    public void SetCancel() =>
         Volatile.Read(ref this._internalCts).Cancel();
-    }
 
-    protected sealed override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-    {
-        return routeBuilder.AddHandler<TIn, TOut>(this.RouteToActions);
-    }
+    protected sealed override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.AddHandler<TIn, TOut>(this.RouteToActionsAsync);
 
-    private int _nextActionIndex = 0;
-    private ValueTask<TOut> RouteToActions(TIn message, IWorkflowContext context)
+    private int _nextActionIndex;
+    private ValueTask<TOut> RouteToActionsAsync(TIn message, IWorkflowContext context)
     {
         if (this._nextActionIndex >= this._actions.Length)
         {
@@ -75,10 +69,8 @@ internal class TestingExecutor<TIn, TOut> : Executor, IDisposable
         this.Dispose(false);
     }
 
-    protected virtual void Dispose(bool disposing)
-    {
+    protected virtual void Dispose(bool disposing) =>
         this._internalCts.Dispose();
-    }
 
     public void Dispose()
     {

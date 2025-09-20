@@ -46,7 +46,7 @@ public class Run
         return result;
     }
 
-    private readonly List<WorkflowEvent> _eventSink = new();
+    private readonly List<WorkflowEvent> _eventSink = [];
     private readonly StreamingRun _streamingRun;
     internal Run(StreamingRun streamingRun)
     {
@@ -91,7 +91,7 @@ public class Run
     /// </summary>
     public IEnumerable<WorkflowEvent> OutgoingEvents => this._eventSink;
 
-    private int _lastBookmark = 0;
+    private int _lastBookmark;
 
     /// <summary>
     /// Gets all events emitted by the workflow since the last access to <see cref="NewEvents" />.

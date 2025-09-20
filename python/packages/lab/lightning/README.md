@@ -1,17 +1,17 @@
-# Agent Framework Lab - Agent Framework x Agent Lighting
+# Agent Framework Lab - Agent Framework x Agent Lightning
 
 RL Module for Microsoft Agent Framework
 
 ## Installation
 
 ```bash
-pip install agent-framework-lab-lighting
+pip install agent-framework-lab-lightning
 ```
 
 ## Usage
 
 ```python
-from agent_framework.lab.lighting import YourClass
+from agent_framework.lab.lightning import YourClass
 
 # Your usage example here
 instance = YourClass()
@@ -32,7 +32,7 @@ Brief description of what this lab package provides and its main features.
 ### Basic Usage
 
 ```python
-from agent_framework.lab.lighting import YourClass
+from agent_framework.lab.lightning import YourClass
 
 # Example usage
 ```

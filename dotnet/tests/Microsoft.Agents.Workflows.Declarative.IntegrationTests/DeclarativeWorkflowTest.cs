@@ -25,10 +25,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
     [Theory]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
-    public Task Validate(string workflowFileName, string testcaseFileName) =>
-        this.RunWorkflow(workflowFileName, testcaseFileName);
+    public Task ValidateAsync(string workflowFileName, string testcaseFileName) =>
+        this.RunWorkflowAsync(workflowFileName, testcaseFileName);
 
-    private Task RunWorkflow(string workflowFileName, string testcaseFileName)
+    private Task RunWorkflowAsync(string workflowFileName, string testcaseFileName)
     {
         this.Output.WriteLine($"WORKFLOW: {workflowFileName}");
         this.Output.WriteLine($"TESTCASE: {testcaseFileName}");
@@ -42,13 +42,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         return
             testcase.Setup.Input.Type switch
             {
-                nameof(ChatMessage) => this.RunWorkflow<ChatMessage>(testcase, workflowPath, configuration),
-                nameof(String) => this.RunWorkflow<string>(testcase, workflowPath, configuration),
+                nameof(ChatMessage) => this.RunWorkflowAsync<ChatMessage>(testcase, workflowPath, configuration),
+                nameof(String) => this.RunWorkflowAsync<string>(testcase, workflowPath, configuration),
                 _ => throw new NotSupportedException($"Input type '{testcase.Setup.Input.Type}' is not supported."),
             };
     }
 
-    private async Task RunWorkflow<TInput>(
+    private async Task RunWorkflowAsync<TInput>(
         Testcase testcase,
         string workflowPath,
         IConfiguration configuration) where TInput : notnull
@@ -58,7 +58,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         AzureAIConfiguration? foundryConfig = configuration.GetSection("AzureAI").Get<AzureAIConfiguration>();
         Assert.NotNull(foundryConfig);
 
-        IDictionary<string, string?> agentMap = await agentFixture.GetAgentsAsync(foundryConfig);
+        IReadOnlyDictionary<string, string?> agentMap = await agentFixture.GetAgentsAsync(foundryConfig);
 
         IConfiguration workflowConfig =
             new ConfigurationBuilder()

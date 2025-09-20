@@ -126,7 +126,7 @@ internal static partial class Throw
     public static string IfNullOrWhitespace([NotNull] string? argument, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
 #if !NETCOREAPP3_1_OR_GREATER
-        if (argument == null)
+        if (argument is null)
         {
             ArgumentNullException(paramName);
         }
@@ -134,7 +134,7 @@ internal static partial class Throw
 
         if (string.IsNullOrWhiteSpace(argument))
         {
-            if (argument == null)
+            if (argument is null)
             {
                 ArgumentNullException(paramName);
             }
@@ -159,7 +159,7 @@ internal static partial class Throw
     public static string IfNullOrEmpty([NotNull] string? argument, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
 #if !NETCOREAPP3_1_OR_GREATER
-        if (argument == null)
+        if (argument is null)
         {
             ArgumentNullException(paramName);
         }
@@ -167,7 +167,7 @@ internal static partial class Throw
 
         if (string.IsNullOrEmpty(argument))
         {
-            if (argument == null)
+            if (argument is null)
             {
                 ArgumentNullException(paramName);
             }
@@ -215,7 +215,7 @@ internal static partial class Throw
         where T : struct, Enum
     {
 #if NET5_0_OR_GREATER
-        if (!Enum.IsDefined<T>(argument))
+        if (!Enum.IsDefined(argument))
 #else
         if (!Enum.IsDefined(typeof(T), argument))
 #endif
@@ -248,7 +248,7 @@ internal static partial class Throw
     [ExcludeFromCodeCoverage]
     public static IEnumerable<T> IfNullOrEmpty<T>([NotNull] IEnumerable<T>? argument, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
-        if (argument == null)
+        if (argument is null)
         {
             ArgumentNullException(paramName);
         }
