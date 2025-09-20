@@ -192,12 +192,8 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
             throw new TaskCanceledException("The operation was canceled.");
         }
 
-        if (status == ResponseStatus.Incomplete)
-        {
-            throw new InvalidOperationException($"The operation is incomplete. Reason: {incompleteStatusReason}.");
-        }
-
-        if (status != ResponseStatus.Completed)
+        if (status == ResponseStatus.InProgress ||
+            status == ResponseStatus.Queued)
         {
             var token = new LongRunContinuationToken(responseId)
             {
