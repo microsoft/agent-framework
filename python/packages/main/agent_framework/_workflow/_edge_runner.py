@@ -66,11 +66,11 @@ class EdgeRunner(ABC):
         # Execute with trace context parameters
         await target_executor.execute(
             message.data,
-            source_ids,              # source_executor_ids
-            shared_state,            # shared_state
-            ctx,                     # runner_context
-            trace_contexts=message.trace_contexts,   # Pass trace contexts
-            source_span_ids=message.source_span_ids, # Pass source span IDs for linking
+            source_ids,  # source_executor_ids
+            shared_state,  # shared_state
+            ctx,  # runner_context
+            trace_contexts=message.trace_contexts,  # Pass trace contexts
+            source_span_ids=message.source_span_ids,  # Pass source span IDs for linking
         )
 
 

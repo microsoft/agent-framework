@@ -257,9 +257,9 @@ async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMem
     # Test executor trace context handling
     await executor.execute(
         "test message",
-        ["source"],          # source_executor_ids
-        shared_state,        # shared_state
-        ctx,                 # runner_context
+        ["source"],  # source_executor_ids
+        shared_state,  # shared_state
+        ctx,  # runner_context
         trace_contexts=[{"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"}],
         source_span_ids=["1234567890123456"],
     )

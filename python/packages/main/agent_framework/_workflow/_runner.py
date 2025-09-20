@@ -205,9 +205,9 @@ class Runner:
                                     )
                                     await executor.execute(
                                         sub_request,
-                                        [message.source_id],        # source_executor_ids
-                                        self._shared_state,          # shared_state
-                                        self._ctx,                   # runner_context
+                                        [message.source_id],  # source_executor_ids
+                                        self._shared_state,  # shared_state
+                                        self._ctx,  # runner_context
                                         trace_contexts=[message.trace_context] if message.trace_context else None,
                                         source_span_ids=[message.source_span_id] if message.source_span_id else None,
                                     )
@@ -230,9 +230,9 @@ class Runner:
                             )
                             await request_info_executor.execute(
                                 sub_request,
-                                [message.source_id],        # source_executor_ids
-                                self._shared_state,          # shared_state
-                                self._ctx,                   # runner_context
+                                [message.source_id],  # source_executor_ids
+                                self._shared_state,  # shared_state
+                                self._ctx,  # runner_context
                                 trace_contexts=[message.trace_context] if message.trace_context else None,
                                 source_span_ids=[message.source_span_id] if message.source_span_id else None,
                             )

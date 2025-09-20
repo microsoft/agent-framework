@@ -24,12 +24,15 @@ from ._events import (
     AgentRunEvent,
     AgentRunUpdateEvent,
     ExecutorCompletedEvent,
+    ExecutorFailedEvent,
     ExecutorInvokedEvent,
     RequestInfoEvent,
+    WorkflowErrorDetails,
     _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
 )
-from ._runner_context import RunnerContext, _decode_checkpoint_value
+from ._runner_context import Message, RunnerContext, _decode_checkpoint_value
 from ._shared_state import SharedState
+from ._telemetry import workflow_tracer
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext, WorkflowOutputContext, infer_output_types_from_ctx_annotation
 
@@ -125,38 +128,47 @@ class Executor(AFBaseModel):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        # Create the appropriate WorkflowContext based on handler specs
-        context = self._create_context_for_message(
-            message=message,
-            source_executor_ids=source_executor_ids,
-            shared_state=shared_state,
-            runner_context=runner_context,
-            trace_contexts=trace_contexts,
-            source_span_ids=source_span_ids,
-        )
-
-        # Create processing span for tracing (gracefully handles disabled tracing)
-        from ._telemetry import workflow_tracer
-
-        source_trace_contexts = trace_contexts
-        source_span_ids_for_tracing = source_span_ids
-
-        # Handle case where Message wrapper is passed instead of raw data
-        from ._runner_context import Message
-
-        if isinstance(message, Message):
-            message = message.data
-
+        # Create processing span for tracing.
         with workflow_tracer.create_processing_span(
             self.id,
             self.__class__.__name__,
             type(message).__name__,
-            source_trace_contexts=source_trace_contexts,
-            source_span_ids=source_span_ids_for_tracing,
+            source_trace_contexts=trace_contexts,
+            source_span_ids=source_span_ids,
         ):
-            # Lazy registration for SubWorkflowRequestInfo if we have interceptors
+            # Handle case where Message wrapper is passed instead of raw data
+            if isinstance(message, Message):
+                message = message.data
+
+            # Find the handler and handler spec that matches the message type
+            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            ctx_annotation = None
+
+            for message_type in self._handlers:
+                if is_instance_of(message, message_type):
+                    handler = self._handlers[message_type]
+                    # Find the corresponding handler spec for context annotation
+                    for spec in self._handler_specs:
+                        if spec.get("message_type") == message_type:
+                            ctx_annotation = spec.get("ctx_annotation")
+                            break
+                    break
+
+            if handler is None:
+                raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
+
+            # Create the appropriate WorkflowContext based on handler specs
+            context = self._create_context_for_handler(
+                source_executor_ids=source_executor_ids,
+                shared_state=shared_state,
+                runner_context=runner_context,
+                ctx_annotation=ctx_annotation,
+                trace_contexts=trace_contexts,
+                source_span_ids=source_span_ids,
+            )
+
             if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-                # Directly handle SubWorkflowRequestInfo
+                # Handle SubWorkflowRequestInfo if we have interceptors defined
                 with _framework_event_origin():
                     invoke_event = ExecutorInvokedEvent(self.id)
                 await context.add_event(invoke_event)
@@ -164,8 +176,6 @@ class Executor(AFBaseModel):
                     await self._handle_sub_workflow_request(message, context)
                 except Exception as exc:
                     # Surface structured executor failure before propagating
-                    from ._events import ExecutorFailedEvent, WorkflowErrorDetails
-
                     with _framework_event_origin():
                         failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
                     await context.add_event(failure_event)
@@ -175,14 +185,7 @@ class Executor(AFBaseModel):
                 await context.add_event(completed_event)
                 return
 
-            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
-            for message_type in self._handlers:
-                if is_instance_of(message, message_type):
-                    handler = self._handlers[message_type]
-                    break
-
-            if handler is None:
-                raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
+            # Invoke the handler with the message and context
             with _framework_event_origin():
                 invoke_event = ExecutorInvokedEvent(self.id)
             await context.add_event(invoke_event)
@@ -190,8 +193,6 @@ class Executor(AFBaseModel):
                 await handler(message, context)
             except Exception as exc:
                 # Surface structured executor failure before propagating
-                from ._events import ExecutorFailedEvent, WorkflowErrorDetails
-
                 with _framework_event_origin():
                     failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
                 await context.add_event(failure_event)
@@ -200,37 +201,29 @@ class Executor(AFBaseModel):
                 completed_event = ExecutorCompletedEvent(self.id)
             await context.add_event(completed_event)
 
-    def _create_context_for_message(
+    def _create_context_for_handler(
         self,
-        message: Any,
         source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
+        ctx_annotation: Any,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
     ) -> WorkflowContext[Any]:
-        """Create the appropriate WorkflowContext based on handler specs for the given message type.
+        """Create the appropriate WorkflowContext based on the handler's context annotation.
 
         Args:
-            message: The message to be processed to find the matching handler.
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
             shared_state: The shared state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
+            ctx_annotation: The context annotation from the handler spec to determine which context type to create.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
 
         Returns:
-            WorkflowContext[Any] or WorkflowOutputContext[Any] based on the matching handler's specs.
+            WorkflowContext[Any] or WorkflowOutputContext[Any] based on the handler's context annotation.
         """
-        # Find the handler spec that matches the message type
         from typing import get_origin
-
-        ctx_annotation = None
-        for spec in self._handler_specs:
-            message_type = spec.get("message_type")
-            if message_type is not None and is_instance_of(message, message_type):
-                ctx_annotation = spec.get("ctx_annotation")
-                break
 
         # If ctx_annotation indicates WorkflowOutputContext, create that
         if ctx_annotation is not None:
