@@ -34,11 +34,11 @@ including both streaming and non-streaming response handling.
 
 class EchoAgent(BaseAgent):
     """A simple custom agent that echoes user messages with a prefix.
-    
+
     This demonstrates how to create a fully custom agent by extending BaseAgent
     and implementing the required run() and run_stream() methods.
     """
-    
+
     echo_prefix: str = "Echo: "
 
     def __init__(
@@ -57,7 +57,12 @@ class EchoAgent(BaseAgent):
             echo_prefix: The prefix to add to echoed messages.
             **kwargs: Additional keyword arguments passed to BaseAgent.
         """
-        super().__init__(name=name, description=description, echo_prefix=echo_prefix, **kwargs)
+        super().__init__(
+            name=name,
+            description=description,
+            echo_prefix=echo_prefix,  # type: ignore
+            **kwargs,
+        )
 
     async def run(
         self,
@@ -78,11 +83,11 @@ class EchoAgent(BaseAgent):
         """
         # Normalize input messages to a list
         normalized_messages = self._normalize_messages(messages)
-        
+
         if not normalized_messages:
             response_message = ChatMessage(
                 role=Role.ASSISTANT,
-                contents=[TextContent(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")]
+                contents=[TextContent(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")],
             )
         else:
             # For simplicity, echo the last user message
@@ -91,11 +96,8 @@ class EchoAgent(BaseAgent):
                 echo_text = f"{self.echo_prefix}{last_message.text}"
             else:
                 echo_text = f"{self.echo_prefix}[Non-text message received]"
-            
-            response_message = ChatMessage(
-                role=Role.ASSISTANT,
-                contents=[TextContent(text=echo_text)]
-            )
+
+            response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=echo_text)])
 
         # Notify the thread of new messages if provided
         if thread is not None:
@@ -123,7 +125,7 @@ class EchoAgent(BaseAgent):
         """
         # Normalize input messages to a list
         normalized_messages = self._normalize_messages(messages)
-        
+
         if not normalized_messages:
             response_text = "Hello! I'm a custom echo agent. Send me a message and I'll echo it back."
         else:
@@ -143,21 +145,18 @@ class EchoAgent(BaseAgent):
         for i, word in enumerate(words):
             # Add space before word except for the first one
             chunk_text = f" {word}" if i > 0 else word
-            
+
             yield AgentRunResponseUpdate(
                 contents=[TextContent(text=chunk_text)],
                 role=Role.ASSISTANT,
             )
-            
+
             # Small delay to simulate streaming
             await asyncio.sleep(0.1)
 
         # Notify the thread of the complete response if provided
         if thread is not None:
-            complete_response = ChatMessage(
-                role=Role.ASSISTANT,
-                contents=[TextContent(text=response_text)]
-            )
+            complete_response = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
             await self._notify_thread_of_new_messages(thread, complete_response)
 
 
@@ -168,21 +167,19 @@ async def main() -> None:
     # Create EchoAgent
     print("--- EchoAgent Example ---")
     echo_agent = EchoAgent(
-        name="EchoBot",
-        description="A simple agent that echoes messages with a prefix",
-        echo_prefix="🔊 Echo: "
+        name="EchoBot", description="A simple agent that echoes messages with a prefix", echo_prefix="🔊 Echo: "
     )
-    
+
     # Test non-streaming
     print(f"Agent Name: {echo_agent.name}")
     print(f"Agent ID: {echo_agent.id}")
     print(f"Display Name: {echo_agent.display_name}")
-    
+
     query = "Hello, custom agent!"
     print(f"\nUser: {query}")
     result = await echo_agent.run(query)
     print(f"Agent: {result.messages[0].text}")
-    
+
     # Test streaming
     query2 = "This is a streaming test"
     print(f"\nUser: {query2}")
@@ -195,23 +192,23 @@ async def main() -> None:
     # Example with threads
     print("\n--- Using Custom Agent with Thread ---")
     thread = echo_agent.get_new_thread()
-    
+
     # First message
     result1 = await echo_agent.run("First message", thread=thread)
-    print(f"User: First message")
+    print("User: First message")
     print(f"Agent: {result1.messages[0].text}")
-    
+
     # Second message in same thread
     result2 = await echo_agent.run("Second message", thread=thread)
-    print(f"User: Second message")
+    print("User: Second message")
     print(f"Agent: {result2.messages[0].text}")
-    
+
     # Check conversation history
     if thread.message_store:
         messages = await thread.message_store.list_messages()
         print(f"\nThread contains {len(messages)} messages in history")
     else:
-        print(f"\nThread has no message store configured")
+        print("\nThread has no message store configured")
 
 
 if __name__ == "__main__":

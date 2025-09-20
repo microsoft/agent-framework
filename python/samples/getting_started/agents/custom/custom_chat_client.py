@@ -7,13 +7,13 @@ from typing import Any
 
 from agent_framework import (
     BaseChatClient,
-    ChatAgent,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Role,
     TextContent,
+    use_function_invocation,
 )
 
 """
@@ -35,15 +35,17 @@ including both streaming and non-streaming response handling, and demonstrates h
 custom client with ChatAgent through the create_agent() method.
 """
 
+
+@use_function_invocation
 class EchoingChatClient(BaseChatClient):
     """A custom chat client that echoes messages back with modifications.
-    
+
     This demonstrates how to implement a custom chat client by extending BaseChatClient
     and implementing the required _inner_get_response() and _inner_get_streaming_response() methods.
     """
-    
+
     OTEL_PROVIDER_NAME: str = "EchoingChatClient"
-    
+
     prefix: str = "Echo:"
 
     def __init__(self, *, prefix: str = "Echo:", **kwargs: Any) -> None:
@@ -53,7 +55,10 @@ class EchoingChatClient(BaseChatClient):
             prefix: Prefix to add to echoed messages.
             **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
-        super().__init__(prefix=prefix, **kwargs)
+        super().__init__(
+            prefix=prefix,  # type: ignore
+            **kwargs,
+        )
 
     async def _inner_get_response(
         self,
@@ -72,17 +77,14 @@ class EchoingChatClient(BaseChatClient):
                 if message.role == Role.USER:
                     last_user_message = message
                     break
-            
+
             if last_user_message and last_user_message.text:
                 response_text = f"{self.prefix} {last_user_message.text}"
             else:
                 response_text = f"{self.prefix} [No text message found]"
-        
-        response_message = ChatMessage(
-            role=Role.ASSISTANT,
-            contents=[TextContent(text=response_text)]
-        )
-        
+
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
+
         return ChatResponse(
             messages=[response_message],
             model_id="echo-model-v1",
@@ -98,15 +100,11 @@ class EchoingChatClient(BaseChatClient):
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Stream back the echoed message character by character."""
         # Get the complete response first
-        response = await self._inner_get_response(
-            messages=messages, 
-            chat_options=chat_options, 
-            **kwargs
-        )
-        
+        response = await self._inner_get_response(messages=messages, chat_options=chat_options, **kwargs)
+
         if response.messages:
             response_text = response.messages[0].text or ""
-            
+
             # Stream character by character
             for char in response_text:
                 yield ChatResponseUpdate(
@@ -124,29 +122,29 @@ async def main() -> None:
 
     # Create the custom chat client
     print("--- EchoingChatClient Example ---")
-    
+
     echo_client = EchoingChatClient(prefix="🔊 Echo:")
-    
+
     # Use the chat client directly
     print("Using chat client directly:")
     direct_response = await echo_client.get_response("Hello, custom chat client!")
     print(f"Direct response: {direct_response.messages[0].text}")
-    
+
     # Create an agent using the custom chat client
     echo_agent = echo_client.create_agent(
         name="EchoAgent",
         instructions="You are a helpful assistant that echoes back what users say.",
     )
-    
+
     print(f"\nAgent Name: {echo_agent.name}")
     print(f"Agent Display Name: {echo_agent.display_name}")
-    
+
     # Test non-streaming with agent
     query = "This is a test message"
     print(f"\nUser: {query}")
     result = await echo_agent.run(query)
     print(f"Agent: {result.messages[0].text}")
-    
+
     # Test streaming with agent
     query2 = "Stream this message back to me"
     print(f"\nUser: {query2}")
@@ -158,21 +156,21 @@ async def main() -> None:
 
     # Example: Using with threads and conversation history
     print("\n--- Using Custom Chat Client with Thread ---")
-    
+
     thread = echo_agent.get_new_thread()
-    
+
     # Multiple messages in conversation
     messages = [
         "Hello, I'm starting a conversation",
         "How are you doing?",
         "Thanks for chatting!",
     ]
-    
+
     for msg in messages:
         result = await echo_agent.run(msg, thread=thread)
         print(f"User: {msg}")
         print(f"Agent: {result.messages[0].text}\n")
-    
+
     # Check conversation history
     if thread.message_store:
         thread_messages = await thread.message_store.list_messages()
