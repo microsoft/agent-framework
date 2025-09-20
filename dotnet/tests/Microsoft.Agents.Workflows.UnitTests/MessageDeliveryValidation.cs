@@ -20,7 +20,7 @@ internal static class MessageDeliveryValidation
                     (string expectedSender, List<string> expectedMessages) = forward;
 
                     return (Action<string>)(
-                        (string senderId) =>
+                        senderId =>
                         {
                             senderId.Should().Be(expectedSender);
                             queuedMessages[senderId].Should().HaveCount(expectedMessages.Count);

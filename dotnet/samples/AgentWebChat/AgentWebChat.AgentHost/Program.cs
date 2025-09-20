@@ -83,10 +83,7 @@ builder.Services.AddCosmosActorStateStorage("actor-state-db", "ActorState");
 var app = builder.Build();
 
 app.MapOpenApi();
-app.UseSwaggerUI(options =>
-{
-    options.SwaggerEndpoint("/openapi/v1.json", "Agents API");
-});
+app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents API"));
 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();

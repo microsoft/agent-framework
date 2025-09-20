@@ -6,26 +6,27 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeData) :
+internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeData) :
     EdgeRunner<FanOutEdgeData>(runContext, edgeData)
 {
     private Dictionary<string, IWorkflowContext> BoundContexts { get; }
         = edgeData.SinkIds.ToDictionary(
             sinkId => sinkId,
-            sinkId => runContext.Bind(sinkId));
+            runContext.Bind);
 
     public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope, IStepTracer? tracer)
     {
         object message = envelope.Message;
         List<string> targets =
-            this.EdgeData.EdgeAssigner == null
+            this.EdgeData.EdgeAssigner is null
                 ? this.EdgeData.SinkIds
                 : this.EdgeData.EdgeAssigner(message, this.BoundContexts.Count)
                                .Select(i => this.EdgeData.SinkIds[i]).ToList();
 
-        IEnumerable<string> filteredTargets = envelope.TargetId != null
-                                            ? targets.Where(IsValidTarget)
-                                            : targets;
+        IEnumerable<string> filteredTargets =
+            envelope.TargetId is not null
+                ? targets.Where(IsValidTarget)
+                : targets;
 
         object?[] result = await Task.WhenAll(filteredTargets.Select(ProcessTargetAsync)).ConfigureAwait(false);
         return result.Where(r => r is not null);
@@ -47,7 +48,7 @@ internal class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeDa
 
         bool IsValidTarget(string targetId)
         {
-            return envelope.TargetId == null || targetId == envelope.TargetId;
+            return envelope.TargetId is null || targetId == envelope.TargetId;
         }
     }
 }

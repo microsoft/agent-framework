@@ -14,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.InProc;
 
-internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
+internal sealed class InProcessRunnerContext<TExternalInput> : IRunnerContext
 {
     private StepContext _nextStep = new();
     private readonly Dictionary<string, ExecutorRegistration> _executorRegistrations;
@@ -66,10 +66,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
     public bool NextStepHasActions => this._nextStep.HasMessages;
     public bool HasUnservicedRequests => this._externalRequests.Count > 0;
 
-    public StepContext Advance()
-    {
-        return Interlocked.Exchange(ref this._nextStep, new StepContext());
-    }
+    public StepContext Advance() => Interlocked.Exchange(ref this._nextStep, new StepContext());
 
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent)
     {
@@ -83,10 +80,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
         return default;
     }
 
-    public IWorkflowContext Bind(string executorId)
-    {
-        return new BoundContext(this, executorId);
-    }
+    public IWorkflowContext Bind(string executorId) => new BoundContext(this, executorId);
 
     public ValueTask PostAsync(ExternalRequest request)
     {
@@ -100,7 +94,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
     internal StateManager StateManager { get; } = new();
 
-    private class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
+    private sealed class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
@@ -118,15 +112,9 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
     }
 
-    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
-    {
-        return Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).AsTask()));
-    }
+    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default) => Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).AsTask()));
 
-    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
-    {
-        return Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).AsTask()));
-    }
+    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default) => Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).AsTask()));
 
     internal ValueTask<RunnerStateData> ExportStateAsync()
     {
@@ -135,7 +123,7 @@ internal class InProcessRunnerContext<TExternalInput> : IRunnerContext
             throw new InvalidOperationException("Cannot export state when there are queued events. Please process or clear the events before exporting state.");
         }
 
-        Dictionary<ExecutorIdentity, List<ExportedState>> queuedMessages = this._nextStep.ExportMessages();
+        Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> queuedMessages = this._nextStep.ExportMessages();
         RunnerStateData result = new(instantiatedExecutors: [.. this._executors.Keys],
                                      queuedMessages,
                                      outstandingRequests: [.. this._externalRequests.Values]);

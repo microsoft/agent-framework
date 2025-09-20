@@ -10,69 +10,69 @@ public class ActorTypeTests
     /// <summary>
     /// Provides valid ActorType names that conform to the regex pattern ^[a-zA-Z_][a-zA-Z._:\-0-9]*$.
     /// </summary>
-    public static IEnumerable<object[]> ValidActorTypeNames => new List<object[]>
-        {
-            new object[] { "a" }, // Single letter
-            new object[] { "A" }, // Single uppercase letter
-            new object[] { "_" }, // Single underscore
-            new object[] { "agent" }, // Simple name
-            new object[] { "Agent" }, // Capitalized name
-            new object[] { "AGENT" }, // All caps name
-            new object[] { "my_agent" }, // With underscore
-            new object[] { "MyAgent" }, // Camel case
-            new object[] { "agent1" }, // With number
-            new object[] { "agent_1" }, // With underscore and number
-            new object[] { "agent:type" }, // With colon
-            new object[] { "agent-type" }, // With hyphen
-            new object[] { "my_agent:type-1" }, // Complex valid name
-            new object[] { "A1_test:complex-name" }, // Very complex valid name
-            new object[] { "_private_agent" }, // Starting with underscore
-            new object[] { "agent_with_many_underscores" }, // Multiple underscores
-            new object[] { "agent:with:colons" }, // Multiple colons
-            new object[] { "agent-with-hyphens" }, // Multiple hyphens
-            new object[] { "agent123456789" }, // With many numbers
-            new object[] { "agent.type" }, // With dot
-            new object[] { "agent.sub.type" }, // With multiple dots
-            new object[] { "my.agent_1:type-name" }, // Complex with dots
-        };
+    public static IEnumerable<object[]> ValidActorTypeNames { get; } =
+        [
+            ["a"], // Single letter
+            ["A"], // Single uppercase letter
+            ["_"], // Single underscore
+            ["agent"], // Simple name
+            ["Agent"], // Capitalized name
+            ["AGENT"], // All caps name
+            ["my_agent"], // With underscore
+            ["MyAgent"], // Camel case
+            ["agent1"], // With number
+            ["agent_1"], // With underscore and number
+            ["agent:type"], // With colon
+            ["agent-type"], // With hyphen
+            ["my_agent:type-1"], // Complex valid name
+            ["A1_test:complex-name"], // Very complex valid name
+            ["_private_agent"], // Starting with underscore
+            ["agent_with_many_underscores"], // Multiple underscores
+            ["agent:with:colons"], // Multiple colons
+            ["agent-with-hyphens"], // Multiple hyphens
+            ["agent123456789"], // With many numbers
+            ["agent.type"], // With dot
+            ["agent.sub.type"], // With multiple dots
+            ["my.agent_1:type-name"], // Complex with dots
+        ];
 
     /// <summary>
     /// Provides invalid ActorType names that violate the regex pattern ^[a-zA-Z_][a-zA-Z._:\-0-9]*$.
     /// </summary>
-    public static IEnumerable<object[]> InvalidActorTypeNames => new List<object[]>
-        {
-            new object[] { "1agent" }, // Starting with number
-            new object[] { "9test" }, // Starting with number
-            new object[] { "-agent" }, // Starting with hyphen
-            new object[] { ":agent" }, // Starting with colon
-            new object[] { " agent" }, // Starting with space
-            new object[] { "agent " }, // Trailing space
-            new object[] { "agent agent" }, // Space in middle
-            new object[] { "agent@type" }, // Invalid character @
-            new object[] { "agent#type" }, // Invalid character #
-            new object[] { "agent$type" }, // Invalid character $
-            new object[] { "agent%type" }, // Invalid character %
-            new object[] { "agent^type" }, // Invalid character ^
-            new object[] { "agent&type" }, // Invalid character &
-            new object[] { "agent*type" }, // Invalid character *
-            new object[] { "agent(type)" }, // Invalid characters ( )
-            new object[] { "agent[type]" }, // Invalid characters [ ]
-            new object[] { "agent{type}" }, // Invalid characters { }
-            new object[] { "agent+type" }, // Invalid character +
-            new object[] { "agent=type" }, // Invalid character =
-            new object[] { "agent\\type" }, // Invalid character \
-            new object[] { "agent/type" }, // Invalid character /
-            new object[] { "agent?type" }, // Invalid character ?
-            new object[] { "agent,type" }, // Invalid character ,
-            new object[] { "agent;type" }, // Invalid character ;
-            new object[] { "agent\"type" }, // Invalid character "
-            new object[] { "agent'type" }, // Invalid character '
-            new object[] { "agent`type" }, // Invalid character `
-            new object[] { "agent~type" }, // Invalid character ~
-            new object[] { "agent!type" }, // Invalid character !
-            new object[] { "agent\ttype" }, // Tab character
-            new object[] { "agent\ntype" }, // Newline character
-        };
+    public static IEnumerable<object[]> InvalidActorTypeNames { get; } =
+        [
+            ["1agent"], // Starting with number
+            ["9test"], // Starting with number
+            ["-agent"], // Starting with hyphen
+            [":agent"], // Starting with colon
+            [" agent"], // Starting with space
+            ["agent "], // Trailing space
+            ["agent agent"], // Space in middle
+            ["agent@type"], // Invalid character @
+            ["agent#type"], // Invalid character #
+            ["agent$type"], // Invalid character $
+            ["agent%type"], // Invalid character %
+            ["agent^type"], // Invalid character ^
+            ["agent&type"], // Invalid character &
+            ["agent*type"], // Invalid character *
+            ["agent(type)"], // Invalid characters ( )
+            ["agent[type]"], // Invalid characters [ ]
+            ["agent{type}"], // Invalid characters { }
+            ["agent+type"], // Invalid character +
+            ["agent=type"], // Invalid character =
+            ["agent\\type"], // Invalid character \
+            ["agent/type"], // Invalid character /
+            ["agent?type"], // Invalid character ?
+            ["agent,type"], // Invalid character ,
+            ["agent;type"], // Invalid character ;
+            ["agent\"type"], // Invalid character "
+            ["agent'type"], // Invalid character '
+            ["agent`type"], // Invalid character `
+            ["agent~type"], // Invalid character ~
+            ["agent!type"], // Invalid character !
+            ["agent\ttype"], // Tab character
+            ["agent\ntype"], // Newline character
+        ];
 
     /// <summary>
     /// Verifies that providing valid actor type name to <see cref="ActorType"/> constructor sets the Name property correctly.
@@ -107,21 +107,17 @@ public class ActorTypeTests
     /// Verifies that providing a null type name to <see cref="ActorType"/> constructor throws an <see cref="ArgumentNullException"/>.
     /// </summary>
     [Fact]
-    public void Constructor_NullTypeName_ThrowsArgumentNullException()
-    {
+    public void Constructor_NullTypeName_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new ActorType(null!));
-    }
 
     /// <summary>
     /// Verifies that providing an empty type name to <see cref="ActorType"/> constructor throws an <see cref="ArgumentException"/>.
     /// </summary>
     [Fact]
-    public void Constructor_EmptyTypeName_ThrowsArgumentException()
-    {
+    public void Constructor_EmptyTypeName_ThrowsArgumentException() =>
         // Act & Assert
         Assert.Throws<ArgumentException>(() => new ActorType(""));
-    }
 
     /// <summary>
     /// Verifies specific edge cases for valid type names.
@@ -258,40 +254,32 @@ public class ActorTypeTests
     /// </summary>
     [Theory]
     [MemberData(nameof(ValidActorTypeNames))]
-    public void IsValidType_ValidTypeName_ReturnsTrue(string typeName)
-    {
+    public void IsValidType_ValidTypeName_ReturnsTrue(string typeName) =>
         // Act & Assert
         Assert.True(ActorType.IsValidType(typeName));
-    }
 
     /// <summary>
     /// Verifies that IsValidType static method works correctly for invalid names.
     /// </summary>
     [Theory]
     [MemberData(nameof(InvalidActorTypeNames))]
-    public void IsValidType_InvalidTypeName_ReturnsFalse(string typeName)
-    {
+    public void IsValidType_InvalidTypeName_ReturnsFalse(string typeName) =>
         // Act & Assert
         Assert.False(ActorType.IsValidType(typeName));
-    }
 
     /// <summary>
     /// Verifies that IsValidType throws for null.
     /// </summary>
     [Fact]
-    public void IsValidType_NullTypeName_ThrowsArgumentNullException()
-    {
+    public void IsValidType_NullTypeName_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => ActorType.IsValidType(null!));
-    }
 
     /// <summary>
     /// Verifies that IsValidType throws for empty string.
     /// </summary>
     [Fact]
-    public void IsValidType_EmptyTypeName_ThrowsArgumentException()
-    {
+    public void IsValidType_EmptyTypeName_ThrowsArgumentException() =>
         // Act & Assert
         Assert.Throws<ArgumentException>(() => ActorType.IsValidType(""));
-    }
 }

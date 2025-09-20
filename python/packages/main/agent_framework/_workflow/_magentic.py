@@ -1635,7 +1635,7 @@ class MagenticBuilder:
         if self._enable_plan_review:
             from ._executor import RequestInfoExecutor
 
-            request_info = RequestInfoExecutor()
+            request_info = RequestInfoExecutor(id="request_info")
             workflow_builder = (
                 workflow_builder
                 # Only route plan review asks to request_info

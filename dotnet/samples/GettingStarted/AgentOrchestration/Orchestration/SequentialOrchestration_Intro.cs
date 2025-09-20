@@ -19,7 +19,7 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
     {
         // Define the agents
         ChatClientAgent analystAgent =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Analyst",
                 instructions:
                 """
@@ -30,7 +30,7 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
                 """,
                 description: "A agent that extracts key concepts from a product description.");
         ChatClientAgent writerAgent =
-            this.CreateAgent(
+            CreateAgent(
                 name: "copywriter",
                 instructions:
                 """
@@ -40,7 +40,7 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
                 """,
                 description: "An agent that writes a marketing copy based on the extracted concepts.");
         ChatClientAgent editorAgent =
-            this.CreateAgent(
+            CreateAgent(
                 name: "editor",
                 instructions:
                 """
@@ -58,14 +58,14 @@ public class SequentialOrchestration_Intro(ITestOutputHelper output) : Orchestra
             new(analystAgent, writerAgent, editorAgent)
             {
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
-                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallback : null,
+                ResponseCallback = monitor.ResponseCallbackAsync,
+                StreamingResponseCallback = streamedResponse ? monitor.StreamingResultCallbackAsync : null,
             };
 
         // Run the orchestration
-        string input = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours";
-        Console.WriteLine($"\n# INPUT: {input}\n");
-        AgentRunResponse result = await orchestration.RunAsync(input);
+        const string Input = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours";
+        Console.WriteLine($"\n# INPUT: {Input}\n");
+        AgentRunResponse result = await orchestration.RunAsync(Input);
         Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);

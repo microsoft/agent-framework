@@ -31,7 +31,7 @@ public static class Program
         var workflow = WorkflowHelper.GetWorkflow();
 
         // Create checkpoint manager
-        var checkpointManager = new CheckpointManager();
+        var checkpointManager = CheckpointManager.Default;
         var checkpoints = new List<CheckpointInfo>();
 
         // Execute the workflow and save checkpoints
@@ -50,7 +50,7 @@ public static class Program
                 // Checkpoints are automatically created at the end of each super step when a
                 // checkpoint manager is provided. You can store the checkpoint info for later use.
                 CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
-                if (checkpoint != null)
+                if (checkpoint is not null)
                 {
                     checkpoints.Add(checkpoint);
                     Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
@@ -70,9 +70,9 @@ public static class Program
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
         // Restoring from a checkpoint and resuming execution
-        var checkpointIndex = 5;
-        Console.WriteLine($"\n\nRestoring from the {checkpointIndex + 1}th checkpoint.");
-        CheckpointInfo savedCheckpoint = checkpoints[checkpointIndex];
+        const int CheckpointIndex = 5;
+        Console.WriteLine($"\n\nRestoring from the {CheckpointIndex + 1}th checkpoint.");
+        CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
         // Note that we are restoring the state directly to the same run instance.
         await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))

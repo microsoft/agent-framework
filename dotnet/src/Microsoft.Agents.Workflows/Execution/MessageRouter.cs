@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
 
 using MessageHandlerF =
@@ -14,27 +16,31 @@ using MessageHandlerF =
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class MessageRouter
+internal sealed class MessageRouter
 {
     private readonly Dictionary<Type, MessageHandlerF> _typedHandlers;
-    private readonly bool _hasCatchall;
+    private readonly Dictionary<TypeId, Type> _runtimeTypeMap;
+    private readonly MessageHandlerF? _catchAllHandler;
 
     internal MessageRouter(Dictionary<Type, MessageHandlerF> handlers)
     {
-        this._typedHandlers = Throw.IfNull(handlers);
-        this._hasCatchall = this._typedHandlers.ContainsKey(typeof(object));
+        Throw.IfNull(handlers);
 
-        this.IncomingTypes = [.. this._typedHandlers.Keys];
+        this._typedHandlers = handlers;
+        this._runtimeTypeMap = handlers.Keys.ToDictionary(t => new TypeId(t), t => t);
+        this._catchAllHandler = handlers.FirstOrDefault(e => e.Key == typeof(object)).Value;
+
+        this.IncomingTypes = [.. handlers.Keys];
     }
 
     public HashSet<Type> IncomingTypes { get; }
 
-    public bool CanHandle(object message) => this.CanHandle(Throw.IfNull(message).GetType());
+    public bool CanHandle(object message) => this.CanHandle(new TypeId(Throw.IfNull(message).GetType()));
+    public bool CanHandle(Type candidateType) => this.CanHandle(new TypeId(Throw.IfNull(candidateType)));
 
-    public bool CanHandle(Type candidateType)
+    public bool CanHandle(TypeId candidateType)
     {
-        // For now we only support routing to handlers registered on the exact type (no base type delegation).
-        return this._hasCatchall || this._typedHandlers.ContainsKey(candidateType);
+        return this._catchAllHandler is not null || this._runtimeTypeMap.ContainsKey(candidateType);
     }
 
     public async ValueTask<CallResult?> RouteMessageAsync(object message, IWorkflowContext context, bool requireRoute = false)
@@ -43,9 +49,17 @@ internal class MessageRouter
 
         CallResult? result = null;
 
+        if (message is PortableValue portableValue &&
+            this._runtimeTypeMap.TryGetValue(portableValue.TypeId, out Type? runtimeType))
+        {
+            // If we found a runtime type, we can use it
+            message = portableValue.AsType(runtimeType) ?? message;
+        }
+
         try
         {
-            if (this._typedHandlers.TryGetValue(message.GetType(), out MessageHandlerF? handler))
+            if (this._typedHandlers.TryGetValue(message.GetType(), out MessageHandlerF? handler) ||
+                (handler = this._catchAllHandler) is not null)
             {
                 result = await handler(message, context).ConfigureAwait(false);
             }

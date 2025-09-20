@@ -102,7 +102,7 @@ public static class HostApplicationBuilderAgentExtensions
         Throw.IfNull(builder);
         Throw.IfNull(name);
         Throw.IfNull(createAgentDelegate);
-        builder.Services.AddKeyedSingleton<AIAgent>(name, (sp, key) =>
+        builder.Services.AddKeyedSingleton(name, (sp, key) =>
         {
             Throw.IfNull(key);
             var keyString = key as string;

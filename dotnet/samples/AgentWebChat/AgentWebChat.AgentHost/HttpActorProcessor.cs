@@ -28,12 +28,12 @@ internal static class HttpActorProcessor
             return GetResult(response);
         }
 
-        if (streaming == true)
+        if (streaming is true)
         {
             return new ActorUpdateStreamingResult(responseHandle);
         }
 
-        if (blocking == true)
+        if (blocking is true)
         {
             response = await responseHandle.GetResponseAsync(cancellationToken);
             return GetResult(response);
@@ -44,7 +44,7 @@ internal static class HttpActorProcessor
             ActorId = actorId,
             MessageId = messageId,
             Status = RequestStatus.Pending,
-            Data = JsonDocument.Parse("{}").RootElement
+            Data = JsonSerializer.Deserialize<JsonElement>("{}"),
         });
     }
 
@@ -64,12 +64,12 @@ internal static class HttpActorProcessor
             return GetResult(response);
         }
 
-        if (streaming == true)
+        if (streaming is true)
         {
             return new ActorUpdateStreamingResult(responseHandle);
         }
 
-        if (blocking == true)
+        if (blocking is true)
         {
             response = await responseHandle.GetResponseAsync(cancellationToken);
             return GetResult(response);

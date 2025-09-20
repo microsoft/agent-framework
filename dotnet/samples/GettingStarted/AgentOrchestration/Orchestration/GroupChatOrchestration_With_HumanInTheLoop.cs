@@ -16,7 +16,7 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
     {
         // Define the agents
         ChatClientAgent writer =
-            this.CreateAgent(
+            CreateAgent(
                 name: "CopyWriter",
                 description: "A copy writer",
                 instructions:
@@ -29,7 +29,7 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
                 Consider suggestions when refining an idea.
                 """);
         ChatClientAgent editor =
-            this.CreateAgent(
+            CreateAgent(
                 name: "Reviewer",
                 description: "An editor.",
                 instructions:
@@ -63,13 +63,13 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
                 editor)
             {
                 LoggerFactory = this.LoggerFactory,
-                ResponseCallback = monitor.ResponseCallback,
+                ResponseCallback = monitor.ResponseCallbackAsync,
             };
 
         // Run the orchestration
-        string input = "Create a slogon for a new eletric SUV that is affordable and fun to drive.";
-        Console.WriteLine($"\n# INPUT: {input}\n");
-        AgentRunResponse result = await orchestration.RunAsync(input);
+        const string Input = "Create a slogon for a new eletric SUV that is affordable and fun to drive.";
+        Console.WriteLine($"\n# INPUT: {Input}\n");
+        AgentRunResponse result = await orchestration.RunAsync(Input);
         Console.WriteLine($"\n# RESULT: {result}");
 
         this.DisplayHistory(monitor.History);
@@ -84,7 +84,7 @@ public class GroupChatOrchestration_With_HumanInTheLoop(ITestOutputHelper output
     /// </remarks>
     private sealed class CustomRoundRobinGroupChatManager : RoundRobinGroupChatManager
     {
-        protected override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
+        protected override ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInputAsync(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
         {
             string? lastAgent = history.LastOrDefault()?.AuthorName;
 

@@ -5,10 +5,19 @@ from dataclasses import dataclass
 
 import pytest
 
-from agent_framework import Executor, WorkflowCompletedEvent, WorkflowContext, WorkflowEvent, handler
+from agent_framework import (
+    AgentExecutorResponse,
+    AgentRunResponse,
+    Executor,
+    WorkflowCompletedEvent,
+    WorkflowContext,
+    WorkflowEvent,
+    WorkflowEventSource,
+    handler,
+)
 from agent_framework._workflow._edge import SingleEdgeGroup
 from agent_framework._workflow._runner import Runner
-from agent_framework._workflow._runner_context import InProcRunnerContext, RunnerContext
+from agent_framework._workflow._runner_context import InProcRunnerContext, Message, RunnerContext
 from agent_framework._workflow._shared_state import SharedState
 
 
@@ -79,6 +88,7 @@ async def test_runner_run_until_convergence():
         assert isinstance(event, WorkflowEvent)
         if isinstance(event, WorkflowCompletedEvent):
             result = event.data
+            assert event.origin is WorkflowEventSource.EXECUTOR
 
     assert result is not None and result == 10
 
@@ -148,3 +158,20 @@ async def test_runner_already_running():
                 pass
 
         await asyncio.gather(_run(), _run())
+
+
+async def test_runner_emits_runner_completion_for_agent_response_without_targets():
+    ctx = InProcRunnerContext()
+    runner = Runner([], {}, SharedState(), ctx)
+
+    await ctx.send_message(
+        Message(
+            data=AgentExecutorResponse("agent", AgentRunResponse()),
+            source_id="agent",
+        )
+    )
+
+    events: list[WorkflowEvent] = [event async for event in runner.run_until_convergence()]
+    completions = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert completions
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in completions)

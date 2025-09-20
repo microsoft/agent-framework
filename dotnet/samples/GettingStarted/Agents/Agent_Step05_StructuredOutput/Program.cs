@@ -20,7 +20,7 @@ ChatClientAgentOptions agentOptions = new(name: "HelpfulAssistant", instructions
 {
     ChatOptions = new()
     {
-        ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
+        ResponseFormat = ChatResponseFormat.ForJsonSchema(
             schema: AIJsonUtilities.CreateJsonSchema(typeof(PersonInfo)),
             schemaName: "PersonInfo",
             schemaDescription: "Information about a person including their name, age, and occupation")

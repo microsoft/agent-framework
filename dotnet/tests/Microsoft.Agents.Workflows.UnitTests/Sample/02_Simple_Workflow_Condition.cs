@@ -14,15 +14,15 @@ internal static class Step2EntryPoint
     {
         get
         {
-            string[] spamKeywords = { "spam", "advertisement", "offer" };
+            string[] spamKeywords = ["spam", "advertisement", "offer"];
 
             DetectSpamExecutor detectSpam = new(spamKeywords);
             RespondToMessageExecutor respondToMessage = new();
             RemoveSpamExecutor removeSpam = new();
 
             return new WorkflowBuilder(detectSpam)
-                .AddEdge(detectSpam, respondToMessage, isSpam => isSpam is false) // If not spam, respond
-                .AddEdge(detectSpam, removeSpam, isSpam => isSpam is true) // If spam, remove
+                .AddEdge(detectSpam, respondToMessage, (bool isSpam) => isSpam is false) // If not spam, respond
+                .AddEdge(detectSpam, removeSpam, (bool isSpam) => isSpam is true) // If spam, remove
                 .Build<string>();
         }
     }
@@ -84,7 +84,7 @@ internal sealed class RespondToMessageExecutor : ReflectingExecutor<RespondToMes
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(RespondToMessageExecutor.ActionResult))
+        await context.AddEventAsync(new WorkflowCompletedEvent(ActionResult))
                      .ConfigureAwait(false);
     }
 }
@@ -103,7 +103,7 @@ internal sealed class RemoveSpamExecutor : ReflectingExecutor<RemoveSpamExecutor
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(RemoveSpamExecutor.ActionResult))
+        await context.AddEventAsync(new WorkflowCompletedEvent(ActionResult))
                      .ConfigureAwait(false);
     }
 }

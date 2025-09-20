@@ -16,7 +16,7 @@ public abstract class WorkflowTest : IDisposable
     protected WorkflowTest(ITestOutputHelper output)
     {
         this.Output = new TestOutputAdapter(output);
-        System.Console.SetOut(this.Output);
+        Console.SetOut(this.Output);
     }
 
     public void Dispose()

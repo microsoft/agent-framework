@@ -30,7 +30,7 @@ public sealed class SwitchBuilder
     /// <param name="executors">One or more executors to associate with the predicate. Each executor will be invoked if the predicate matches.
     /// Cannot be null.</param>
     /// <returns>The current <see cref="SwitchBuilder"/> instance, allowing for method chaining.</returns>
-    public SwitchBuilder AddCase(Func<object?, bool> predicate, params ExecutorIsh[] executors)
+    public SwitchBuilder AddCase<T>(Func<T?, bool> predicate, params ExecutorIsh[] executors)
     {
         Throw.IfNull(predicate);
         Throw.IfNull(executors);
@@ -49,7 +49,8 @@ public sealed class SwitchBuilder
             indicies.Add(index);
         }
 
-        this._caseMap.Add((predicate, indicies));
+        Func<object?, bool> casePredicate = WorkflowBuilder.CreateConditionFunc(predicate)!;
+        this._caseMap.Add((casePredicate, indicies));
 
         return this;
     }
@@ -83,7 +84,7 @@ public sealed class SwitchBuilder
         List<(Func<object?, bool> Predicate, HashSet<int> OutgoingIndicies)> caseMap = this._caseMap;
         HashSet<int> defaultIndicies = this._defaultIndicies;
 
-        return builder.AddFanOutEdge(source, CasePartitioner, [.. this._executors]);
+        return builder.AddFanOutEdge<object>(source, CasePartitioner, [.. this._executors]);
 
         IEnumerable<int> CasePartitioner(object? input, int targetCount)
         {

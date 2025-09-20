@@ -24,36 +24,25 @@ public abstract class OrchestrationSample : BaseSample
     /// <param name="name">An optional name for the agent.</param>
     /// <param name="functions">A set of <see cref="AIFunction"/> instances to be used as tools by the agent.</param>
     /// <returns>A new <see cref="ChatClientAgent"/> instance configured with the provided parameters.</returns>
-    protected ChatClientAgent CreateAgent(string instructions, string? description = null, string? name = null, params AIFunction[] functions)
-    {
-        // Get the chat client to use for the agent.
-        using IChatClient chatClient = CreateChatClient();
-
-        ChatClientAgentOptions options =
-            new()
-            {
-                Name = name,
-                Description = description,
-                Instructions = instructions,
-                ChatOptions = new() { Tools = functions, ToolMode = ChatToolMode.Auto }
-            };
-
-        return new ChatClientAgent(chatClient, options);
-    }
+    protected static ChatClientAgent CreateAgent(string instructions, string? description = null, string? name = null, params AIFunction[] functions) =>
+        new(CreateChatClient(), new ChatClientAgentOptions()
+        {
+            Name = name,
+            Description = description,
+            Instructions = instructions,
+            ChatOptions = new() { Tools = functions, ToolMode = ChatToolMode.Auto }
+        });
 
     /// <summary>
     /// Creates and configures a new <see cref="IChatClient"/> instance using the OpenAI client and test configuration.
     /// </summary>
     /// <returns>A configured <see cref="IChatClient"/> instance ready for use with agents.</returns>
-    protected IChatClient CreateChatClient()
-    {
-        return new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
-            .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
-            .AsIChatClient()
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
-    }
+    protected static IChatClient CreateChatClient() => new OpenAIClient(TestConfiguration.OpenAI.ApiKey)
+        .GetChatClient(TestConfiguration.OpenAI.ChatModelId)
+        .AsIChatClient()
+        .AsBuilder()
+        .UseFunctionInvocation()
+        .Build();
 
     /// <summary>
     /// Display the provided history.
@@ -129,7 +118,7 @@ public abstract class OrchestrationSample : BaseSample
         /// </summary>
         /// <param name="response">The collection of <see cref="ChatMessage"/> objects to process.</param>
         /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-        public ValueTask ResponseCallback(IEnumerable<ChatMessage> response)
+        public ValueTask ResponseCallbackAsync(IEnumerable<ChatMessage> response)
         {
             WriteStreamedResponse(this.StreamedResponses);
             this.StreamedResponses.Clear();
@@ -144,7 +133,7 @@ public abstract class OrchestrationSample : BaseSample
         /// </summary>
         /// <param name="streamedResponse">The <see cref="AgentRunResponseUpdate"/> to process.</param>
         /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-        public ValueTask StreamingResultCallback(AgentRunResponseUpdate streamedResponse)
+        public ValueTask StreamingResultCallbackAsync(AgentRunResponseUpdate streamedResponse)
         {
             this.StreamedResponses.Add(streamedResponse);
             return default;
@@ -153,16 +142,16 @@ public abstract class OrchestrationSample : BaseSample
 
     /// <summary>
     /// Initializes a new instance of the <see cref="BaseSample"/> class, setting up logging, configuration, and
-    /// optionally redirecting <see cref="System.Console"/> output to the test output.
+    /// optionally redirecting <see cref="Console"/> output to the test output.
     /// </summary>
     /// <remarks>This constructor initializes logging using an <see cref="XunitLogger"/> and sets up
     /// configuration from multiple sources, including a JSON file, environment variables, and user secrets.
-    /// If <paramref name="redirectSystemConsoleOutput"/> is <see langword="true"/>, calls to <see cref="System.Console"/>
+    /// If <paramref name="redirectSystemConsoleOutput"/> is <see langword="true"/>, calls to <see cref="Console"/>
     /// will be redirected to the test output provided by <paramref name="output"/>.
     /// </remarks>
     /// <param name="output">The <see cref="ITestOutputHelper"/> instance used to write test output.</param>
     /// <param name="redirectSystemConsoleOutput">
-    /// A value indicating whether <see cref="System.Console"/> output should be redirected to the test output. <see langword="true"/> to redirect; otherwise, <see langword="false"/>.
+    /// A value indicating whether <see cref="Console"/> output should be redirected to the test output. <see langword="true"/> to redirect; otherwise, <see langword="false"/>.
     /// </param>
     protected OrchestrationSample(ITestOutputHelper output, bool redirectSystemConsoleOutput = true)
         : base(output, redirectSystemConsoleOutput)

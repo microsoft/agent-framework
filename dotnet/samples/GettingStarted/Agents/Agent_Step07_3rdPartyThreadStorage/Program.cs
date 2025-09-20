@@ -38,12 +38,12 @@ AIAgent agent = new AzureOpenAIClient(
      {
          Name = JokerName,
          Instructions = JokerInstructions,
-         ChatMessageStoreFactory = () =>
+         ChatMessageStoreFactory = (jsonElement, jso) =>
          {
              // Create a new chat message store for this agent that stores the messages in a vector store.
              // Each thread must get its own copy of the VectorChatMessageStore, since the store
              // also contains the id that the thread is stored under.
-             return new VectorChatMessageStore(vectorStore);
+             return new VectorChatMessageStore(vectorStore, jsonElement, jso);
          }
      });
 
@@ -65,7 +65,7 @@ Console.WriteLine(JsonSerializer.Serialize(serializedThread, new JsonSerializerO
 // and loaded again later.
 
 // Deserialize the thread state after loading from storage.
-AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
+AgentThread resumedThread = agent.DeserializeThread(serializedThread);
 
 // Run the agent with the thread that stores conversation history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
@@ -75,18 +75,27 @@ namespace SampleApp
     /// <summary>
     /// A sample implementation of <see cref="IChatMessageStore"/> that stores chat messages in a vector store.
     /// </summary>
-    /// <param name="vectorStore">The vector store to store the messages in.</param>
-    internal sealed class VectorChatMessageStore(VectorStore vectorStore) : IChatMessageStore
+    internal sealed class VectorChatMessageStore : IChatMessageStore
     {
         private string? _threadId;
+        private readonly VectorStore _vectorStore;
 
-        public string? ThreadId => this._threadId;
+        public VectorChatMessageStore(VectorStore vectorStore, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
+
+            if (serializedStoreState.ValueKind is JsonValueKind.String)
+            {
+                // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
+                this._threadId = serializedStoreState.Deserialize<string>();
+            }
+        }
 
         public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
             this._threadId ??= Guid.NewGuid().ToString();
 
-            var collection = vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
+            var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
             await collection.UpsertAsync(messages.Select(x => new ChatHistoryItem()
@@ -101,7 +110,7 @@ namespace SampleApp
 
         public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
         {
-            var collection = vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
+            var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
             var records = await collection
@@ -111,25 +120,15 @@ namespace SampleApp
                     cancellationToken)
                 .ToListAsync(cancellationToken);
 
-            var messages = records
-                .Select(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!)
-                .ToList();
+            var messages = records.ConvertAll(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!)
+;
             messages.Reverse();
             return messages;
         }
 
-        public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        {
+        public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
             // We have to serialize the thread id, so that on deserialization we can retrieve the messages using the same thread id.
-            return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this._threadId));
-        }
-
-        public ValueTask DeserializeStateAsync(JsonElement? serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        {
-            // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
-            this._threadId = JsonSerializer.Deserialize<string>((JsonElement)serializedStoreState!);
-            return new ValueTask();
-        }
+            new(JsonSerializer.SerializeToElement(this._threadId));
 
         /// <summary>
         /// The data structure used to store chat history items in the vector store.

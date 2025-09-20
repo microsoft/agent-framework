@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -94,7 +95,7 @@ public sealed class ChatClientAgent : AIAgent
     public string? Instructions => this._agentOptions?.Instructions;
 
     /// <summary>
-    /// Gets of the default <see cref="Microsoft.Extensions.AI.ChatOptions"/> used by the agent.
+    /// Gets of the default <see cref="ChatOptions"/> used by the agent.
     /// </summary>
     internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
@@ -228,24 +229,23 @@ public sealed class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        return base.GetService(serviceType, serviceKey)
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        base.GetService(serviceType, serviceKey)
         ?? (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
         : serviceType == typeof(IChatClient) ? this.ChatClient
         : this.ChatClient.GetService(serviceType, serviceKey));
-    }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread()
-    {
-        var thread = new AgentThread
+    public override AgentThread GetNewThread() =>
+        new()
         {
-            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(),
-            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke()
+            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null),
+            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(default, null)
         };
-        return thread;
-    }
+
+    /// <inheritdoc/>
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(serializedThread, jsonSerializerOptions, this._agentOptions?.ChatMessageStoreFactory, this._agentOptions?.AIContextProviderFactory);
 
     #region Private
 
@@ -450,7 +450,7 @@ public sealed class ChatClientAgent : AIAgent
         {
             throw new InvalidOperationException(
                 $"""
-                The {nameof(chatOptions.ConversationId)} provided via {nameof(Microsoft.Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
+                The {nameof(chatOptions.ConversationId)} provided via {nameof(AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
                 Only one id can be used for a run.
                 """);
         }
@@ -488,12 +488,12 @@ public sealed class ChatClientAgent : AIAgent
             // so we should update the thread with the new id.
             thread.ConversationId = responseConversationId;
         }
-        else if (thread.MessageStore is null)
+        else
         {
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
             // with the custom MessageStore so that it has somewhere to store the chat history.
-            thread.MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke();
+            thread.MessageStore ??= this._agentOptions?.ChatMessageStoreFactory?.Invoke(default, null);
         }
     }
 

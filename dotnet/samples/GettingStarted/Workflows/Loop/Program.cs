@@ -108,7 +108,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
 internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int>
 {
     private readonly int _targetNumber;
-    private int _tries = 0;
+    private int _tries;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="JudgeExecutor"/> class.
