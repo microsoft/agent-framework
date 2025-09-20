@@ -460,7 +460,7 @@ def handler(
         @functools.wraps(func)
         async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext[Any] | NoOutputWorkflowContext) -> Any:
             """Wrapper function to call the handler."""
-            return await func(self, message, ctx)  # type:ignore
+            return await func(self, message, ctx)  # type: ignore
 
         # Preserve the original function signature for introspection during validation
         with contextlib.suppress(AttributeError, TypeError):
