@@ -169,7 +169,7 @@ class OllamaChatClient(BaseChatClient):
                     )
                 case DataContent():
                     if not content.has_top_level_media_type("image"):
-                        raise ServiceInvalidRequestError("Only URIContent with image media type is supported.")
+                        raise ServiceInvalidRequestError("Only DataContent with image media type is supported.")
                     ollama_message = OllamaMessage(
                         role=message.role.value,
                         images=[OllamaImage(value=content.uri)],
