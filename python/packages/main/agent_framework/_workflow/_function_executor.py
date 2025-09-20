@@ -28,8 +28,6 @@ def _is_workflow_context_type(annotation: Any) -> bool:
     return annotation is WorkflowContext or annotation is WorkflowOutputContext
 
 
-
-
 class FunctionExecutor(Executor):
     """Executor that wraps a user-defined function.
 

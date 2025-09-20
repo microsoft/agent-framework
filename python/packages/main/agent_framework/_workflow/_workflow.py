@@ -202,7 +202,7 @@ class Workflow(AFBaseModel):
                     # Get the original executor object and serialize its workflow
                     original_executor = self.executors.get(executor_id)
                     if original_executor and hasattr(original_executor, "workflow"):
-                        from ._executor import WorkflowExecutor
+                        from ._workflow_executor import WorkflowExecutor
 
                         if isinstance(original_executor, WorkflowExecutor):
                             executor_data["workflow"] = original_executor.workflow.model_dump(**kwargs)

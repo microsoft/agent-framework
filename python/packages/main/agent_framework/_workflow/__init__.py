@@ -54,7 +54,6 @@ from ._executor import (
     RequestResponse,
     SubWorkflowRequestInfo,
     SubWorkflowResponse,
-    WorkflowExecutor,
     handler,
     intercepts_request,
 )
@@ -103,6 +102,7 @@ from ._validation import (
 from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext, WorkflowOutputContext
+from ._workflow_executor import WorkflowExecutor
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",

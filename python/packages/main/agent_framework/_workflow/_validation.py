@@ -457,7 +457,8 @@ class WorkflowGraphValidator:
         if not source_output_types or not target_input_types:
             # Suppress warnings for built-in workflow components where dynamic typing is expected
             try:
-                from ._executor import RequestInfoExecutor, WorkflowExecutor  # local import to avoid cycles
+                from ._executor import RequestInfoExecutor  # local import to avoid cycles
+                from ._workflow_executor import WorkflowExecutor
 
                 builtin_types = (RequestInfoExecutor, WorkflowExecutor)
             except Exception:
@@ -508,7 +509,6 @@ class WorkflowGraphValidator:
                 source_output_types,
                 target_input_types,
             )
-
 
     # endregion
 
@@ -692,7 +692,7 @@ class WorkflowGraphValidator:
         This prevents non-deterministic behavior where multiple executors could intercept
         the same request type from the same sub-workflow.
         """
-        from ._executor import WorkflowExecutor
+        from ._workflow_executor import WorkflowExecutor
 
         # Find all WorkflowExecutor instances in the workflow
         workflow_executors: dict[str, WorkflowExecutor] = {}
