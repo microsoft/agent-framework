@@ -1,34 +1,34 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from random import randint
-from typing import Annotated
+from datetime import datetime
 
 from agent_framework.ollama import OllamaChatClient
-from pydantic import Field
+
+# Ensure to install Ollama and have a model running locally before running the sample
+# Not all Models support function calling, to test function calling try llama3.2
+# Set the model to use via the OLLAMA_CHAT_MODEL_ID environment variable or modify the code below.
+# https://ollama.com/
 
 
-def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
-) -> str:
-    """Get the weather for a given location."""
-    conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+def get_time():
+    """Get the current time."""
+    return f"The current time is {datetime.now().strftime('%I:%M %p')}."
 
 
 async def main() -> None:
     client = OllamaChatClient()
-    message = "What's the weather in Amsterdam and in Paris?"
+    message = "What time is it? Use a tool call"
     stream = False
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(message, tools=get_weather):
+        async for chunk in client.get_streaming_response(message, tools=get_time):
             if str(chunk):
                 print(str(chunk), end="")
         print("")
     else:
-        response = await client.get_response(message, tools=get_weather)
+        response = await client.get_response(message, tools=get_time)
         print(f"Assistant: {response}")
 
 

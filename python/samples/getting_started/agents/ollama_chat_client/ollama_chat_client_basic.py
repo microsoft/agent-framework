@@ -1,18 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from random import randint
-from typing import Annotated
+from datetime import datetime
 
 from agent_framework.ollama import OllamaChatClient
 
+# Ensure to install Ollama and have a model running locally before running the sample
+# Not all Models support function calling, to test function calling try llama3.2
+# Set the model to use via the OLLAMA_CHAT_MODEL_ID environment variable or modify the code below.
+# https://ollama.com/
 
-def get_weather(
-    location: Annotated[str, "The location to get the weather for."],
-) -> str:
-    """Get the weather for a given location."""
-    conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
+def get_time():
+    """Get the current time."""
+    return f"The current time is {datetime.now().strftime('%I:%M %p')}."
 
 
 async def non_streaming_example() -> None:
@@ -20,12 +21,12 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming Response Example ===")
 
     agent = OllamaChatClient().create_agent(
-        name="WeatherAgent",
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
+        name="TimeAgent",
+        instructions="You are a helpful time agent answer in one sentence.",
+        tools=get_time,
     )
 
-    query = "What's the weather like in Seattle?"
+    query = "What time is it in Seattle? Use a tool call"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Result: {result}\n")
@@ -36,12 +37,11 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     agent = OllamaChatClient().create_agent(
-        name="WeatherAgent",
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
+        name="TimeAgent",
+        instructions="You are a helpful time agent answer in one sentence.",
+        tools=get_time,
     )
-
-    query = "What's the weather like in Portland?"
+    query = "What time is it? Use a tool call"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run_stream(query):

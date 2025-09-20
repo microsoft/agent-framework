@@ -12,6 +12,5 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "OllamaChatClient",
     "OllamaSettings",
-    "OllamaSettings",
     "__version__",
 ]

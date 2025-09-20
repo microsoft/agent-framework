@@ -109,6 +109,7 @@ class OllamaChatClient(BaseChatClient):
             model=self.chat_model_id,
             stream=True,
             **options_dict,
+            **kwargs,
         )
 
         async for part in response_object:
