@@ -6,6 +6,7 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
+    WorkflowOutputContext,
     WorkflowContext,
     executor,
     handler,
@@ -17,8 +18,13 @@ Step 1: Foundational patterns: Executors and edges
 What this example shows
 - Two ways to define a unit of work (an Executor node):
     1) Custom class that subclasses Executor with an async method marked by @handler.
-         Signature: (text: str, ctx: WorkflowContext[str]) -> None. The typed ctx
-         advertises the type this node emits via ctx.send_message(...).
+         Signatures: 
+            - (text: str, ctx: WorkflowContext[str]) -> None, or
+            - (text: str, ctx: WorkflowOutputContext[None, str]) -> None.
+         The first parameter is the typed input to this node.
+         The second parameter is a WorkflowContext or WorkflowOutputContext.
+         WorkflowContext is used for nodes that send messages to downstream nodes.
+         WorkflowOutputContext is used for nodes that also yield workflow output.
     2) Standalone async function decorated with @executor using the same signature.
          Simple steps can use this form; a terminal step can emit a
          WorkflowCompletedEvent to end the workflow.
@@ -27,8 +33,8 @@ What this example shows
     add_edge(A, B) to connect nodes, set_start_executor(A), then build() -> Workflow.
 
 - Running and results:
-    workflow.run(initial_input) executes the graph. The last node emits a
-    WorkflowCompletedEvent that carries the final result.
+    workflow.run(initial_input) executes the graph. The last node yields the
+    final result and adds a WorkflowCompletedEvent to signal completion.
 
 Prerequisites
 - No external services required.
@@ -70,22 +76,23 @@ class UpperCase(Executor):
 # -----------------------------------------------
 #
 # For simple steps you can skip subclassing and define an async function with the
-# same signature pattern (typed input + WorkflowContext[T]) and decorate it with
+# same signature pattern (typed input + WorkflowOutputContext[T]) and decorate it with
 # @executor. This creates a fully functional node that can be wired into a flow.
 
 
 @executor(id="reverse_text_executor")
-async def reverse_text(text: str, ctx: WorkflowContext[str]) -> None:
-    """Reverse the input string and signal workflow completion.
+async def reverse_text(text: str, ctx: WorkflowOutputContext[None, str]) -> None:
+    """Reverse the input string, yield the output, and signal workflow completion.
 
-    This node emits a terminal event using ctx.add_event(WorkflowCompletedEvent).
-    The data carried by the WorkflowCompletedEvent becomes the final result of
-    the workflow (returned by workflow.run(...)).
+    This node yields the final output using ctx.yield_output(result),
+    and emits a terminal event using ctx.add_event(WorkflowCompletedEvent).
+    The final output can be retrieved from the workflow run results.
     """
     result = text[::-1]
 
-    # Send the result with a workflow completion event.
-    await ctx.add_event(WorkflowCompletedEvent(result))
+    # Yield the output and signal workflow completion.
+    await ctx.yield_output(result)
+    await ctx.add_event(WorkflowCompletedEvent())
 
 
 async def main():
@@ -100,17 +107,17 @@ async def main():
     workflow = WorkflowBuilder().add_edge(upper_case, reverse_text).set_start_executor(upper_case).build()
 
     # Run the workflow by sending the initial message to the start node.
-    # The run(...) call returns an event collection; its get_completed_event()
-    # provides the WorkflowCompletedEvent emitted by the terminal node.
+    # The run(...) call returns an event collection; its get_outputs() method
+    # retrieves the outputs yielded by any terminal nodes.
     events = await workflow.run("hello world")
-    print(events.get_completed_event())
+    print(events.get_outputs())
     # Summarize the final run state (e.g., COMPLETED)
     print("Final state:", events.get_final_state())
 
     """
     Sample Output:
 
-    WorkflowCompletedEvent(data=DLROW OLLEH)
+    ['DLROW OLLEH']
     Final state: WorkflowRunState.COMPLETED
     """
 
