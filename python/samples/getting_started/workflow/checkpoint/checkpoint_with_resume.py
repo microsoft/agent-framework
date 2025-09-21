@@ -3,7 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_framework import (
     AgentExecutor,
@@ -12,6 +12,7 @@ from agent_framework import (
     ChatMessage,
     Executor,
     FileCheckpointStorage,
+    RequestInfoExecutor,
     Role,
     WorkflowBuilder,
     WorkflowCompletedEvent,
@@ -20,6 +21,10 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureChatClient
 from azure.identity import AzureCliCredential
+
+if TYPE_CHECKING:
+    from agent_framework import Workflow
+    from agent_framework._workflow._checkpoint import WorkflowCheckpoint
 
 """
 Sample: Checkpointing and Resuming a Workflow (with an Agent stage)
@@ -87,7 +92,7 @@ class UpperCaseExecutor(Executor):
 class SubmitToLowerAgent(Executor):
     """Builds an AgentExecutorRequest to send to the lowercasing agent while keeping shared-state visibility."""
 
-    def __init__(self, agent_id: str, id: str | None = None):
+    def __init__(self, id: str, agent_id: str):
         super().__init__(id=id)
         self._agent_id = agent_id
 
@@ -132,10 +137,6 @@ class FinalizeFromAgent(Executor):
 class ReverseTextExecutor(Executor):
     """Reverses the input text and persists local state."""
 
-    def __init__(self, id: str):
-        """Initialize the executor with an ID."""
-        super().__init__(id=id)
-
     @handler
     async def reverse_text(self, text: str, ctx: WorkflowContext[str]) -> None:
         result = text[::-1]
@@ -154,15 +155,10 @@ class ReverseTextExecutor(Executor):
         await ctx.send_message(result)
 
 
-async def main():
-    # Clear existing checkpoints in this sample directory for a clean run.
-    checkpoint_dir = Path(TEMP_DIR)
-    for file in checkpoint_dir.glob("*.json"):
-        file.unlink()
-
+def create_workflow(checkpoint_storage: FileCheckpointStorage) -> "Workflow":
     # Instantiate the pipeline executors.
-    upper_case_executor = UpperCaseExecutor(id="upper_case_executor")
-    reverse_text_executor = ReverseTextExecutor(id="reverse_text_executor")
+    upper_case_executor = UpperCaseExecutor(id="upper-case")
+    reverse_text_executor = ReverseTextExecutor(id="reverse-text")
 
     # Configure the agent stage that lowercases the text.
     chat_client = AzureChatClient(credential=AzureCliCredential())
@@ -174,14 +170,11 @@ async def main():
     )
 
     # Bridge to the agent and terminalization stage.
-    submit_lower = SubmitToLowerAgent(agent_id=lower_agent.id, id="submit_lower")
+    submit_lower = SubmitToLowerAgent(id="submit_lower", agent_id=lower_agent.id)
     finalize = FinalizeFromAgent(id="finalize")
 
-    # Backing store for checkpoints written by with_checkpointing.
-    checkpoint_storage = FileCheckpointStorage(storage_path=TEMP_DIR)
-
     # Build the workflow with checkpointing enabled.
-    workflow = (
+    return (
         WorkflowBuilder(max_iterations=5)
         .add_edge(upper_case_executor, reverse_text_executor)  # Uppercase -> Reverse
         .add_edge(reverse_text_executor, submit_lower)  # Reverse -> Build Agent request
@@ -191,6 +184,40 @@ async def main():
         .with_checkpointing(checkpoint_storage=checkpoint_storage)  # Enable persistence
         .build()
     )
+
+def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
+    """Display human-friendly checkpoint metadata using framework summaries."""
+
+    if not checkpoints:
+        return
+
+    print("\nCheckpoint summary:")
+    for cp in sorted(checkpoints, key=lambda c: c.timestamp):
+        summary = RequestInfoExecutor.checkpoint_summary(cp)
+        msg_count = sum(len(v) for v in cp.messages.values())
+        state_keys = sorted(cp.executor_states.keys())
+        orig = cp.shared_state.get("original_input")
+        upper = cp.shared_state.get("upper_output")
+
+        line = (
+            f"- {summary.checkpoint_id} | iter={summary.iteration_count} | messages={msg_count} | states={state_keys}"
+        )
+        if summary.status:
+            line += f" | status={summary.status}"
+        line += f" | shared_state: original_input='{orig}', upper_output='{upper}'"
+        print(line)
+
+
+async def main():
+    # Clear existing checkpoints in this sample directory for a clean run.
+    checkpoint_dir = Path(TEMP_DIR)
+    for file in checkpoint_dir.glob("*.json"):
+        file.unlink()
+
+    # Backing store for checkpoints written by with_checkpointing.
+    checkpoint_storage = FileCheckpointStorage(storage_path=TEMP_DIR)
+
+    workflow = create_workflow(checkpoint_storage=checkpoint_storage)
 
     # Run the full workflow once and observe events as they stream.
     print("Running workflow with initial message...")
@@ -206,26 +233,20 @@ async def main():
     # All checkpoints created by this run share the same workflow_id.
     workflow_id = all_checkpoints[0].workflow_id
 
-    # Dump a quick summary including shared_state keys to illustrate what persisted.
-    print("\nCheckpoint summary:")
-    for cp in sorted(all_checkpoints, key=lambda c: c.timestamp):
-        msg_count = sum(len(v) for v in cp.messages.values())
-        state_keys = sorted(list(cp.executor_states.keys())) if hasattr(cp, "executor_states") else []
-        orig = cp.shared_state.get("original_input") if hasattr(cp, "shared_state") else None
-        upper = cp.shared_state.get("upper_output") if hasattr(cp, "shared_state") else None
-        print(
-            f"- {cp.checkpoint_id} | "
-            f"iter={cp.iteration_count} | messages={msg_count} | states={state_keys} | "
-            f"shared_state: original_input='{orig}', upper_output='{upper}'"
-        )
+    _render_checkpoint_summary(all_checkpoints)
 
     # Offer an interactive selection of checkpoints to resume from.
     sorted_cps = sorted([cp for cp in all_checkpoints if cp.workflow_id == workflow_id], key=lambda c: c.timestamp)
 
     print("\nAvailable checkpoints to resume from:")
     for idx, cp in enumerate(sorted_cps):
+        summary = RequestInfoExecutor.checkpoint_summary(cp)
+        line = f"  [{idx}] id={summary.checkpoint_id} iter={summary.iteration_count}"
+        if summary.status:
+            line += f" status={summary.status}"
         msg_count = sum(len(v) for v in cp.messages.values())
-        print(f"  [{idx}] id={cp.checkpoint_id} iter={cp.iteration_count} messages={msg_count}")
+        line += f" messages={msg_count}"
+        print(line)
 
     user_input = input(
         "\nEnter checkpoint index (or paste checkpoint id) to resume from, or press Enter to skip resume: "
@@ -256,15 +277,7 @@ async def main():
     # You can reuse the same workflow graph definition and resume from a prior checkpoint.
     # This second workflow instance does not enable checkpointing to show that resumption
     # reads from stored state but need not write new checkpoints.
-    new_workflow = (
-        WorkflowBuilder(max_iterations=5)
-        .add_edge(upper_case_executor, reverse_text_executor)
-        .add_edge(reverse_text_executor, submit_lower)
-        .add_edge(submit_lower, lower_agent)
-        .add_edge(lower_agent, finalize)
-        .set_start_executor(upper_case_executor)
-        .build()
-    )
+    new_workflow = create_workflow(checkpoint_storage=checkpoint_storage)
 
     print(f"\nResuming from checkpoint: {chosen_cp_id}")
     async for event in new_workflow.run_stream_from_checkpoint(chosen_cp_id, checkpoint_storage=checkpoint_storage):
@@ -275,15 +288,15 @@ async def main():
 
     Running workflow with initial message...
     UpperCaseExecutor: 'hello world' -> 'HELLO WORLD'
-    Event: ExecutorInvokedEvent(executor_id=upper_case_executor)
+    Event: ExecutorInvokeEvent(executor_id=upper_case_executor)
     Event: ExecutorCompletedEvent(executor_id=upper_case_executor)
     ReverseTextExecutor: 'HELLO WORLD' -> 'DLROW OLLEH'
-    Event: ExecutorInvokedEvent(executor_id=reverse_text_executor)
+    Event: ExecutorInvokeEvent(executor_id=reverse_text_executor)
     Event: ExecutorCompletedEvent(executor_id=reverse_text_executor)
     LowerAgent (shared_state): original_input='hello world', upper_output='HELLO WORLD'
-    Event: ExecutorInvokedEvent(executor_id=submit_lower)
-    Event: ExecutorInvokedEvent(executor_id=lower_agent)
-    Event: ExecutorInvokedEvent(executor_id=finalize)
+    Event: ExecutorInvokeEvent(executor_id=submit_lower)
+    Event: ExecutorInvokeEvent(executor_id=lower_agent)
+    Event: ExecutorInvokeEvent(executor_id=finalize)
     Event: WorkflowCompletedEvent(data=dlrow olleh)
 
     Checkpoint summary:
@@ -300,9 +313,9 @@ async def main():
 
     Resuming from checkpoint: a78c345a-e5d9-45ba-82c0-cb725452d91b
     LowerAgent (shared_state): original_input='hello world', upper_output='HELLO WORLD'
-    Resumed Event: ExecutorInvokedEvent(executor_id=submit_lower)
-    Resumed Event: ExecutorInvokedEvent(executor_id=lower_agent)
-    Resumed Event: ExecutorInvokedEvent(executor_id=finalize)
+    Resumed Event: ExecutorInvokeEvent(executor_id=submit_lower)
+    Resumed Event: ExecutorInvokeEvent(executor_id=lower_agent)
+    Resumed Event: ExecutorInvokeEvent(executor_id=finalize)
     Resumed Event: WorkflowCompletedEvent(data=dlrow olleh)
     """  # noqa: E501
 
