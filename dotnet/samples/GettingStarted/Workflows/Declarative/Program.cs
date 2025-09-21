@@ -291,7 +291,7 @@ internal sealed class Program
             string? repoFolder = GetRepoFolder();
             if (repoFolder is not null)
             {
-                workflowFile = Path.Combine(repoFolder, "Workflows", workflowFile);
+                workflowFile = Path.Combine(repoFolder, "workflow-samples", workflowFile);
                 workflowFile = Path.ChangeExtension(workflowFile, ".yaml");
             }
         }
