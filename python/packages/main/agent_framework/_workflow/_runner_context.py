@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 import logging
+import sys
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, fields, is_dataclass
@@ -60,6 +61,39 @@ _MAX_ENCODE_DEPTH = 100
 _CYCLE_SENTINEL = "<cycle>"
 
 
+def _instantiate_checkpoint_dataclass(cls: type[Any], payload: Any) -> Any | None:
+    if not isinstance(cls, type):
+        logger.debug(f"Checkpoint decoder received non-type dataclass reference: {cls!r}")
+        return None
+
+    if isinstance(payload, dict):
+        try:
+            return cls(**payload)  # type: ignore[arg-type]
+        except TypeError as exc:
+            logger.debug(f"Checkpoint decoder could not call {cls.__name__}(**payload): {exc}")
+        except Exception as exc:
+            logger.warning(f"Checkpoint decoder encountered unexpected error calling {cls.__name__}(**payload): {exc}")
+        try:
+            instance = object.__new__(cls)
+        except Exception as exc:
+            logger.debug(f"Checkpoint decoder could not allocate {cls.__name__} without __init__: {exc}")
+            return None
+        for key, val in payload.items():
+            try:
+                setattr(instance, key, val)
+            except Exception as exc:
+                logger.debug(f"Checkpoint decoder could not set attribute {key} on {cls.__name__}: {exc}")
+        return instance
+
+    try:
+        return cls(payload)  # type: ignore[call-arg]
+    except TypeError as exc:
+        logger.debug(f"Checkpoint decoder could not call {cls.__name__}({payload!r}): {exc}")
+    except Exception as exc:
+        logger.warning(f"Checkpoint decoder encountered unexpected error calling {cls.__name__}({payload!r}): {exc}")
+    return None
+
+
 def _is_pydantic_model(obj: object) -> bool:
     """Best-effort check for Pydantic models (e.g., AFBaseModel).
 
@@ -99,7 +133,7 @@ def _encode_checkpoint_value(value: Any) -> Any:
                     "value": v.model_dump(mode="json"),
                 }
             except Exception as exc:  # best-effort fallback
-                logger.debug("Pydantic model_dump failed for %s: %s", cls, exc)
+                logger.debug(f"Pydantic model_dump failed for {cls}: {exc}")
                 return str(v)
 
         # Dataclasses (instances only)
@@ -178,36 +212,32 @@ def _decode_checkpoint_value(value: Any) -> Any:
             if isinstance(type_key, str):
                 try:
                     module_name, class_name = type_key.split(":", 1)
-                    module = importlib.import_module(module_name)
+                    module = sys.modules.get(module_name)
+                    if module is None:
+                        module = importlib.import_module(module_name)
                     cls: Any = getattr(module, class_name)
                     if hasattr(cls, "model_validate"):
                         return cls.model_validate(raw)
                 except Exception as exc:
-                    logger.debug(
-                        "Failed to decode pydantic model %s: %s; returning raw value",
-                        type_key,
-                        exc,
-                    )
+                    logger.debug(f"Failed to decode pydantic model {type_key}: {exc}; returning raw value")
         # Dataclass marker handling
         if _DATACLASS_MARKER in value_dict and "value" in value_dict:
             type_key_dc: str | None = value_dict.get(_DATACLASS_MARKER)  # type: ignore[assignment]
             raw_dc: Any = value_dict.get("value")
+            decoded_raw = _decode_checkpoint_value(raw_dc)
             if isinstance(type_key_dc, str):
                 try:
                     module_name, class_name = type_key_dc.split(":", 1)
-                    module = importlib.import_module(module_name)
+                    module = sys.modules.get(module_name)
+                    if module is None:
+                        module = importlib.import_module(module_name)
                     cls_dc: Any = getattr(module, class_name)
-                    decoded_raw = _decode_checkpoint_value(raw_dc)
-                    if isinstance(decoded_raw, dict):
-                        return cls_dc(**decoded_raw)
+                    constructed = _instantiate_checkpoint_dataclass(cls_dc, decoded_raw)
+                    if constructed is not None:
+                        return constructed
                 except Exception as exc:
-                    logger.debug(
-                        "Failed to decode dataclass %s: %s; returning raw value",
-                        type_key_dc,
-                        exc,
-                    )
-            # Fallback to decoded raw value
-            return _decode_checkpoint_value(raw_dc)
+                    logger.debug(f"Failed to decode dataclass {type_key_dc}: {exc}; returning raw value")
+            return decoded_raw
 
         # Regular dict: decode recursively
         decoded: dict[str, Any] = {}
@@ -338,6 +368,10 @@ class RunnerContext(Protocol):
         """
         ...
 
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+        """Load a checkpoint without mutating the current context state."""
+        ...
+
     async def get_checkpoint_state(self) -> CheckpointState:
         """Get the current state of the context suitable for checkpointing."""
         ...
@@ -409,7 +443,7 @@ class InProcRunnerContext:
                     return
         except Exception as exc:  # pragma: no cover - defensive logging path
             # Best-effort filtering only; never block event delivery on filtering errors
-            logger.debug("Error while filtering event %r: %s", event, exc, exc_info=True)
+            logger.debug(f"Error while filtering event {event!r}: {exc}", exc_info=True)
 
         await self._event_queue.put(event)
 
@@ -496,6 +530,11 @@ class InProcRunnerContext:
         self._workflow_id = checkpoint.workflow_id
         logger.info(f"Restored state from checkpoint {checkpoint_id}'")
         return True
+
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+        if not self._checkpoint_storage:
+            raise ValueError("Checkpoint storage not configured")
+        return await self._checkpoint_storage.load_checkpoint(checkpoint_id)
 
     async def get_checkpoint_state(self) -> CheckpointState:
         serializable_messages: dict[str, list[dict[str, Any]]] = {}

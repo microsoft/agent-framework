@@ -19,7 +19,7 @@
     <PackageVersion Include="Aspire.Hosting.Testing" Version="9.4.2" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.4" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.2" />
-    <PackageVersion Include="Azure.Identity" Version="1.15.0" />
+    <PackageVersion Include="Azure.Identity" Version="1.16.0" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.7.2" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.0-preview.1.25458.4" />
