@@ -13,7 +13,14 @@ from ._events import (
     WorkflowFailedEvent,
     WorkflowRunState,
 )
-from ._executor import Executor, RequestInfoMessage, SubWorkflowRequestInfo, SubWorkflowResponse, handler
+from ._executor import (
+    Executor,
+    RequestInfoExecutor,
+    RequestInfoMessage,
+    SubWorkflowRequestInfo,
+    SubWorkflowResponse,
+    handler,
+)
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -64,8 +71,19 @@ class WorkflowExecutor(Executor):
 
         Returns:
             A list of output types that the underlying workflow can produce.
+            Includes SubWorkflowRequestInfo if the sub-workflow contains RequestInfoExecutor.
         """
-        return self.workflow.output_types
+        output_types = list(self.workflow.output_types)
+
+        # Check if the sub-workflow contains a RequestInfoExecutor
+        # If so, this WorkflowExecutor can also output SubWorkflowRequestInfo messages
+        for executor in self.workflow.executors.values():
+            if isinstance(executor, RequestInfoExecutor):
+                if SubWorkflowRequestInfo not in output_types:
+                    output_types.append(SubWorkflowRequestInfo)
+                break
+
+        return output_types
 
     @handler  # No output_types - can send any completion data type
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:

@@ -84,7 +84,7 @@ async def test_simple_sub_workflow():
 
     # Create parent workflow
     parent = SimpleParent()
-    workflow_executor = WorkflowExecutor(sub_workflow, "sub_workflow")
+    workflow_executor = WorkflowExecutor(sub_workflow, id="sub_workflow")
 
     main_workflow = (
         WorkflowBuilder()
