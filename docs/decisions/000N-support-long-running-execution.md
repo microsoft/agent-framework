@@ -830,12 +830,45 @@ ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOp
 ChatResponse quickResponse = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { AllowLongRunningResponses = false });
 ```
 
-**Pro:** Callers can switch between quick prompts and long-running operation per invocation of the `Get{Streaming}ResponseAsync` methods without 
+**Pros:** 
+- Callers can switch between quick prompts and long-running operation per invocation of the `Get{Streaming}ResponseAsync` methods without 
 changing the client configuration.
+- Enables explicit control over the execution mode by callers per invocation, meaning that no caller site is broken if the agent is injected via DI, 
+and the caller can turn on the long-running operation mode when it can handle it.
 
 **Con:** This may not be valuable for all callers, as they may not have enough information to decide whether the prompt should run as a long-running operation or quick prompt.
 
-#### 2.2 Execution Mode per Chat Client Instance
+#### 2.2 Execution Mode per `Get{Streaming}ResponseAsync` Invocation + Model Class
+
+This option is similar to the previous one, but suggest using a model class `LongRunningResponsesOptions` for properties related to long-running operations.
+
+```csharp
+public class LongRunningResponsesOptions
+{
+    public bool? Allow { get; set; }
+    //public PollingSettings? PollingSettings { get; set; } // Can be added leter if necessary
+}
+
+public class ChatOptions
+{
+    public LongRunningResponsesOptions? LongRunningResponsesOptions { get; set; }
+}
+
+// Consumer code example
+IChatClient chatClient = ...; // Get an instance of IChatClient
+
+// Start a long-running execution for the prompt if supported by the underlying API
+ChatResponse response = await chatClient.GetResponseAsync("<prompt>", new ChatOptions { LongRunningResponsesOptions = new() { Allow = true } });
+```
+
+**Pros:** 
+- Enables explicit control over the execution mode by callers per invocation, meaning that no caller site is broken if the agent is injected via DI, 
+and the caller can turn on the long-running operation mode when it can handle it.
+- No proliferation of long-running operation-related properties in the `ChatOptions` class.
+
+**Con:** Slightly more complex initialization.
+
+#### 2.3 Execution Mode per Chat Client Instance
 
 This option proposes adding a new `enableLongRunningResponses` parameter to constructors of chat clients that support both quick prompts and long-running operations.
 The parameter value will be `true` if the chat client should operate in long-running operation mode, `false` if it should operate in quick prompt mode.
@@ -845,7 +878,7 @@ Chat clients that work with APIs that don't require explicit configuration won't
 logic/configuration.
 
 ```csharp
-public class CustomChatClient : IChatClient, IAsyncChatClient
+public class CustomChatClient : IChatClient
 {
     private readonly bool _enableLongRunningResponses;
 
@@ -872,7 +905,7 @@ generation can be configured to always use long-running execution mode.
 
 **Con:** Less flexible than the previous option, as it requires configuring the chat client upfront at instantiation time. However, this flexibility might not be needed.
 
-#### 2.3 Combined Approach
+#### 2.4 Combined Approach
 
 This option proposes a combined approach that allows configuration per chat client instance and per `Get{Streaming}ResponseAsync` method invocation.
 
@@ -880,7 +913,7 @@ The chat client will use whichever configuration is provided, whether set in the
 method invocation. If both are set, the one provided in the `Get{Streaming}ResponseAsync` method invocation takes precedence.
 
 ```csharp
-public class CustomChatClient : IChatClient, IAsyncChatClient
+public class CustomChatClient : IChatClient
 {
     private readonly bool _enableLongRunningResponses;
 
@@ -1354,6 +1387,11 @@ internal sealed class LongRunContinuationToken
         return JsonSerializer.Serialize(this, OpenAIJsonContext2.Default.LongRunContinuationToken);
     }
 }
+
+public class ChatOptions
+{
+    public string? ContinuationToken { get; set; }
+}
 ```
 
 **Pro:** No dependency on the `System.ClientModel` package.
@@ -1563,63 +1601,94 @@ Console.WriteLine(response.Text);
 
 **Pro:** No proliferation of long-running operation properties in agents' model classes.
 
+##### 2.2 Continuation Token of String Type
+
+This options is similar to the previous one but suggests using a string type for the continuation token instead of the `System.ClientModel.ContinuationToken` type.
+
+```csharp
+internal sealed class LongRunContinuationToken
+{
+    public LongRunContinuationToken(string responseId)
+    {
+        this.ResponseId = responseId;
+    }
+
+    public string ResponseId { get; set; }
+
+    public int? SequenceNumber { get; set; }
+
+    public static LongRunContinuationToken Deserialize(string json)
+    {
+        Throw.IfNullOrEmpty(json);
+
+        var token = JsonSerializer.Deserialize<LongRunContinuationToken>(json, OpenAIJsonContext2.Default.LongRunContinuationToken)
+            ?? throw new InvalidOperationException("Failed to deserialize LongRunContinuationToken.");
+
+        return token;
+    }
+
+    public string Serialize()
+    {
+        return JsonSerializer.Serialize(this, OpenAIJsonContext2.Default.LongRunContinuationToken);
+    }
+}
+
+public class AgentRunOptions
+{
+    public string? ContinuationToken { get; set; }
+}
+```
+
+**Pro:** No dependency on the `System.ClientModel` package.
+
 ### 3. Enabling Long-Running Operations
 
 This section considers different options for enabling long-running operations for agents.
 
 The "2. Enabling Long-Running Operations" section above discusses different options for enabling long-running operations for chat clients, which are:
 - Execution Mode per `Get{Streaming}ResponseAsync` Invocation
+- Execution Mode per `Get{Streaming}ResponseAsync` Invocation + Model Class
 - Execution Mode per Chat Client Instance
 - Combined Approach
 
-For agents that are supposed to be configured once in accordance with a role in a scenario, it makes sense to have an enabling option per agent instance only, rather than per method invocation.
-  
-#### 3.1 Execution Mode per Agent Instance
+#### 3.1 Execution Mode per `Run{Streaming}Async` Invocation + Model Class
 
-This option proposes adding a new `enableLongRuns` parameter to the constructors of agents that work with APIs that support explicit execution mode configuration.
-The parameter value will be `true` if the agent should operate in long-running operation mode, and `false`, `null`, or omitted if it should operate in quick prompt mode.  
+This options is the same as ""2.2 Execution Mode per `Get{Streaming}ResponseAsync` Invocation + Model Class" for chat clients,
+and suggests using the `LongRuningResponsesOptions` model class to keep long-running operation-related options.
   
-Agents that work with APIs that don't require explicit configuration, like A2A agents, won't have this parameter in their constructors and will operate according 
-to their own logic/configuration.  
-  
-```csharp  
-public class CustomAgent : AIAgent  
-{  
-    private readonly bool _enableLongRuns;  
-  
-    public CustomAgent(bool enableLongRuns)  
-    {  
-        this._enableLongRuns = enableLongRuns;  
-    }  
-  
-    // Existing methods...  
-}  
-  
-// Consumer code example  
-AIAgent agent = new CustomAgent(enableLongRuns: true);  
-  
-// Start a long-running execution for the prompt  
-AgentRunResponse response = await agent.RunAsync("What is the capital of France?");  
-```  
-  
-An agent can be configured to always operate in long-running operation mode or quick prompt mode based on their role in a specific scenario.
-For example, an agent responsible for generating ideas for images can be configured for quick prompt mode, while an agent responsible for image generation
-can be configured to always use long-running execution mode.  
-  
-**Pro:** Can be beneficial for scenarios where agents need to be configured upfront in accordance with their role in a scenario.  
-  
-**Con:** Less flexible than the previous option, as it requires configuring of agents upfront at instantiation time. However, this flexibility might not be needed for agents.
+```csharp
+public class LongRunningResponsesOptions
+{
+    public bool? Allow { get; set; }
+    //public PollingSettings? PollingSettings { get; set; } // Can be added leter if necessary
+}
+
+public class AgentRunOptions
+{
+    public LongRunningResponsesOptions? LongRunningResponsesOptions { get; set; }
+}
+
+// Consumer code example
+AIAgent agent = ...; // Get an instance of an AIAgent
+
+// Start a long-running execution
+AgentRunResponse response = await agent.RunAsync("<prompt>", new AgentRunOptions { LongRunningResponsesOptions = new() { Allow = true } });
+```
 
 ## Decision Outcome
 
 ### Long-Running Execution Support for Chat Clients
- - Option **"1.4 Individual Interface per Uncommon Operation + Use Get{Streaming}ResponseAsync for Common Operations"** is selected:
+ - Option **1.4 Individual Interface per Uncommon Operation + Use Get{Streaming}ResponseAsync for Common Operations** is selected:
    - Start, update, get status, and get result of long-running operations will be handled by the existing `Get{Streaming}ResponseAsync` methods of the `IChatClient`.
-   - Cancellation of long-running operations will be handled by a new `CancelResponseAsync` method of a new `ICancelableChatClient` interface.
+   - Cancellation of long-running operations is skipped and will be handled by a new `CancelResponseAsync` method of a new `ICancelableChatClient` interface.
    - Deletion is skipped for now and can be implemented later if needed, following the same approach as cancellation.
- - Option "**3.2: One Method to Get Status and Result**" is selected.
- - Option "**4.2. As Properties Of ChatResponse**" is selected.
- - Option "**6.1.4 Continuation Token of String Type**" is selected.
+ - Option **2.2 Execution Mode per `Get{Streaming}ResponseAsync` Invocation + Model Class** is selected.
+ - Option **3.2: One Method to Get Status and Result** is selected.
+ - Option **4.2. As Properties Of ChatResponse** is selected.
+ - Option **6.1.4 Continuation Token of String Type** is selected.
 
 ### Long-Running Operations Support for AF Agents
-TBD
+ - Options **1.1 Run{Streaming}Async Methods for Common Operations and the Update Operation + New Method Per Uncommon Operation** is selected.
+   - Cancellation and deletion of long-running operations is skipped for now and can be implemented later if needed, following the approach as described in the option.
+ - Option **2.2 Continuation Token of String Type** is selected.
+ - Option **3.1 Execution Mode per `Run{Streaming}Async` Invocation + Model Class** is selected.
