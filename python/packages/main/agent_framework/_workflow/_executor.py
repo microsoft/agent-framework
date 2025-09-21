@@ -144,6 +144,11 @@ class Executor(AFBaseModel):
             handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
             ctx_annotation = None
 
+            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
+                # Special case: always handle SubWorkflowRequestInfo if we have interceptors defined
+                handler = self._handle_sub_workflow_request
+                ctx_annotation = WorkflowContext[RequestInfoMessage]
+
             for message_type in self._handlers:
                 if is_instance_of(message, message_type):
                     handler = self._handlers[message_type]
@@ -166,24 +171,6 @@ class Executor(AFBaseModel):
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
             )
-
-            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-                # Handle SubWorkflowRequestInfo if we have interceptors defined
-                with _framework_event_origin():
-                    invoke_event = ExecutorInvokedEvent(self.id)
-                await context.add_event(invoke_event)
-                try:
-                    await self._handle_sub_workflow_request(message, context)
-                except Exception as exc:
-                    # Surface structured executor failure before propagating
-                    with _framework_event_origin():
-                        failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
-                    await context.add_event(failure_event)
-                    raise
-                with _framework_event_origin():
-                    completed_event = ExecutorCompletedEvent(self.id)
-                await context.add_event(completed_event)
-                return
 
             # Invoke the handler with the message and context
             with _framework_event_origin():
@@ -265,6 +252,16 @@ class Executor(AFBaseModel):
 
                         if self._handlers.get(message_type) is not None:
                             raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
+
+                        # RequestInfoExecutor is allowed to handle SubWorkflowRequestInfo directly
+                        # but other executors should use @intercepts_request
+                        if message_type is SubWorkflowRequestInfo and self.__class__.__name__ != "RequestInfoExecutor":
+                            raise ValueError(
+                                f"Executor {self.__class__.__name__} cannot define a handler for "
+                                "SubWorkflowRequestInfo directly. "
+                                f"Use @intercepts_request decorator to intercept sub-workflow requests."
+                            )
+
                         # Get the bound method
                         bound_method = getattr(self, attr_name)
                         self._handlers[message_type] = bound_method
@@ -292,97 +289,148 @@ class Executor(AFBaseModel):
                         if request_type not in self._request_interceptors:
                             self._request_interceptors[request_type] = []
                         self._request_interceptors[request_type].append(interceptor_info)
+
+                        # We need to register the handler for SubWorkflowRequestInfo
+                        # if not already registered.
+                        if SubWorkflowRequestInfo not in self._handlers:
+                            self._handlers[SubWorkflowRequestInfo] = self._handle_sub_workflow_request
+                            self._handler_specs.append({
+                                "name": attr_name,
+                                "message_type": SubWorkflowRequestInfo,
+                                "output_types": [SubWorkflowResponse, SubWorkflowRequestInfo, RequestInfoMessage],
+                                "workflow_output_types": [],
+                                "ctx_annotation": WorkflowContext[
+                                    SubWorkflowRequestInfo | SubWorkflowResponse | RequestInfoMessage
+                                ],
+                                "source": "class_method",
+                            })
             except AttributeError:
                 # Skip attributes that may not be accessible
                 continue
 
-    def _register_sub_workflow_handler(self) -> None:
-        """Register automatic handler for SubWorkflowRequestInfo messages."""
-        # We need to use a string reference until the class is defined
-        # This will be resolved later when the class is actually used
-        pass  # Will be registered lazily when needed
-
     async def _handle_sub_workflow_request(
         self,
         request: "SubWorkflowRequestInfo",
-        ctx: WorkflowContext[Any],
+        ctx: WorkflowContext["SubWorkflowResponse | SubWorkflowRequestInfo | RequestInfoMessage"],
     ) -> None:
         """Automatic routing to @intercepts_request methods.
 
         This is only active for executors that have @intercepts_request methods.
         """
-        # Try to match against registered interceptors
+        # Try to find a matching interceptor for the request and execute it
         for request_type, interceptor_list in self._request_interceptors.items():
-            matched = False
-
-            # Check type matching
-            if isinstance(request_type, type) and is_instance_of(request.data, request_type):
-                matched = True
-            elif (
-                isinstance(request_type, str)
-                and hasattr(request.data, "__class__")
-                and request.data.__class__.__name__ == request_type
-            ):
-                # String matching - could check against type name or other attributes
-                matched = True
-
-            if matched:
-                # Check each interceptor in the list for this request type
+            if self._request_matches_type(request.data, request_type):
                 for interceptor_info in interceptor_list:
-                    # Check workflow scope if specified
-                    from_workflow = interceptor_info["from_workflow"]
-                    if from_workflow and request.sub_workflow_id != from_workflow:
-                        continue  # Skip this interceptor, wrong workflow
-
-                    # Check additional condition
-                    condition = interceptor_info["condition"]
-                    if condition and not condition(request):
-                        continue
-
-                    # Call the interceptor method
-                    method = interceptor_info["method"]
-                    response = await method(request.data, ctx)
-
-                    # Check if interceptor handled it or needs to forward
-                    if isinstance(response, RequestResponse):
-                        # Add automatic correlation info to the response
-                        correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
-                            response,
-                            request.data,
-                            request.request_id,
+                    if self._interceptor_applies_to_request(request, interceptor_info):
+                        logger.debug(
+                            f"Executor {self.id} intercepting request {request.request_id} "
+                            f"of type {type(request.data).__name__} from sub-workflow {request.sub_workflow_id}"
                         )
-
-                        if correlated_response.is_handled:
-                            # Send response back to sub-workflow
-                            await ctx.send_message(
-                                SubWorkflowResponse(
-                                    request_id=request.request_id,
-                                    data=correlated_response.data,
-                                ),
-                                target_id=request.sub_workflow_id,
-                            )
-                        else:
-                            # Forward WITH CONTEXT PRESERVED
-                            # Update the data if interceptor provided a modified request
-                            if correlated_response.forward_request:
-                                request.data = correlated_response.forward_request
-
-                            # Send the inner request to RequestInfoExecutor to create external request
-                            await ctx.send_message(request)
-                    else:
-                        # Legacy support: direct return means handled
-                        await ctx.send_message(
-                            SubWorkflowResponse(
-                                request_id=request.request_id,
-                                data=response,
-                            ),
-                            target_id=request.sub_workflow_id,
-                        )
-                    return
-
+                        await self._execute_interceptor(request, interceptor_info, ctx)
+                        return  # Only the first matching interceptor is executed
+        logger.debug(
+            f"Executor {self.id} has no matching interceptor for request {request.request_id} "
+            f"of type {type(request.data).__name__} from sub-workflow {request.sub_workflow_id}; forwarding "
+            "inner request to RequestInfoExecutor for external handling."
+        )
         # No interceptor found - forward inner request to RequestInfoExecutor
-        # This sends the original request to RequestInfoExecutor
         await ctx.send_message(request.data)
+
+    def _request_matches_type(self, request_data: Any, request_type: type | str) -> bool:
+        """Check if request data matches the expected type.
+
+        Args:
+            request_data: The request data to check
+            request_type: The type to match against (can be a type or string)
+
+        Returns:
+            True if the request matches the type, False otherwise.
+        """
+        if isinstance(request_type, type):
+            return is_instance_of(request_data, request_type)
+
+        return (
+            isinstance(request_type, str)
+            and hasattr(request_data, "__class__")
+            and request_data.__class__.__name__ == request_type
+        )
+
+    def _interceptor_applies_to_request(
+        self, request: "SubWorkflowRequestInfo", interceptor_info: dict[str, Any]
+    ) -> bool:
+        """Check if an interceptor applies to the given request.
+
+        Args:
+            request: The sub-workflow request
+            interceptor_info: Information about the interceptor
+
+        Returns:
+            True if the interceptor should handle this request, False otherwise.
+        """
+        # Check workflow scope if specified
+        from_workflow = interceptor_info["from_workflow"]
+        if from_workflow and request.sub_workflow_id != from_workflow:
+            return False
+
+        # Check additional condition
+        condition = interceptor_info["condition"]
+        return not (condition and not condition(request))
+
+    async def _execute_interceptor(
+        self,
+        request: "SubWorkflowRequestInfo",
+        interceptor_info: dict[str, Any],
+        ctx: WorkflowContext["SubWorkflowResponse | SubWorkflowRequestInfo | RequestInfoMessage"],
+    ) -> None:
+        """Execute a single interceptor method.
+
+        Args:
+            request: The sub-workflow request
+            interceptor_info: Information about the interceptor method
+            ctx: The workflow context
+        """
+        method = interceptor_info["method"]
+        response = await method(request.data, ctx)
+
+        if not isinstance(response, RequestResponse):
+            raise RuntimeError(
+                f"Interceptor method {method.__name__} must return RequestResponse, got {type(response)}"
+            )
+
+        # Add automatic correlation info to the response
+        correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
+            response,
+            request.data,
+            request.request_id,
+        )
+
+        if correlated_response.is_handled:
+            logger.debug(
+                f"Executor {self.id}'s interceptor handled request {request.request_id} "
+                f"of type {type(request.data).__name__} from sub-workflow {request.sub_workflow_id}. "
+                f"Sending response back to sub-workflow."
+            )
+            # Send response back to sub-workflow that made the request
+            await ctx.send_message(
+                SubWorkflowResponse(
+                    request_id=request.request_id,
+                    data=correlated_response.data,
+                ),
+                target_id=request.sub_workflow_id,
+            )
+        else:
+            logger.debug(
+                f"Executor {self.id}'s interceptor did not handle request {request.request_id} "
+                f"of type {type(request.data).__name__} from sub-workflow {request.sub_workflow_id}. "
+                "Forwarding to RequestInfoExecutor for external handling."
+            )
+            # Forward the request with potentially modified data
+            # Update the data if interceptor provided a modified request
+            if correlated_response.forward_request:
+                request.data = correlated_response.forward_request
+
+            # Send the inner request to RequestInfoExecutor to create external request
+            await ctx.send_message(request)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -414,6 +462,15 @@ class Executor(AFBaseModel):
             output_types: List of output types for send_message()
             workflow_output_types: List of workflow output types for yield_output()
         """
+        # RequestInfoExecutor is allowed to handle SubWorkflowRequestInfo directly
+        # but other executors should use @intercepts_request
+        if message_type is SubWorkflowRequestInfo and self.__class__.__name__ != "RequestInfoExecutor":
+            raise ValueError(
+                f"Executor {self.__class__.__name__} cannot define a handler for "
+                "SubWorkflowRequestInfo directly. "
+                f"Use @intercepts_request decorator to intercept sub-workflow requests."
+            )
+
         if message_type in self._handlers:
             raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
 

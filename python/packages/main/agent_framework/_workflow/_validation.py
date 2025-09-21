@@ -217,7 +217,6 @@ class WorkflowGraphValidator:
         self._validate_type_compatibility()
         self._validate_graph_connectivity(start_executor_id)
         self._validate_self_loops()
-        self._validate_handler_ambiguity()
         self._validate_dead_ends()
         self._validate_cycles()
         self._validate_interceptor_uniqueness()
@@ -610,30 +609,6 @@ class WorkflowGraphValidator:
                 f"Self-loop detected: Executor '{edge.source_id}' connects to itself. "
                 f"This may cause infinite recursion if not properly handled with conditions."
             )
-
-    def _validate_handler_ambiguity(self) -> None:
-        """Check for potential ambiguity in message handlers.
-
-        Warns when executors have multiple handlers that could handle the same type,
-        which might lead to unexpected behavior.
-        """
-        for executor_id, executor in self._executors.items():
-            input_types = executor.input_types
-
-            # Check for duplicate input types
-            seen_types: set[type[Any]] = set()
-            duplicate_types: set[type[Any]] = set()
-
-            for input_type in input_types:
-                if input_type in seen_types:
-                    duplicate_types.add(input_type)
-                seen_types.add(input_type)
-
-            if duplicate_types:
-                logger.warning(
-                    f"Executor '{executor_id}' has multiple handlers for the same input types: "
-                    f"{[str(t) for t in duplicate_types]}. This may lead to ambiguous message routing."
-                )
 
     def _validate_dead_ends(self) -> None:
         """Identify executors that have no outgoing edges (potential dead ends).
