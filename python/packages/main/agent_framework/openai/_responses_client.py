@@ -1,4 +1,3 @@
-
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
