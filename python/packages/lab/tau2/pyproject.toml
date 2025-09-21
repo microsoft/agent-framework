@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-lab-gaia"
-description = "GAIA benchmark module for Microsoft Agent Framework."
+name = "agent-framework-lab-tau2"
+description = "Tau2 Benchmark for Agent Framework."
 authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,24 +23,24 @@ classifiers = [
 dependencies = [
   "agent-framework",
   "pydantic>=2.0.0",
-  "opentelemetry-api>=1.24.0",
-  "tqdm>=4.60.0",
-  "huggingface-hub>=0.20.0",
-  "orjson>=3.8.0",
+  "tiktoken>=0.11.0",
+  "loguru>=0.7.3",
+  "tau2@git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
 ]
-
-[project.scripts]
-gaia_viewer = "agent_framework_lab_gaia:viewer_main"
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["agent_framework_lab_gaia", "agent_framework.lab.gaia"]
+packages = ["agent_framework_lab_tau2", "agent_framework.lab.tau2"]
+
+[tool.setuptools.package-dir]
+"agent_framework.lab.tau2" = "namespace/agent_framework/lab/tau2"
+"agent_framework_lab_tau2" = "agent_framework_lab_tau2"
 
 [tool.setuptools.package-data]
-agent_framework_lab_gaia = ["py.typed"]
+agent_framework_lab_tau2 = ["py.typed"]
 
 [tool.ruff]
 line-length = 120
@@ -67,14 +67,24 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 implicit_reexport = true
-packages = ["agent_framework_lab_gaia"]
+packages = ["agent_framework_lab_tau2"]
+exclude = [
+  "data",
+]
+
+[tool.pyright]
+exclude = ["**/data"]
+
 
 [tool.poe]
 executor.type = "uv"
 include = "../../../shared_tasks.toml"
 
 [tool.poe.tasks]
-test = "pytest --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered tests"
+test = "pytest --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered tests"
+mypy = "mypy agent_framework_lab_tau2"
+setup-data = "python tests/setup_data.py"
+purge-data = "python tests/purge_data.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -83,4 +93,7 @@ addopts = "--strict-markers --strict-config"
 markers = [
   "unit: marks tests as unit tests",
   "integration: marks tests as integration tests",
+]
+env = [
+  "TAU2_DATA_DIR=data",
 ]
