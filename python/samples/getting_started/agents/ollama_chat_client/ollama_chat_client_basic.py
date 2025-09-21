@@ -11,9 +11,9 @@ from agent_framework.ollama import OllamaChatClient
 # https://ollama.com/
 
 
-def get_time():
+def get_time(location: str) -> str:
     """Get the current time."""
-    return f"The current time is {datetime.now().strftime('%I:%M %p')}."
+    return f"The current time in {location} is {datetime.now().strftime('%I:%M %p')}."
 
 
 async def non_streaming_example() -> None:
@@ -41,7 +41,7 @@ async def streaming_example() -> None:
         instructions="You are a helpful time agent answer in one sentence.",
         tools=get_time,
     )
-    query = "What time is it? Use a tool call"
+    query = "What time is it in San Francisco? Use a tool call"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run_stream(query):
