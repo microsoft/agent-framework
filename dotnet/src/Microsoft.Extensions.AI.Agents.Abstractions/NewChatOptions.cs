@@ -22,7 +22,7 @@ public class NewChatOptions : ChatOptions
     public BackgroundResponsesOptions? BackgroundResponsesOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets continuation token to get result of ongoing operation.
+    /// Gets or sets continuation token to continue an ongoing operation.
     /// </summary>
     public string? ContinuationToken { get; set; }
 

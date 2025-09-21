@@ -31,7 +31,7 @@ public class AgentRunOptions
     public BackgroundResponsesOptions? BackgroundResponsesOptions { get; set; }
 
     /// <summary>
-    /// Continuation token to get result of ongoing operation.
+    /// Gets or sets continuation token to continue an ongoing operation.
     /// </summary>
     public string? ContinuationToken { get; set; }
 }
