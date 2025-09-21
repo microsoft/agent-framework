@@ -43,7 +43,7 @@ class DispatchToExperts(Executor):
     """Dispatches the incoming prompt to all expert agent executors for parallel processing (fan out)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "dispatch_to_experts")
         self._expert_ids = expert_ids
 
     @handler
@@ -71,7 +71,7 @@ class AggregateInsights(Executor):
     """Aggregates expert agent responses into a single consolidated result (fan in)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "aggregate_insights")
         self._expert_ids = expert_ids
 
     @handler

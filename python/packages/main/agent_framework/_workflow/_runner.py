@@ -13,7 +13,14 @@ from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
 from ._events import WorkflowCompletedEvent, WorkflowEvent, _framework_event_origin
 from ._executor import Executor
-from ._runner_context import Message, RunnerContext
+from ._runner_context import (
+    _DATACLASS_MARKER,
+    _PYDANTIC_MARKER,
+    CheckpointState,
+    Message,
+    RunnerContext,
+    _decode_checkpoint_value,
+)
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
@@ -53,6 +60,7 @@ class Runner:
         self._workflow_id = workflow_id
         self._running = False
         self._resumed_from_checkpoint = False  # Track whether we resumed
+        self.graph_signature_hash: str | None = None
 
         # Set workflow ID in context if provided
         if workflow_id:
@@ -244,6 +252,19 @@ class Runner:
                 """Inner loop to deliver a single message through an edge runner."""
                 return await edge_runner.send_message(message, self._shared_state, self._ctx)
 
+            def _normalize_message_payload(message: Message) -> None:
+                data = message.data
+                if not isinstance(data, dict):
+                    return
+                if _PYDANTIC_MARKER not in data and _DATACLASS_MARKER not in data:
+                    return
+                try:
+                    decoded = _decode_checkpoint_value(data)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Failed to decode checkpoint payload during delivery: %s", exc)
+                    return
+                message.data = decoded
+
             # Handle SubWorkflowRequestInfo messages specially
             await _deliver_sub_workflow_requests(messages)
 
@@ -266,6 +287,7 @@ class Runner:
 
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
             for message in non_sub_workflow_messages:
+                _normalize_message_payload(message)
                 # Deliver a message through all edge runners associated with the source executor concurrently.
                 tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
                 if not tasks:
@@ -332,6 +354,8 @@ class Runner:
                 "superstep": self._iteration,
                 "checkpoint_type": checkpoint_category,
             }
+            if self.graph_signature_hash:
+                metadata["graph_signature"] = self.graph_signature_hash
             checkpoint_id = await self._ctx.create_checkpoint(metadata=metadata)
             logger.info(f"Created {checkpoint_type} checkpoint: {checkpoint_id}")
             return checkpoint_id
@@ -403,14 +427,45 @@ class Runner:
             return False
 
         try:
-            success = await self._ctx.restore_from_checkpoint(checkpoint_id)
-            if not success:
+            checkpoint = await self._ctx.load_checkpoint(checkpoint_id)
+            if not checkpoint:
+                logger.error(f"Checkpoint {checkpoint_id} not found")
                 return False
 
+            graph_hash = getattr(self, "graph_signature_hash", None)
+            checkpoint_hash = (checkpoint.metadata or {}).get("graph_signature")
+            if graph_hash and checkpoint_hash and graph_hash != checkpoint_hash:
+                raise ValueError(
+                    "Workflow graph has changed since the checkpoint was created. "
+                    "Please rebuild the original workflow before resuming."
+                )
+            if graph_hash and not checkpoint_hash:
+                logger.warning(
+                    "Checkpoint %s does not include graph signature metadata; skipping topology validation.",
+                    checkpoint_id,
+                )
+
+            state: CheckpointState = {
+                "messages": checkpoint.messages,
+                "shared_state": checkpoint.shared_state,
+                "executor_states": checkpoint.executor_states,
+                "iteration_count": checkpoint.iteration_count,
+                "max_iterations": checkpoint.max_iterations,
+            }
+            await self._ctx.set_checkpoint_state(state)
+            if checkpoint.workflow_id:
+                self._ctx.set_workflow_id(checkpoint.workflow_id)
+            self._workflow_id = checkpoint.workflow_id
+
             await self._restore_shared_state_from_context()
-            self.mark_resumed()  # mark resumed; iteration/max already restored from context
+            self.mark_resumed(
+                iteration=checkpoint.iteration_count,
+                max_iterations=checkpoint.max_iterations,
+            )
             logger.info(f"Successfully restored workflow from checkpoint: {checkpoint_id}")
             return True
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             return False
