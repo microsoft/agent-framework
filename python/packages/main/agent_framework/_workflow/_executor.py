@@ -275,6 +275,7 @@ class Executor(AFBaseModel):
                             "message_type": message_type,
                             "output_types": handler_spec.get("output_types", []),
                             "workflow_output_types": handler_spec.get("workflow_output_types", []),
+                            "ctx_annotation": handler_spec.get("ctx_annotation"),
                             "source": "class_method",  # Distinguish from instance handlers if needed
                         })
 
@@ -557,6 +558,7 @@ def handler(
             # Keep output_types and workflow_output_types in spec for validators
             "output_types": inferred_output_types,
             "workflow_output_types": inferred_workflow_output_types,
+            "ctx_annotation": ctx_annotation,
         }
 
         return wrapper

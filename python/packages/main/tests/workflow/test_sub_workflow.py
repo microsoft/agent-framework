@@ -12,9 +12,9 @@ from agent_framework import (
     RequestInfoMessage,
     RequestResponse,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowExecutor,
+    WorkflowOutputContext,
     handler,
     intercepts_request,
 )
@@ -54,7 +54,7 @@ class EmailValidator(Executor):
 
     @handler
     async def validate_request(
-        self, request: EmailValidationRequest, ctx: WorkflowContext[RequestInfoMessage | ValidationResult]
+        self, request: EmailValidationRequest, ctx: WorkflowOutputContext[RequestInfoMessage, ValidationResult]
     ) -> None:
         """Validate an email address."""
         # Extract domain and check if it's approved
@@ -62,7 +62,7 @@ class EmailValidator(Executor):
 
         if not domain:
             result = ValidationResult(email=request.email, is_valid=False, reason="Invalid email format")
-            await ctx.add_event(WorkflowCompletedEvent(data=result))
+            await ctx.yield_output(result)
             return
 
         # Request domain check from external source
@@ -71,7 +71,7 @@ class EmailValidator(Executor):
 
     @handler
     async def handle_domain_response(
-        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext[ValidationResult]
+        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowOutputContext[None, ValidationResult]
     ) -> None:
         """Handle domain check response with correlation."""
         # Use the original email from the correlated response
@@ -80,7 +80,7 @@ class EmailValidator(Executor):
             is_valid=response.data or False,
             reason="Domain approved" if response.data else "Domain not approved",
         )
-        await ctx.add_event(WorkflowCompletedEvent(data=result))
+        await ctx.yield_output(result)
 
 
 class ParentOrchestrator(Executor):
@@ -150,7 +150,7 @@ async def test_basic_sub_workflow() -> None:
             self.result = result
 
     parent = SimpleParent()
-    workflow_executor = WorkflowExecutor(validation_workflow, id="email_workflow")
+    workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
     main_request_info = RequestInfoExecutor(id="main_request_info")
 
     main_workflow = (
@@ -199,7 +199,7 @@ async def test_sub_workflow_with_interception():
 
     # Create parent workflow with interception
     parent = ParentOrchestrator(approved_domains={"example.com", "internal.org"})
-    workflow_executor = WorkflowExecutor(validation_workflow, id="email_workflow")
+    workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
     parent_request_info = RequestInfoExecutor(id="request_info")
 
     main_workflow = (
@@ -291,7 +291,7 @@ async def test_conditional_forwarding() -> None:
     )
 
     parent = ConditionalParent()
-    workflow_executor = WorkflowExecutor(validation_workflow, id="email_workflow")
+    workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
     parent_request_info = RequestInfoExecutor(id="request_info")
 
     main_workflow = (
@@ -377,8 +377,8 @@ async def test_workflow_scoped_interception() -> None:
     workflow_b = create_validation_workflow()
 
     parent = MultiWorkflowParent()
-    executor_a = WorkflowExecutor(workflow_a, id="workflow_a")
-    executor_b = WorkflowExecutor(workflow_b, id="workflow_b")
+    executor_a = WorkflowExecutor(workflow_a, "workflow_a")
+    executor_b = WorkflowExecutor(workflow_b, "workflow_b")
     parent_request_info = RequestInfoExecutor(id="request_info")
 
     main_workflow = (

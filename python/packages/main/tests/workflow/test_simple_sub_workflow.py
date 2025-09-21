@@ -8,6 +8,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
+    WorkflowOutputContext,
     handler,
 )
 
@@ -33,13 +34,11 @@ class SimpleSubExecutor(Executor):
         super().__init__(id="simple_sub")
 
     @handler
-    async def process(self, request: SimpleRequest, ctx: WorkflowContext[None]) -> None:
+    async def process(self, request: SimpleRequest, ctx: WorkflowOutputContext[None, SimpleResponse]) -> None:
         """Process a simple request."""
-        from agent_framework import WorkflowCompletedEvent
-
         # Just echo back with prefix and complete
         response = SimpleResponse(result=f"processed: {request.text}")
-        await ctx.add_event(WorkflowCompletedEvent(data=response))
+        await ctx.yield_output(response)
 
 
 class SimpleParent(Executor):
@@ -85,7 +84,7 @@ async def test_simple_sub_workflow():
 
     # Create parent workflow
     parent = SimpleParent()
-    workflow_executor = WorkflowExecutor(sub_workflow, id="sub_workflow")
+    workflow_executor = WorkflowExecutor(sub_workflow, "sub_workflow")
 
     main_workflow = (
         WorkflowBuilder()

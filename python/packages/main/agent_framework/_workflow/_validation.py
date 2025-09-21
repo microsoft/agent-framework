@@ -9,7 +9,8 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
-from ._executor import Executor
+from ._executor import Executor, RequestInfoExecutor
+from ._workflow_executor import WorkflowExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ class WorkflowGraphValidator:
                 - T_Out elements must be valid types (class) or typing generics (e.g., list[str]);
                     values like int() or 123 are invalid
         """
-        from ._workflow_context import WorkflowContext  # Local import to avoid cycles
+        from ._workflow_context import WorkflowContext, WorkflowOutputContext  # Local import to avoid cycles
 
         # Iterate over all registered executors in the workflow graph
         for executor_id, executor in self._executors.items():
@@ -271,7 +272,8 @@ class WorkflowGraphValidator:
                 if ctx_ann is inspect.Parameter.empty:
                     raise HandlerOutputAnnotationError(executor_id, handler_name, "missing type annotation for ctx")
 
-                # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
+                # Validate that the ctx annotation is WorkflowContext[...] or
+                # WorkflowOutputContext[...] and is properly parameterized
                 ctx_origin = get_origin(ctx_ann)
                 if ctx_origin is None:
                     # If it's exactly the WorkflowContext class, T_Out is missing (e.g., WorkflowContext)
@@ -281,11 +283,20 @@ class WorkflowGraphValidator:
                             handler_name,
                             "T_Out is missing; use WorkflowContext[None] or specify concrete types",
                         )
-                else:
-                    # The annotation is parameterized, but must be for WorkflowContext
-                    if ctx_origin is not WorkflowContext:
+                    if ctx_ann is WorkflowOutputContext:
                         raise HandlerOutputAnnotationError(
-                            executor_id, handler_name, f"ctx must be WorkflowContext[T], got {ctx_ann}"
+                            executor_id,
+                            handler_name,
+                            "T_Out and T_W_Out are missing; use "
+                            "WorkflowOutputContext[None, OutputType] or specify concrete types",
+                        )
+                else:
+                    # The annotation is parameterized, but must be for WorkflowContext or WorkflowOutputContext
+                    if ctx_origin is not WorkflowContext and ctx_origin is not WorkflowOutputContext:
+                        raise HandlerOutputAnnotationError(
+                            executor_id,
+                            handler_name,
+                            f"ctx must be WorkflowContext[T] or WorkflowOutputContext[T, U], got {ctx_ann}",
                         )
 
                 # Extract and validate T_Out
@@ -330,7 +341,8 @@ class WorkflowGraphValidator:
                     if ctx_ann is None:
                         continue  # Skip if no annotation stored
 
-                    # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
+                    # Validate that the ctx annotation is WorkflowContext[...]
+                    # or WorkflowOutputContext[...] and is properly parameterized
                     ctx_origin = get_origin(ctx_ann)
                     if ctx_origin is None:
                         if ctx_ann is WorkflowContext:
@@ -339,10 +351,19 @@ class WorkflowGraphValidator:
                                 handler_name,
                                 "T_Out is missing; use WorkflowContext[None] or specify concrete types",
                             )
-                    else:
-                        if ctx_origin is not WorkflowContext:
+                        if ctx_ann is WorkflowOutputContext:
                             raise HandlerOutputAnnotationError(
-                                executor_id, handler_name, f"ctx must be WorkflowContext[T], got {ctx_ann}"
+                                executor_id,
+                                handler_name,
+                                "T_Out and T_W_Out are missing; use "
+                                "WorkflowOutputContext[None, OutputType] or specify concrete types",
+                            )
+                    else:
+                        if ctx_origin is not WorkflowContext and ctx_origin is not WorkflowOutputContext:
+                            raise HandlerOutputAnnotationError(
+                                executor_id,
+                                handler_name,
+                                f"ctx must be WorkflowContext[T] or WorkflowOutputContext[T, U], got {ctx_ann}",
                             )
 
                     # Extract and validate T_Out
@@ -455,22 +476,14 @@ class WorkflowGraphValidator:
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
         if not source_output_types or not target_input_types:
-            # Suppress warnings for built-in workflow components where dynamic typing is expected
-            try:
-                from ._executor import RequestInfoExecutor  # local import to avoid cycles
-                from ._workflow_executor import WorkflowExecutor
-
-                builtin_types = (RequestInfoExecutor, WorkflowExecutor)
-            except Exception:
-                builtin_types = tuple()  # type: ignore[assignment]
-
-            if not source_output_types and not isinstance(source_executor, builtin_types):
+            # Suppress warnings for RequestInfoExecutor where dynamic typing is expected
+            if not source_output_types and not isinstance(source_executor, RequestInfoExecutor):
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
                     f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
-            if not target_input_types and not isinstance(target_executor, builtin_types):
+            if not target_input_types and not isinstance(target_executor, RequestInfoExecutor):
                 logger.warning(
                     f"Executor '{target_executor.id}' has no input type annotations. "
                     f"Type compatibility validation will be skipped for edges to this executor. "
@@ -692,8 +705,6 @@ class WorkflowGraphValidator:
         This prevents non-deterministic behavior where multiple executors could intercept
         the same request type from the same sub-workflow.
         """
-        from ._workflow_executor import WorkflowExecutor
-
         # Find all WorkflowExecutor instances in the workflow
         workflow_executors: dict[str, WorkflowExecutor] = {}
         for executor_id, executor in self._executors.items():
