@@ -61,9 +61,9 @@ async def test_executor_failed_event_emitted_on_direct_execute():
     with pytest.raises(RuntimeError, match="boom"):
         await failing.execute(
             0,
-            ["START"],  # source_executor_ids
-            shared_state,  # shared_state
-            ctx,  # runner_context
+            ["START"],
+            shared_state,
+            ctx,
         )
     drained = await ctx.drain_events()
     failed = [e for e in drained if isinstance(e, ExecutorFailedEvent)]
