@@ -30,7 +30,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions
             {
-                AllowLongRunningResponses = enableLongRunningResponses
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = enableLongRunningResponses
+                },
             },
         };
 
@@ -76,7 +79,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -123,7 +129,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = false
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = false
+                },
             }
         };
 
@@ -155,7 +164,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -185,7 +197,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -214,7 +229,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -258,7 +276,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -359,7 +380,10 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 

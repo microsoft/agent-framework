@@ -26,7 +26,10 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = enableLongRunningResponses
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = enableLongRunningResponses
+            },
         };
 
         // Act
@@ -54,7 +57,10 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
         };
 
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What is the capital of France?", options);
@@ -86,7 +92,10 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = false,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = false
+            },
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -106,7 +115,10 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -139,7 +151,10 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [
                 AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
                 AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
@@ -176,7 +191,10 @@ public sealed class NewPersistentAgentsChatClientTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
         };
 
         NewChatResponse response = (NewChatResponse)await client.GetResponseAsync("What time is it?", options);

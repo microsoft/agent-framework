@@ -26,7 +26,12 @@ public class AgentRunOptions
     }
 
     /// <summary>
-    /// Token to get result of a long-running operation.
+    /// Gets or sets options for background responses.
+    /// </summary>
+    public BackgroundResponsesOptions? BackgroundResponsesOptions { get; set; }
+
+    /// <summary>
+    /// Continuation token to get result of ongoing operation.
     /// </summary>
     public string? ContinuationToken { get; set; }
 }

@@ -27,7 +27,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = enableLongRunningResponses
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = enableLongRunningResponses
+            }
         };
 
         string responseText = "";
@@ -66,7 +69,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            }
         };
 
         string? firstContinuationToken = null;
@@ -113,7 +119,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = false,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = false
+            },
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -139,7 +148,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -183,7 +195,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [
                 AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
                 AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
@@ -209,7 +224,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [
                 AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
                 AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
@@ -310,7 +328,10 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
 
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
         };
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u);

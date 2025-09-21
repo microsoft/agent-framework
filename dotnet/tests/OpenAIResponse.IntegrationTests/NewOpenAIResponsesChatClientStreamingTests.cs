@@ -43,7 +43,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Arrange
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = enableLongRunningResponses
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = enableLongRunningResponses
+            },
         };
 
         string responseText = "";
@@ -80,7 +83,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Part 1: Start the background run and get the first part of the response.
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
         };
 
         string? firstContinuationToken = null;
@@ -126,7 +132,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Arrange
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = false,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = false
+            },
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -150,7 +159,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -170,7 +182,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [
                 AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
                 AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
@@ -194,7 +209,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
@@ -236,7 +254,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Part 1: Start the background run.
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true,
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
             Tools = [
                 AIFunctionFactory.Create(() => new DateTime(2025, 09, 16, 05, 43,00), new AIFunctionFactoryOptions { Name = "GetCurrentTime" }),
                 AIFunctionFactory.Create((DateTime time, string location) => $"It's cloudy in {location} at {time}", new AIFunctionFactoryOptions { Name = "GetWeather" })
@@ -280,9 +301,14 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
     public async Task GetStreamingResponseAsync_WithFunctionCallingInterrupted_AllowsToContinueItAsync()
     {
         // Part 1: Start the background run.
-        NewChatOptions options = new();
-        options.AllowLongRunningResponses = true;
-        options.Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })];
+        NewChatOptions options = new()
+        {
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
+            Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
+        };
 
         string? continuationToken = null;
 
@@ -319,7 +345,10 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         // Arrange
         NewChatOptions options = new()
         {
-            AllowLongRunningResponses = true
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
         };
 
         IAsyncEnumerable<NewChatResponseUpdate> streamingResponse = this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u);

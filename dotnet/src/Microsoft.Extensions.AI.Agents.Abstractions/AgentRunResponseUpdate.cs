@@ -146,7 +146,7 @@ public class AgentRunResponseUpdate
     public DateTimeOffset? CreatedAt { get; set; }
 
     /// <summary>
-    /// Represent a token that can be used to retrieve result of a long-running operation.
+    /// Continuation token to continue the operation that generated this response.
     /// </summary>
     public string? ContinuationToken { get; set; }
 

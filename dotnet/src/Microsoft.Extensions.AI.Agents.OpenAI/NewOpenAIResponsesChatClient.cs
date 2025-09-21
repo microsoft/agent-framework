@@ -982,9 +982,9 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
     private static bool IsLongRunningResponsesModeEnabled(ChatOptions? options)
     {
         // If specified in options, use that.
-        if (options is NewChatOptions { AllowLongRunningResponses: { } allowLongRunningResponses })
+        if (options is NewChatOptions { BackgroundResponsesOptions.Allow: { } allow })
         {
-            return allowLongRunningResponses;
+            return allow;
         }
 
         return false;

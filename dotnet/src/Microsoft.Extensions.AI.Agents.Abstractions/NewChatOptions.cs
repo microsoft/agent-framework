@@ -17,12 +17,12 @@ namespace Microsoft.Extensions.AI;
 public class NewChatOptions : ChatOptions
 {
     /// <summary>
-    /// Specifies whether the chat client should allow long-running responses if supported by underlying service.
+    /// Gets or sets options for background responses.
     /// </summary>
-    public bool? AllowLongRunningResponses { get; set; }
+    public BackgroundResponsesOptions? BackgroundResponsesOptions { get; set; }
 
     /// <summary>
-    /// Token to get result of a long-running operation.
+    /// Gets or sets continuation token to get result of ongoing operation.
     /// </summary>
     public string? ContinuationToken { get; set; }
 
@@ -58,8 +58,11 @@ public class NewChatOptions : ChatOptions
             options.Tools = new List<AITool>(this.Tools);
         }
 
-        // The following properties are specific to NewChatOptions
-        options.AllowLongRunningResponses = this.AllowLongRunningResponses;
+        if (this.BackgroundResponsesOptions is not null)
+        {
+            options.BackgroundResponsesOptions = new BackgroundResponsesOptions(this.BackgroundResponsesOptions);
+        }
+
         options.ContinuationToken = this.ContinuationToken;
 
         return options;

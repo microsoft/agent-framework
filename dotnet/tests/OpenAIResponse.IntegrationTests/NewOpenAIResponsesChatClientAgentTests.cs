@@ -28,9 +28,10 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         {
             ChatOptions = new NewChatOptions
             {
-                // Should we allow enabling long-running responses for agents via options?
-                // Or only at initialization?
-                AllowLongRunningResponses = enableLongRunningResponses
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = enableLongRunningResponses
+                },
             },
         };
 
@@ -60,7 +61,10 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -94,7 +98,10 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = false
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = false
+                },
             }
         };
 
@@ -118,7 +125,10 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -154,7 +164,10 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
@@ -196,7 +209,10 @@ public sealed class NewOpenAIResponsesChatClientAgentTests
         {
             ChatOptions = new NewChatOptions()
             {
-                AllowLongRunningResponses = true
+                BackgroundResponsesOptions = new BackgroundResponsesOptions
+                {
+                    Allow = true
+                },
             }
         };
 
