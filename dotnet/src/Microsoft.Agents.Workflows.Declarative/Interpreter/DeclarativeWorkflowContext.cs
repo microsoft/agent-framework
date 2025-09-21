@@ -78,13 +78,21 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     /// <inheritdoc/>
     public ValueTask SendMessageAsync(object message, string? targetId = null) => this.Source.SendMessageAsync(message, targetId);
 
-    private async ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true)
+    private ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true)
     {
         bool isManagedScope =
-            ManagedScopes.Contains(Throw.IfNull(scopeName)) ||
-            (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal));
+            scopeName != null && // null scope cannot be managed
+            (ManagedScopes.Contains(scopeName) ||
+            (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal)));
 
-        ValueTask task = value switch
+        if (!isManagedScope)
+        {
+            // Not a managed scope, just pass through.  This is valid when a declarative
+            // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
+            return this.Source.QueueStateUpdateAsync(key, value, scopeName);
+        }
+
+        return value switch
         {
             null => QueueEmptyStateAsync(),
             UnassignedValue => QueueEmptyStateAsync(),
@@ -93,8 +101,6 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             DataValue dataValue => QueueDataValueStateAsync(dataValue),
             _ => QueueNativeStateAsync(value),
         };
-
-        await task.ConfigureAwait(false);
 
         ValueTask QueueEmptyStateAsync()
         {
