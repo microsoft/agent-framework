@@ -118,8 +118,7 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
     e2 = _FakeAgentExec("agentB", "Two")
 
     # Sync callback with ctx parameter (should run via asyncio.to_thread)
-    def summarize_sync(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
-        _ = ctx  # Suppress unused parameter warning
+    def summarize_sync(results: list[AgentExecutorResponse], _ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
         texts: list[str] = []
         for r in results:
             msgs: list[ChatMessage] = r.agent_run_response.messages
