@@ -74,7 +74,7 @@ class WorkflowRunResult(list[WorkflowEvent]):
         Returns:
             A list of outputs produced by the workflow during its execution.
         """
-        return [event.output for event in self if isinstance(event, WorkflowOutputEvent)]
+        return [event.data for event in self if isinstance(event, WorkflowOutputEvent)]
 
     def get_completed_event(self) -> WorkflowCompletedEvent | None:
         """Get the completed event from the workflow run result.

@@ -276,5 +276,5 @@ class WorkflowOutputContext(WorkflowContext[T_Out], Generic[T_Out, T_W_Out]):
                     declared on this context.
         """
         with _framework_event_origin():
-            event = WorkflowOutputEvent(output=output, source_executor_id=self._executor_id)
+            event = WorkflowOutputEvent(data=output, source_executor_id=self._executor_id)
         await self._runner_context.add_event(event)
