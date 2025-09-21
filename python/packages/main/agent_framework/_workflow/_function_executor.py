@@ -166,7 +166,7 @@ class FunctionExecutor(Executor):
                 return await asyncio.to_thread(func, message)  # type: ignore
 
         # Now register our instance handler
-        self.register_instance_handler(
+        self._register_instance_handler(
             name=func.__name__,
             func=wrapped_func,
             message_type=message_type,

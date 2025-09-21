@@ -213,7 +213,7 @@ class TestFunctionExecutor:
             await ctx.send_message(message)
 
         with pytest.raises(ValueError, match="Handler for type .* already registered"):
-            func_exec.register_instance_handler(
+            func_exec._register_instance_handler(
                 name="second",
                 func=second_handler,
                 message_type=str,

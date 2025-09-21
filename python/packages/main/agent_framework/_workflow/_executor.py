@@ -67,7 +67,7 @@ class WorkflowCheckpointSummary:
 
 
 class Executor(AFBaseModel):
-    """An executor is a component that processes messages in a workflow."""
+    """Base class for all executors in a workflow."""
 
     # Provide a default so static analyzers (e.g., pyright) don't require passing `id`.
     # Runtime still sets a concrete value in __init__.
@@ -116,6 +116,9 @@ class Executor(AFBaseModel):
         source_span_ids: list[str] | None = None,
     ) -> None:
         """Execute the executor with a given message and context parameters.
+
+        - Do not call this method directly - it is invoked by the workflow engine.
+        - Do not override this method. Instead, define handlers using @handler decorator.
 
         Args:
             message: The message to be processed by the executor.
@@ -255,7 +258,7 @@ class Executor(AFBaseModel):
 
                         # RequestInfoExecutor is allowed to handle SubWorkflowRequestInfo directly
                         # but other executors should use @intercepts_request
-                        if message_type is SubWorkflowRequestInfo and self.__class__.__name__ != "RequestInfoExecutor":
+                        if message_type is SubWorkflowRequestInfo and not isinstance(self, RequestInfoExecutor):
                             raise ValueError(
                                 f"Executor {self.__class__.__name__} cannot define a handler for "
                                 "SubWorkflowRequestInfo directly. "
@@ -443,7 +446,7 @@ class Executor(AFBaseModel):
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
 
-    def register_instance_handler(
+    def _register_instance_handler(
         self,
         name: str,
         func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]],
@@ -462,9 +465,7 @@ class Executor(AFBaseModel):
             output_types: List of output types for send_message()
             workflow_output_types: List of workflow output types for yield_output()
         """
-        # RequestInfoExecutor is allowed to handle SubWorkflowRequestInfo directly
-        # but other executors should use @intercepts_request
-        if message_type is SubWorkflowRequestInfo and self.__class__.__name__ != "RequestInfoExecutor":
+        if message_type is SubWorkflowRequestInfo:
             raise ValueError(
                 f"Executor {self.__class__.__name__} cannot define a handler for "
                 "SubWorkflowRequestInfo directly. "
@@ -962,6 +963,17 @@ class RequestInfoExecutor(Executor):
             await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 
         await self._clear_pending_request_snapshot(request_id, ctx)
+
+    def _register_instance_handler(
+        self,
+        name: str,
+        func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]],
+        message_type: type,
+        ctx_annotation: Any,
+        output_types: list[type],
+        workflow_output_types: list[type],
+    ) -> None:
+        raise NotImplementedError("Cannot register handlers on RequestInfoExecutor")
 
     async def _record_pending_request_snapshot(
         self,
