@@ -79,16 +79,17 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     private ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true)
     {
-        if (scopeName is null || !ManagedScopes.Contains(scopeName))
+        bool isManagedScope =
+            scopeName != null && // null scope cannot be managed
+            (ManagedScopes.Contains(scopeName) ||
+            (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal)));
+
+        if (!isManagedScope)
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
             return this.Source.QueueStateUpdateAsync(key, value, scopeName);
         }
-
-        bool isManagedScope =
-            ManagedScopes.Contains(scopeName) ||
-            (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal));
 
         return value switch
         {

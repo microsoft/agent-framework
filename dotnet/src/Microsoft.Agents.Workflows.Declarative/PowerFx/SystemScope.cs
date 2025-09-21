@@ -21,7 +21,6 @@ internal static class SystemScope
         public const string Bot = nameof(Bot);
         public const string Conversation = nameof(Conversation);
         public const string ConversationId = nameof(SystemVariables.ConversationId);
-        public const string InternalId = nameof(InternalId);
         public const string LastMessage = nameof(LastMessage);
         public const string LastMessageId = nameof(SystemVariables.LastMessageId);
         public const string LastMessageText = nameof(SystemVariables.LastMessageText);
@@ -36,7 +35,6 @@ internal static class SystemScope
         Names.Bot,
         Names.Conversation,
         Names.ConversationId,
-        Names.InternalId,
         Names.LastMessage,
         Names.LastMessageId,
         Names.LastMessageText,
@@ -63,7 +61,6 @@ internal static class SystemScope
                 new NamedValue("InTestMode", FormulaValue.New(false))),
             VariableScopeNames.System);
         state.Set(Names.ConversationId, FormulaType.String.NewBlank(), VariableScopeNames.System);
-        state.Set(Names.InternalId, FormulaType.String.NewBlank(), VariableScopeNames.System);
 
         state.Set(
             Names.Recognizer,
