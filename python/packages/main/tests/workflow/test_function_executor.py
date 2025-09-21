@@ -9,8 +9,10 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
     executor,
 )
+from agent_framework._workflow._workflow_context import WorkflowOutputContext
 
 
 class TestFunctionExecutor:
@@ -167,18 +169,25 @@ class TestFunctionExecutor:
             await ctx.send_message(result)
 
         @executor(id="reverse")
-        async def reverse_text(text: str, ctx: WorkflowContext[Any]) -> None:
+        async def reverse_text(text: str, ctx: WorkflowOutputContext[Any, str]) -> None:
             result = text[::-1]
-            await ctx.add_event(WorkflowCompletedEvent(result))
+            await ctx.yield_output(result)
+            await ctx.add_event(WorkflowCompletedEvent())
 
         workflow = WorkflowBuilder().add_edge(to_upper, reverse_text).set_start_executor(to_upper).build()
 
         # Run workflow
         events = await workflow.run("hello world")
         completed = events.get_completed_event()
+        output_event = None
+        for event in events:
+            if isinstance(event, WorkflowOutputEvent):
+                output_event = event
+                break
 
         assert completed is not None
-        assert completed.data == "DLROW OLLEH"
+        assert output_event is not None
+        assert output_event.data == "DLROW OLLEH"
 
     def test_can_handle_method(self):
         """Test that can_handle method works with instance handlers."""
@@ -386,9 +395,10 @@ class TestFunctionExecutor:
             # In practice, the wrapper handles the async conversion
 
         @executor(id="async_reverse")
-        async def reverse_async(text: str, ctx: WorkflowContext[Any]):
+        async def reverse_async(text: str, ctx: WorkflowOutputContext[Any, str]):
             result = text[::-1]
-            await ctx.add_event(WorkflowCompletedEvent(result))
+            await ctx.yield_output(result)
+            await ctx.add_event(WorkflowCompletedEvent())
 
         # Verify the executors can handle their input types
         assert to_upper_sync.can_handle("hello")

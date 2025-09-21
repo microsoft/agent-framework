@@ -299,6 +299,7 @@ class Runner:
                             final_messages = message.data.agent_run_response.messages
                             final_text = final_messages[-1].text if final_messages else "(no content)"
                             with _framework_event_origin():
+                                # TODO(moonbox3): does user expect this event to contain the final text?
                                 completion_event = WorkflowCompletedEvent(final_text)
                             await self._ctx.add_event(completion_event)
                             continue  # Terminal handled
@@ -322,6 +323,7 @@ class Runner:
                             final_messages = message.data.agent_run_response.messages
                             final_text = final_messages[-1].text if final_messages else "(no content)"
                             with _framework_event_origin():
+                                # TODO(moonbox3): does user expect this event to contain the final text?
                                 completion_event = WorkflowCompletedEvent(final_text)
                             await self._ctx.add_event(completion_event)
                             continue

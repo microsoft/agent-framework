@@ -26,6 +26,7 @@ from agent_framework import (
     WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,  # type: ignore  # noqa: E402
+    WorkflowOutputEvent,
     handler,
 )
 from agent_framework._agents import BaseAgent
@@ -170,14 +171,19 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert req_event is not None
 
     completed: WorkflowCompletedEvent | None = None
+    output: ChatMessage | None = None
     async for ev in wf.send_responses_streaming({
         req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     }):
         if isinstance(ev, WorkflowCompletedEvent):
             completed = ev
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = ev.data  # type: ignore[assignment]
+        if completed is not None and output is not None:
             break
     assert completed is not None
-    assert isinstance(getattr(completed, "data", None), ChatMessage)
+    assert output is not None
+    assert isinstance(output, ChatMessage)
 
 
 async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
@@ -247,7 +253,10 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
 
     completed = next((e for e in events if isinstance(e, WorkflowCompletedEvent)), None)
     assert completed is not None
-    data = getattr(completed, "data", None)
+    # Check that we got workflow output via WorkflowOutputEvent
+    output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
+    assert output_event is not None
+    data = output_event.data
     assert isinstance(data, ChatMessage)
     assert data.role == Role.ASSISTANT
 

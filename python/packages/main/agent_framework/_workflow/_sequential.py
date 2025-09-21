@@ -27,9 +27,8 @@ Why include the small internal adapter executors?
 - Agent response adaptation ("to-conversation:<participant>"): agents (via AgentExecutor)
   emit `AgentExecutorResponse`. The adapter converts that to a `list[ChatMessage]`
   using `full_conversation` so original prompts aren't lost when chaining.
-- Explicit completion ("complete"): emits a `WorkflowCompletedEvent` with the final
-  conversation list, giving a consistent terminal payload shape for both agents and
-  custom executors.
+- Explicit completion ("complete"): yields the final conversation list and emits a `WorkflowCompletedEvent`
+  giving a consistent terminal payload shape for both agents and custom executors.
 
 These adapters are first-class executors by design so they are type-checked at edges,
 observable (ExecutorInvoke/Completed events), and easily testable/reusable. Their IDs are
@@ -51,7 +50,7 @@ from ._executor import (
     handler,
 )
 from ._workflow import Workflow, WorkflowBuilder
-from ._workflow_context import WorkflowContext
+from ._workflow_context import WorkflowContext, WorkflowOutputContext
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +87,11 @@ class _CompleteWithConversation(Executor):
     """Terminates the workflow by emitting the final conversation context."""
 
     @handler
-    async def complete(self, conversation: list[ChatMessage], ctx: WorkflowContext[Any]) -> None:
-        await ctx.add_event(WorkflowCompletedEvent(data=list(conversation)))
+    async def complete(
+        self, conversation: list[ChatMessage], ctx: WorkflowOutputContext[Any, list[ChatMessage]]
+    ) -> None:
+        await ctx.yield_output(list(conversation))
+        await ctx.add_event(WorkflowCompletedEvent())
 
 
 class SequentialBuilder:
@@ -148,7 +150,7 @@ class SequentialBuilder:
             - If Agent (or AgentExecutor): pass conversation to the agent, then convert response
               to conversation via _ResponseToConversation
             - Else (custom Executor): pass conversation directly to the executor
-        - _CompleteWithConversation emits WorkflowCompletedEvent with the final conversation
+        - _CompleteWithConversation yields the final conversation and emits WorkflowCompletedEvent
         """
         if not self._participants:
             raise ValueError("No participants provided. Call .participants([...]) first.")

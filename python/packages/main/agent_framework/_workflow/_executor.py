@@ -547,15 +547,16 @@ class Executor(AFBaseModel):
 
 
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
+ContextT = TypeVar("ContextT", bound="WorkflowContext[Any]")
 
 
 def handler(
-    func: Callable[[ExecutorT, Any, WorkflowContext[Any] | WorkflowOutputContext[Any, Any]], Awaitable[Any]],
+    func: Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
 ) -> (
-    Callable[[ExecutorT, Any, WorkflowContext[Any] | WorkflowOutputContext[Any, Any]], Awaitable[Any]]
+    Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]
     | Callable[
-        [Callable[[ExecutorT, Any, WorkflowContext[Any] | WorkflowOutputContext[Any, Any]], Awaitable[Any]]],
-        Callable[[ExecutorT, Any, WorkflowContext[Any] | WorkflowOutputContext[Any, Any]], Awaitable[Any]],
+        [Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]],
+        Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
     ]
 ):
     """Decorator to register a handler for an executor.
@@ -577,8 +578,8 @@ def handler(
     """
 
     def decorator(
-        func: Callable[[ExecutorT, Any, WorkflowContext[Any] | WorkflowOutputContext[Any, Any]], Awaitable[Any]],
-    ) -> Callable[[ExecutorT, Any, WorkflowContext[Any] | WorkflowOutputContext[Any, Any]], Awaitable[Any]]:
+        func: Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
+    ) -> Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]:
         # Extract the message type from a handler function.
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
@@ -601,9 +602,7 @@ def handler(
             )
 
         @functools.wraps(func)
-        async def wrapper(
-            self: ExecutorT, message: Any, ctx: WorkflowContext[Any] | WorkflowOutputContext[Any, Any]
-        ) -> Any:
+        async def wrapper(self: ExecutorT, message: Any, ctx: ContextT) -> Any:
             """Wrapper function to call the handler."""
             return await func(self, message, ctx)
 

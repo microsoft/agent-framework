@@ -31,7 +31,7 @@ from agent_framework._pydantic import AFBaseModel
 from ._events import WorkflowCompletedEvent, WorkflowEvent
 from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
-from ._workflow_context import WorkflowContext
+from ._workflow_context import WorkflowContext, WorkflowOutputContext
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -840,7 +840,9 @@ class MagenticOrchestratorExecutor(Executor):
     async def handle_start_message(
         self,
         message: MagenticStartMessage,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest],
+        context: WorkflowOutputContext[
+            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
+        ],
     ) -> None:
         """Handle the initial start message to begin orchestration."""
         if getattr(self, "_terminated", False):
@@ -877,7 +879,7 @@ class MagenticOrchestratorExecutor(Executor):
 
         # Start the inner loop
         ctx2 = cast(
-            WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+            WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
             context,
         )
         await self._run_inner_loop(ctx2)
@@ -886,7 +888,7 @@ class MagenticOrchestratorExecutor(Executor):
     async def handle_response_message(
         self,
         message: MagenticResponseMessage,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Handle responses from agents."""
         if getattr(self, "_terminated", False):
@@ -914,9 +916,9 @@ class MagenticOrchestratorExecutor(Executor):
     async def handle_plan_review_response(
         self,
         response: RequestResponse[MagenticPlanReviewRequest, MagenticPlanReviewReply],
-        context: WorkflowContext[
+        context: WorkflowOutputContext[
             # may broadcast ledger next, or ask for another round of review
-            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest
+            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
         ],
     ) -> None:
         if getattr(self, "_terminated", False):
@@ -968,7 +970,7 @@ class MagenticOrchestratorExecutor(Executor):
 
             # Enter the normal coordination loop
             ctx2 = cast(
-                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+                WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
                 context,
             )
             await self._run_inner_loop(ctx2)
@@ -997,7 +999,7 @@ class MagenticOrchestratorExecutor(Executor):
                 self._context.chat_history.append(self._task_ledger)
                 # No further review requests; proceed directly into coordination
             ctx2 = cast(
-                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+                WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
                 context,
             )
             await self._run_inner_loop(ctx2)
@@ -1032,7 +1034,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _run_outer_loop(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run the outer orchestration loop - planning phase."""
         if self._context is None:
@@ -1056,7 +1058,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _run_inner_loop(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run the inner orchestration loop. Coordination phase. Serialized with a lock."""
         if self._context is None or self._task_ledger is None:
@@ -1066,7 +1068,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _run_inner_loop_locked(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run inner loop with exclusive access."""
         # Narrow optional context for the remainder of this method
@@ -1154,7 +1156,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _reset_and_replan(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Reset context and replan."""
         if self._context is None:
@@ -1178,7 +1180,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _prepare_final_answer(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Prepare the final answer using the manager."""
         if self._context is None:
@@ -1188,14 +1190,15 @@ class MagenticOrchestratorExecutor(Executor):
         final_answer = await self._manager.prepare_final_answer(self._context.model_copy(deep=True))
 
         # Emit a completed event for the workflow
-        await context.add_event(WorkflowCompletedEvent(final_answer))
+        await context.yield_output(final_answer)
+        await context.add_event(WorkflowCompletedEvent())
 
         if self._result_callback:
             await self._result_callback(final_answer)
 
     async def _check_within_limits_or_complete(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowOutputContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> bool:
         """Check if orchestrator is within operational limits."""
         if self._context is None:
@@ -1221,8 +1224,9 @@ class MagenticOrchestratorExecutor(Executor):
                         author_name=MAGENTIC_MANAGER_NAME,
                     )
 
-                # Emit a completed event with the partial result
-                await context.add_event(WorkflowCompletedEvent(partial_result))
+                # Yield the partial result and signal completion
+                await context.yield_output(partial_result)
+                await context.add_event(WorkflowCompletedEvent())
 
                 if self._result_callback:
                     await self._result_callback(partial_result)
