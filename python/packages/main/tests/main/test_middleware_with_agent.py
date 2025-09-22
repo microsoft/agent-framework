@@ -23,6 +23,7 @@ from agent_framework._middleware import (
     AgentRunContext,
     FunctionInvocationContext,
     FunctionMiddleware,
+    MiddlewareType,
 )
 
 from .conftest import MockChatClient
@@ -1335,7 +1336,7 @@ class TestMiddlewareDecoratorLogic:
 
         # Check that decorator markers were set
         assert hasattr(test_agent_middleware, "_middleware_type")
-        assert test_agent_middleware._middleware_type == "agent"  # type: ignore[attr-defined]
+        assert test_agent_middleware._middleware_type == MiddlewareType.AGENT  # type: ignore[attr-defined]
 
         assert hasattr(test_function_middleware, "_middleware_type")
-        assert test_function_middleware._middleware_type == "function"  # type: ignore[attr-defined]
+        assert test_function_middleware._middleware_type == MiddlewareType.FUNCTION  # type: ignore[attr-defined]
