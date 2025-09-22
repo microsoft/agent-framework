@@ -121,6 +121,9 @@ async Task AFAgentAsync()
     }
 
     // Clean up
-    await assistantsClient.DeleteThreadAsync(((ChatClientAgentThread)thread).ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantsClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }
