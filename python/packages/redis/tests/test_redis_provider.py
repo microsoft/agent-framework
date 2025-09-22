@@ -441,7 +441,7 @@ class TestEnsureIndex:
         with pytest.raises(ServiceInitializationError) as exc:
             await provider._ensure_index()
 
-        assert "schema does not match" in str(exc.value)
+        assert "incompatible with the current configuration" in str(exc.value)
         assert "overwrite_index=True" in str(exc.value)
 
         # Should not call create when schema validation fails
