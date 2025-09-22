@@ -209,9 +209,7 @@ public class AgentRunResponse
             structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
             return failureReason is null;
         }
-#pragma warning disable CA1031 // Do not catch general exception types
         catch
-#pragma warning restore CA1031
         {
             structuredOutput = default;
             return false;

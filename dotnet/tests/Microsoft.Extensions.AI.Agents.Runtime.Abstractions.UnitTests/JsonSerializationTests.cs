@@ -478,9 +478,7 @@ public class JsonSerializationTests
         Assert.Equal(253, dataInResult.Length);
 
         // Verify that the truncated data matches the first 250 characters of the original
-#pragma warning disable CA1846 // Prefer 'AsSpan' over 'Substring'
         Assert.Equal(rawText.Substring(0, 250), dataInResult.Substring(0, 250));
-#pragma warning restore CA1846
     }
 
     [Fact]

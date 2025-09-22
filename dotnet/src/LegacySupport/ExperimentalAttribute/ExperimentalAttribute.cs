@@ -47,9 +47,7 @@ internal sealed class ExperimentalAttribute : Attribute
     /// </summary>
     /// <value>The format string that represents a URL to corresponding documentation.</value>
     /// <remarks>An example format string is <c>https://contoso.com/obsoletion-warnings/{0}</c>.</remarks>
-#pragma warning disable S3996 // URI properties should not be strings
     public string? UrlFormat { get; set; }
-#pragma warning restore S3996 // URI properties should not be strings
 }
 
 #endif

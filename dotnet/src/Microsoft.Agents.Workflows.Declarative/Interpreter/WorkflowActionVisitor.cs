@@ -221,7 +221,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         QuestionExecutor questionExecutor = new(item, this._workflowState);
         this.ContinueWith(questionExecutor);
-        this._workflowModel.AddLink(actionId, postId, message => QuestionExecutor.IsComplete(message));
+        this._workflowModel.AddLink(actionId, postId, QuestionExecutor.IsComplete);
 
         string prepareId = QuestionExecutor.Steps.Prepare(actionId);
         this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !QuestionExecutor.IsComplete(message));
@@ -234,7 +234,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         string captureId = QuestionExecutor.Steps.Capture(actionId);
         this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, questionExecutor.CaptureResponseAsync, emitResult: false), parentId);
 
-        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, questionExecutor.CompleteAsync), parentId, message => QuestionExecutor.IsComplete(message));
+        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, questionExecutor.CompleteAsync), parentId, QuestionExecutor.IsComplete);
         this._workflowModel.AddLink(captureId, prepareId, message => !QuestionExecutor.IsComplete(message));
     }
 

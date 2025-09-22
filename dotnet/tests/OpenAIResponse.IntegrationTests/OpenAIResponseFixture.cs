@@ -18,10 +18,8 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
 
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private OpenAIResponseClient _openAIResponseClient;
-    private ChatClientAgent _agent;
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+    private OpenAIResponseClient _openAIResponseClient = null!;
+    private ChatClientAgent _agent = null!;
 
     public AIAgent Agent => this._agent;
 
