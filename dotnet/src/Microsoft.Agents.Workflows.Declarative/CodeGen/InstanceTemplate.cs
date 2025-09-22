@@ -47,7 +47,14 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write(".Session);");
+            this.Write(".Session");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InstanceTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.HasProvider ? ", options.AgentProvider" : ""));
+            
+            #line default
+            #line hidden
+            this.Write(");");
             return this.GenerationEnvironment.ToString();
         }
     }

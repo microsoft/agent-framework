@@ -19,7 +19,7 @@ internal static class IWorkflowContextExtensions
         context.AddEventAsync(new DeclarativeActionCompletedEvent(action));
 
     public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, object? result = null, CancellationToken cancellationToken = default) =>
-        context.SendMessageAsync(new ExecutorResultMessage(id, result));
+        context.SendMessageAsync(new ActionExecutorResult(id, result));
 
     public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.VariableScopeName));

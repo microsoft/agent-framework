@@ -14,6 +14,7 @@ internal partial class AddConversationMessageTemplate
     {
         this.Model = this.Initialize(model);
         this.Message = Throw.IfNull(this.Model.Message?.Path);
+        this.UseAgentProvider = true;
     }
 
     public AddConversationMessage Model { get; }

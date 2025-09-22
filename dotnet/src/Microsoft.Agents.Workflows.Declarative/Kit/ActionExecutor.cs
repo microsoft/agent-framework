@@ -2,19 +2,44 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
 /// <summary>
+/// Base class for action executors that do not consume the input message (most).
+/// </summary>
+/// <param name="id">The executor id</param>
+/// <param name="session">Session to support formula expressions.</param>
+public abstract class ActionExecutor(string id, FormulaSession session) : ActionExecutor<ActionExecutorResult>(id, session)
+{
+    /// <inheritdoc/>
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken = default)
+    {
+        await this.ExecuteAsync(context, cancellationToken).ConfigureAwait(false);
+        return default;
+    }
+
+    /// <summary>
+    /// Executes the core logic of the action.
+    /// </summary>
+    /// <param name="context">The workflow execution context providing messaging and state services.</param>
+    /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
+    protected abstract ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Base class for an action executor that receives the initial trigger message.
 /// </summary>
-public abstract class ActionExecutor : Executor<ActionExecutorResult>
+/// <typeparam name="TMessage">The type of message being handled</typeparam>
+public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessage : notnull
 {
     private readonly FormulaSession _context;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ActionExecutor"/> class.
+    /// Initializes a new instance of the <see cref="ActionExecutor{TMessage}"/> class.
     /// </summary>
     /// <param name="id">The executor id</param>
     /// <param name="session">Session to support formula expressions.</param>
@@ -25,18 +50,19 @@ public abstract class ActionExecutor : Executor<ActionExecutorResult>
     }
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context)
     {
-        await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._context.State), cancellationToken: default).ConfigureAwait(false);
+        object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._context.State), message, cancellationToken: default).ConfigureAwait(false);
 
-        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
+        await context.SendResultMessageAsync(this.Id, result).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Executes the core logic of the action.
     /// </summary>
     /// <param name="context">The workflow execution context providing messaging and state services.</param>
+    /// <param name="message">The the message handled by this executor.</param>
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
-    protected abstract ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+    protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, TMessage message, CancellationToken cancellationToken = default);
 }

@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Moq;
@@ -259,7 +260,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         {
             if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
-                ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
+                ActionExecutorResult? message = invokeEvent.Data as ActionExecutorResult;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
             else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)

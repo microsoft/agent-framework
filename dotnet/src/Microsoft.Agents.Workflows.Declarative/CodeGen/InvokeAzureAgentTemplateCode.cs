@@ -9,6 +9,7 @@ internal partial class InvokeAzureAgentTemplate
     public InvokeAzureAgentTemplate(InvokeAzureAgent model)
     {
         this.Model = this.Initialize(model);
+        this.UseAgentProvider = true;
     }
 
     public InvokeAzureAgent Model { get; }

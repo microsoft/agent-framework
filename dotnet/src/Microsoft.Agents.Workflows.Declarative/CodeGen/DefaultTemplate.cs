@@ -28,32 +28,35 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         {
             this.Write("\n");
             this.Write("\n");
-            this.Write("\n/// <summary>\n/// ");
+            this.Write("\nDelegateExecutor ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.Comment));
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.InstanceVariable));
             
             #line default
             #line hidden
-            this.Write("\n/// </summary>\n/// <remarks>\n/// This action does nothing but exists so to it ma" +
-                    "y be used as a target for an edge from other actions.\n/// </remarks>\ninternal se" +
-                    "aled class ");
-            
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
-            
-            #line default
-            #line hidden
-            this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
+            this.Write(" = new(id: \"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
-            this.Write("\", session)\n{\n    /// <inheritdoc />\n    protected override ValueTask ExecuteAsyn" +
-                    "c(IWorkflowContext context, CancellationToken cancellationToken)\n    {\n       //" +
-                    " No operation\n       return default;\n    }\n}");
+            this.Write("\", ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.RootVariable));
+            
+            #line default
+            #line hidden
+            this.Write(".Session");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Action is not null ? $", {this.Action}" : ""));
+            
+            #line default
+            #line hidden
+            this.Write(");\n");
             return this.GenerationEnvironment.ToString();
         }
     }

@@ -9,6 +9,7 @@ internal partial class RetrieveConversationMessageTemplate
     public RetrieveConversationMessageTemplate(RetrieveConversationMessage model)
     {
         this.Model = this.Initialize(model);
+        this.UseAgentProvider = true;
     }
 
     public RetrieveConversationMessage Model { get; }

@@ -90,10 +90,11 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 
 if (this.TypeInfo.UserVariables.Count > 0)
 { 
+
             
             #line default
             #line hidden
-            this.Write("\n        // Set user variables to default values");
+            this.Write("        // Initialize variables");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 

@@ -6,6 +6,7 @@ using Microsoft.Agents.Workflows.Declarative.Entities;
 using Microsoft.Agents.Workflows.Declarative.Events;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -31,7 +32,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
 
     public static bool IsComplete(object? message)
     {
-        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
         return executorMessage.Result is null;
     }
 
@@ -69,7 +70,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         return default;
     }
 
-    public async ValueTask PrepareResponseAsync(IWorkflowContext context, ExecutorResultMessage message, CancellationToken cancellationToken)
+    public async ValueTask PrepareResponseAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
@@ -111,7 +112,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         }
     }
 
-    public async ValueTask CompleteAsync(IWorkflowContext context, ExecutorResultMessage message, CancellationToken cancellationToken)
+    public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
     }

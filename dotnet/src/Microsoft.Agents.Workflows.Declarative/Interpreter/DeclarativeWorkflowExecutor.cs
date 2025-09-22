@@ -2,6 +2,7 @@
 
 using System;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.AI;
 
@@ -25,6 +26,6 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         ChatMessage input = inputTransform.Invoke(message);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
-        await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
+        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 }

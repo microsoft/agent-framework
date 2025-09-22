@@ -14,6 +14,8 @@ internal abstract class ActionTemplate : CodeTemplate, IModeledAction
 
     public string ParentId { get; private set; } = string.Empty;
 
+    public bool UseAgentProvider { get; init; }
+
     protected TAction Initialize<TAction>(TAction model) where TAction : DialogAction
     {
         this.Id = model.GetId();

@@ -1,18 +1,4 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate, IModeledAction" visibility="internal" #>
 <#@ import namespace="Microsoft.Agents.Workflows.Declarative.Interpreter" #>
 <#@ assembly name="System.Core" #>
-/// <summary>
-/// <#= this.Comment #>
-/// </summary>
-/// <remarks>
-/// This action does nothing but exists so to it may be used as a target for an edge from other actions.
-/// </remarks>
-internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
-{
-    /// <inheritdoc />
-    protected override ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {
-       // No operation
-       return default;
-    }
-}
+DelegateExecutor <#= this.InstanceVariable #> = new(id: "<#= this.Id #>", <#= this.RootVariable #>.Session);

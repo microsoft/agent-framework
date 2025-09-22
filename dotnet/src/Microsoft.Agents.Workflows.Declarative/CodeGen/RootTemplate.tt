@@ -24,8 +24,8 @@ internal sealed class <#= this.TypeName #>Executor<TInput>(
 }
 
 if (this.TypeInfo.UserVariables.Count > 0)
-{ #>
-        // Set user variables to default values<#
+{ 
+#>        // Initialize variables<#
     foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
     {#>
         await context.QueueStateUpdateAsync("<#= variableInfo.Path.VariableName #>", UnassignedValue.Instance, "<#= variableInfo.Path.VariableScopeName #>").ConfigureAwait(false);<#

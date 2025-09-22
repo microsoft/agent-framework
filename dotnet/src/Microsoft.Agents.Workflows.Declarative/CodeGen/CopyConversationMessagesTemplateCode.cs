@@ -9,6 +9,7 @@ internal partial class CopyConversationMessagesTemplate
     public CopyConversationMessagesTemplate(CopyConversationMessages model)
     {
         this.Model = this.Initialize(model);
+        this.UseAgentProvider = true;
     }
 
     public CopyConversationMessages Model { get; }

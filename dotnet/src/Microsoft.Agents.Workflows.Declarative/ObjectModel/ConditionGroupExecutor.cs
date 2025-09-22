@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
@@ -37,13 +38,13 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
 
     public bool IsMatch(ConditionItem conditionItem, object? message)
     {
-        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
         return string.Equals(Steps.Item(this.Model, conditionItem), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
     public bool IsElse(object? message)
     {
-        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
         return string.Equals(Steps.Else(this.Model), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
@@ -67,6 +68,6 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         return Steps.Else(this.Model);
     }
 
-    public async ValueTask DoneAsync(IWorkflowContext context, ExecutorResultMessage _, CancellationToken cancellationToken) =>
+    public async ValueTask DoneAsync(IWorkflowContext context, ActionExecutorResult _, CancellationToken cancellationToken) =>
         await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
 }

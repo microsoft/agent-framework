@@ -11,6 +11,7 @@ internal partial class CreateConversationTemplate
     {
         this.Model = this.Initialize(model);
         this.ConversationId = Throw.IfNull(this.Model.ConversationId?.Path);
+        this.UseAgentProvider = true;
     }
 
     public CreateConversation Model { get; }

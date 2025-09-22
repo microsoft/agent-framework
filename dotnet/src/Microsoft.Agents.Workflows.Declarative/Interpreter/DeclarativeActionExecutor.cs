@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
@@ -21,7 +22,7 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>, IModeledAction
+internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IModeledAction
 {
     private string? _parentId;
     private readonly WorkflowFormulaState _state;
@@ -54,7 +55,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
     protected virtual bool EmitResultEvent => true;
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(ExecutorResultMessage message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {

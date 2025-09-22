@@ -42,23 +42,33 @@ internal sealed class WorkflowCodeBuilder : IModelBuilder<string>
         this.HandelAction(source);
         this.HandelAction(target);
 
-        this._edges.Add(new EdgeTemplate(source.Id, target.Id).TransformText()); // %%% WITH CONDITION
+        this._edges.Add(new EdgeTemplate(source.Id, target.Id, condition).TransformText());
     }
 
     private void HandelAction(IModeledAction action)
     {
+        // All templates are based on "CodeTemplate"
         if (action is not CodeTemplate template)
         {
+            // Something has gone very wrong.
             throw new DeclarativeModelException($"Unable to generate code for: {action.GetType().Name}.");
         }
 
         if (this._actions.Add(action.Id))
         {
-            this._definitions.Add(template.TransformText());
-
-            if (action is not RootTemplate)
+            switch (action)
             {
-                this._instances.Add(new InstanceTemplate(action.Id, this._rootId).TransformText()); // %%% WITH PROVIDER, OR NOT ???
+                case EmptyTemplate:
+                case DefaultTemplate:
+                    this._instances.Add(template.TransformText());
+                    break;
+                case ActionTemplate actionTemplate:
+                    this._definitions.Add(template.TransformText());
+                    this._instances.Add(new InstanceTemplate(action.Id, this._rootId, actionTemplate.UseAgentProvider).TransformText());
+                    break;
+                case RootTemplate:
+                    this._definitions.Add(template.TransformText());
+                    break;
             }
         }
     }

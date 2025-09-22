@@ -6,14 +6,16 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class EmptyTemplate
 {
-    public EmptyTemplate(string actionId, string executorComment)
+    public EmptyTemplate(string actionId, string rootId, string? action = null) // %%% NEEDED - action?
     {
         this.Id = actionId;
         this.Name = this.Id.FormatType();
-        this.Comment = executorComment;
+        this.InstanceVariable = this.Id.FormatName();
+        this.RootVariable = rootId.FormatName();
     }
 
     public string Id { get; }
-    public string Comment { get; }
     public string Name { get; }
+    public string InstanceVariable { get; }
+    public string RootVariable { get; }
 }
