@@ -314,7 +314,6 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         Log.ActorContextDisposing(this._logger, this.ActorId.ToString());
 
         this._cts.Dispose();
-#pragma warning disable CA2012 // Use ValueTasks correctly
 #pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
         if (this._actorInstance is IDisposable actorInstanceDisposable)
         {
@@ -322,12 +321,11 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         }
         else
         {
-            this._actorInstance.DisposeAsync().GetAwaiter().GetResult();
+            this._actorInstance.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
 
         this._actorRunTask?.GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
-#pragma warning restore CA2012 // Use ValueTasks correctly
+#pragma warning restore VSTHRD002
 
         Log.ActorContextDisposed(this._logger, this.ActorId.ToString());
     }
@@ -378,7 +376,6 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         public override async ValueTask<ActorResponse> GetResponseAsync(CancellationToken cancellationToken)
         {
             ActorResponse response;
-#pragma warning disable CA1031 // Do not catch general exception types
             try
             {
                 var responseMessage = await entry.Response
@@ -404,7 +401,6 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
                     Status = RequestStatus.Failed,
                 };
             }
-#pragma warning restore CA1031 // Do not catch general exception types
 
             return response;
         }
@@ -414,8 +410,8 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
             if (entry.Response.Status is TaskStatus.RanToCompletion)
             {
 #pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-                var responseMessage = entry.Response.GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+                var responseMessage = entry.Response.Result;
+#pragma warning restore VSTHRD002
                 response = new ActorResponse
                 {
                     ActorId = context.ActorId,
