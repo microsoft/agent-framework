@@ -19,6 +19,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+import json
 
 import numpy as np
 from redisvl.index import AsyncSearchIndex
@@ -197,19 +198,58 @@ class RedisProvider(ContextProvider):
 
         Raises ServiceInitializationError if schemas don't match, with helpful guidance.
         """
-        # Get existing index schema
-        existing_index = await AsyncSearchIndex.from_existing(self.index_name, redis_url=self.redis_url)
+        # Defaults for attr normalization
+        TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
+        TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
 
-        # Compare schemas by converting both to dictionaries
+        def _significant_index(i: dict[str, Any]) -> dict[str, Any]:
+            return {k: i.get(k) for k in ("name", "prefix", "key_separator", "storage_type")}
+
+        def _sig_tag(attrs: dict[str, Any] | None) -> dict[str, Any]:
+            a = {**TAG_DEFAULTS, **(attrs or {})}
+            return {k: a[k] for k in ("separator", "case_sensitive", "withsuffixtrie")}
+
+        def _sig_text(attrs: dict[str, Any] | None) -> dict[str, Any]:
+            a = {**TEXT_DEFAULTS, **(attrs or {})}
+            return {k: a[k] for k in ("weight", "no_stem")}
+
+        def _sig_vector(attrs: dict[str, Any] | None) -> dict[str, Any]:
+            a = {**(attrs or {})}
+            # Require these to exist if vector field is present
+            return {k: a.get(k) for k in ("algorithm", "dims", "distance_metric", "datatype")}
+
+        def _schema_signature(schema: dict[str, Any]) -> dict[str, Any]:
+            # Order-independent, minimal signature
+            sig: dict[str, Any] = {"index": _significant_index(schema.get("index", {})), "fields": {}}
+            for f in schema.get("fields", []):
+                name, ftype = f.get("name"), f.get("type")
+                if not name:
+                    continue
+                if ftype == "tag":
+                    sig["fields"][name] = {"type": "tag", "attrs": _sig_tag(f.get("attrs"))}
+                elif ftype == "text":
+                    sig["fields"][name] = {"type": "text", "attrs": _sig_text(f.get("attrs"))}
+                elif ftype == "vector":
+                    sig["fields"][name] = {"type": "vector", "attrs": _sig_vector(f.get("attrs"))}
+                else:
+                    # Unknown field types: compare by type only
+                    sig["fields"][name] = {"type": ftype}
+            return sig
+
+        existing_index = await AsyncSearchIndex.from_existing(self.index_name, redis_url=self.redis_url)
         existing_schema = existing_index.schema.to_dict()
         current_schema = self.schema_dict
 
-        if existing_schema != current_schema:
+        existing_sig = _schema_signature(existing_schema)
+        current_sig = _schema_signature(current_schema)
+
+        if existing_sig != current_sig:
+            # Add sigs to error message
             raise ServiceInitializationError(
-                f"Existing Redis index '{self.index_name}' schema does not match the current configuration. "
-                "This could lead to data corruption or query failures. "
-                "Set overwrite_index=True to rebuild the index with the new schema "
-                "(this will preserve data but may cause temporary downtime)."
+                "Existing Redis index schema is incompatible with the current configuration.\n"
+                f"Existing (significant): {json.dumps(existing_sig, indent=2, sort_keys=True)}\n"
+                f"Current  (significant): {json.dumps(current_sig, indent=2, sort_keys=True)}\n"
+                "Set overwrite_index=True to rebuild if this change is intentional."
             )
 
     async def _add(
