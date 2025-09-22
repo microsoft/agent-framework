@@ -24,7 +24,7 @@ public class NewChatOptions : ChatOptions
     /// <summary>
     /// Gets or sets continuation token to continue an ongoing operation.
     /// </summary>
-    public string? ContinuationToken { get; set; }
+    public ResumptionToken? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override ChatOptions Clone()

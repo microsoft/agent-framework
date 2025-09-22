@@ -15,7 +15,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -95,7 +94,7 @@ namespace Azure.AI.Agents.Persistent
         {
             Argument.AssertNotNull(messages, nameof(messages));
 
-            var lrToken = options is NewChatOptions { ContinuationToken: { Length: > 0 } token } ? LongRunContinuationToken.Deserialize(token) : null;
+            var lrToken = options is NewChatOptions { ContinuationToken: { } token } ? PersistentLongRunResumptionToken.FromToken(token) : null;
 
             // Extract necessary state from messages and options.
             (ThreadAndRunOptions runOptions, List<FunctionResultContent>? toolResults) =
@@ -333,7 +332,7 @@ namespace Azure.AI.Agents.Persistent
             }
         }
 
-        private static string? GetContinuationToken(string runId, string threadId, RunStatus status, ChatOptions? options, string? stepId = null, bool? throwIfOperationCancelled = true)
+        private static PersistentLongRunResumptionToken? GetContinuationToken(string runId, string threadId, RunStatus status, ChatOptions? options, string? stepId = null, bool? throwIfOperationCancelled = true)
         {
             if (!IsLongRunningResponsesModeEnabled(options))
             {
@@ -357,12 +356,10 @@ namespace Azure.AI.Agents.Persistent
 
             if (status != RunStatus.Completed)
             {
-                var token = new LongRunContinuationToken(runId, threadId)
+                return new PersistentLongRunResumptionToken(runId, threadId)
                 {
                     StepId = stepId,
                 };
-
-                return token.Serialize();
             }
 
             return null;
@@ -735,7 +732,7 @@ namespace Azure.AI.Agents.Persistent
 
                     string? stepIdToStartFrom = null;
                     bool skipSteps = false;
-                    if (options is NewChatOptions { ContinuationToken: { } token } && LongRunContinuationToken.Deserialize(token) is { } lrToken)
+                    if (options is NewChatOptions { ContinuationToken: { } token } && PersistentLongRunResumptionToken.FromToken(token) is { } lrToken)
                     {
                         stepIdToStartFrom = lrToken.StepId;
                         skipSteps = !string.IsNullOrWhiteSpace(stepIdToStartFrom);
@@ -1004,10 +1001,3 @@ namespace Azure.AI.Agents.Persistent
         }
     }
 }
-
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
-    UseStringEnumConverter = true,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    WriteIndented = true)]
-[JsonSerializable(typeof(LongRunContinuationToken))]
-internal sealed partial class JsonContext : JsonSerializerContext;

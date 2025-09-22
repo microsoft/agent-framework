@@ -51,8 +51,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         };
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         // Act
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -90,8 +90,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             },
         };
 
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
         string responseText = "";
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -218,8 +218,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         };
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
@@ -266,8 +266,8 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         };
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What's the weather in Paris right now? Include the time.", options).Select(u => (NewChatResponseUpdate)u))
         {
@@ -311,7 +311,7 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
             Tools = [AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" })]
         };
 
-        string? continuationToken = null;
+        ResumptionToken? continuationToken = null;
 
         await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {

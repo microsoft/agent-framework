@@ -33,5 +33,5 @@ public class AgentRunOptions
     /// <summary>
     /// Gets or sets continuation token to continue an ongoing operation.
     /// </summary>
-    public string? ContinuationToken { get; set; }
+    public ResumptionToken? ContinuationToken { get; set; }
 }

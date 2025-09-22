@@ -38,8 +38,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         };
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         // Act
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?", options: options))
@@ -71,8 +71,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
         using var agent = CreateAIAgent();
 
         // Part 1: Start the background run and get the first part of the response.
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
         string responseText = "";
 
         ChatClientAgentRunOptions options = new()
@@ -222,8 +222,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
 
         // Part 1: Start the background run.
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         ChatClientAgentRunOptions options = new()
         {
@@ -287,8 +287,8 @@ public sealed class NewOpenAIResponsesChatClientAgentStreamingTests
 
         // Part 1: Start the background run.
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         await foreach (var update in agent.RunStreamingAsync("What's the weather in Paris right now? Include the time.", options: options))
         {

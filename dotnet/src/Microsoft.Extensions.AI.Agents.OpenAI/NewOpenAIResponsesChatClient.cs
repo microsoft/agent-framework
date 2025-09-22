@@ -84,7 +84,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         // The continuation token, provided by a caller, indicates that the caller is interested in
         // the result of the ongoing operation rather than in creating a new one.
-        if (options is NewChatOptions { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
+        if (options is NewChatOptions { ContinuationToken: { } token } && ResponsesLongRunResumptionToken.FromToken(token) is { } longRunToken)
         {
             if (messages.Any())
             {
@@ -166,7 +166,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
         return response;
     }
 
-    private static string? GetContinuationToken(
+    private static ResponsesLongRunResumptionToken? GetContinuationToken(
         bool? backgroundModeEnabled,
         ResponseStatus? status,
         string responseId,
@@ -193,12 +193,10 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
         if (status == ResponseStatus.InProgress ||
             status == ResponseStatus.Queued)
         {
-            var token = new LongRunContinuationToken(responseId)
+            return new ResponsesLongRunResumptionToken(responseId)
             {
                 SequenceNumber = sequenceNumber,
             };
-
-            return token.Serialize();
         }
 
         return null;
@@ -266,7 +264,7 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         // The continuation token, provided by a caller, indicates that the caller is interested in
         // the result of the ongoing operation rather than in creating a new one.
-        if (options is NewChatOptions { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
+        if (options is NewChatOptions { ContinuationToken: { } token } && ResponsesLongRunResumptionToken.FromToken(token) is { } longRunToken)
         {
             if (messages.Any())
             {
@@ -1154,5 +1152,4 @@ internal static class OpenAIClientExtensions3
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(IEnumerable<string>))]
 [JsonSerializable(typeof(JsonElement))]
-[JsonSerializable(typeof(LongRunContinuationToken))]
 internal sealed partial class OpenAIJsonContext2 : JsonSerializerContext;

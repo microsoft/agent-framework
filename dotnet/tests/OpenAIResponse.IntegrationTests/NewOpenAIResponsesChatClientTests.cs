@@ -86,7 +86,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.ContinuationToken is { } token && ++attempts < 5)
+        while (response.ContinuationToken is { } token && ++attempts < 10)
         {
             options.ContinuationToken = token;
 

@@ -34,8 +34,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         };
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         // Act
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -75,8 +75,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
             }
         };
 
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
         string responseText = "";
 
         await foreach (var update in client.GetStreamingResponseAsync("What is the capital of France?", options).Select(u => (NewChatResponseUpdate)u))
@@ -156,8 +156,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         };
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         await foreach (var update in client.GetStreamingResponseAsync("What time is it?", options).Select(u => (NewChatResponseUpdate)u))
         {
@@ -235,8 +235,8 @@ public sealed class NewPersistentAgentsChatClientStreamingTests
         };
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         await foreach (var update in client.GetStreamingResponseAsync("What's the weather in Paris right now? Include the time.", options).Select(u => (NewChatResponseUpdate)u))
         {

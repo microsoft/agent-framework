@@ -24,8 +24,8 @@ public sealed class A2AAgentStreaming
         AIAgent agent = await this.CreateA2AAgentAsync();
 
         string responseText = "";
-        string? firstContinuationToken = null;
-        string? lastContinuationToken = null;
+        ResumptionToken? firstContinuationToken = null;
+        ResumptionToken? lastContinuationToken = null;
 
         // Act
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
@@ -49,7 +49,7 @@ public sealed class A2AAgentStreaming
         AIAgent agent = await this.CreateA2AAgentAsync();
 
         string responseText = "";
-        string? continuationToken = null;
+        ResumptionToken? continuationToken = null;
 
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
         {
@@ -90,7 +90,7 @@ public sealed class A2AAgentStreaming
         AIAgent agent = await this.CreateA2AAgentAsync();
 
         string responseText = "";
-        string? continuationToken = null;
+        ResumptionToken? continuationToken = null;
 
         await foreach (var update in agent.RunStreamingAsync("What is the capital of France?"))
         {
@@ -131,7 +131,7 @@ public sealed class A2AAgentStreaming
 
         AgentThread thread = agent.GetNewThread();
 
-        string? continuationToken = null;
+        ResumptionToken? continuationToken = null;
         UserInputRequestContent[]? userInputsRequests = null;
 
         // 1. Ask the agent to book a flight intentionally omitting details to trigger user input request

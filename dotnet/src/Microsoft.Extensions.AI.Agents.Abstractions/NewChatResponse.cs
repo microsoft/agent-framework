@@ -16,5 +16,5 @@ public class NewChatResponse : ChatResponse
     /// <summary>
     /// Continuation token to continue the operation that generated this response.
     /// </summary>
-    public string? ContinuationToken { get; set; }
+    public ResumptionToken? ContinuationToken { get; set; }
 }
