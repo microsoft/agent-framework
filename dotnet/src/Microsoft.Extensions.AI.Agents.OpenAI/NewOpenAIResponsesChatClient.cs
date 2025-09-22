@@ -74,30 +74,29 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? [.. messages];
 
-        // Convert the inputs into what OpenAIResponseClient expects.
-        var openAIResponseItems = ToOpenAIResponseItems(messages, options);
         var openAIOptions = ToOpenAIResponseCreationOptions(options);
 
-        OpenAIResponse openAIResponse;
-
-        // The continuation token, provided by a caller, indicates that the caller is interested in
-        // the result of the ongoing operation rather than in creating a new one.
+        // The continuation token provided by a caller indicates that the caller is interested
+        // in the result of the ongoing operation rather than in creating a new one.
         if (options is NewChatOptions { ContinuationToken: { } token } && ResponsesLongRunResumptionToken.FromToken(token) is { } longRunToken)
         {
-            if (messages.Any())
+            if (inputMessages.Count > 0)
             {
                 throw new InvalidOperationException("Messages are not allowed when using a continuation token.");
             }
 
-            openAIResponse = await _responseClient.GetResponseAsync(longRunToken.ResponseId, cancellationToken).ConfigureAwait(false);
+            var response = await _responseClient.GetResponseAsync(longRunToken.ResponseId, cancellationToken).ConfigureAwait(false);
+
+            return FromOpenAIResponse(response, openAIOptions);
         }
-        else
-        {
-            // Otherwise, create a new response.
-            openAIResponse = await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false);
-        }
+
+        // Convert the inputs into what OpenAIResponseClient expects.
+        var openAIResponseItems = ToOpenAIResponseItems(inputMessages, options);
+
+        // Create a new response.
+        OpenAIResponse openAIResponse = await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false);
 
         // Convert the response to a ChatResponse.
         return FromOpenAIResponse(openAIResponse, openAIOptions);
@@ -255,30 +254,29 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
     public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? [.. messages];
 
-        var openAIResponseItems = ToOpenAIResponseItems(messages, options);
         var openAIOptions = ToOpenAIResponseCreationOptions(options);
 
-        IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates;
-
-        // The continuation token, provided by a caller, indicates that the caller is interested in
-        // the result of the ongoing operation rather than in creating a new one.
+        // The continuation token provided by a caller indicates that the caller is interested
+        // in the result of the ongoing operation rather than in creating a new one.
         if (options is NewChatOptions { ContinuationToken: { } token } && ResponsesLongRunResumptionToken.FromToken(token) is { } longRunToken)
         {
-            if (messages.Any())
+            if (inputMessages.Count > 0)
             {
                 throw new InvalidOperationException("Messages are not allowed when using a continuation token.");
             }
 
             // If response id is provided, get the response by id.
-            streamingUpdates = _responseClient.GetResponseStreamingAsync(longRunToken.ResponseId, longRunToken.SequenceNumber, cancellationToken);
+            IAsyncEnumerable<StreamingResponseUpdate> updates = _responseClient.GetResponseStreamingAsync(longRunToken.ResponseId, longRunToken.SequenceNumber, cancellationToken);
+
+            return FromOpenAIStreamingResponseUpdatesAsync(updates, openAIOptions, cancellationToken);
         }
-        else
-        {
-            // Otherwise, create a new response.
-            streamingUpdates = _responseClient.CreateResponseStreamingAsync(openAIResponseItems, openAIOptions, cancellationToken);
-        }
+
+        var openAIResponseItems = ToOpenAIResponseItems(messages, options);
+
+        // Create a new response.
+        IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates = _responseClient.CreateResponseStreamingAsync(openAIResponseItems, openAIOptions, cancellationToken);
 
         return FromOpenAIStreamingResponseUpdatesAsync(streamingUpdates, openAIOptions, cancellationToken);
     }
