@@ -12,6 +12,7 @@ using Shared.IntegrationTests;
 
 namespace OpenAIResponse.IntegrationTests;
 
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
@@ -366,6 +367,46 @@ public sealed class NewOpenAIResponsesChatClientStreamingTests : IDisposable
         Assert.NotNull(response.ResponseId);
     }
 
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithApprovalRequiredFunction_AndLongRunningOperation_AllowsToProvideApprovalAsync()
+    {
+        // Part 1: Start the background run.
+        NewChatOptions options = new()
+        {
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
+            Tools = [new NewApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" }))]
+        };
+
+        var approvalRequests = new List<FunctionApprovalRequestContent>();
+        string? responseId = null;
+
+        // 1. Send request and exit when we see the function call requiring approval.
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync("What time is it in Dublin?", options).Select(u => (NewChatResponseUpdate)u))
+        {
+            approvalRequests.AddRange(update.Contents.OfType<FunctionApprovalRequestContent>());
+            responseId = update.ResponseId;
+        }
+
+        // 2. Get the function approval request.
+        var functionApprovalRequest = Assert.Single(approvalRequests);
+
+        // 3. Approve the function call.
+        var functionApprovalResponse = functionApprovalRequest.CreateResponse(approved: true);
+
+        // 4. Send the approval response.
+        string responseText = "";
+        options.ConversationId = responseId; // Link to the existing conversation.
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync(new ChatMessage(ChatRole.User, [functionApprovalResponse]), options).Select(u => (NewChatResponseUpdate)u))
+        {
+            responseText += update;
+        }
+
+        Assert.Contains("5:43", responseText);
+        Assert.Contains("Dublin", responseText);
+    }
     public void Dispose()
     {
         this._chatClient?.Dispose();

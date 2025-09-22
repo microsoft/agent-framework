@@ -82,17 +82,21 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         OpenAIResponse openAIResponse;
 
-        // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of this response
-        // rather than in creating a new one.
+        // The continuation token, provided by a caller, indicates that the caller is interested in
+        // the result of the ongoing operation rather than in creating a new one.
         if (options is NewChatOptions { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
         {
-            // If continuation token with response, get the response by id.
-            openAIResponse = (await _responseClient.GetResponseAsync(longRunToken.ResponseId, cancellationToken).ConfigureAwait(false)).Value;
+            if (messages.Any())
+            {
+                throw new InvalidOperationException("Messages are not allowed when using a continuation token.");
+            }
+
+            openAIResponse = await _responseClient.GetResponseAsync(longRunToken.ResponseId, cancellationToken).ConfigureAwait(false);
         }
         else
         {
             // Otherwise, create a new response.
-            openAIResponse = (await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false)).Value;
+            openAIResponse = await _responseClient.CreateResponseAsync(openAIResponseItems, openAIOptions, cancellationToken).ConfigureAwait(false);
         }
 
         // Convert the response to a ChatResponse.
@@ -260,10 +264,15 @@ internal sealed class NewOpenAIResponsesChatClient : IChatClient, ICancelableCha
 
         IAsyncEnumerable<StreamingResponseUpdate> streamingUpdates;
 
-        // The continuation token, provided by a caller, indicates that the caller is interested in the status/result of this response
-        // rather than in creating a new one.
+        // The continuation token, provided by a caller, indicates that the caller is interested in
+        // the result of the ongoing operation rather than in creating a new one.
         if (options is NewChatOptions { ContinuationToken: { Length: > 0 } token } && LongRunContinuationToken.Deserialize(token) is { } longRunToken)
         {
+            if (messages.Any())
+            {
+                throw new InvalidOperationException("Messages are not allowed when using a continuation token.");
+            }
+
             // If response id is provided, get the response by id.
             streamingUpdates = _responseClient.GetResponseStreamingAsync(longRunToken.ResponseId, longRunToken.SequenceNumber, cancellationToken);
         }

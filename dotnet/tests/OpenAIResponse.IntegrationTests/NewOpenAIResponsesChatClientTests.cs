@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Microsoft.Extensions.AI;
@@ -9,6 +10,8 @@ using OpenAI.Responses;
 using Shared.IntegrationTests;
 
 namespace OpenAIResponse.IntegrationTests;
+
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 {
@@ -175,7 +178,7 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
         // Part 2: Poll for completion.
         int attempts = 0;
 
-        while (response.ContinuationToken is { } token && ++attempts < 5)
+        while (response.ContinuationToken is { } token && ++attempts < 10)
         {
             options.ContinuationToken = token;
 
@@ -211,6 +214,59 @@ public sealed class NewOpenAIResponsesChatClientTests : IDisposable
 
         // Assert
         Assert.NotNull(cancelResponse);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_WithApprovalRequiredFunction_AndLongRunningOperation_AllowsToProvideApprovalAsync()
+    {
+        NewChatOptions options = new()
+        {
+            BackgroundResponsesOptions = new BackgroundResponsesOptions
+            {
+                Allow = true
+            },
+            Tools = [new NewApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "5:43", new AIFunctionFactoryOptions { Name = "GetCurrentTime" }))]
+        };
+
+        // 1. Send initial request.
+        NewChatResponse response = (NewChatResponse)await this._chatClient.GetResponseAsync("What time is it in Dublin?", options);
+
+        // 2. Poll the long running operation until we get a function approval request
+        // in which case the continuation token will be null.
+        while (response.ContinuationToken is { } token)
+        {
+            options.ContinuationToken = token;
+
+            response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
+
+            await Task.Delay(2000);
+        }
+
+        // 3. Get the function approval request.
+        var functionApprovalRequests = response.Messages.SelectMany(x => x.Contents).OfType<FunctionApprovalRequestContent>();
+        var functionApprovalRequest = Assert.Single(functionApprovalRequests);
+
+        // 4. Approve the function call.
+        var functionApprovalResponse = functionApprovalRequest.CreateResponse(approved: true);
+
+        // 5. Send the approval response.
+        options.ConversationId = response.ResponseId; // Link to the existing conversation.
+        options.ContinuationToken = null;
+        response = (NewChatResponse)await this._chatClient.GetResponseAsync(new ChatMessage(ChatRole.User, [functionApprovalResponse]), options);
+
+        // 6. Poll for completion.
+        while (response.ContinuationToken is { } token)
+        {
+            options.ContinuationToken = token;
+
+            response = (NewChatResponse)await this._chatClient.GetResponseAsync([], options);
+
+            await Task.Delay(2000);
+        }
+
+        Assert.Contains("5:43", response.Text);
+        Assert.Contains("Dublin", response.Text);
+        Assert.Null(response.ContinuationToken);
     }
 
     public void Dispose()
