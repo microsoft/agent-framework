@@ -1224,7 +1224,9 @@ def _capture_messages(
     from ._clients import prepare_messages
 
     prepped = prepare_messages(messages)
+    otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
+        otel_messages.append(_to_otel_message(message))
         try:
             message_data = message.model_dump(exclude_none=True)
         except Exception:
@@ -1237,7 +1239,6 @@ def _capture_messages(
                 ChatMessageListTimestampFilter.INDEX_KEY: index,
             },
         )
-    otel_messages = [_to_otel_message(message) for message in prepped]
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason.value]
     span.set_attribute(OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages))
