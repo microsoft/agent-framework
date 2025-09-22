@@ -246,7 +246,7 @@ class Workflow(AFBaseModel):
         global OTEL_SETTINGS
         from ..observability import OTEL_SETTINGS
 
-        OTEL_SETTINGS.setup_observability()
+        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
         with create_workflow_span(
             OtelAttr.WORKFLOW_RUN_SPAN,
             {
