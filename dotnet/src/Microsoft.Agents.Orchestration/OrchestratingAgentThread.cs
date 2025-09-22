@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Orchestration;
 /// <summary>
 /// The thread implementation used by <see cref="OrchestratingAgent"/>.
 /// </summary>
-internal class OrchestratingAgentThread : InMemoryAgentThread
+internal sealed class OrchestratingAgentThread : InMemoryAgentThread
 {
     internal OrchestratingAgentThread()
         : base() { }

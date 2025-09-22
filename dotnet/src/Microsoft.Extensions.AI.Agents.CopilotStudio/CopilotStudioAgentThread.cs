@@ -7,7 +7,7 @@ namespace Microsoft.Extensions.AI.Agents.CopilotStudio;
 /// <summary>
 /// Thread for CopilotStudio based agents.
 /// </summary>
-public class CopilotStudioAgentThread : ServiceIdAgentThread
+public sealed class CopilotStudioAgentThread : ServiceIdAgentThread
 {
     internal CopilotStudioAgentThread()
     {

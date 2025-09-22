@@ -7,7 +7,7 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 /// <summary>
 /// Thread for A2A based agents.
 /// </summary>
-public class A2AAgentThread : ServiceIdAgentThread
+public sealed class A2AAgentThread : ServiceIdAgentThread
 {
     internal A2AAgentThread()
     {
