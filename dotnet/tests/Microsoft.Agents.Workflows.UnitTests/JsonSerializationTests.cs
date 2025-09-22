@@ -70,7 +70,7 @@ public class JsonSerializationTests
         {
             return deserialized => deserialized.AssemblyName == type.AssemblyName &&
                                    deserialized.TypeName == type.TypeName &&
-                                   deserialized.IsMatch(typeof(Type));
+                                   deserialized.IsMatch<Type>();
         }
     }
 
@@ -84,7 +84,7 @@ public class JsonSerializationTests
         {
             return deserialized => deserialized.ExecutorId == executorInfo.ExecutorId &&
                                    // Rely on the TypeId test to probe TypeId serialization - just validate that we got a functional TypeId
-                                   deserialized.ExecutorType.IsMatch(typeof(ForwardMessageExecutor<string>));
+                                   deserialized.ExecutorType.IsMatch<ForwardMessageExecutor<string>>();
         }
     }
 
@@ -169,7 +169,7 @@ public class JsonSerializationTests
 
         return builder.BuildWithOutput<string, int, int>(
             intToString,
-            StreamingAggregators.Last<int>(), (int _, int __) => true);
+            StreamingAggregators.Last<int>(), (_, __) => true);
     }
 
     private static WorkflowInfo TestWorkflowInfo => CreateTestWorkflow().ToWorkflowInfo();
@@ -232,7 +232,7 @@ public class JsonSerializationTests
 
         JsonMarshaller marshaller = new();
 
-        JsonElement jsonElement = marshaller.Marshal(prototype, typeof(WorkflowInfo));
+        JsonElement jsonElement = marshaller.Marshal(prototype);
         WorkflowInfo deserialized = marshaller.Marshal<WorkflowInfo>(jsonElement);
 
         ValidateWorkflowInfo(deserialized, prototype);

@@ -249,7 +249,7 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread();
 
         // Assert
-        Assert.IsAssignableFrom<AgentThread>(thread);
+        Assert.IsType<AgentThread>(thread, exactMatch: false);
     }
 
     /// <summary>

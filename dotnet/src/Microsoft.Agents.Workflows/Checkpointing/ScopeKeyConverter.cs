@@ -11,17 +11,23 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 /// <summary>
 /// Provides support for using <see cref="ScopeKey"/> values as dictionary keys when serializing and deserializing JSON.
 /// </summary>
-internal sealed class ScopeKeyConverter : JsonConverterDictionarySupportBase<ScopeKey>
+internal sealed partial class ScopeKeyConverter : JsonConverterDictionarySupportBase<ScopeKey>
 {
     protected override JsonTypeInfo<ScopeKey> TypeInfo => WorkflowsJsonUtilities.JsonContext.Default.ScopeKey;
 
-    public static readonly Regex ScopeKeyPropertyNamePattern =
-        new(@"^(?<executorId>(((\|\|)|([^\|]))*))\|(?<scopeName>(@(((\|\|)|([^\|]))*))?)\|(?<key>(((\|\|)|([^\|]))*)?)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture);
+    private const string ScopeKeyPropertyNamePattern = @"^(?<executorId>(((\|\|)|([^\|]))*))\|(?<scopeName>(@(((\|\|)|([^\|]))*))?)\|(?<key>(((\|\|)|([^\|]))*)?)$";
+#if NET
+    [GeneratedRegex(ScopeKeyPropertyNamePattern, RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture)]
+    public static partial Regex ScopeKeyPropertyNameRegex();
+#else
+    public static Regex ScopeKeyPropertyNameRegex() => s_scopeKeyPropertyNameRegex;
+    private static readonly Regex s_scopeKeyPropertyNameRegex =
+        new(ScopeKeyPropertyNamePattern, RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture);
+#endif
 
     protected override ScopeKey Parse(string propertyName)
     {
-        Match scopeKeyPatternMatch = ScopeKeyPropertyNamePattern.Match(propertyName);
+        Match scopeKeyPatternMatch = ScopeKeyPropertyNameRegex().Match(propertyName);
         if (!scopeKeyPatternMatch.Success)
         {
             throw new JsonException($"Invalid ScopeKey property name format. Got '{propertyName}'.");
@@ -37,7 +43,7 @@ internal sealed class ScopeKeyConverter : JsonConverterDictionarySupportBase<Sco
     }
 
     [return: NotNull]
-    private static string Escape(string? value, bool allowNullAndPad = false, [CallerArgumentExpression("value")] string componentName = "ScopeKey")
+    private static string Escape(string? value, bool allowNullAndPad = false, [CallerArgumentExpression(nameof(value))] string componentName = "ScopeKey")
     {
         if (!allowNullAndPad && value is null)
         {
@@ -57,7 +63,7 @@ internal sealed class ScopeKeyConverter : JsonConverterDictionarySupportBase<Sco
         return $"{value.Replace("|", "||")}";
     }
 
-    private static string? Unescape([DisallowNull] string value, bool allowNullAndPad = false, [CallerArgumentExpression("value")] string componentName = "ScopeKey")
+    private static string? Unescape([DisallowNull] string value, bool allowNullAndPad = false, [CallerArgumentExpression(nameof(value))] string componentName = "ScopeKey")
     {
         if (value.Length == 0)
         {
