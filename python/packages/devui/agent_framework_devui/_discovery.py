@@ -105,8 +105,19 @@ class EntityDiscovery:
             if hasattr(entity_object, "get_executors_list") or hasattr(entity_object, "executors"):
                 entity_type = "workflow"
 
-        # Extract metadata
-        name = getattr(entity_object, "name", "unknown")
+        # Extract metadata with improved fallback naming
+        name = getattr(entity_object, "name", None)
+        if not name:
+            # In-memory entities: use ID with entity type prefix since no directory name available
+            entity_id_raw = getattr(entity_object, "id", None)
+            if entity_id_raw:
+                # Truncate UUID to first 8 characters for readability
+                short_id = str(entity_id_raw)[:8] if len(str(entity_id_raw)) > 8 else str(entity_id_raw)
+                name = f"{entity_type.title()} {short_id}"
+            else:
+                # Fallback to class name with entity type
+                class_name = entity_object.__class__.__name__
+                name = f"{entity_type.title()} {class_name}"
         description = getattr(entity_object, "description", "")
 
         # Generate entity ID using Agent Framework specific naming
@@ -404,8 +415,25 @@ class EntityDiscovery:
             module_path: Path to module for metadata
         """
         try:
-            # Extract metadata from the live object
-            name = getattr(obj, "name", None) or entity_id.replace("_", " ").title()
+            # Extract metadata from the live object with improved fallback naming
+            name = getattr(obj, "name", None)
+            if not name:
+                # For directory-based entities, prefer directory name over UUID
+                # entity_id format: "workflow_fanout_workflow" or "agent_weather_agent"
+                if entity_id and "_" in entity_id:
+                    # Directory-based: use formatted directory name (remove type prefix)
+                    directory_name = entity_id.split("_", 1)[1] if "_" in entity_id else entity_id
+                    name = directory_name.replace("_", " ").title()
+                else:
+                    # In-memory: use ID with entity type prefix
+                    entity_id_raw = getattr(obj, "id", None)
+                    if entity_id_raw:
+                        # Truncate UUID to first 8 characters for readability
+                        short_id = str(entity_id_raw)[:8] if len(str(entity_id_raw)) > 8 else str(entity_id_raw)
+                        name = f"{obj_type.title()} {short_id}"
+                    else:
+                        # Final fallback to class name
+                        name = f"{obj_type.title()} {obj.__class__.__name__}"
             description = getattr(obj, "description", None)
             tools = await self._extract_tools_from_object(obj, obj_type)
 

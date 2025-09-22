@@ -9,9 +9,8 @@ import logging
 from typing import Annotated
 
 from agent_framework import ChatAgent
+from agent_framework.devui import serve
 from agent_framework.openai import OpenAIChatClient
-
-from agent_framework_devui import serve
 
 
 def get_weather(

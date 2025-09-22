@@ -508,8 +508,8 @@ class MessageMapper:
 
         usage = ResponseUsage(
             input_tokens=0,
-            output_tokens=len(error_text) // 4,
-            total_tokens=len(error_text) // 4,
+            output_tokens=0,
+            total_tokens=0,
             input_tokens_details=InputTokensDetails(cached_tokens=0),
             output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
         )

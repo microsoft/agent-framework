@@ -47,3 +47,25 @@ agent = ChatAgent(
     ),
     tools=[get_weather, get_forecast],
 )
+
+
+def main():
+    """Launch the Azure weather agent in DevUI."""
+    import logging
+
+    from agent_framework.devui import serve
+
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger = logging.getLogger(__name__)
+
+    logger.info("Starting Azure Weather Agent")
+    logger.info("Available at: http://localhost:8090")
+    logger.info("Entity ID: agent_AzureWeatherAgent")
+
+    # Launch server with the agent
+    serve(entities=[agent], port=8090, auto_open=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -678,100 +678,21 @@ def create_complex_workflow():
 workflow = create_complex_workflow()
 
 
-async def main():
-    """Main function to test the workflow."""
+def main():
+    """Launch the fanout workflow in DevUI."""
+    from agent_framework.devui import serve
+
     # Setup logging
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     logger = logging.getLogger(__name__)
 
-    # Test different scenarios with structured inputs
-    test_scenarios = [
-        {
-            "name": "High Priority Customer Data (Success Path)",
-            "request": ProcessingRequest(
-                data_source="database",
-                data_type="customer",
-                processing_priority="high",
-                batch_size=750,
-                quality_threshold=0.7,
-                transformations=["normalize", "enrich"],
-                description="Processing customer data for monthly report",
-                force_validation_failure=False,
-                force_transformation_failure=False,
-            ),
-        },
-        {
-            "name": "Critical Transaction Data (All Transformations)",
-            "request": ProcessingRequest(
-                data_source="api",
-                data_type="transaction",
-                processing_priority="critical",
-                batch_size=1200,
-                quality_threshold=0.9,
-                transformations=["normalize", "enrich", "aggregate"],
-                description="Real-time transaction processing",
-                enable_security_validation=True,
-                force_validation_failure=False,
-                force_transformation_failure=False,
-            ),
-        },
-        {
-            "name": "Low Priority Analytics (Validation Failure Test)",
-            "request": ProcessingRequest(
-                data_source="file_upload",
-                data_type="analytics",
-                processing_priority="low",
-                batch_size=300,
-                quality_threshold=0.8,
-                transformations=["aggregate"],
-                description="Analytics batch processing",
-                force_validation_failure=True,  # Force failure
-                force_transformation_failure=False,
-            ),
-        },
-        {
-            "name": "Streaming Product Data (Minimal Validation)",
-            "request": ProcessingRequest(
-                data_source="streaming",
-                data_type="product",
-                processing_priority="normal",
-                batch_size=500,
-                quality_threshold=0.6,
-                transformations=["normalize"],
-                description="Product catalog updates",
-                enable_security_validation=False,  # Disable security check
-                enable_quality_validation=False,  # Disable quality check
-                force_validation_failure=False,
-                force_transformation_failure=False,
-            ),
-        },
-    ]
+    logger.info("Starting Complex Fan-In/Fan-Out Data Processing Workflow")
+    logger.info("Available at: http://localhost:8090")
+    logger.info("Entity ID: workflow_complex_workflow")
 
-    for i, scenario in enumerate(test_scenarios, 1):
-        logger.info(f"\n🧪 Test Scenario {i}: {scenario['name']}")
-        logger.info(f"Starting scenario {i}: {scenario['name']}")
-        logger.info(
-            f"Configuration - Source: {scenario['request'].data_source}, "
-            f"Type: {scenario['request'].data_type}, "
-            f"Priority: {scenario['request'].processing_priority}"
-        )
-
-        start_time = asyncio.get_event_loop().time()
-
-        async for event in workflow.run_stream(scenario["request"]):
-            elapsed = asyncio.get_event_loop().time() - start_time
-            logger.debug(f"[{elapsed:.1f}s] {event}")
-
-            if isinstance(event, WorkflowCompletedEvent):
-                logger.info(f"✅ Scenario {i} completed in {elapsed:.1f} seconds!")
-                logger.info(f"Scenario {i} completed successfully in {elapsed:.1f} seconds")
-                break
-
-        # Wait between test runs
-        if i < len(test_scenarios):
-            logger.info("Waiting 2 seconds before next scenario...")
-            await asyncio.sleep(2)
+    # Launch server with the workflow
+    serve(entities=[workflow], port=8090, auto_open=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

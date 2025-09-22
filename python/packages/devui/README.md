@@ -24,7 +24,7 @@ You can also launch it programmatically
 ```python
 from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_devui import serve
+from agent_framework.devui import serve
 
 def get_weather(location: str) -> str:
     """Get weather for a location."""

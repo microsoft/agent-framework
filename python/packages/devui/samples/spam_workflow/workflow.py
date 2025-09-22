@@ -313,37 +313,21 @@ workflow = (
 # Note: Workflow metadata is determined by executors and graph structure
 
 
-async def main():
-    """Main function to run the workflow (for testing outside DevUI)."""
+def main():
+    """Launch the spam detection workflow in DevUI."""
+    from agent_framework.devui import serve
+
     # Setup logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logger = logging.getLogger(__name__)
 
-    # Test cases with varying complexity
-    test_messages = ["URGENT: You have won $1,000,000! Click here now to claim your prize!"]
+    logger.info("Starting Spam Detection Workflow")
+    logger.info("Available at: http://localhost:8090")
+    logger.info("Entity ID: workflow_spam_detection")
 
-    logger.info("🚀 Testing Enhanced 5-Step Spam Detection Workflow")
-    logger.info("=" * 60)
-
-    for i, message in enumerate(test_messages, 1):
-        logger.info(f"\n📨 Test Case {i}: '{message}'")
-        logger.info("-" * 60)
-
-        try:
-            email_request = EmailRequest(email=message)
-            async for event in workflow.run_stream(email_request):
-                if isinstance(event, WorkflowCompletedEvent):
-                    logger.info(f"\n🎯 Final Result: {event.data}")
-                else:
-                    logger.info(f"📋 Event: {event}")
-        except Exception as e:
-            logger.error(f"❌ Error: {e}")
-
-        logger.info("\n" + "=" * 60)
-
-        # Add a small delay between test cases for readability
-        await asyncio.sleep(0.5)
+    # Launch server with the workflow
+    serve(entities=[workflow], port=8090, auto_open=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
