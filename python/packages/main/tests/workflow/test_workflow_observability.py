@@ -215,10 +215,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
-@pytest.mark.parametrize("enable_workflow_otel", [False], indirect=True)
-async def test_trace_context_disabled_when_tracing_disabled(
-    enable_otel, enable_workflow_otel, span_exporter: InMemorySpanExporter
-) -> None:
+async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
     shared_state = SharedState()

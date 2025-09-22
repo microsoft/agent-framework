@@ -343,8 +343,6 @@ class OtelSettings(AFBaseSettings):
     Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
                     (Env var ENABLE_OTEL)
-        enable_workflow_otel: Enable OpenTelemetry diagnostics for Workflows.
-                    (Env var ENABLE_WORKFLOW_OTEL)
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
                     (Env var ENABLE_SENSITIVE_DATA)
         application_insights_connection_string: The Azure Monitor connection string. Default is None.
@@ -358,7 +356,6 @@ class OtelSettings(AFBaseSettings):
     env_prefix: ClassVar[str] = ""
 
     enable_otel: bool = False
-    enable_workflow_otel: bool = False
     enable_sensitive_data: bool = False
     application_insights_connection_string: str | list[str] | None = None
     application_insights_live_metrics: bool = False
@@ -377,11 +374,6 @@ class OtelSettings(AFBaseSettings):
         Model diagnostics are enabled if either diagnostic is enabled or diagnostic with sensitive events is enabled.
         """
         return self.enable_otel or self.enable_sensitive_data
-
-    @property
-    def WORKFLOW_ENABLED(self) -> bool:
-        """Check if model diagnostics for workflows are enabled."""
-        return self.enable_otel or self.enable_workflow_otel
 
     @property
     def SENSITIVE_DATA_ENABLED(self) -> bool:
@@ -421,7 +413,7 @@ class OtelSettings(AFBaseSettings):
             additional_exporters: A list of additional exporters to add to the configuration. Default is None.
             force_setup: Force the setup to be executed even if it has already been executed. Default is False.
         """
-        if (not self.ENABLED and not self.WORKFLOW_ENABLED) or (self._executed_setup and not force_setup):
+        if (not self.ENABLED and not self.ENABLED) or (self._executed_setup and not force_setup):
             return
 
         if not self.application_insights_connection_string and not self.otlp_endpoint and not additional_exporters:
@@ -623,7 +615,6 @@ def get_meter(
 
 def setup_observability(
     enable_otel: bool | None = None,
-    enable_workflow_otel: bool | None = None,
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | list[str] | None = None,
     application_insights_connection_string: str | list[str] | None = None,
@@ -640,7 +631,6 @@ def setup_observability(
 
     Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
-        enable_workflow_otel: Enable OpenTelemetry diagnostics for Workflows. Default is False.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
             Will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
@@ -664,8 +654,6 @@ def setup_observability(
         OTEL_SETTINGS.enable_otel = enable_otel
     if enable_sensitive_data is not None:
         OTEL_SETTINGS.enable_sensitive_data = enable_sensitive_data
-    if enable_workflow_otel is not None:
-        OTEL_SETTINGS.enable_workflow_otel = enable_workflow_otel
     if enable_live_metrics is not None:
         OTEL_SETTINGS.application_insights_live_metrics = enable_live_metrics
     # Run the initial setup, which will create the providers, and add env setting exporters
@@ -1349,7 +1337,7 @@ class EdgeGroupDeliveryStatus(Enum):
 
 def workflow_tracer() -> "Tracer":
     """Get a workflow tracer or a no-op tracer if not enabled."""
-    return get_tracer() if OTEL_SETTINGS.WORKFLOW_ENABLED else trace.NoOpTracer()
+    return get_tracer() if OTEL_SETTINGS.ENABLED else trace.NoOpTracer()
 
 
 def create_workflow_span(

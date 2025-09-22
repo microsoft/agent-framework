@@ -40,7 +40,6 @@ No additional dependencies are required to enable telemetry. The necessary packa
 The following environment variables can be set to configure telemetry, the first two set the basic configuration:
 
 - ENABLE_OTEL=true
-- ENABLE_WORKFLOW_OTEL=true (only needed for workflow telemetry)
 - ENABLE_SENSITIVE_DATA=true
 
 Next we need to know where to send the telemetry, for that you can use either a OTLP endpoint or a connection string for Application Insights:
@@ -72,9 +71,8 @@ This sample shows how to setup telemetry when using the Agent Framework's workfl
 1. Open a terminal and navigate to this folder: `python/samples/getting_started/observability/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
     > Note that `APPLICATION_INSIGHTS_CONNECTION_STRING` and `OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
-    > Set `ENABLE_OTEL=true` to enable basic telemetry and `ENABLE_SENSITIVE_DATA=true` to include sensitive information like prompts and responses.
+    > Set `ENABLE_OTEL=true` to enable telemetry and `ENABLE_SENSITIVE_DATA=true` to include sensitive information like prompts and responses.
         > Sensitive information should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
-    > Set `ENABLE_WORKFLOW_OTEL=true` to enable workflow telemetry for the workflow samples.
 3. Activate your python virtual environment, and then run `python 01-zero_code.py` or others.
 > This will also print the Operation/Trace ID, which can be used later for filtering.
 

@@ -16,27 +16,18 @@ def enable_otel(request: Any) -> bool:
 
 
 @fixture
-def enable_workflow_otel(request: Any) -> bool:
-    """Fixture that returns a boolean indicating if workflow Otel is enabled."""
-    return request.param if hasattr(request, "param") else True
-
-
-@fixture
 def enable_sensitive_data(request: Any) -> bool:
     """Fixture that returns a boolean indicating if sensitive data is enabled."""
     return request.param if hasattr(request, "param") else True
 
 
 @fixture(autouse=True)
-def span_exporter(
-    monkeypatch, enable_otel: bool, enable_sensitive_data: bool, enable_workflow_otel: bool
-) -> Generator[SpanExporter | None]:  # type: ignore
+def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -> Generator[SpanExporter | None]:  # type: ignore
     """Fixture to remove environment variables for OtelSettings."""
 
     env_vars = [
         "ENABLE_OTEL",
         "ENABLE_SENSITIVE_DATA",
-        "ENABLE_WORKFLOW_OTEL",
         "OTLP_ENDPOINT",
         "APPLICATION_INSIGHTS_CONNECTION_STRING",
         "APPLICATION_INSIGHTS_LIVE_METRICS",
@@ -46,7 +37,6 @@ def span_exporter(
         monkeypatch.delenv(key, raising=False)  # type: ignore
     monkeypatch.setenv("ENABLE_OTEL", str(enable_otel))  # type: ignore
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", str(enable_sensitive_data))  # type: ignore
-    monkeypatch.setenv("ENABLE_WORKFLOW_OTEL", str(enable_workflow_otel))  # type: ignore
     import importlib
 
     from opentelemetry import trace
@@ -66,7 +56,7 @@ def span_exporter(
         patch("agent_framework.observability.OTEL_SETTINGS", otel),
         patch("agent_framework.observability.setup_observability"),
     ):
-        if enable_otel or enable_workflow_otel or enable_sensitive_data:
+        if enable_otel or enable_sensitive_data:
             trace.get_tracer_provider().add_span_processor(
                 SimpleSpanProcessor(exporter)  # type: ignore[func-returns-value]
             )

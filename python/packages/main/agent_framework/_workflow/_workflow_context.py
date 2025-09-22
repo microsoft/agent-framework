@@ -98,7 +98,7 @@ class WorkflowContext(Generic[T_Out]):
             msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
 
             # Inject current trace context if tracing enabled
-            if OTEL_SETTINGS.WORKFLOW_ENABLED and span and span.is_recording():  # type: ignore[name-defined]
+            if OTEL_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
                 trace_context: dict[str, str] = {}
                 inject(trace_context)  # Inject current trace context for message propagation
 

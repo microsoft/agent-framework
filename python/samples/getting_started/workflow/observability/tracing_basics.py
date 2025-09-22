@@ -14,7 +14,7 @@ A minimal two executor workflow demonstrates built in OpenTelemetry spans when d
 The sample raises an error if tracing is not configured.
 
 Purpose:
-- Require diagnostics by checking ENABLE_WORKFLOW_OTEL and wiring a console exporter.
+- Require diagnostics by checking ENABLE_OTEL and wiring a console exporter.
 - Show the span categories produced by a simple graph:
   - workflow.build (events: build.started, build.validation_completed, build.completed, edge_group.process)
   - workflow.run (events: workflow.started, workflow.completed or workflow.error)
@@ -26,8 +26,8 @@ Prerequisites:
 - No external services required for the workflow itself.
 - To print spans to the console, install the OpenTelemetry SDK: pip install opentelemetry-sdk
 - Enable diagnostics:
-    configure your .env file with `ENABLE_WORKFLOW_OTEL=true` or run:
-    export ENABLE_WORKFLOW_OTEL=true
+    configure your .env file with `ENABLE_OTEL=true` or run:
+    export ENABLE_OTEL=true
 """
 
 logger = get_logger()
@@ -38,14 +38,14 @@ def _ensure_tracing_configured() -> None:
 
     If the env var is set, attach a ConsoleSpanExporter so spans print to stdout.
     """
-    env = os.getenv("ENABLE_WORKFLOW_OTEL", "").lower()
+    env = os.getenv("ENABLE_OTEL", "").lower()
     if env not in {"1", "true", "yes"}:
         logger.info("Tracing diagnostics are disabled in the env. Setting this manually here.")
 
     from agent_framework.observability import setup_observability
     from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
-    setup_observability(enable_workflow_otel=True, exporters=[ConsoleSpanExporter()])
+    setup_observability(enable_otel=True, exporters=[ConsoleSpanExporter()])
 
 
 class StartExecutor(Executor):
