@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -14,7 +13,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
-internal sealed record class WorkflowTypeInfo(FrozenSet<string> EnvironmentVariables, IEnumerable<VariableInformationDiagnostic> UserVariables);
+internal sealed record class WorkflowTypeInfo(ISet<string> EnvironmentVariables, IList<VariableInformationDiagnostic> UserVariables);
 
 internal static class WorkflowDiagnostics
 {
@@ -26,8 +25,8 @@ internal static class WorkflowDiagnostics
 
         return
             new WorkflowTypeInfo(
-                semanticModel.GetAllEnvironmentVariablesReferencedInTheBot().ToFrozenSet(),
-                semanticModel.GetVariables(workflowElement.SchemaName.Value).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()));
+                semanticModel.GetAllEnvironmentVariablesReferencedInTheBot(),
+                [.. semanticModel.GetVariables(workflowElement.SchemaName.Value).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic())]);
     }
 
     public static void Initialize<TElement>(this WorkflowFormulaState scopes, TElement workflowElement, IConfiguration? configuration) where TElement : BotElement, IDialogBase

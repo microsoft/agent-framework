@@ -21,7 +21,7 @@ public class GotoTemplateTest(ITestOutputHelper output) : WorkflowActionTemplate
         GotoAction model = this.CreateModel(displayName, targetId);
 
         // Act
-        EmptyTemplate template = new(model, "Go to another action.");
+        DefaultTemplate template = new(model, "Go to another action.");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 

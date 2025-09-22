@@ -16,9 +16,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class EmptyTemplate : CodeTemplate, IModeledAction
+    internal partial class DefaultTemplate : ActionTemplate, IModeledAction
     {
 #line hidden
         /// <summary>
@@ -30,7 +30,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             this.Write("\n");
             this.Write("\n/// <summary>\n/// ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Comment));
             
             #line default
@@ -39,14 +39,14 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
                     "y be used as a target for an edge from other actions.\n/// </remarks>\ninternal se" +
                     "aled class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
             this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\DefaultTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default

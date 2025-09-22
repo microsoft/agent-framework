@@ -21,7 +21,7 @@ public class EndConversationTest(ITestOutputHelper output) : WorkflowActionTempl
         EndConversation model = this.CreateModel(displayName);
 
         // Act
-        EmptyTemplate template = new(model, "Ends the conversation");
+        DefaultTemplate template = new(model, "Ends the conversation");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 

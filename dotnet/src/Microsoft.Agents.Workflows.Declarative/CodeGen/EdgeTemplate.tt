@@ -1,3 +1,10 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" #>
 <#@ assembly name="System.Core" #>
-builder.AddEdge(<#= this.SourceId #>, <#= this.TargetId #>);
+<# if (this.Condition is not null)
+{#>
+    builder.AddEdge(<#= this.SourceId #>, <#= this.TargetId #>, condition => <#= this.Condition #>);<#
+}
+else
+{#>
+    builder.AddEdge(<#= this.SourceId #>, <#= this.TargetId #>);<#
+} #>

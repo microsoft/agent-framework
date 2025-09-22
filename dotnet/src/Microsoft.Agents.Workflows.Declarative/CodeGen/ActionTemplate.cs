@@ -6,7 +6,7 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
-internal abstract class ActionTemplate : CodeTemplate
+internal abstract class ActionTemplate : CodeTemplate, IModeledAction
 {
     public string Id { get; private set; } = string.Empty;
 
@@ -19,6 +19,7 @@ internal abstract class ActionTemplate : CodeTemplate
         this.Id = model.GetId();
         this.ParentId = model.GetParentId() ?? WorkflowActionVisitor.Steps.Root();
         this.Name = this.Id.FormatType();
+
         return model;
     }
 }

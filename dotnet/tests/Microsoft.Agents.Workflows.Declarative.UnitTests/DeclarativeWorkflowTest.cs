@@ -7,7 +7,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Moq;
 using Xunit.Abstractions;
@@ -58,7 +57,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopContinueActionAsync()
     {
         await this.RunWorkflowAsync("LoopContinue.yaml");
-        this.AssertExecutionCount(expectedCount: 7);
+        this.AssertExecutionCount(expectedCount: 23);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("continueLoop_now");
         this.AssertExecuted("end_all");
@@ -168,7 +167,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(DisableTrigger.Builder))]
     [InlineData(typeof(DisconnectedNodeContainer.Builder))]
     [InlineData(typeof(EmitEvent.Builder))]
-    [InlineData(typeof(EndDialog.Builder))]
     [InlineData(typeof(GetActivityMembers.Builder))]
     [InlineData(typeof(GetConversationMembers.Builder))]
     [InlineData(typeof(HttpRequestAction.Builder))]
@@ -281,10 +279,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     private sealed class RootExecutor() :
-        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.Steps.Root("anything")),
-        IMessageHandler<string>
+        Executor<string>(WorkflowActionVisitor.Steps.Root("anything")),
+        IModeledAction
     {
-        public async ValueTask HandleAsync(string message, IWorkflowContext context) =>
+        public override async ValueTask HandleAsync(string message, IWorkflowContext context) =>
             await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow:t}").ConfigureAwait(false);
     }
 }

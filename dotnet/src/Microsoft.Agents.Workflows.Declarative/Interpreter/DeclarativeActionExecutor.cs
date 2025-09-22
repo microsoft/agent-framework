@@ -21,7 +21,7 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
+internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>, IModeledAction
 {
     private string? _parentId;
     private readonly WorkflowFormulaState _state;

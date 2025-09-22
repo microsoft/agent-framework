@@ -21,7 +21,7 @@ internal sealed class DelegateActionExecutor(string actionId, WorkflowFormulaSta
     }
 }
 
-internal class DelegateActionExecutor<TMessage> : Executor<TMessage> where TMessage : notnull
+internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IModeledAction where TMessage : notnull
 {
     private readonly WorkflowFormulaState _state;
     private readonly DelegateAction<TMessage>? _action;

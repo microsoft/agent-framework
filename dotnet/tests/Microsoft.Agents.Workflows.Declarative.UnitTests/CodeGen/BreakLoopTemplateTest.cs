@@ -21,7 +21,7 @@ public class BreakLoopTemplateTest(ITestOutputHelper output) : WorkflowActionTem
         BreakLoop model = this.CreateModel(displayName);
 
         // Act
-        EmptyTemplate template = new(model, "Break from the current loop.");
+        DefaultTemplate template = new(model, "Break from the current loop.");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 

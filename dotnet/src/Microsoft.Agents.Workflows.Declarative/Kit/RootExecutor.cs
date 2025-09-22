@@ -48,7 +48,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
         await this.ExecuteAsync(message, new DeclarativeWorkflowContext(context, this._state), cancellationToken: default).ConfigureAwait(false);
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
-        this._state.SetLastMessage(input);
+        await context.SetLastMessageAsync(input).ConfigureAwait(false);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }

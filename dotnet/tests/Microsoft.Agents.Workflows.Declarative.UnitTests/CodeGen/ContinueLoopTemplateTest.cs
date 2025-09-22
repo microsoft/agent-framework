@@ -21,7 +21,7 @@ public class ContinueLoopTemplateTest(ITestOutputHelper output) : WorkflowAction
         ContinueLoop model = this.CreateModel(displayName);
 
         // Act
-        EmptyTemplate template = new(model, "Continue with the next loop value.");
+        DefaultTemplate template = new(model, "Continue with the next loop value.");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 

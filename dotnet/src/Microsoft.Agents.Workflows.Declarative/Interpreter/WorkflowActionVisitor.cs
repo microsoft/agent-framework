@@ -17,13 +17,17 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     internal static class Steps
     {
+        public static string Root(AdaptiveDialog action) => $"{action.BeginDialog?.Id.Value ?? DefaultWorkflowId}_{nameof(Root)}";
+
         public static string Root(string? actionId = null) => $"{actionId ?? DefaultWorkflowId}_{nameof(Root)}";
 
         public static string Post(string actionId) => $"{actionId}_{nameof(Post)}";
+
+        public static string Restart(string actionId) => $"{actionId}_{nameof(Restart)}";
     }
 
-    private readonly WorkflowBuilder _workflowBuilder;
-    private readonly DeclarativeWorkflowModel _workflowModel;
+    private readonly Executor _rootAction;
+    private readonly WorkflowModel<Func<object?, bool>> _workflowModel;
     private readonly DeclarativeWorkflowOptions _workflowOptions;
     private readonly WorkflowFormulaState _workflowState;
 
@@ -32,8 +36,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         WorkflowFormulaState state,
         DeclarativeWorkflowOptions options)
     {
-        this._workflowBuilder = new WorkflowBuilder(rootAction);
-        this._workflowModel = new DeclarativeWorkflowModel(rootAction);
+        this._rootAction = rootAction;
+        this._workflowModel = new WorkflowModel<Func<object?, bool>>((IModeledAction)rootAction);
         this._workflowOptions = options;
         this._workflowState = state;
     }
@@ -42,11 +46,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     public Workflow<TInput> Complete<TInput>()
     {
-        // Process the cached links
-        this._workflowModel.ConnectNodes(this._workflowBuilder);
+        WorkflowModelBuilder builder = new(this._rootAction);
 
-        // Build final workflow
-        return this._workflowBuilder.Build<TInput>();
+        this._workflowModel.Build(builder);
+
+        return builder.WorkflowBuilder.Build<TInput>();
     }
 
     protected override void Visit(ActionScope item)
@@ -197,12 +201,21 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             DefaultActionExecutor continueLoopExecutor = new(item, this._workflowState);
             this.ContinueWith(continueLoopExecutor);
-            this._workflowModel.AddLink(continueLoopExecutor.Id, Steps.Post(loopExecutor.Id));
+            this._workflowModel.AddLink(continueLoopExecutor.Id, ForeachExecutor.Steps.Next(loopExecutor.Id));
             this.RestartAfter(continueLoopExecutor.Id, continueLoopExecutor.ParentId);
         }
     }
 
     protected override void Visit(EndConversation item)
+    {
+        this.Trace(item);
+
+        DefaultActionExecutor endExecutor = new(item, this._workflowState);
+        this.ContinueWith(endExecutor);
+        this.RestartAfter(endExecutor.Id, endExecutor.ParentId);
+    }
+
+    protected override void Visit(EndDialog item)
     {
         this.Trace(item);
 
@@ -227,8 +240,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !QuestionExecutor.IsComplete(message));
 
         string inputId = QuestionExecutor.Steps.Input(actionId);
-        InputPort inputPort = InputPort.Create<InputRequest, InputResponse>(inputId);
-        this._workflowModel.AddPort(inputPort, parentId);
+        ModeledPort inputPort = new(InputPort.Create<InputRequest, InputResponse>(inputId));
+        this._workflowModel.AddNode(inputPort, parentId);
         this._workflowModel.AddLinkFromPeer(parentId, inputId);
 
         string captureId = QuestionExecutor.Steps.Capture(actionId);
@@ -388,8 +401,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(UnknownDialogAction item) => this.NotSupported(item);
 
-    protected override void Visit(EndDialog item) => this.NotSupported(item);
-
     protected override void Visit(RepeatDialog item) => this.NotSupported(item);
 
     protected override void Visit(ReplaceDialog item) => this.NotSupported(item);
@@ -436,13 +447,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     }
 
     private void ContinueWith(
-        Executor executor,
+        IModeledAction action,
         string parentId,
         Func<object?, bool>? condition = null,
         Action? completionHandler = null)
     {
-        this._workflowModel.AddNode(executor, parentId, completionHandler);
-        this._workflowModel.AddLinkFromPeer(parentId, executor.Id, condition);
+        this._workflowModel.AddNode(action, parentId, completionHandler);
+        this._workflowModel.AddLinkFromPeer(parentId, action.Id, condition);
     }
 
     private string ContinuationFor(string parentId, DelegateAction<ExecutorResultMessage>? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
@@ -455,7 +466,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     }
 
     private void RestartAfter(string actionId, string parentId) =>
-        this._workflowModel.AddNode(new DelegateActionExecutor($"{actionId}_Continue", this._workflowState), parentId);
+        this._workflowModel.AddNode(new DelegateActionExecutor(Steps.Restart(actionId), this._workflowState), parentId);
 
     private static string GetParentId(BotElement item) =>
         item.GetParentId() ??

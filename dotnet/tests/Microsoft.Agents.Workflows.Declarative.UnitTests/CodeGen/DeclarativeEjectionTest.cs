@@ -31,7 +31,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     private async Task EjectWorkflowAsync(string workflowPath)
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        string workflowCode = DeclarativeWorkflowBuilder.Eject(yamlReader, "Test.Workflow");
+        string workflowCode = DeclarativeWorkflowBuilder.Eject(yamlReader, DeclarativeWorkflowLanguage.CSharp, "Test.Workflow");
 
         string baselinePath = Path.Combine("Workflows", Path.ChangeExtension(workflowPath, ".cs"));
 #if CREATE_BASELINE

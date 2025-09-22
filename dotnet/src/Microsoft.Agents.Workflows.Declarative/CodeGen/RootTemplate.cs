@@ -10,6 +10,7 @@
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 {
     using Microsoft.Agents.Workflows.Declarative.Extensions;
+    using Microsoft.Agents.Workflows.Declarative.Interpreter;
     using Microsoft.Bot.ObjectModel;
     using System;
     
@@ -19,7 +20,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     
     #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
-    internal partial class RootTemplate : CodeTemplate
+    internal partial class RootTemplate : CodeTemplate, IModeledAction
     {
 #line hidden
         /// <summary>
@@ -27,6 +28,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         /// </summary>
         public override string TransformText()
         {
+            this.Write("\n");
             this.Write("\n");
             this.Write("\n");
             this.Write("\n");
@@ -39,7 +41,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line default
             #line hidden
             this.Write("Executor<TInput>(\n    DeclarativeWorkflowOptions options,\n    Func<TInput, ChatMe" +
-                    "ssage>? inputTransform) :\n    RootExecutor<TInput>(\"");
+                    "ssage> inputTransform) :\n    RootExecutor<TInput>(\"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
@@ -48,12 +50,20 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line hidden
             this.Write("\", options, inputTransform)\n    where TInput : notnull\n{\n    protected override a" +
                     "sync ValueTask ExecuteAsync(TInput message, IWorkflowContext context, Cancellati" +
-                    "onToken cancellationToken)\n    {\n        // Set environment variables");
+                    "onToken cancellationToken)\n    {\n");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
+ if (this.TypeInfo.EnvironmentVariables.Count > 0)
+{ 
+            
+            #line default
+            #line hidden
+            this.Write("\n        // Set environment variables");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
-        foreach (string variableName in this.TypeInfo.EnvironmentVariables)
-        { 
+    foreach (string variableName in this.TypeInfo.EnvironmentVariables)
+    { 
             
             #line default
             #line hidden
@@ -75,17 +85,20 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
-        }
-        
+    }
+}
+
+if (this.TypeInfo.UserVariables.Count > 0)
+{ 
             
             #line default
             #line hidden
-            this.Write("\n\n        // Set user variables to default values");
+            this.Write("\n        // Set user variables to default values");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
-        foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
-        {
+    foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
+    {
             
             #line default
             #line hidden
@@ -107,8 +120,8 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
-        }
-        
+    }
+}
             
             #line default
             #line hidden

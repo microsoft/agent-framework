@@ -2,7 +2,6 @@
 
 using System;
 using System.IO;
-using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
@@ -17,6 +16,20 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// </summary>
 public static class DeclarativeWorkflowBuilder
 {
+    /// <summary>
+    /// Transforms the input message into a <see cref="ChatMessage"/> based on <see cref="object.ToString()"/>.
+    /// Also performs pass-through for <see cref="ChatMessage"/> input.
+    /// </summary>
+    /// <param name="message">The input message to transform.</param>
+    /// <returns>The transformed message (as <see cref="ChatMessage"/></returns>
+    public static ChatMessage DefaultTransform(object message) =>
+            message switch
+            {
+                ChatMessage chatMessage => chatMessage,
+                string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
+                _ => new(ChatRole.User, $"{message}")
+            };
+
     /// <summary>
     /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
@@ -49,15 +62,8 @@ public static class DeclarativeWorkflowBuilder
         Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
     {
-        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Workflow undefined.");
-
-        // ISSUE #486 - Use "Workflow" element for Foundry.
-        if (rootElement is not AdaptiveDialog workflowElement)
-        {
-            throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
-        }
-
-        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
+        AdaptiveDialog workflowElement = ReadWorkflow(yamlReader);
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
@@ -68,7 +74,7 @@ public static class DeclarativeWorkflowBuilder
 
         WorkflowActionVisitor visitor = new(rootExecutor, state, options);
         WorkflowElementWalker walker = new(visitor);
-        walker.Visit(rootElement);
+        walker.Visit(workflowElement);
 
         return visitor.Complete<TInput>();
     }
@@ -77,61 +83,61 @@ public static class DeclarativeWorkflowBuilder
     /// Generates source code (provider/executor scaffolding) for the workflow defined in the YAML file.
     /// </summary>
     /// <param name="workflowFile">The path to the workflow YAML file.</param>
+    /// <param name="workflowLanguage">The language to use for the generated code.</param>
     /// <param name="workflowNamespace">Optional target namespace for the generated code.</param>
     /// <param name="workflowPrefix">Optional prefix for generated workflow type.</param>
     /// <returns>The generated source code representing the workflow.</returns>
     public static string Eject(
         string workflowFile,
+        DeclarativeWorkflowLanguage workflowLanguage,
         string? workflowNamespace = null,
         string? workflowPrefix = null)
     {
         using StreamReader yamlReader = File.OpenText(workflowFile);
-        return Eject(yamlReader, workflowNamespace, workflowPrefix);
+        return Eject(yamlReader, workflowLanguage, workflowNamespace, workflowPrefix);
     }
 
     /// <summary>
     /// Generates source code (provider/executor scaffolding) for the workflow defined in the provided YAML reader.
     /// </summary>
     /// <param name="yamlReader">The reader supplying the workflow YAML.</param>
+    /// <param name="workflowLanguage">The language to use for the generated code.</param>
     /// <param name="workflowNamespace">Optional target namespace for the generated code.</param>
     /// <param name="workflowPrefix">Optional prefix for generated workflow type.</param>
     /// <returns>The generated source code representing the workflow.</returns>
     public static string Eject(
         TextReader yamlReader,
+        DeclarativeWorkflowLanguage workflowLanguage,
         string? workflowNamespace = null,
         string? workflowPrefix = null)
     {
-        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Workflow undefined.");
-
-        // ISSUE #486 - Use "Workflow" element for Foundry.
-        if (rootElement is not AdaptiveDialog workflowElement)
+        if (workflowLanguage != DeclarativeWorkflowLanguage.CSharp)
         {
-            throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
+            throw new NotSupportedException($"Converting workflow to {workflowLanguage} is not currently supported.");
         }
 
-        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
+        AdaptiveDialog workflowElement = ReadWorkflow(yamlReader);
 
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
         WorkflowTypeInfo typeInfo = workflowElement.WrapWithBot().Describe();
 
         WorkflowEjectVisitor visitor = new(rootId, typeInfo);
         WorkflowElementWalker walker = new(visitor);
-        walker.Visit(rootElement);
+        walker.Visit(workflowElement);
 
-        ProviderTemplate template =
-            new(rootId, visitor.Executors, visitor.Instances, visitor.Edges)
-            {
-                Namespace = workflowNamespace,
-                Prefix = workflowPrefix,
-            };
-
-        return template.TransformText();
+        return visitor.Complete(workflowNamespace, workflowPrefix);
     }
 
-    private static ChatMessage DefaultTransform(object message) =>
-            message switch
-            {
-                ChatMessage chatMessage => chatMessage,
-                string stringMessage => new ChatMessage(ChatRole.User, stringMessage),
-                _ => new(ChatRole.User, $"{message}")
-            };
+    private static AdaptiveDialog ReadWorkflow(TextReader yamlReader)
+    {
+        BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Workflow undefined.");
+
+        // "Workflow" is an alias for "AdaptiveDialog"
+        if (rootElement is not AdaptiveDialog workflowElement)
+        {
+            throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(Workflow)}.");
+        }
+
+        return workflowElement;
+    }
 }

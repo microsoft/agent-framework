@@ -40,7 +40,14 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write(" = new(root.Session);");
+            this.Write(" = new(");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InstanceTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.RootVariable));
+            
+            #line default
+            #line hidden
+            this.Write(".Session);");
             return this.GenerationEnvironment.ToString();
         }
     }

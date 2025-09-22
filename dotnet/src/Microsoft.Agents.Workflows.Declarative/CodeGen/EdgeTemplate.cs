@@ -26,7 +26,46 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         public override string TransformText()
         {
             this.Write("\n");
-            this.Write("\nbuilder.AddEdge(");
+            this.Write("\n");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+ if (this.Condition is not null)
+{
+            
+            #line default
+            #line hidden
+            this.Write("\n    builder.AddEdge(");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.SourceId));
+            
+            #line default
+            #line hidden
+            this.Write(", ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.TargetId));
+            
+            #line default
+            #line hidden
+            this.Write(", condition => ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Condition));
+            
+            #line default
+            #line hidden
+            this.Write(");");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+
+}
+else
+{
+            
+            #line default
+            #line hidden
+            this.Write("\n    builder.AddEdge(");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.SourceId));
@@ -41,6 +80,14 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line default
             #line hidden
             this.Write(");");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
+
+} 
+            
+            #line default
+            #line hidden
+            this.Write("\n");
             return this.GenerationEnvironment.ToString();
         }
     }

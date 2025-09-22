@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
@@ -12,48 +13,61 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 {
-    //private readonly DeclarativeWorkflowModel _workflowModel;
+    private readonly string _rootId;
+    private readonly WorkflowModel<string> _workflowModel;
 
     public WorkflowEjectVisitor(
         string workflowId,
         WorkflowTypeInfo typeInfo)
     {
-        //this._workflowModel = new DeclarativeWorkflowModel(rootAction);
+        this._rootId = workflowId;
+        this._workflowModel = new WorkflowModel<string>(new RootTemplate(workflowId, typeInfo));
         this.Edges = [];
-        this.Executors = [new RootTemplate(workflowId, typeInfo).TransformText()];
+        this.Executors = [new RootTemplate(workflowId, typeInfo).TransformText()]; // %%% TODO IModelAction
         this.Instances = [];
     }
 
     public bool HasUnsupportedActions { get; private set; }
 
-    public List<string> Edges { get; }
+    public List<string> Edges { get; } // %%% REMOVE
     public List<string> Executors { get; }
     public List<string> Instances { get; }
 
-    protected override void Visit(ActionScope item) // %%% TODO
+    public string Complete(string? workflowNamespace = null, string? workflowPrefix = null)
+    {
+        WorkflowCodeBuilder builder = new(this._rootId);
+
+        this._workflowModel.Build(builder);
+
+        return builder.GenerateCode(workflowNamespace, workflowPrefix);
+    }
+
+    protected override void Visit(ActionScope item)
     {
         this.Trace(item);
 
-        //string parentId = GetParentId(item);
+        string parentId = GetParentId(item);
 
-        //// Handle case where root element is its own parent
-        //if (item.Id.Equals(parentId))
-        //{
-        //    parentId = RootId(parentId);
-        //}
+        // Handle case where root element is its own parent
+        if (item.Id.Equals(parentId))
+        {
+            parentId = WorkflowActionVisitor.Steps.Root(parentId);
+        }
 
-        //this.ContinueWith(this.CreateStep(item.Id.Value), parentId, condition: null, CompletionHandler);
+        string ExecutorComment = @$"// %%% BEGIN ACTION SCOPE FOR: ""{item.Id}""";
+
+        this.ContinueWith(new EmptyTemplate(item.Id.Value, ExecutorComment), parentId, condition: null, CompletionHandler); // %%% COMPLETION HANDLER
 
         //// Complete the action scope.
-        //void CompletionHandler()
-        //{
-        //    if (this._workflowModel.GetDepth(item.Id.Value) > 1)
-        //    {
-        //        string completionId = this.ContinuationFor(item.Id.Value); // End scope
-        //        this._workflowModel.AddLinkFromPeer(item.Id.Value, completionId); // Connect with final action
-        //        this._workflowModel.AddLink(completionId, PostId(parentId)); // Merge with parent scope
-        //    }
-        //}
+        void CompletionHandler()
+        {
+            if (this._workflowModel.GetDepth(item.Id.Value) > 1)
+            {
+                string completionId = this.ContinuationFor(item.Id.Value); // End scope
+                this._workflowModel.AddLinkFromPeer(item.Id.Value, completionId); // Connect with final action
+                this._workflowModel.AddLink(completionId, WorkflowActionVisitor.Steps.Post(parentId)); // Merge with parent scope
+            }
+        }
     }
 
     public override void VisitConditionItem(ConditionItem item) // %%% TODO
@@ -90,7 +104,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         string actionId = item.GetId();
         this.Executors.Add(new ConditionGroupTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(actionId).TransformText());
+        this.Instances.Add(new InstanceTemplate(actionId, this._rootId).TransformText());
 
         this.Edges.Add(new EdgeTemplate("root", actionId).TransformText()); // %%% CONTINUE WITH
 
@@ -128,34 +142,33 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         string ExecutorComment = @$"Transfers execution to action ""{item.ActionId.Value}""";
 
-        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
-        this.Edges.Add(new EdgeTemplate(item.ActionId.Value, item.GetId()).TransformText()); // %%% RESTART
+        DefaultTemplate action = new(item, ExecutorComment);
+        this.ContinueWith(action);
+        this._workflowModel.AddLink(action.Id, item.ActionId.Value);
+        this.RestartAfter(action.Id, action.ParentId);
     }
 
     protected override void Visit(Foreach item)
     {
         this.Trace(item);
 
-        string actionId = item.GetId();
-        string loopId = ForeachExecutor.Steps.Next(actionId);
-        string startId = ForeachExecutor.Steps.Next(actionId);
-        string endId = ForeachExecutor.Steps.End(actionId);
+        ForeachTemplate template = new(item);
+        string loopId = ForeachExecutor.Steps.Next(template.Id);
+        this.ContinueWith(template, condition: null, CompletionHandler); // Foreach
+        //this.ContinueWith(new DelegateActionExecutor(loopId, this._workflowState, action.TakeNextAsync), action.Id); // %%% DELEGATE
 
-        this.Executors.Add(new ForeachTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(actionId).TransformText());
+        string continuationId = this.ContinuationFor(template.Id, template.ParentId); // Action continuation
+        this._workflowModel.AddLink(loopId, continuationId, $"!{template.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
 
-        this.Edges.Add(new EdgeTemplate("root", actionId).TransformText()); // %%% CONTINUE WITH
-        this.Edges.Add(new EdgeTemplate(actionId, loopId).TransformText()); // %%% CONTINUE WITH
-        this.Edges.Add(new EdgeTemplate(loopId, startId).TransformText()); // %%% CONDITION
-        this.Edges.Add(new EdgeTemplate(loopId, endId).TransformText()); // %%% CONDITION
-
-        CompletionHandler(); // %%% HAXX
+        string startId = ForeachExecutor.Steps.Start(template.Id);
+        //this._workflowModel.AddNode(new DelegateActionExecutor(startId, this._workflowState), template.Id);  // %%% EMPTY
+        this._workflowModel.AddLink(loopId, startId, $"{template.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
 
         void CompletionHandler()
         {
-            this.Edges.Add(new EdgeTemplate(endId, loopId).TransformText()); // %%% CONTINUE WITH
+            string endActionsId = ForeachExecutor.Steps.End(template.Id); // Loop continuation
+            //this.ContinueWith(new DelegateActionExecutor(endActionsId, template.ResetAsync), template.Id); // %%% DELEGATE
+            this._workflowModel.AddLink(endActionsId, loopId);
         }
     }
 
@@ -163,32 +176,30 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        //ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
-        const string LoopId = "loop_action_id"; // %%% TODO
-        //if (loopExecutor is not null)
-        //{
-        string ExecutorComment = @$"Break out of loop: ""{LoopId}""";
-
-        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", ForeachExecutor.Steps.End(LoopId)).TransformText()); // %%% CONTINUE WITH
-        //}
+        ForeachTemplate? loopExecutor = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
+        if (loopExecutor is not null)
+        {
+            string ExecutorComment = @$"Break out loop: ""{loopExecutor.Id}""";
+            DefaultTemplate template = new(item, ExecutorComment);
+            this.ContinueWith(template);
+            this._workflowModel.AddLink(template.Id, WorkflowActionVisitor.Steps.Post(template.Id));
+            this.RestartAfter(template.Id, template.ParentId);
+        }
     }
 
     protected override void Visit(ContinueLoop item)
     {
         this.Trace(item);
 
-        //ForeachExecutor? loopExecutor = this._workflowModel.LocateParent<ForeachExecutor>(item.GetParentId());
-        const string LoopId = "loop_action_id"; // %%% TODO
-        //if (loopExecutor is not null)
-        //{
-        string ExecutorComment = @$"Continue with next value for loop: ""{LoopId}""";
-
-        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", ForeachExecutor.Steps.Start(LoopId)).TransformText()); // %%% CONTINUE WITH
-        //}
+        ForeachTemplate? loopExecutor = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
+        if (loopExecutor is not null)
+        {
+            string ExecutorComment = @$"Continue with next value for loop: ""{loopExecutor.Id}""";
+            DefaultTemplate template = new(item, ExecutorComment);
+            this.ContinueWith(template);
+            this._workflowModel.AddLink(template.Id, ForeachExecutor.Steps.Start(template.Id));
+            this.RestartAfter(template.Id, template.ParentId);
+        }
     }
 
     protected override void Visit(EndConversation item)
@@ -197,124 +208,125 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         const string ExecutorComment = "Ends the conversation with the user. This action does not delete any conversation history.";
 
-        this.Executors.Add(new EmptyTemplate(item, ExecutorComment).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH AND RESTART
+        DefaultTemplate template = new(item, ExecutorComment);
+        this.ContinueWith(template);
+        this.RestartAfter(template.Id, template.ParentId);
+    }
+
+    protected override void Visit(EndDialog item)
+    {
+        this.Trace(item);
+
+        const string ExecutorComment = "Ends the conversation with the user. This action does not delete any conversation history.";
+
+        DefaultTemplate template = new(item, ExecutorComment);
+        this.ContinueWith(template);
+        this.RestartAfter(template.Id, template.ParentId);
     }
 
     protected override void Visit(SetVariable item)
     {
         this.Trace(item);
 
-        this.Executors.Add(new SetVariableTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.ContinueWith(new SetVariableTemplate(item));
     }
 
     protected override void Visit(SetMultipleVariables item)
     {
-        throw new System.NotImplementedException();
+        this.Trace(item);
+
+        this.ContinueWith(new SetMultipleVariablesTemplate(item));
     }
 
     protected override void Visit(SetTextVariable item)
     {
         this.Trace(item);
 
-        this.Executors.Add(new SetTextVariableTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.ContinueWith(new SetTextVariableTemplate(item));
     }
 
     protected override void Visit(ClearAllVariables item)
     {
         this.Trace(item);
 
-        this.Executors.Add(new ClearAllVariablesTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.ContinueWith(new ClearAllVariablesTemplate(item));
     }
 
     protected override void Visit(ResetVariable item)
     {
         this.Trace(item);
 
-        this.Executors.Add(new ResetVariableTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.ContinueWith(new ResetVariableTemplate(item));
     }
 
     protected override void Visit(EditTable item) // %%% TODO
     {
         this.Trace(item);
 
-        //this.ContinueWith(new EditTableExecutor(item, this._workflowState));
+        //this.ContinueWith(new EditTableTemplate(item));
     }
 
     protected override void Visit(EditTableV2 item) // %%% TODO
     {
         this.Trace(item);
 
-        //this.ContinueWith(new EditTableV2Executor(item, this._workflowState));
+        //this.ContinueWith(new EditTableV2Template(item));
     }
 
     protected override void Visit(ParseValue item) // %%% TODO
     {
         this.Trace(item);
 
-        //this.ContinueWith(new ParseValueExecutor(item, this._workflowState));
+        //this.ContinueWith(new ParseValueTemplate(item));
     }
 
     protected override void Visit(SendActivity item)
     {
         this.Trace(item);
 
-        this.Executors.Add(new SendActivityTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.ContinueWith(new SendActivityTemplate(item));
     }
 
     protected override void Visit(InvokeAzureAgent item) // %%% TODO
     {
-        throw new System.NotImplementedException();
+        this.Trace(item);
+
+        //this.ContinueWith(new InvokeAzureAgentTemplate(item));
     }
 
     protected override void Visit(CreateConversation item)
     {
         this.Trace(item);
 
-        this.Executors.Add(new CreateConversationTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.ContinueWith(new CreateConversationTemplate(item));
     }
 
     protected override void Visit(AddConversationMessage item)
     {
         this.Trace(item);
 
-        this.Executors.Add(new AddConversationMessageTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.ContinueWith(new AddConversationMessageTemplate(item));
     }
 
     protected override void Visit(CopyConversationMessages item)
     {
-        this.Executors.Add(new CopyConversationMessagesTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.Trace(item);
+
+        this.ContinueWith(new CopyConversationMessagesTemplate(item));
     }
 
     protected override void Visit(RetrieveConversationMessage item)
     {
-        this.Executors.Add(new RetrieveConversationMessageTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.Trace(item);
+
+        this.ContinueWith(new RetrieveConversationMessageTemplate(item));
     }
 
     protected override void Visit(RetrieveConversationMessages item)
     {
-        this.Executors.Add(new RetrieveConversationMessagesTemplate(item).TransformText());
-        this.Instances.Add(new InstanceTemplate(item.GetId()).TransformText());
-        this.Edges.Add(new EdgeTemplate("root", item.GetId()).TransformText()); // %%% CONTINUE WITH
+        this.Trace(item);
+
+        this.ContinueWith(new RetrieveConversationMessagesTemplate(item));
     }
 
     #region Not supported
@@ -409,11 +421,6 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.NotSupported(item);
     }
 
-    protected override void Visit(EndDialog item)
-    {
-        this.NotSupported(item);
-    }
-
     protected override void Visit(RepeatDialog item)
     {
         this.NotSupported(item);
@@ -501,7 +508,41 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     #endregion
 
-    //private static string PostId(string actionId) => $"{actionId}_Post";
+    private void ContinueWith(
+        ActionTemplate template,
+        string? condition = null,
+        Action? completionHandler = null)
+    {
+        this.ContinueWith(template, template.ParentId, condition, completionHandler);
+    }
+
+    private void ContinueWith(
+        IModeledAction action,
+        string parentId,
+        string? condition = null,
+        Action? completionHandler = null)
+    {
+        this._workflowModel.AddNode(action, parentId, completionHandler);
+        this._workflowModel.AddLinkFromPeer(parentId, action.Id, condition);
+    }
+
+    private string ContinuationFor(string parentId, DelegateAction<ExecutorResultMessage>? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
+
+    private string ContinuationFor(string actionId, string parentId, DelegateAction<ExecutorResultMessage>? stepAction = null)
+    {
+        actionId = WorkflowActionVisitor.Steps.Post(actionId);
+
+        string ExecutorComment = @$"// %%% END ACTION SCOPE FOR: ""{actionId}""";
+        this._workflowModel.AddNode(new EmptyTemplate(actionId, ExecutorComment), parentId);
+
+        return actionId;
+    }
+
+    private void RestartAfter(string actionId, string parentId)
+    {
+        string ExecutorComment = @$"// %%% RESTART AFTER: ""{actionId}""";
+        this._workflowModel.AddNode(new EmptyTemplate(WorkflowActionVisitor.Steps.Restart(actionId), ExecutorComment), parentId);
+    }
 
     //private static string GetParentId(BotElement item) =>
     //    item.GetParentId() ??
@@ -526,6 +567,10 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     //    return stepExecutor;
     //}
 
+    private static string GetParentId(BotElement item) =>
+        item.GetParentId() ??
+        throw new DeclarativeModelException($"Missing parent ID for action element: {item.GetId()} [{item.GetType().Name}].");
+
     private void NotSupported(DialogAction item)
     {
         Debug.WriteLine($"> UNKNOWN: {FormatItem(item)} => {FormatParent(item)}");
@@ -542,9 +587,9 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         string? parentId = item.GetParentId();
         if (item.Id.Equals(parentId ?? string.Empty))
         {
-            WorkflowActionVisitor.Steps.Root(parentId);
+            parentId = WorkflowActionVisitor.Steps.Root(parentId);
         }
-        Debug.WriteLine($"> VISIT: {FormatItem(item)} => {FormatParent(item)}");
+        Debug.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(parentId))}{FormatItem(item)} => {FormatParent(item)}");
     }
 
     private static string FormatItem(BotElement element) => $"{element.GetType().Name} ({element.GetId()})";

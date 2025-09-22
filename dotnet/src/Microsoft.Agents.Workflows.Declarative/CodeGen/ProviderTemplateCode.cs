@@ -16,12 +16,14 @@ internal partial class ProviderTemplate
         this.Executors = executors;
         this.Instances = instances;
         this.Edges = edges;
+        this.RootInstance = workflowId.FormatName();
         this.RootExecutorType = workflowId.FormatType();
     }
 
     public string? Namespace { get; init; }
     public string? Prefix { get; init; }
 
+    public string RootInstance { get; }
     public string RootExecutorType { get; }
 
     public IEnumerable<string> Executors { get; }

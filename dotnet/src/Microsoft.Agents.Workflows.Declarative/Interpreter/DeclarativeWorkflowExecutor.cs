@@ -14,16 +14,16 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     string workflowId,
     WorkflowFormulaState state,
     Func<TInput, ChatMessage> inputTransform) :
-    Executor<TInput>(workflowId)
-    where TInput : notnull
+    Executor<TInput>(workflowId), IModeledAction where TInput : notnull
 {
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         // No state to restore if we're starting from the beginning.
         state.SetInitialized();
 
+        DeclarativeWorkflowContext declarativeContext = new(context, state);
         ChatMessage input = inputTransform.Invoke(message);
-        state.SetLastMessage(input);
+        await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
         await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
     }

@@ -112,20 +112,34 @@ foreach (string executor in ByLine(this.Executors, formatGroup: true))
             
             #line default
             #line hidden
-            this.Write("\n    public static Workflow<TInput> CreateWorkflow<TInput>(\n        DeclarativeWo" +
-                    "rkflowOptions options,\n        Func<TInput, ChatMessage>? inputTransform = null)" +
-                    " \n        where TInput : notnull\n    {\n        // Create executor instances\n    " +
-                    "    ");
+            this.Write(@"
+    public static Workflow<TInput> CreateWorkflow<TInput>(
+        DeclarativeWorkflowOptions options,
+        Func<TInput, ChatMessage>? inputTransform = null) 
+        where TInput : notnull
+    {
+        // Create root executor to initialize the workflow.
+        inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
+        ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.RootExecutorType));
             
             #line default
             #line hidden
-            this.Write("Executor<TInput> root = new(options, inputTransform);");
+            this.Write("Executor<TInput> ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.RootInstance));
+            
+            #line default
+            #line hidden
+            this.Write(" = new(options, inputTransform);");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 
+
+        // Create executor instances
 foreach (string instance in ByLine(this.Instances))
 { 
             
@@ -145,8 +159,14 @@ foreach (string instance in ByLine(this.Instances))
             
             #line default
             #line hidden
-            this.Write("\n\n        // Define the workflow builder\n        WorkflowBuilder builder = new(ro" +
-                    "ot);\n\n        // Connect executors");
+            this.Write("\n\n        // Define the workflow builder\n        WorkflowBuilder builder = new(");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.RootInstance));
+            
+            #line default
+            #line hidden
+            this.Write(");\n\n        // Connect executors");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"
 

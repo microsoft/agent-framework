@@ -46,15 +46,18 @@ foreach (string executor in ByLine(this.Executors, formatGroup: true))
         Func<TInput, ChatMessage>? inputTransform = null) 
         where TInput : notnull
     {
+        // Create root executor to initialize the workflow.
+        inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
+        <#= this.RootExecutorType #>Executor<TInput> <#= this.RootInstance #> = new(options, inputTransform);<#
+
         // Create executor instances
-        <#= this.RootExecutorType #>Executor<TInput> root = new(options, inputTransform);<#
 foreach (string instance in ByLine(this.Instances))
 { #>
         <#= instance #><#
 }#>
 
         // Define the workflow builder
-        WorkflowBuilder builder = new(root);
+        WorkflowBuilder builder = new(<#= this.RootInstance #>);
 
         // Connect executors<#
 foreach (string edge in ByLine(this.Edges))
