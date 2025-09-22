@@ -294,7 +294,8 @@ public sealed class AIAgentBuilderExtensionsTests
         Console.WriteLine($"ChatClientAgent service: {chatClientAgent.GetService<ChatClientAgent>()}");
 
         var result = builder
-            .UseFunctionInvocationContext(funcCallbackAsync)                                                        // FunctionCallMiddlewareAgent (should be outer)
+            .UseFunctionInvocationContext(funcCallbackAsync)
+            .UseRunningContext(runCallbackAsync)
             .Build();
 
         // Assert
@@ -309,12 +310,8 @@ public sealed class AIAgentBuilderExtensionsTests
         Assert.IsType<RunningMiddlewareAgent>(innerAgent); // Should be the second RunningMiddleware
 
         var runningMiddleware = (RunningMiddlewareAgent)innerAgent;
-        var innerInnerAgent = GetInnerAgent(runningMiddleware);
-        Assert.IsType<RunningMiddlewareAgent>(innerInnerAgent); // Should be the first RunningMiddleware
-
-        var firstRunningMiddleware = (RunningMiddlewareAgent)innerInnerAgent;
-        var coreAgent = GetInnerAgent(firstRunningMiddleware);
-        Assert.IsType<ChatClientAgent>(coreAgent); // Should be the original ChatClientAgent
+        var coreAgent = GetInnerAgent(runningMiddleware);
+        Assert.IsType<ChatClientAgent>(coreAgent); // Should be the first RunningMiddleware
     }
 
     /// <summary>
