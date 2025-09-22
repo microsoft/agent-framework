@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
@@ -14,6 +15,14 @@ if TYPE_CHECKING:
     from ._tools import AIFunction
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
+
+
+class MiddlewareType(Enum):
+    """Enum representing the type of middleware."""
+
+    AGENT = "agent"
+    FUNCTION = "function"
+
 
 __all__ = [
     "AgentMiddleware",
@@ -159,7 +168,7 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
             await next(context)
     """
     # Add marker attribute to identify this as agent middleware
-    func._middleware_type = "agent"  # type: ignore
+    func._middleware_type: MiddlewareType = MiddlewareType.AGENT  # type: ignore
     return func
 
 
@@ -182,7 +191,7 @@ def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareC
             await next(context)
     """
     # Add marker attribute to identify this as function middleware
-    func._middleware_type = "function"  # type: ignore
+    func._middleware_type: MiddlewareType = MiddlewareType.FUNCTION  # type: ignore
     return func
 
 
@@ -532,23 +541,23 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     original_run = agent_class.run  # type: ignore[attr-defined]
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
 
-    def _determine_middleware_type(middleware: Any) -> str:
+    def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         """Determine middleware type using decorator and/or parameter type annotation.
 
         Args:
             middleware: The middleware function to analyze.
 
         Returns:
-            "agent" or "function" indicating the middleware type.
+            MiddlewareType.AGENT or MiddlewareType.FUNCTION indicating the middleware type.
 
         Raises:
             ValueError: When middleware type cannot be determined or there's a mismatch.
         """
         # Check for decorator marker
-        decorator_type: str | None = getattr(middleware, "_middleware_type", None)
+        decorator_type: MiddlewareType | None = getattr(middleware, "_middleware_type", None)
 
         # Check for parameter type annotation
-        param_type = None
+        param_type: MiddlewareType | None = None
         try:
             sig = inspect.signature(middleware)
             params = list(sig.parameters.values())
@@ -559,9 +568,9 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                 if hasattr(first_param.annotation, "__name__"):
                     annotation_name = first_param.annotation.__name__
                     if annotation_name == "AgentRunContext":
-                        param_type = "agent"
+                        param_type = MiddlewareType.AGENT
                     elif annotation_name == "FunctionInvocationContext":
-                        param_type = "function"
+                        param_type = MiddlewareType.FUNCTION
             else:
                 # Not enough parameters - can't be valid middleware
                 raise ValueError(
@@ -578,8 +587,8 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             # Both decorator and parameter type specified - they must match
             if decorator_type != param_type:
                 raise ValueError(
-                    f"Middleware type mismatch: decorator indicates '{decorator_type}' "
-                    f"but parameter type indicates '{param_type}' for function {middleware.__name__}"
+                    f"Middleware type mismatch: decorator indicates '{decorator_type.value}' "
+                    f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
                 )
             return decorator_type
 
@@ -640,9 +649,9 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             elif callable(middleware):  # type: ignore[arg-type]
                 # Determine middleware type using decorator and/or parameter type annotation
                 middleware_type = _determine_middleware_type(middleware)
-                if middleware_type == "agent":
+                if middleware_type == MiddlewareType.AGENT:
                     agent_middlewares.append(middleware)  # type: ignore
-                elif middleware_type == "function":
+                elif middleware_type == MiddlewareType.FUNCTION:
                     function_middlewares.append(middleware)  # type: ignore
                 else:
                     # This should not happen if _determine_middleware_type is implemented correctly
