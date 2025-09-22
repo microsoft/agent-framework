@@ -269,7 +269,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 else None,
                             )
                         )
-
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:
