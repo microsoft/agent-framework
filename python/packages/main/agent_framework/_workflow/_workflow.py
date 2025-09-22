@@ -37,7 +37,7 @@ from ._events import (
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
-    _framework_event_origin,
+    _framework_event_origin,  # type: ignore
 )
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
@@ -170,7 +170,7 @@ class Workflow(AFBaseModel):
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
         self._shared_state = SharedState()
-        self._runner = Runner(
+        self._runner: Runner = Runner(
             self.edge_groups,
             self.executors,
             self._shared_state,
@@ -387,7 +387,7 @@ class Workflow(AFBaseModel):
             if await self._runner.context.has_messages():
                 # Run one iteration to process pending messages
                 # This will populate RequestInfoExecutor._request_events properly
-                await self._runner._run_iteration()
+                await self._runner._run_iteration()  # type: ignore
 
             if responses:
                 request_info_executor = self._find_request_info_executor()

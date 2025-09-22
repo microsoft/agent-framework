@@ -11,15 +11,15 @@ if TYPE_CHECKING:
 
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowCompletedEvent, WorkflowEvent, _framework_event_origin
+from ._events import WorkflowCompletedEvent, WorkflowEvent, _framework_event_origin  # type: ignore
 from ._executor import Executor
 from ._runner_context import (
-    _DATACLASS_MARKER,
-    _PYDANTIC_MARKER,
+    _DATACLASS_MARKER,  # type: ignore
+    _PYDANTIC_MARKER,  # type: ignore
     CheckpointState,
     Message,
     RunnerContext,
-    _decode_checkpoint_value,
+    _decode_checkpoint_value,  # type: ignore
 )
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of

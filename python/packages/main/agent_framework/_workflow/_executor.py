@@ -29,7 +29,7 @@ from ._events import (
     RequestInfoEvent,
     _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
 )
-from ._runner_context import _decode_checkpoint_value
+from ._runner_context import _decode_checkpoint_value  # pyright: ignore[reportPrivateUsage]
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
@@ -261,7 +261,7 @@ class Executor(AFBaseModel):
 
                     # Call the interceptor method
                     method = interceptor_info["method"]
-                    response = await method(request.data, ctx)
+                    response: "RequestResponse[Any, Any]" = await method(request.data, ctx)
 
                     # Check if interceptor handled it or needs to forward
                     if isinstance(response, RequestResponse):
@@ -730,28 +730,7 @@ class RequestInfoExecutor(Executor):
             payload: dict[str, Any]
             data_cls = request_data.__class__ if request_data is not None else type(None)
 
-            if request_data is not None and is_dataclass(request_data) and not isinstance(request_data, type):
-                dataclass_instance = cast(Any, request_data)
-                payload = {
-                    "kind": "dataclass",
-                    "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
-                    "value": asdict(dataclass_instance),
-                }
-            else:
-                model_dump_fn = getattr(request_data, "model_dump", None) if request_data is not None else None
-                if callable(model_dump_fn):
-                    typed_dump = cast(Callable[..., Any], model_dump_fn)
-                    payload = {
-                        "kind": "pydantic",
-                        "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
-                        "value": typed_dump(mode="json"),
-                    }
-                else:
-                    payload = {
-                        "kind": "raw",
-                        "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
-                        "value": vars(request_data) if request_data is not None else {},
-                    }
+            payload = self._encode_request_payload(request_data, data_cls)
 
             return {
                 "source_executor_id": event.source_executor_id,
@@ -764,6 +743,52 @@ class RequestInfoExecutor(Executor):
             "sub_workflow_contexts": dict(self._sub_workflow_contexts),
         }
 
+    def _encode_request_payload(self, request_data: RequestInfoMessage | None, data_cls: type[Any]) -> dict[str, Any]:
+        if request_data is None or isinstance(request_data, (str, int, float, bool)):
+            return {
+                "kind": "raw",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": request_data,
+            }
+
+        if is_dataclass(request_data) and not isinstance(request_data, type):
+            dataclass_instance = cast(Any, request_data)
+            safe_value = self._make_json_safe(asdict(dataclass_instance))
+            return {
+                "kind": "dataclass",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        model_dump_fn = getattr(request_data, "model_dump", None)
+        if callable(model_dump_fn):
+            try:
+                dumped = model_dump_fn(mode="json")
+            except TypeError:
+                dumped = model_dump_fn()
+            safe_value = self._make_json_safe(dumped)
+            return {
+                "kind": "pydantic",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        details = self._serialise_request_details(request_data)
+        if details is not None:
+            safe_value = self._make_json_safe(details)
+            return {
+                "kind": "raw",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        safe_value = self._make_json_safe(request_data)
+        return {
+            "kind": "raw",
+            "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+            "value": safe_value,
+        }
+
     def restore_state(self, state: dict[str, Any]) -> None:
         """Restore pending request bookkeeping from checkpoint state."""
         self._request_events.clear()
@@ -771,7 +796,16 @@ class RequestInfoExecutor(Executor):
 
         for request_id, payload in stored_events.items():
             request_type_qual = payload.get("request_type", "")
-            request_type = self._import_qualname(request_type_qual)
+            try:
+                request_type = self._import_qualname(request_type_qual)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.debug(
+                    "RequestInfoExecutor %s failed to import %s during restore: %s",
+                    self.id,
+                    request_type_qual,
+                    exc,
+                )
+                request_type = RequestInfoMessage
             request_data_meta = payload.get("request_data", {})
             request_data = self._decode_request_data(request_data_meta)
             event = RequestInfoEvent(
@@ -784,7 +818,7 @@ class RequestInfoExecutor(Executor):
 
         sub_contexts = state.get("sub_workflow_contexts", {})
         if isinstance(sub_contexts, dict):
-            self._sub_workflow_contexts = {k: dict(v) for k, v in sub_contexts.items()}
+            self._sub_workflow_contexts = {str(k): dict(v) for k, v in sub_contexts.items()}  # type: ignore[arg-type]
         else:
             self._sub_workflow_contexts = {}
 
@@ -805,7 +839,19 @@ class RequestInfoExecutor(Executor):
         kind = metadata.get("kind")
         type_name = metadata.get("type", "")
         value = metadata.get("value", {})
-        imported = self._import_qualname(type_name) if type_name else RequestInfoMessage
+        if type_name:
+            try:
+                imported = self._import_qualname(type_name)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.debug(
+                    "RequestInfoExecutor %s failed to import %s during decode: %s",
+                    self.id,
+                    type_name,
+                    exc,
+                )
+                imported = RequestInfoMessage
+        else:
+            imported = RequestInfoMessage
         target_cls: type[RequestInfoMessage]
         if isinstance(imported, type) and issubclass(imported, RequestInfoMessage):
             target_cls = imported
@@ -814,7 +860,7 @@ class RequestInfoExecutor(Executor):
 
         if kind == "dataclass" and isinstance(value, dict):
             with contextlib.suppress(TypeError):
-                return target_cls(**value)
+                return target_cls(**value)  # type: ignore[arg-type]
 
         if kind == "pydantic" and isinstance(value, dict):
             model_validate = getattr(target_cls, "model_validate", None)
@@ -823,9 +869,9 @@ class RequestInfoExecutor(Executor):
 
         if isinstance(value, dict):
             with contextlib.suppress(TypeError):
-                return target_cls(**value)
-            instance = cast(RequestInfoMessage, object.__new__(target_cls))
-            instance.__dict__.update(value)
+                return target_cls(**value)  # type: ignore[arg-type]
+            instance = object.__new__(target_cls)
+            instance.__dict__.update(value)  # type: ignore[arg-type]
             return instance
 
         with contextlib.suppress(Exception):
@@ -847,7 +893,6 @@ class RequestInfoExecutor(Executor):
         self._request_events[message.request_id] = event
         await self._record_pending_request_snapshot(message, source_executor_id, ctx)
         await ctx.add_event(event)
-        await ctx.set_state(self.snapshot_state())
 
     @handler
     async def handle_sub_workflow_request(
@@ -879,7 +924,6 @@ class RequestInfoExecutor(Executor):
         )
         self._request_events[message.request_id] = event
         await ctx.add_event(event)
-        await ctx.set_state(self.snapshot_state())
 
     async def handle_response(
         self,
@@ -929,7 +973,6 @@ class RequestInfoExecutor(Executor):
             await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 
         await self._clear_pending_request_snapshot(request_id, ctx)
-        await ctx.set_state(self.snapshot_state())
 
     async def _ensure_state_loaded(self, request_id: str, ctx: WorkflowContext[Any]) -> None:
         if self._state_loaded:
@@ -953,23 +996,25 @@ class RequestInfoExecutor(Executor):
         pending = await self._load_pending_request_state(ctx)
         pending[request.request_id] = snapshot
         await self._persist_pending_request_state(pending, ctx)
+        await self._write_executor_state(ctx, pending)
 
     async def _clear_pending_request_snapshot(self, request_id: str, ctx: WorkflowContext[Any]) -> None:
         pending = await self._load_pending_request_state(ctx)
-        if request_id not in pending:
-            return
-
-        pending.pop(request_id, None)
-        await self._persist_pending_request_state(pending, ctx)
+        if request_id in pending:
+            pending.pop(request_id, None)
+            await self._persist_pending_request_state(pending, ctx)
+        await self._write_executor_state(ctx, pending)
 
     async def _load_pending_request_state(self, ctx: WorkflowContext[Any]) -> dict[str, Any]:
         try:
             existing = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except KeyError:
+            return {}
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to read pending request state: {exc}")
             return {}
 
-        if not isinstance(existing, dict) or existing is None:
+        if not isinstance(existing, dict):
             if existing not in (None, {}):
                 logger.warning(
                     f"RequestInfoExecutor {self.id} encountered non-dict pending state "
@@ -977,7 +1022,7 @@ class RequestInfoExecutor(Executor):
                 )
             return {}
 
-        return dict(existing)
+        return dict(existing)  # type: ignore[arg-type]
 
     async def _persist_pending_request_state(self, pending: dict[str, Any], ctx: WorkflowContext[Any]) -> None:
         await self._safe_set_shared_state(ctx, pending)
@@ -994,6 +1039,14 @@ class RequestInfoExecutor(Executor):
             await ctx.set_state({"pending_requests": pending})
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to update runner state with pending requests: {exc}")
+
+    async def _write_executor_state(self, ctx: WorkflowContext[Any], pending: dict[str, Any]) -> None:
+        state = self.snapshot_state()
+        state["pending_requests"] = pending
+        try:
+            await ctx.set_state(state)
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to persist executor state: {exc}")
 
     def _build_request_snapshot(
         self,
@@ -1046,11 +1099,11 @@ class RequestInfoExecutor(Executor):
             return value
         if isinstance(value, Mapping):
             safe_dict: dict[str, Any] = {}
-            for key, val in value.items():
-                safe_dict[str(key)] = self._make_json_safe(val)
+            for key, val in value.items():  # type: ignore[misc]
+                safe_dict[str(key)] = self._make_json_safe(val)  # type: ignore[arg-type]
             return safe_dict
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            return [self._make_json_safe(item) for item in value]
+            return [self._make_json_safe(item) for item in value]  # type: ignore[misc]
         return repr(value)
 
     async def has_pending_request(self, request_id: str, ctx: WorkflowContext[Any]) -> bool:
@@ -1102,7 +1155,7 @@ class RequestInfoExecutor(Executor):
             shared_pending = None
 
         if isinstance(shared_pending, dict):
-            for key, value in shared_pending.items():
+            for key, value in shared_pending.items():  # type: ignore[misc]
                 if isinstance(key, str) and isinstance(value, dict):
                     combined[key] = cast(dict[str, Any], value)
 
@@ -1115,7 +1168,7 @@ class RequestInfoExecutor(Executor):
         if isinstance(state, dict):
             state_pending = state.get("pending_requests")
             if isinstance(state_pending, dict):
-                for key, value in state_pending.items():
+                for key, value in state_pending.items():  # type: ignore[misc]
                     if isinstance(key, str) and isinstance(value, dict) and key not in combined:
                         combined[key] = cast(dict[str, Any], value)
 
@@ -1244,16 +1297,16 @@ class RequestInfoExecutor(Executor):
 
         shared_map = checkpoint.shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)
         if isinstance(shared_map, Mapping):
-            for request_id, snapshot in shared_map.items():
-                RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
+            for request_id, snapshot in shared_map.items():  # type: ignore[misc]
+                RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)  # type: ignore[arg-type]
 
         for state in checkpoint.executor_states.values():
             if not isinstance(state, Mapping):
                 continue
             inner = state.get("pending_requests")
             if isinstance(inner, Mapping):
-                for request_id, snapshot in inner.items():
-                    RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
+                for request_id, snapshot in inner.items():  # type: ignore[misc]
+                    RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)  # type: ignore[arg-type]
 
         for source_id, message_list in checkpoint.messages.items():
             if executor_filter is not None and source_id not in executor_filter:
@@ -1320,19 +1373,19 @@ class RequestInfoExecutor(Executor):
 
         RequestInfoExecutor._apply_update(
             details,
-            prompt=snapshot.get("prompt"),
-            draft=snapshot.get("draft"),
-            iteration=snapshot.get("iteration"),
-            source_executor_id=snapshot.get("source_executor_id"),
+            prompt=snapshot.get("prompt"),  # type: ignore[misc]
+            draft=snapshot.get("draft"),  # type: ignore[misc]
+            iteration=snapshot.get("iteration"),  # type: ignore[misc]
+            source_executor_id=snapshot.get("source_executor_id"),  # type: ignore[misc]
         )
 
-        extra = snapshot.get("details")
+        extra = snapshot.get("details")  # type: ignore[misc]
         if isinstance(extra, Mapping):
             RequestInfoExecutor._apply_update(
                 details,
-                prompt=extra.get("prompt"),
-                draft=extra.get("draft"),
-                iteration=extra.get("iteration"),
+                prompt=extra.get("prompt"),  # type: ignore[misc]
+                draft=extra.get("draft"),  # type: ignore[misc]
+                iteration=extra.get("iteration"),  # type: ignore[misc]
             )
 
     @staticmethod
@@ -1342,17 +1395,17 @@ class RequestInfoExecutor(Executor):
         raw_message: Mapping[str, Any],
     ) -> None:
         if isinstance(payload, RequestResponse):
-            request_id = payload.request_id or RequestInfoExecutor._get_field(payload.original_request, "request_id")
+            request_id = payload.request_id or RequestInfoExecutor._get_field(payload.original_request, "request_id")  # type: ignore[arg-type]
             if not request_id:
                 return
             details = pending.setdefault(request_id, PendingRequestDetails(request_id=request_id))
             RequestInfoExecutor._apply_update(
                 details,
-                prompt=RequestInfoExecutor._get_field(payload.original_request, "prompt"),
-                draft=RequestInfoExecutor._get_field(payload.original_request, "draft"),
-                iteration=RequestInfoExecutor._get_field(payload.original_request, "iteration"),
+                prompt=RequestInfoExecutor._get_field(payload.original_request, "prompt"),  # type: ignore[arg-type]
+                draft=RequestInfoExecutor._get_field(payload.original_request, "draft"),  # type: ignore[arg-type]
+                iteration=RequestInfoExecutor._get_field(payload.original_request, "iteration"),  # type: ignore[arg-type]
                 source_executor_id=raw_message.get("source_id"),
-                original_request=payload.original_request,
+                original_request=payload.original_request,  # type: ignore[arg-type]
             )
         elif isinstance(payload, RequestInfoMessage):
             request_id = getattr(payload, "request_id", None)
@@ -1396,7 +1449,7 @@ class RequestInfoExecutor(Executor):
         if obj is None:
             return None
         if isinstance(obj, Mapping):
-            return obj.get(key)
+            return obj.get(key)  # type: ignore[misc,return-value]
         return getattr(obj, key, None)
 
     @staticmethod
