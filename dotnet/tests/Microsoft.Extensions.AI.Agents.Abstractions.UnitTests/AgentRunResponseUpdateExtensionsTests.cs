@@ -63,18 +63,29 @@ public class AgentRunResponseUpdateExtensionsTests
         Assert.Equal("someResponse", response.ResponseId);
         Assert.Equal(new DateTimeOffset(2, 2, 3, 4, 5, 6, TimeSpan.Zero), response.CreatedAt);
 
-        ChatMessage message = response.Messages.Single();
+        Assert.Equal(2, response.Messages.Count);
+
+        ChatMessage message = response.Messages[0];
         Assert.Equal("12345", message.MessageId);
-        Assert.Equal(new ChatRole("human"), message.Role);
-        Assert.Equal("Someone", message.AuthorName);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Null(message.AuthorName);
         Assert.Null(message.AdditionalProperties);
+        Assert.Single(message.Contents);
+        Assert.Equal("Hello", Assert.IsType<TextContent>(message.Contents[0]).Text);
+
+        message = response.Messages[1];
+        Assert.Null(message.MessageId);
+        Assert.Equal(new("human"), message.Role);
+        Assert.Equal("Someone", message.AuthorName);
+        Assert.Single(message.Contents);
+        Assert.Equal(", world!", Assert.IsType<TextContent>(message.Contents[0]).Text);
 
         Assert.NotNull(response.AdditionalProperties);
         Assert.Equal(2, response.AdditionalProperties.Count);
         Assert.Equal("b", response.AdditionalProperties["a"]);
         Assert.Equal("d", response.AdditionalProperties["c"]);
 
-        Assert.Equal("Hello, world!", response.Text);
+        Assert.Equal("Hello" + Environment.NewLine + ", world!", response.Text);
     }
 
     [Theory]
