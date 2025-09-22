@@ -163,7 +163,7 @@ async def test_workflow_send_responses_streaming():
     """Test the workflow run with approval."""
     executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
-    request_info_executor = RequestInfoExecutor()
+    request_info_executor = RequestInfoExecutor(id="request_info")
 
     workflow = (
         WorkflowBuilder()
@@ -195,7 +195,7 @@ async def test_workflow_send_responses():
     """Test the workflow run with approval."""
     executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
-    request_info_executor = RequestInfoExecutor()
+    request_info_executor = RequestInfoExecutor(id="request_info")
 
     workflow = (
         WorkflowBuilder()

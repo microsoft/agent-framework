@@ -26,21 +26,9 @@ internal sealed class AIAgentHostExecutor : Executor
         this._thread ??= this._agent.GetNewThread();
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<ChatMessage>(this.QueueMessageAsync)
-                    .AddHandler<List<ChatMessage>>(this.QueueMessagesAsync)
+        routeBuilder.AddHandler<ChatMessage>((message, _) => this._pendingMessages.Add(message))
+                    .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
                     .AddHandler<TurnToken>(this.TakeTurnAsync);
-
-    public ValueTask QueueMessagesAsync(List<ChatMessage> messages, IWorkflowContext context)
-    {
-        this._pendingMessages.AddRange(messages);
-        return default;
-    }
-
-    public ValueTask QueueMessageAsync(ChatMessage message, IWorkflowContext context)
-    {
-        this._pendingMessages.Add(message);
-        return default;
-    }
 
     private const string ThreadStateKey = nameof(_thread);
     private const string PendingMessagesStateKey = nameof(_pendingMessages);
@@ -56,7 +44,7 @@ internal sealed class AIAgentHostExecutor : Executor
         Task messagesTask = Task.CompletedTask;
         if (this._pendingMessages.Count > 0)
         {
-            JsonElement messagesValue = this._pendingMessages.SerializeToJson();
+            JsonElement messagesValue = this._pendingMessages.Serialize();
             messagesTask = context.QueueStateUpdateAsync(PendingMessagesStateKey, messagesValue).AsTask();
         }
 
@@ -74,7 +62,7 @@ internal sealed class AIAgentHostExecutor : Executor
         JsonElement? messagesValue = await context.ReadStateAsync<JsonElement?>(PendingMessagesStateKey).ConfigureAwait(false);
         if (messagesValue.HasValue)
         {
-            List<ChatMessage> messages = messagesValue.Value.DeserializeMessageList();
+            List<ChatMessage> messages = messagesValue.Value.DeserializeMessages();
             this._pendingMessages.AddRange(messages);
         }
     }
@@ -122,6 +110,7 @@ internal sealed class AIAgentHostExecutor : Executor
         }
 
         await PublishCurrentMessageAsync().ConfigureAwait(false);
+        this._pendingMessages.Clear();
         await context.SendMessageAsync(token).ConfigureAwait(false);
 
         async ValueTask PublishCurrentMessageAsync()

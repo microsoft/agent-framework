@@ -5,16 +5,16 @@ import pytest
 from agent_framework import Executor, WorkflowContext, handler
 
 
-def test_executor_without_handlers():
-    """Test that an executor without handlers raises an error when trying to run."""
+def test_executor_without_id():
+    """Test that an executor without an ID raises an error when trying to run."""
 
-    class MockExecutorWithoutHandlers(Executor):
+    class MockExecutorWithoutID(Executor):
         """A mock executor that does not implement any handlers."""
 
         pass
 
     with pytest.raises(ValueError):
-        MockExecutorWithoutHandlers()
+        MockExecutorWithoutID(id="")
 
 
 def test_executor_handler_without_annotations():
@@ -61,7 +61,7 @@ def test_executor_with_valid_handlers():
             """Another mock handler with a valid signature."""
             pass
 
-    executor = MockExecutorWithValidHandlers()
+    executor = MockExecutorWithValidHandlers(id="test")
     assert executor.id is not None
     assert len(executor._handlers) == 2  # type: ignore
     assert executor.can_handle("text") is True
@@ -85,7 +85,7 @@ def test_executor_handlers_with_output_types():
             """A mock handler that outputs an integer."""
             pass
 
-    executor = MockExecutorWithOutputTypes()
+    executor = MockExecutorWithOutputTypes(id="test")
     assert len(executor._handlers) == 2  # type: ignore
 
     string_handler = executor._handlers[str]  # type: ignore

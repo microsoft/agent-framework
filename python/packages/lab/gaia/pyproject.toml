@@ -72,7 +72,9 @@ packages = ["agent_framework_lab_gaia"]
 [tool.poe]
 executor.type = "uv"
 include = "../../../shared_tasks.toml"
+
 [tool.poe.tasks]
+test = "pytest --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered tests"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
