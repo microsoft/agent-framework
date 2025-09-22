@@ -29,6 +29,7 @@ from ._pydantic import AFBaseModel
 from .exceptions import ChatClientInitializationError, ToolException
 from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
+    OTEL_SETTINGS,
     OtelAttr,
     capture_exception,  # type: ignore
     get_function_span,
@@ -400,15 +401,12 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             otel_settings: Optional model diagnostics settings to override the default settings.
             kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
         """
-        global OTEL_SETTINGS
-        from .observability import OTEL_SETTINGS
-
         tool_call_id = kwargs.pop("tool_call_id", None)
         if arguments is not None:
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
-        if not OTEL_SETTINGS.ENABLED:  # type: ignore[name-defined]
+        if not OTEL_SETTINGS.ENABLED:
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -417,9 +415,9 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             logger.debug(f"Function result: {result or 'None'}")
             return result  # type: ignore[reportReturnType]
 
-        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
+        OTEL_SETTINGS.setup_observability()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
                 if arguments
@@ -430,7 +428,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         with get_function_span(attributes=attributes) as span:
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
-            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:
                 logger.debug(f"Function arguments: {kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -446,7 +444,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:
                     try:
                         json_result = json.dumps(result)
                     except (TypeError, OverflowError):
