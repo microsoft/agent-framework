@@ -139,8 +139,6 @@ class RedisProvider(ContextProvider):
             {"name": "conversation_id", "type": "tag"},
             {"name": "message_id", "type": "tag"},
             {"name": "author_name", "type": "tag"},
-            {"name": "created_at_isoformat", "type": "text"},
-            {"name": "created_at_timestamp", "type": "numeric"},
             # Partition fields (TAG for fast filtering)
             {"name": "application_id", "type": "tag"},
             {"name": "agent_id", "type": "tag"},
