@@ -63,7 +63,6 @@ class GAIATelemetryConfig:
         from agent_framework.observability import setup_observability
 
         setup_observability(
-            enable_otel=True,
             enable_sensitive_data=True,  # Enable for detailed task traces
             otlp_endpoint=self.otlp_endpoint,
             application_insights_connection_string=self.application_insights_connection_string,

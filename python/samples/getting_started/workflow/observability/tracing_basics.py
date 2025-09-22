@@ -45,7 +45,7 @@ def _ensure_tracing_configured() -> None:
     from agent_framework.observability import setup_observability
     from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
-    setup_observability(enable_otel=True, exporters=[ConsoleSpanExporter()])
+    setup_observability(exporters=[ConsoleSpanExporter()])
 
 
 class StartExecutor(Executor):

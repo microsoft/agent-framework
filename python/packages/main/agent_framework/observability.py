@@ -614,7 +614,6 @@ def get_meter(
 
 
 def setup_observability(
-    enable_otel: bool | None = None,
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | list[str] | None = None,
     application_insights_connection_string: str | list[str] | None = None,
@@ -622,7 +621,7 @@ def setup_observability(
     enable_live_metrics: bool | None = None,
     exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
 ) -> None:
-    """Setup telemetry with optionally provided settings.
+    """Setup telemetry with optionally provided settings, it is implied that you want to enable telemetry.
 
     All of these values can be set through environment variables or you can pass them here,
     in the case where both are present, the provided value takes precedence.
@@ -630,7 +629,6 @@ def setup_observability(
     If you have both connection_string and otlp_endpoint, the connection_string will be used.
 
     Args:
-        enable_otel: Enable OpenTelemetry diagnostics. Default is False.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
             Will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
@@ -650,8 +648,7 @@ def setup_observability(
 
     global OTEL_SETTINGS
     # Update the otel settings with the provided values
-    if enable_otel is not None:
-        OTEL_SETTINGS.enable_otel = enable_otel
+    OTEL_SETTINGS.enable_otel = True
     if enable_sensitive_data is not None:
         OTEL_SETTINGS.enable_sensitive_data = enable_sensitive_data
     if enable_live_metrics is not None:
