@@ -9,21 +9,17 @@ from functools import wraps
 from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, TypeVar
 
+from opentelemetry import metrics, trace
 from opentelemetry.semconv_ai import GenAISystem, Meters, SpanAttributes
-from opentelemetry.trace import Link, NoOpTracer, Span, SpanKind, StatusCode, use_span
-from opentelemetry.trace.span import SpanContext
 from pydantic import PrivateAttr
-
-from agent_framework.exceptions import AgentInitializationError, ChatClientInitializationError
 
 from . import __version__ as version_info
 from ._logging import get_logger
 from ._pydantic import AFBaseSettings
-from .exceptions import AgentFrameworkException
+from .exceptions import AgentInitializationError, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
     from azure.core.credentials import TokenCredential
-    from opentelemetry.metrics import Histogram, Meter
     from opentelemetry.sdk._events import EventLoggerProvider
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs._internal.export import LogExporter
@@ -282,6 +278,13 @@ def _get_exporters(
     return exporters
 
 
+def _create_resource() -> "Resource":
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.semconv.attributes import service_attributes
+
+    return Resource.create({service_attributes.SERVICE_NAME: "agent_framework"})
+
+
 class OtelSettings(AFBaseSettings):
     """Settings for Open Telemetry.
 
@@ -319,8 +322,8 @@ class OtelSettings(AFBaseSettings):
     application_insights_connection_string: str | list[str] | None = None
     application_insights_live_metrics: bool = False
     otlp_endpoint: str | list[str] | None = None
+    _resource: "Resource" = PrivateAttr(default_factory=_create_resource)
     _executed_setup: bool = PrivateAttr(default=False)
-    _resource: "Resource | None" = PrivateAttr(default=None)
     _tracer_provider: "TracerProvider | None" = PrivateAttr(default=None)
     _meter_provider: "MeterProvider | None" = PrivateAttr(default=None)
     _logger_provider: "LoggerProvider | None" = PrivateAttr(default=None)
@@ -337,7 +340,7 @@ class OtelSettings(AFBaseSettings):
     @property
     def WORKFLOW_ENABLED(self) -> bool:
         """Check if model diagnostics for workflows are enabled."""
-        return self.enable_workflow_otel
+        return self.enable_otel or self.enable_workflow_otel
 
     @property
     def SENSITIVE_DATA_ENABLED(self) -> bool:
@@ -354,33 +357,10 @@ class OtelSettings(AFBaseSettings):
 
     @property
     def resource(self) -> "Resource":
-        """Get the resource for the telemetry."""
-        if not self._resource:
-            from opentelemetry.sdk.resources import Resource
-            from opentelemetry.semconv.attributes import service_attributes
-
-            self._resource = Resource.create({service_attributes.SERVICE_NAME: "agent_framework"})
+        """Get the resource."""
         return self._resource
 
-    @property
-    def tracer_provider(self) -> "TracerProvider":
-        """Get the tracer provider."""
-        if not self._tracer_provider:
-            self.setup_telemetry()
-        if not self._tracer_provider:
-            raise AgentFrameworkException("Tracing provider could not be created.")
-        return self._tracer_provider
-
-    @property
-    def meter_provider(self) -> "MeterProvider":
-        """Get the meter provider."""
-        if not self._meter_provider:
-            self.setup_telemetry()
-        if not self._meter_provider:
-            raise AgentFrameworkException("Meter provider could not be created.")
-        return self._meter_provider
-
-    def setup_telemetry(self, credential: "TokenCredential | None" = None) -> None:
+    def setup_observability(self, credential: "TokenCredential | None" = None) -> None:
         """Setup telemetry based on the settings.
 
         If both connection_string and otlp_endpoint both will be used.
@@ -396,6 +376,19 @@ class OtelSettings(AFBaseSettings):
 
         global_logger = logging.getLogger()
         global_logger.setLevel(logging.NOTSET)
+        exporters = _get_exporters(
+            endpoints=self.otlp_endpoint
+            if self.otlp_endpoint is None or isinstance(self.otlp_endpoint, list)
+            else [self.otlp_endpoint],
+            connection_strings=(
+                self.application_insights_connection_string
+                if self.application_insights_connection_string is None
+                or isinstance(self.application_insights_connection_string, list)
+                else [self.application_insights_connection_string]
+            ),
+            credential=credential,
+        )
+        self._configure_tracing(exporters)
         if self.application_insights_connection_string and self.application_insights_live_metrics:
             from azure.monitor.opentelemetry import configure_azure_monitor
 
@@ -416,20 +409,32 @@ class OtelSettings(AFBaseSettings):
                     disable_metric=True,
                     disable_tracing=True,
                 )
-        exporters = _get_exporters(
-            endpoints=self.otlp_endpoint
-            if self.otlp_endpoint is None or isinstance(self.otlp_endpoint, list)
-            else [self.otlp_endpoint],
-            connection_strings=(
-                self.application_insights_connection_string
-                if self.application_insights_connection_string is None
-                or isinstance(self.application_insights_connection_string, list)
-                else [self.application_insights_connection_string]
-            ),
-            credential=credential,
+
+    def _check_endpoint_already_configured(self, otlp_endpoint: str) -> bool:
+        """Check if the endpoint is already configured.
+
+        Returns:
+            True if the endpoint is already configured, False otherwise.
+        """
+        if not self.otlp_endpoint:
+            return False
+        return otlp_endpoint not in (
+            self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
         )
-        self._configure_tracing(exporters)
-        self._executed_setup = True
+
+    def _check_connection_string_already_configured(self, connection_string: str) -> bool:
+        """Check if the connection string is already configured.
+
+        Returns:
+            True if the connection string is already configured, False otherwise.
+        """
+        if not self.application_insights_connection_string:
+            return False
+        return connection_string not in (
+            self.application_insights_connection_string
+            if isinstance(self.application_insights_connection_string, list)
+            else [self.application_insights_connection_string]
+        )
 
     def add_exporters(
         self,
@@ -454,41 +459,31 @@ class OtelSettings(AFBaseSettings):
             exporters: A list of exporters, for logs, metrics or spans, or any combination. Default is None.
             credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
         """
-        if not self._executed_setup:
-            self.setup_telemetry(credential=credential)
-
         new_endpoints: list[str] = []
-        if otlp_endpoints is not None and self.otlp_endpoint is not None:
-            existing_endpoints = self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
+        if otlp_endpoints is not None:
             for endpoint in otlp_endpoints:
-                if endpoint not in existing_endpoints:
-                    new_endpoints.append(endpoint)
-                else:
+                if self._check_endpoint_already_configured(endpoint):
                     logger.warning(f"OTLP endpoint {endpoint} is already configured, skipping.")
+                else:
+                    new_endpoints.append(endpoint)
 
         new_connection_strings: list[str] = []
-        if connection_strings is not None and self.application_insights_connection_string is not None:
-            existing_connection_strings = (
-                self.application_insights_connection_string
-                if isinstance(self.application_insights_connection_string, list)
-                else [self.application_insights_connection_string]
-            )
+        if connection_strings is not None:
             for conn_string in connection_strings:
-                if conn_string not in existing_connection_strings:
-                    new_connection_strings.append(conn_string)
-                else:
+                if self._check_connection_string_already_configured(conn_string):
                     logger.warning(f"Connection string {conn_string} is already configured, skipping.")
+                else:
+                    new_connection_strings.append(conn_string)
 
         new_exporters = _get_exporters(
             endpoints=new_endpoints,
-            connection_strings=connection_strings,
+            connection_strings=new_connection_strings,
             credential=credential,
         )
         self._configure_tracing([*(exporters if exporters else []), *new_exporters])
 
     def _configure_tracing(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
         from opentelemetry._logs import set_logger_provider
-        from opentelemetry.metrics import set_meter_provider
         from opentelemetry.sdk._events import EventLoggerProvider
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
         from opentelemetry.sdk._logs._internal.export import LogExporter
@@ -497,25 +492,27 @@ class OtelSettings(AFBaseSettings):
         from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
         from opentelemetry.sdk.metrics.view import DropAggregation, View
         from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
         # Use SimpleSpanProcessor for in-memory exporter (tests) so spans are
         # exported synchronously and immediately available via
         # InMemorySpanExporter.get_finished_spans(). For all other exporters
         # keep using the BatchSpanProcessor behavior.
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
-        from opentelemetry.trace import set_tracer_provider
 
         # Tracing
-        if not self._tracer_provider:
-            self._tracer_provider = TracerProvider(resource=self.resource)
+        if not self._executed_setup:
+            new_tracer_provider = TracerProvider(resource=self.resource)
+            # setting global tracer provider, other libaries can use this,
+            # but if another global tracer provider is already set this will not override it.
+            trace.set_tracer_provider(new_tracer_provider)
+        tracer_provider = trace.get_tracer_provider()
         for exporter in exporters:
             if not isinstance(exporter, SpanExporter):
                 continue
-            self._tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-        # setting global tracer provider, other libaries can use this,
-        # but if another global tracer provider is already set this will not override it.
-        # Internal AF functions should use OTEL_SETTINGS.tracer_provider to get the correct tracer provider.
-        set_tracer_provider(self._tracer_provider)
+            if (add_span_processor := getattr(tracer_provider, "add_span_processor", None)) and callable(
+                add_span_processor
+            ):
+                add_span_processor(BatchSpanProcessor(exporter))
 
         # Logging
         if not self._logger_provider:
@@ -537,24 +534,22 @@ class OtelSettings(AFBaseSettings):
             self._event_logger_provider = EventLoggerProvider(self._logger_provider)
 
         # metrics
-
-        metric_readers = [
-            PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
-            for exporter in exporters
-            if isinstance(exporter, MetricExporter)
-        ]
-        if not self._meter_provider:
-            self._meter_provider = MeterProvider(
-                metric_readers=metric_readers,
-                resource=self.resource,
-                views=[
-                    # Dropping all instrument names except for those starting with "agent_framework"
-                    View(instrument_name="*", aggregation=DropAggregation()),
-                    View(instrument_name="agent_framework*"),
-                    View(instrument_name="gen_ai*"),
-                ],
-            )
-        set_meter_provider(self._meter_provider)
+        meter_provider = MeterProvider(
+            metric_readers=[
+                PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
+                for exporter in exporters
+                if isinstance(exporter, MetricExporter)
+            ],
+            resource=self.resource,
+            views=[
+                # Dropping all instrument names except for those starting with "agent_framework"
+                View(instrument_name="*", aggregation=DropAggregation()),
+                View(instrument_name="agent_framework*"),
+                View(instrument_name="gen_ai*"),
+            ],
+        )
+        metrics.set_meter_provider(meter_provider)
+        self._executed_setup = True
 
 
 global OTEL_SETTINGS
@@ -566,17 +561,18 @@ def get_tracer(
     instrumenting_library_version: str = version_info,
     schema_url: str | None = None,
     attributes: dict[str, Any] | None = None,
-) -> "Tracer":
+) -> "trace.Tracer":
     """Returns a `Tracer` for use by the given instrumentation library.
 
     This function is a convenience wrapper for
-    OTEL_SETTINGS.tracer_provider.get_tracer
+    trace.get_tracer()
     replicating the behavior of opentelemetry.trace.TracerProvider.get_tracer.
 
     If tracer_provider is omitted the current configured one is used.
     """
-    global OTEL_SETTINGS
-    return OTEL_SETTINGS.tracer_provider.get_tracer(
+    if not OTEL_SETTINGS.is_setup:
+        OTEL_SETTINGS.setup_observability()
+    return trace.get_tracer(
         instrumenting_module_name=instrumenting_module_name,
         instrumenting_library_version=instrumenting_library_version,
         schema_url=schema_url,
@@ -589,41 +585,29 @@ def get_meter(
     version: str = version_info,
     schema_url: str | None = None,
     attributes: dict[str, Any] | None = None,
-) -> "Meter":
-    """Returns a `Meter` for use by the given instrumentation library.
+) -> "metrics.Meter":
+    """Returns a `Meter` for Agent Framework.
 
-    For any two calls it is undefined whether the same or different
-    `Meter` instances are returned, even for different library names.
-
-    This function may return different `Meter` types (e.g. a no-op meter
-    vs. a functional meter).
+    This is a convenience wrapper for
+    metrics.get_meter() replicating the behavior of
+    opentelemetry.metrics.get_meter().
 
     Args:
-        name: The name of the instrumenting module.
-            ``__name__`` may not be used as this can result in
-            different meter names if the meters are in different files.
-            It is better to use a fixed string that can be imported where
-            needed and used consistently as the name of the meter.
+        name: Optional name, default is "agent_framework". The name of the
+            instrumenting library.
 
-            This should *not* be the name of the module that is
-            instrumented but the name of the module doing the instrumentation.
-            E.g., instead of ``"requests"``, use
-            ``"opentelemetry.instrumentation.requests"``.
-
-        version: Optional. The version string of the
-            instrumenting library.  Usually this should be the same as
-            ``importlib.metadata.version(instrumenting_library_name)``.
+        version: Optional. The version of `agent_framework`, default is the
+            current version of the package.
 
         schema_url: Optional. Specifies the Schema URL of the emitted telemetry.
         attributes: Optional. Attributes that are associated with the emitted telemetry.
     """
-    global OTEL_SETTINGS
-    return OTEL_SETTINGS.meter_provider.get_meter(
-        name=name, version=version, schema_url=schema_url, attributes=attributes
-    )
+    if not OTEL_SETTINGS.is_setup:
+        OTEL_SETTINGS.setup_observability()
+    return metrics.get_meter(name=name, version=version, schema_url=schema_url, attributes=attributes)
 
 
-def setup_telemetry(
+def setup_observability(
     enable_otel: bool | None = None,
     enable_workflow_otel: bool | None = None,
     enable_sensitive_data: bool | None = None,
@@ -661,6 +645,7 @@ def setup_telemetry(
         application_insights_connection_string = [application_insights_connection_string]
 
     global OTEL_SETTINGS
+    # Update the otel settings with the provided values
     if enable_otel is not None:
         OTEL_SETTINGS.enable_otel = enable_otel
     if enable_sensitive_data is not None:
@@ -669,18 +654,22 @@ def setup_telemetry(
         OTEL_SETTINGS.enable_workflow_otel = enable_workflow_otel
     if enable_live_metrics is not None:
         OTEL_SETTINGS.application_insights_live_metrics = enable_live_metrics
-    OTEL_SETTINGS.add_exporters(
-        credential=credential,
-        otlp_endpoints=otlp_endpoint,
-        exporters=exporters,
-        connection_strings=application_insights_connection_string,
-    )
+    # Run the initial setup, which will create the providers, and add env setting exporters
+    OTEL_SETTINGS.setup_observability(credential=credential)
+    # Add any additional exporters
+    if otlp_endpoint or application_insights_connection_string or exporters:
+        OTEL_SETTINGS.add_exporters(
+            credential=credential,
+            otlp_endpoints=otlp_endpoint,
+            exporters=exporters,
+            connection_strings=application_insights_connection_string,
+        )
 
 
 # region Chat Client Telemetry
 
 
-def _get_duration_histogram() -> "Histogram":
+def _get_duration_histogram() -> "metrics.Histogram":
     return get_meter().create_histogram(
         name=Meters.LLM_OPERATION_DURATION,
         unit=OtelAttr.DURATION_UNIT,
@@ -689,7 +678,7 @@ def _get_duration_histogram() -> "Histogram":
     )
 
 
-def _get_token_usage_histogram() -> "Histogram":
+def _get_token_usage_histogram() -> "metrics.Histogram":
     return get_meter().create_histogram(
         name=Meters.LLM_TOKEN_USAGE,
         unit=OtelAttr.T_UNIT,
@@ -730,6 +719,7 @@ def _trace_get_response(
                     messages=messages,
                     **kwargs,
                 )
+            OTEL_SETTINGS.setup_observability()
             if "token_usage_histogram" not in self.additional_properties:
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
@@ -810,6 +800,7 @@ def _trace_get_streaming_response(
                 async for update in func(self, messages=messages, **kwargs):
                     yield update
                 return
+            OTEL_SETTINGS.setup_observability()
             if "token_usage_histogram" not in self.additional_properties:
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
@@ -874,7 +865,7 @@ def _trace_get_streaming_response(
     return decorator(func)
 
 
-def use_telemetry(
+def use_observability(
     chat_client: type[TChatClient],
 ) -> type[TChatClient]:
     """Class decorator that enables telemetry for a chat client.
@@ -944,6 +935,7 @@ def _trace_agent_run(
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
 
+        OTEL_SETTINGS.setup_observability()
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1013,6 +1005,7 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
+        OTEL_SETTINGS.setup_observability()
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1095,14 +1088,14 @@ def get_function_span_attributes(function: "AIFunction[Any, Any]", tool_call_id:
 
 def get_function_span(
     attributes: dict[str, str],
-) -> "_AgnosticContextManager[Span]":
+) -> "_AgnosticContextManager[trace.Span]":
     """Starts a span for the given function.
 
     Args:
         attributes: The span attributes.
 
     Returns:
-        trace.Span: The started span as a context manager.
+        trace.trace.Span: The started span as a context manager.
     """
     return get_tracer().start_as_current_span(
         name=f"{attributes[OtelAttr.OPERATION]} {attributes[OtelAttr.TOOL_NAME]}",
@@ -1117,11 +1110,11 @@ def get_function_span(
 def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
-) -> Generator["Span", Any, Any]:
+) -> Generator["trace.Span", Any, Any]:
     """Start a span for a agent run."""
     span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
     span.set_attributes(attributes)
-    with use_span(
+    with trace.use_span(
         span=span,
         end_on_exit=True,
         record_exception=False,
@@ -1183,15 +1176,15 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     return attributes
 
 
-def capture_exception(span: Span, exception: Exception, timestamp: int | None = None) -> None:
+def capture_exception(span: trace.Span, exception: Exception, timestamp: int | None = None) -> None:
     """Set an error for spans."""
     span.set_attribute(OtelAttr.ERROR_TYPE, type(exception).__name__)
     span.record_exception(exception=exception, timestamp=timestamp)
-    span.set_status(status=StatusCode.ERROR, description=repr(exception))
+    span.set_status(status=trace.StatusCode.ERROR, description=repr(exception))
 
 
 def _capture_messages(
-    span: Span,
+    span: trace.Span,
     provider_name: str,
     messages: "str | ChatMessage | list[str] | list[ChatMessage]",
     system_instructions: str | list[str] | None = None,
@@ -1285,10 +1278,10 @@ GEN_AI_METRIC_ATTRIBUTES = (
 
 
 def _capture_response(
-    span: Span,
+    span: trace.Span,
     attributes: dict[str, Any],
-    operation_duration_histogram: "Histogram | None" = None,
-    token_usage_histogram: "Histogram | None" = None,
+    operation_duration_histogram: "metrics.Histogram | None" = None,
+    token_usage_histogram: "metrics.Histogram | None" = None,
 ) -> None:
     """Set the response for a given span."""
     span.set_attributes(attributes)
@@ -1326,14 +1319,14 @@ class EdgeGroupDeliveryStatus(Enum):
 
 def workflow_tracer() -> "Tracer":
     """Get a workflow tracer or a no-op tracer if not enabled."""
-    return get_tracer() if OTEL_SETTINGS.WORKFLOW_ENABLED else NoOpTracer()
+    return get_tracer() if OTEL_SETTINGS.WORKFLOW_ENABLED else trace.NoOpTracer()
 
 
 def create_workflow_span(
     name: str,
     attributes: Mapping[str, str | int] | None = None,
-    kind: SpanKind = SpanKind.INTERNAL,
-) -> "_AgnosticContextManager[Span]":
+    kind: trace.SpanKind = trace.SpanKind.INTERNAL,
+) -> "_AgnosticContextManager[trace.Span]":
     """Create a generic workflow span."""
     return workflow_tracer().start_as_current_span(name, kind=kind, attributes=attributes)
 
@@ -1344,7 +1337,7 @@ def create_processing_span(
     message_type: str,
     source_trace_contexts: list[dict[str, str]] | None = None,
     source_span_ids: list[str] | None = None,
-) -> "_AgnosticContextManager[Span]":
+) -> "_AgnosticContextManager[trace.Span]":
     """Create an executor processing span with optional links to source spans.
 
     Processing spans are created as children of the current workflow span and
@@ -1352,7 +1345,7 @@ def create_processing_span(
     This supports multiple links for fan-in scenarios.
     """
     # Create links to source spans for causality without nesting
-    links: list[Link] = []
+    links: list[trace.Link] = []
     if source_trace_contexts and source_span_ids:
         # Create links for all source spans (supporting fan-in with multiple sources)
         for trace_context, span_id in zip(source_trace_contexts, source_span_ids, strict=False):
@@ -1369,16 +1362,16 @@ def create_processing_span(
                         # Use the source_span_id that was saved from the publishing span
 
                         # Create span context for linking
-                        span_context = SpanContext(
+                        span_context = trace.SpanContext(
                             trace_id=int(trace_id_hex, 16),
                             span_id=int(span_id, 16),
                             is_remote=True,
                         )
-                        links.append(Link(span_context))
+                        links.append(trace.Link(span_context))
 
     return workflow_tracer().start_as_current_span(
         OtelAttr.EXECUTOR_PROCESS_SPAN,
-        kind=SpanKind.INTERNAL,
+        kind=trace.SpanKind.INTERNAL,
         attributes={
             OtelAttr.EXECUTOR_ID: executor_id,
             OtelAttr.EXECUTOR_TYPE: executor_type,
@@ -1395,12 +1388,12 @@ def create_edge_group_processing_span(
     message_target_id: str | None = None,
     source_trace_contexts: list[dict[str, str]] | None = None,
     source_span_ids: list[str] | None = None,
-) -> "_AgnosticContextManager[Span]":
+) -> "_AgnosticContextManager[trace.Span]":
     """Create an edge group processing span with optional links to source spans.
 
     Edge group processing spans track the processing operations in edge runners
     before message delivery, including condition checking and routing decisions.
-    Links to source spans provide causality tracking without unwanted nesting.
+    trace.Links to source spans provide causality tracking without unwanted nesting.
 
     Args:
         edge_group_type: The type of the edge group (class name).
@@ -1422,7 +1415,7 @@ def create_edge_group_processing_span(
         attributes[OtelAttr.MESSAGE_TARGET_ID] = message_target_id
 
     # Create links to source spans for causality without nesting
-    links: list[Link] = []
+    links: list[trace.Link] = []
     if source_trace_contexts and source_span_ids:
         # Create links for all source spans (supporting fan-in with multiple sources)
         for trace_context, span_id in zip(source_trace_contexts, source_span_ids, strict=False):
@@ -1438,19 +1431,19 @@ def create_edge_group_processing_span(
                         # Use the source_span_id that was saved from the publishing span
 
                         # Create span context for linking
-                        span_context = SpanContext(
+                        span_context = trace.SpanContext(
                             trace_id=int(trace_id_hex, 16),
                             span_id=int(span_id, 16),
                             is_remote=True,
                         )
-                        links.append(Link(span_context))
+                        links.append(trace.Link(span_context))
             except (ValueError, TypeError, AttributeError):
                 # If linking fails, continue without link (graceful degradation)
                 pass
 
     return workflow_tracer().start_as_current_span(
         OtelAttr.EDGE_GROUP_PROCESS_SPAN,
-        kind=SpanKind.INTERNAL,
+        kind=trace.SpanKind.INTERNAL,
         attributes=attributes,
         links=links,
     )

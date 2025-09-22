@@ -65,7 +65,7 @@ async def run_sequential_workflow() -> None:
     - Message publishing between executors
     - Workflow completion events
     """
-    with tracer.start_as_current_span("Scenario: Sequential Workflow") as current_span:
+    with tracer.start_as_current_span("Scenario: Sequential Workflow", kind=SpanKind.CLIENT) as current_span:
         print("Running scenario: Sequential Workflow")
         try:
             # Step 1: Create the executors.

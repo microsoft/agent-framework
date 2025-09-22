@@ -93,7 +93,6 @@ async def run_ai_function() -> None:
 
 async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
     """Run the selected scenario(s)."""
-
     tracer = get_tracer("My application", __version__)
     with tracer.start_as_current_span("Sample Scenario's", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")

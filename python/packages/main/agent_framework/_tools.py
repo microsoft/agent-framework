@@ -417,6 +417,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             logger.debug(f"Function result: {result or 'None'}")
             return result  # type: ignore[reportReturnType]
 
+        OTEL_SETTINGS.setup_observability()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
         if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({

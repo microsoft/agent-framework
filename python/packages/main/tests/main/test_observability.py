@@ -32,7 +32,7 @@ from agent_framework.observability import (
     OtelAttr,
     get_function_span,
     use_agent_telemetry,
-    use_telemetry,
+    use_observability,
 )
 
 from .utils import CopyingMock
@@ -160,7 +160,7 @@ def test_start_span_with_tool_call_id():
         assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_123"
 
 
-# region Test use_telemetry decorator
+# region Test use_observability decorator
 
 
 def test_decorator_with_valid_class():
@@ -178,7 +178,7 @@ def test_decorator_with_valid_class():
             return gen()
 
     # Apply the decorator
-    decorated_class = use_telemetry(MockChatClient)
+    decorated_class = use_observability(MockChatClient)
     assert hasattr(decorated_class, OPEN_TELEMETRY_CHAT_CLIENT_MARKER)
 
 
@@ -190,7 +190,7 @@ def test_decorator_with_missing_methods():
 
     # Apply the decorator - should not raise an error
     with pytest.raises(ChatClientInitializationError):
-        use_telemetry(MockChatClient)
+        use_observability(MockChatClient)
 
 
 def test_decorator_with_partial_methods():
@@ -203,7 +203,7 @@ def test_decorator_with_partial_methods():
             return Mock()
 
     with pytest.raises(ChatClientInitializationError):
-        use_telemetry(MockChatClient)
+        use_observability(MockChatClient)
 
 
 # region Test telemetry decorator with mock client
@@ -238,7 +238,7 @@ def mock_chat_client():
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_instrumentation_enabled(mock_chat_client, otel_settings):
     """Test that when diagnostics are enabled, telemetry is applied."""
-    client = use_telemetry(mock_chat_client)()
+    client = use_observability(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
     chat_options = ChatOptions()
@@ -257,8 +257,8 @@ async def test_instrumentation_enabled(mock_chat_client, otel_settings):
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_streaming_response_with_otel(mock_chat_client, otel_settings):
-    """Test streaming telemetry through the use_telemetry decorator."""
-    client = use_telemetry(mock_chat_client)()
+    """Test streaming telemetry through the use_observability decorator."""
+    client = use_observability(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
     chat_options = ChatOptions()
 
@@ -394,13 +394,13 @@ def mock_chat_agent():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_agent_instrumentation_enabled(mock_chat_agent: AgentProtocol, otel_settings):
+async def test_agent_instrumentation_enabled(mock_chat_agent: AgentProtocol, enable_sensitive_data, otel_settings):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
     agent = use_agent_telemetry(mock_chat_agent)()
 
     with (
-        patch("agent_framework.observability.use_span") as mock_use_span,
+        patch("opentelemetry.trace.use_span") as mock_use_span,
         patch("agent_framework.observability.logger") as mock_logger,
     ):
         response = await agent.run("Test message")

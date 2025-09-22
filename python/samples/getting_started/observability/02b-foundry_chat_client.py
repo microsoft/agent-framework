@@ -18,7 +18,7 @@ from pydantic import Field
 This sample, shows you can leverage the built-in telemetry in Foundry.
 It uses the Foundry client to setup the telemetry, this calls
 out to Foundry for a telemetry connection strings,
-and then call the setup_telemetry function in the agent framework.
+and then call the setup_observability function in the agent framework.
 If you want to compare with the trace sent to a generic OTLP endpoint,
 switch the `use_foundry_telemetry` variable to False.
 """
@@ -63,7 +63,7 @@ async def main() -> None:
         FoundryChatClient(client=project, setup_tracing=False) as client,
     ):
         if use_foundry_telemetry:
-            await client.setup_foundry_telemetry(enable_live_metrics=True)
+            await client.setup_foundry_observability(enable_live_metrics=True)
 
         with get_tracer().start_as_current_span(
             name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT

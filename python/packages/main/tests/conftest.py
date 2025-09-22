@@ -31,9 +31,9 @@ def otel_settings(
     patched_otel_settings: "OtelSettings", enable_otel: bool, enable_sensitive_data: bool, enable_workflow_otel: bool
 ) -> "OtelSettings":
     """Fixture to set environment variables for OtelSettings."""
-    from agent_framework.observability import setup_telemetry
+    from agent_framework.observability import setup_observability
 
-    setup_telemetry(
+    setup_observability(
         enable_otel=enable_otel, enable_sensitive_data=enable_sensitive_data, enable_workflow_otel=enable_workflow_otel
     )
 

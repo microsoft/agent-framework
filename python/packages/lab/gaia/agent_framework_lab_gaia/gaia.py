@@ -55,14 +55,14 @@ class GAIATelemetryConfig:
         self.trace_to_file = trace_to_file
         self.file_path = file_path or "gaia_traces.json"
 
-    def setup_telemetry(self) -> None:
+    def setup_observability(self) -> None:
         """Set up OpenTelemetry based on configuration."""
         if not self.enable_tracing:
             return
 
-        from agent_framework.observability import setup_telemetry
+        from agent_framework.observability import setup_observability
 
-        setup_telemetry(
+        setup_observability(
             enable_otel=True,
             enable_sensitive_data=True,  # Enable for detailed task traces
             otlp_endpoint=self.otlp_endpoint,
@@ -272,7 +272,7 @@ class GAIA:
         self.telemetry_config = telemetry_config or GAIATelemetryConfig()
 
         # Set up telemetry
-        self.telemetry_config.setup_telemetry()
+        self.telemetry_config.setup_observability()
 
         # Initialize tracer
         if self.telemetry_config.enable_tracing:

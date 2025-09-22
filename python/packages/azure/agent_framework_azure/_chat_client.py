@@ -14,7 +14,7 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_telemetry
+from agent_framework.observability import use_observability
 from agent_framework.openai._chat_client import OpenAIBaseChatClient
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
@@ -40,7 +40,7 @@ TAzureChatClient = TypeVar("TAzureChatClient", bound="AzureChatClient")
 
 
 @use_function_invocation
-@use_telemetry
+@use_observability
 class AzureChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
     """Azure Chat completion class."""
 

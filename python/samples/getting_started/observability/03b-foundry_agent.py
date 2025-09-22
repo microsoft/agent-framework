@@ -15,7 +15,7 @@ from pydantic import Field
 
 """
 This sample shows you can can setup telemetry with a agent from Foundry.
-We once again call the `setup_foundry_telemetry` method to set up telemetry in order to include the overall spans.
+We once again call the `setup_foundry_observability` method to set up telemetry in order to include the overall spans.
 """
 
 
@@ -35,10 +35,10 @@ async def main():
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
-        # this calls `setup_foundry_telemetry` through the context manager
+        # this calls `setup_foundry_observability` through the context manager
         FoundryChatClient(client=project) as client,
     ):
-        await client.setup_foundry_telemetry(enable_live_metrics=True)
+        await client.setup_foundry_observability(enable_live_metrics=True)
         tracer = trace.get_tracer("agent_framework")
         with tracer.start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):
             print("Running Single Agent Chat")

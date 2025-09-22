@@ -42,10 +42,10 @@ def _ensure_tracing_configured() -> None:
     if env not in {"1", "true", "yes"}:
         logger.info("Tracing diagnostics are disabled in the env. Setting this manually here.")
 
-    from agent_framework.observability import setup_telemetry
+    from agent_framework.observability import setup_observability
     from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
-    setup_telemetry(enable_workflow_otel=True, exporters=[ConsoleSpanExporter()])
+    setup_observability(enable_workflow_otel=True, exporters=[ConsoleSpanExporter()])
 
 
 class StartExecutor(Executor):

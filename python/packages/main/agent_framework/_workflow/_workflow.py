@@ -243,6 +243,10 @@ class Workflow(AFBaseModel):
             WorkflowEvent: The events generated during the workflow execution.
         """
         # Create workflow span that encompasses the entire execution
+        global OTEL_SETTINGS
+        from ..observability import OTEL_SETTINGS
+
+        OTEL_SETTINGS.setup_observability()
         with create_workflow_span(
             OtelAttr.WORKFLOW_RUN_SPAN,
             {
