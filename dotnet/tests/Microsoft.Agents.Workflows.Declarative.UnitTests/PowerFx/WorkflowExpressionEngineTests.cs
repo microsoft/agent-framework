@@ -495,8 +495,8 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TValue, TException>(ObjectExpression<TValue> expression)
-        where TException : Exception
         where TValue : BotElement
+        where TException : Exception
         => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
     private ImmutableArray<TValue> EvaluateExpression<TValue>(ArrayExpression<TValue> expression, TValue[] expectedValue)
