@@ -22,7 +22,7 @@ def enable_sensitive_data(request: Any) -> bool:
 
 
 @fixture(autouse=True)
-def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -> Generator[SpanExporter | None]:  # type: ignore
+def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
     """Fixture to remove environment variables for OtelSettings."""
 
     env_vars = [
@@ -36,6 +36,9 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
     for key in env_vars:
         monkeypatch.delenv(key, raising=False)  # type: ignore
     monkeypatch.setenv("ENABLE_OTEL", str(enable_otel))  # type: ignore
+    if not enable_otel:
+        # we overwrite sensitive data for tests
+        enable_sensitive_data = False
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", str(enable_sensitive_data))  # type: ignore
     import importlib
 

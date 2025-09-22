@@ -1330,6 +1330,7 @@ class EdgeGroupDeliveryStatus(Enum):
 
 def workflow_tracer() -> "Tracer":
     """Get a workflow tracer or a no-op tracer if not enabled."""
+    global OTEL_SETTINGS
     return get_tracer() if OTEL_SETTINGS.ENABLED else trace.NoOpTracer()
 
 
