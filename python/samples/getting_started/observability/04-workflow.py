@@ -10,7 +10,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.observability import get_tracer
+from agent_framework.observability import get_tracer, setup_observability
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 
@@ -103,7 +103,7 @@ async def run_sequential_workflow() -> None:
 
 async def main():
     """Run the telemetry sample with a simple sequential workflow."""
-
+    setup_observability()
     with tracer.start_as_current_span("Sequential Workflow Scenario", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 

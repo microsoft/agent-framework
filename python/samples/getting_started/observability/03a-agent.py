@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
-from agent_framework.observability import get_tracer
+from agent_framework.observability import get_tracer, setup_observability
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry.trace import SpanKind
 from pydantic import Field
@@ -30,7 +30,7 @@ async def main():
     # Set up the telemetry
 
     questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
-
+    setup_observability()
     with get_tracer().start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT):
         print("Running scenario: Agent Chat")
         print("Welcome to the chat, type 'exit' to quit.")

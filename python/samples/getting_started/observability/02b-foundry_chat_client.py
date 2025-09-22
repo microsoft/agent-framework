@@ -7,7 +7,7 @@ from typing import Annotated
 
 from agent_framework import HostedCodeInterpreterTool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.observability import get_tracer
+from agent_framework.observability import get_tracer, setup_observability
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
@@ -50,7 +50,7 @@ async def main() -> None:
     In foundry you will also see specific operations happening that are called by the Foundry implementation,
     such as `create_agent`.
     """
-    use_foundry_telemetry = True
+    use_foundry_obs = True
     questions = [
         "What's the weather in Amsterdam and in Paris?",
         "Why is the sky blue?",
@@ -62,8 +62,10 @@ async def main() -> None:
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
         FoundryChatClient(client=project, setup_tracing=False) as client,
     ):
-        if use_foundry_telemetry:
+        if use_foundry_obs:
             await client.setup_foundry_observability(enable_live_metrics=True)
+        else:
+            setup_observability()
 
         with get_tracer().start_as_current_span(
             name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT

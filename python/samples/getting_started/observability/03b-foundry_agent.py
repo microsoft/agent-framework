@@ -6,10 +6,10 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
+from agent_framework.observability import get_tracer
 from agent_framework_foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
-from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import Field
 
@@ -39,8 +39,7 @@ async def main():
         FoundryChatClient(client=project) as client,
     ):
         await client.setup_foundry_observability(enable_live_metrics=True)
-        tracer = trace.get_tracer("agent_framework")
-        with tracer.start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):
+        with get_tracer().start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):
             print("Running Single Agent Chat")
             print("Welcome to the chat, type 'exit' to quit.")
             agent = ChatAgent(
