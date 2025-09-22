@@ -185,7 +185,8 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(outputSource);
         Throw.IfNull(aggregator);
 
-        OutputCollectorExecutor<TIntermediate, TResult> outputSink = new(aggregator, completionCondition);
+        OutputCollectorExecutor<TIntermediate, TResult> outputSink
+            = new(id: nameof(OutputCollectorExecutor<TIntermediate, TResult>), aggregator, completionCondition);
 
         // TODO: Check that the outputSource has a TResult output?
         builder.AddEdge(outputSource, outputSink);

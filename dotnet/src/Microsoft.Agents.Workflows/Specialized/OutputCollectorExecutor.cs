@@ -13,7 +13,7 @@ internal sealed class OutputCollectorExecutor<TInput, TResult> : Executor, IOutp
 
     public TResult? Result { get; private set; }
 
-    public OutputCollectorExecutor(StreamingAggregator<TInput, TResult> aggregator, Func<TInput, TResult?, bool>? completionCondition = null, string? id = null) : base(id)
+    public OutputCollectorExecutor(string id, StreamingAggregator<TInput, TResult> aggregator, Func<TInput, TResult?, bool>? completionCondition = null) : base(id)
     {
         this._aggregator = Throw.IfNull(aggregator);
         this._completionCondition = completionCondition;

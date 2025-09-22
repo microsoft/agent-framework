@@ -55,11 +55,11 @@ public static class ExecutorIshConfigurationExtensions
     /// </summary>
     /// <typeparam name="TInput">The type of input message.</typeparam>
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
-    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorIsh AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
+        => new FunctionExecutor<TInput>(id, messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
@@ -68,11 +68,11 @@ public static class ExecutorIshConfigurationExtensions
     /// <typeparam name="TInput">The type of input message.</typeparam>
     /// <typeparam name="TOutput">The type of output message.</typeparam>
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
-    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="id">A unique identifier for the executor. If <c>null</c>, will attempt to use the argument expression as an id.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorIsh AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput, TOutput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
+        => new FunctionExecutor<TInput, TOutput>(Throw.IfNull(id), messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
 }
 
 /// <summary>

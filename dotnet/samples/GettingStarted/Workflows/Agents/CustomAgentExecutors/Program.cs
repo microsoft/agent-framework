@@ -40,8 +40,8 @@ public static class Program
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the executors
-        var sloganWriter = new SloganWriterExecutor(chatClient);
-        var feedbackProvider = new FeedbackExecutor(chatClient);
+        var sloganWriter = new SloganWriterExecutor("SloganWriter", chatClient);
+        var feedbackProvider = new FeedbackExecutor("FeedbackProvider", chatClient);
 
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(sloganWriter)
@@ -119,8 +119,9 @@ internal sealed class SloganWriterExecutor
     /// <summary>
     /// Initializes a new instance of the <see cref="SloganWriterExecutor"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
-    public SloganWriterExecutor(IChatClient chatClient)
+    public SloganWriterExecutor(string id, IChatClient chatClient) : base(id)
     {
         ChatClientAgentOptions agentOptions = new(instructions: "You are a professional slogan writer. You will be given a task to create a slogan.")
         {
@@ -189,8 +190,9 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
     /// <summary>
     /// Initializes a new instance of the <see cref="FeedbackExecutor"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
-    public FeedbackExecutor(IChatClient chatClient)
+    public FeedbackExecutor(string id, IChatClient chatClient) : base(id)
     {
         ChatClientAgentOptions agentOptions = new(instructions: "You are a professional editor. You will be given a slogan and the task it is meant to accomplish.")
         {

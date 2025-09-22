@@ -16,9 +16,9 @@ internal static class Step2EntryPoint
         {
             string[] spamKeywords = ["spam", "advertisement", "offer"];
 
-            DetectSpamExecutor detectSpam = new(spamKeywords);
-            RespondToMessageExecutor respondToMessage = new();
-            RemoveSpamExecutor removeSpam = new();
+            DetectSpamExecutor detectSpam = new("DetectSpam", spamKeywords);
+            RespondToMessageExecutor respondToMessage = new("RespondToMessage");
+            RemoveSpamExecutor removeSpam = new("RemoveSpam");
 
             return new WorkflowBuilder(detectSpam)
                 .AddEdge(detectSpam, respondToMessage, (bool isSpam) => !isSpam) // If not spam, respond
@@ -53,7 +53,7 @@ internal sealed class DetectSpamExecutor : ReflectingExecutor<DetectSpamExecutor
 {
     public string[] SpamKeywords { get; }
 
-    public DetectSpamExecutor(params string[] spamKeywords)
+    public DetectSpamExecutor(string id, params string[] spamKeywords) : base(id)
     {
         this.SpamKeywords = spamKeywords;
     }
@@ -70,7 +70,7 @@ internal sealed class DetectSpamExecutor : ReflectingExecutor<DetectSpamExecutor
     }
 }
 
-internal sealed class RespondToMessageExecutor : ReflectingExecutor<RespondToMessageExecutor>, IMessageHandler<bool>
+internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id), IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
@@ -89,7 +89,7 @@ internal sealed class RespondToMessageExecutor : ReflectingExecutor<RespondToMes
     }
 }
 
-internal sealed class RemoveSpamExecutor : ReflectingExecutor<RemoveSpamExecutor>, IMessageHandler<bool>
+internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id), IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 

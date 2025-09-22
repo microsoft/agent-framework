@@ -16,7 +16,7 @@ namespace Microsoft.Agents.Workflows.UnitTests;
 
 public class RepresentationTests
 {
-    private sealed class TestExecutor : Executor
+    private sealed class TestExecutor() : Executor("TestExecutor")
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder;
     }
@@ -80,7 +80,7 @@ public class RepresentationTests
         await RunExecutorishInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
         await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestInputPort));
 
-        OutputCollectorExecutor<ChatMessage, IEnumerable<ChatMessage>> outputCollector = new(StreamingAggregators.Union<ChatMessage>());
+        OutputCollectorExecutor<ChatMessage, IEnumerable<ChatMessage>> outputCollector = new("OutputCollector", StreamingAggregators.Union<ChatMessage>());
         await RunExecutorishInfoMatchTestAsync(outputCollector);
     }
 

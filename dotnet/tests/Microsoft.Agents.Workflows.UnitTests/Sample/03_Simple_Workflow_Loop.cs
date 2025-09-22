@@ -14,8 +14,8 @@ internal static class Step3EntryPoint
     {
         get
         {
-            GuessNumberExecutor guessNumber = new(1, 100);
-            JudgeExecutor judge = new(42); // Let's say the target number is 42
+            GuessNumberExecutor guessNumber = new("GuessNumber", 1, 100);
+            JudgeExecutor judge = new("Judge", 42); // Let's say the target number is 42
 
             return new WorkflowBuilder(guessNumber)
                 .AddEdge(guessNumber, judge)
@@ -60,7 +60,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     public int LowerBound { get; private set; }
     public int UpperBound { get; private set; }
 
-    public GuessNumberExecutor(int lowerBound, int upperBound)
+    public GuessNumberExecutor(string id, int lowerBound, int upperBound) : base(id)
     {
         this.LowerBound = lowerBound;
         this.UpperBound = upperBound;
@@ -97,7 +97,7 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
 
     internal int? Tries { get; private set; }
 
-    public JudgeExecutor(int targetNumber)
+    public JudgeExecutor(string id, int targetNumber) : base(id)
     {
         this._targetNumber = targetNumber;
     }
