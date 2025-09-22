@@ -485,6 +485,7 @@ class ChatAgent(BaseAgent):
             response_id=response.response_id,
             created_at=response.created_at,
             usage_details=response.usage_details,
+            value=response.value,
             raw_representation=response,
             additional_properties=response.additional_properties,
         )
