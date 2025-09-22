@@ -1,7 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
 
+import pytest
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pytest import fixture
 
 if TYPE_CHECKING:
@@ -74,3 +78,22 @@ def patched_otel_settings(monkeypatch) -> "OtelSettings":  # type: ignore
     monkeypatch.setattr(observability, "OTEL_SETTINGS", otel, raising=False)  # type: ignore
 
     return otel
+
+
+@pytest.fixture
+@pytest.mark.parametrize("enable_workflow_otel", [True], indirect=True)
+def span_exporter(otel_settings: "OtelSettings") -> Generator[SpanExporter]:
+    """Set up OpenTelemetry test infrastructure."""
+    from opentelemetry import trace
+
+    # Use the built-in InMemorySpanExporter for better compatibility
+    otel_settings.setup_observability()
+    exporter = InMemorySpanExporter()
+    trace.get_tracer_provider().add_span_processor(
+        SimpleSpanProcessor(exporter)  # type: ignore[func-returns-value]
+    )
+
+    yield exporter
+
+    # Clean up
+    exporter.clear()

@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
 from agent_framework import (
@@ -86,7 +87,7 @@ async def test_ai_function_decorator_with_async():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_ai_function_invoke_telemetry_enabled(otel_settings):
+async def test_ai_function_invoke_telemetry_enabled(otel_settings, span_exporter: InMemorySpanExporter):
     """Test the ai_function invoke method with telemetry enabled."""
 
     @ai_function(
@@ -97,49 +98,35 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
         """A function that adds two numbers for telemetry testing."""
         return x + y
 
-    # Mock the tracer and span
-    mock_tracer = Mock()
-    with (
-        patch("agent_framework.observability.get_tracer", return_value=mock_tracer),
-        # the span creation uses a form of deepcopy, so need to mock that way
-        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
-    ):
-        mock_span = Mock()
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_span)
-        mock_context_manager.__exit__ = Mock(return_value=None)
-        mock_start_span.return_value = mock_context_manager
+    # Mock the histogram
+    mock_histogram = Mock()
+    telemetry_test_tool._invocation_duration_histogram = mock_histogram
+    span_exporter.clear()
+    # Call invoke
+    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
-        # Mock the histogram
-        mock_histogram = Mock()
-        telemetry_test_tool._invocation_duration_histogram = mock_histogram
+    # Verify result
+    assert result == 3
 
-        # Call invoke
-        result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+    # Verify telemetry calls
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
+    assert "telemetry_test_tool" in span.name
+    assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'
 
-        # Verify result
-        assert result == 3
-
-        # Verify telemetry calls
-        mock_start_span.assert_called_once_with(
-            attributes={
-                OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-                OtelAttr.TOOL_NAME: "telemetry_test_tool",
-                OtelAttr.TOOL_CALL_ID: "test_call_id",
-                OtelAttr.TOOL_TYPE: "function",
-                OtelAttr.TOOL_DESCRIPTION: "A test tool for telemetry",
-                OtelAttr.TOOL_ARGUMENTS: '{"x": 1, "y": 2}',
-            }
-        )
-        assert mock_span.set_attribute.call_count == 2
-
-        # Verify histogram was called with correct attributes
-        mock_histogram.record.assert_called_once()
-        call_args = mock_histogram.record.call_args
-        assert call_args[0][0] > 0  # duration should be positive
-        attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-        assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    # Verify histogram was called with correct attributes
+    mock_histogram.record.assert_called_once()
+    call_args = mock_histogram.record.call_args
+    assert call_args[0][0] > 0  # duration should be positive
+    attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
+    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
