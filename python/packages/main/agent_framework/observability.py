@@ -1045,7 +1045,7 @@ def _trace_agent_run_stream(
     return trace_run_streaming
 
 
-def use_agent_telemetry(
+def use_agent_observability(
     agent: type[TAgent],
 ) -> type[TAgent]:
     """Class decorator that enables telemetry for an agent."""

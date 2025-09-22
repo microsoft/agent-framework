@@ -216,7 +216,9 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 @pytest.mark.parametrize("enable_workflow_otel", [False], indirect=True)
-async def test_trace_context_disabled_when_tracing_disabled(enable_otel, enable_workflow_otel, otel_settings) -> None:
+async def test_trace_context_disabled_when_tracing_disabled(
+    enable_otel, enable_workflow_otel, span_exporter: InMemorySpanExporter
+) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
     shared_state = SharedState()
@@ -400,7 +402,8 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
     assert workflow_span.status.status_code.name == "ERROR"
 
 
-async def test_message_trace_context_serialization() -> None:
+@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+async def test_message_trace_context_serialization(span_exporter: InMemorySpanExporter) -> None:
     """Test that message trace context is properly serialized/deserialized."""
     ctx = InProcRunnerContext()
 

@@ -6,7 +6,7 @@ from typing import Any, Generic, TypeVar, cast, get_args
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
 
-from ..observability import OTEL_SETTINGS, OtelAttr, create_workflow_span
+from ..observability import OtelAttr, create_workflow_span
 from ._events import (
     WorkflowEvent,
     WorkflowEventSource,
@@ -84,9 +84,12 @@ class WorkflowContext(Generic[T_Out]):
             target_id: The ID of the target executor to send the message to.
                        If None, the message will be sent to all target executors.
         """
-        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
-        # Create publishing span (inherits current trace context automatically)
+        global OTEL_SETTINGS
+        from ..observability import OTEL_SETTINGS
 
+        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
+
+        # Create publishing span (inherits current trace context automatically)
         attributes: dict[str, str] = {OtelAttr.MESSAGE_TYPE: type(message).__name__}
         if target_id:
             attributes[OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID] = target_id

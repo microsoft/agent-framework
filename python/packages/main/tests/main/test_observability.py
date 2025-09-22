@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.semconv_ai import SpanAttributes
 from opentelemetry.trace import StatusCode
 
@@ -31,11 +32,9 @@ from agent_framework.observability import (
     ChatMessageListTimestampFilter,
     OtelAttr,
     get_function_span,
-    use_agent_telemetry,
+    use_agent_observability,
     use_observability,
 )
-
-from .utils import CopyingMock
 
 # region Test constants
 
@@ -101,63 +100,60 @@ def test_index_key_constant():
 # region Test get_function_span
 
 
-def test_start_span_basic():
+def test_start_span_basic(span_exporter: InMemorySpanExporter):
     """Test starting a span with basic function info."""
-    mock_tracer = Mock()
-    with patch("agent_framework.observability.get_tracer", return_value=mock_tracer):
-        mock_span = Mock()
-        mock_tracer.start_as_current_span.return_value = mock_span
+    # Create a mock function
+    mock_function = Mock()
+    mock_function.name = "test_function"
+    mock_function.description = "Test function description"
+    attributes = {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "test_function",
+        OtelAttr.TOOL_DESCRIPTION: "Test function description",
+        OtelAttr.TOOL_TYPE: "function",
+    }
+    span_exporter.clear()
+    with get_function_span(attributes) as function_span:
+        assert function_span is not None
+        function_span.set_attribute("test_attr", "test_value")
 
-        # Create a mock function
-        mock_function = Mock()
-        mock_function.name = "test_function"
-        mock_function.description = "Test function description"
-        attributes = {
-            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-            OtelAttr.TOOL_NAME: "test_function",
-            OtelAttr.TOOL_DESCRIPTION: "Test function description",
-            OtelAttr.TOOL_TYPE: "function",
-        }
-
-        result = get_function_span(attributes)
-
-        assert result == mock_span
-        mock_tracer.start_as_current_span.assert_called_once()
-
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[1]["name"] == "execute_tool test_function"
-
-        attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
-        assert attributes[OtelAttr.TOOL_NAME] == "test_function"
-        assert attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "execute_tool test_function"
+    assert span.attributes["test_attr"] == "test_value"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert span.attributes[OtelAttr.TOOL_NAME] == "test_function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"
 
 
-def test_start_span_with_tool_call_id():
+def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
     """Test starting a span with tool_call_id."""
-    mock_tracer = Mock()
-    with patch("agent_framework.observability.get_tracer", return_value=mock_tracer):
-        mock_span = CopyingMock()
-        mock_tracer.start_as_current_span.return_value = mock_span
 
-        mock_function = Mock()
-        mock_function.name = "test_function"
-        mock_function.description = "Test function"
+    tool_call_id = "test_call_123"
+    attributes = {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "test_function",
+        OtelAttr.TOOL_DESCRIPTION: "Test function",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.TOOL_CALL_ID: tool_call_id,
+    }
 
-        tool_call_id = "test_call_123"
-        attributes = {
-            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-            OtelAttr.TOOL_NAME: "test_function",
-            OtelAttr.TOOL_DESCRIPTION: "Test function",
-            OtelAttr.TOOL_TYPE: "function",
-            OtelAttr.TOOL_CALL_ID: tool_call_id,
-        }
-
-        _ = get_function_span(attributes)
-
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_123"
+    span_exporter.clear()
+    with get_function_span(attributes) as function_span:
+        assert function_span is not None
+        function_span.set_attribute("test_attr", "test_value")
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "execute_tool test_function"
+    assert span.attributes["test_attr"] == "test_value"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == tool_call_id
+    # Verify all attributes
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert span.attributes[OtelAttr.TOOL_NAME] == "test_function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function"
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
 
 
 # region Test use_observability decorator
@@ -236,54 +232,51 @@ def mock_chat_client():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_instrumentation_enabled(mock_chat_client, otel_settings):
+async def test_chat_client_observability(mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test that when diagnostics are enabled, telemetry is applied."""
     client = use_observability(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
-    chat_options = ChatOptions()
-
-    with (
-        patch("agent_framework.observability._get_span") as mock_response_span,
-        patch("agent_framework.observability._capture_messages") as mock_log_messages,
-    ):
-        response = await client.get_response(messages=messages, chat_options=chat_options)
-        assert response is not None
-        mock_response_span.assert_called_once()
-
-        # Check that log messages was called only if sensitive events are enabled
-        assert mock_log_messages.call_count == (2 if otel_settings.enable_sensitive_data else 0)
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, ai_model_id="Test")
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "chat Test"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "Test"
+    assert span.attributes[OtelAttr.INPUT_TOKENS] == 10
+    assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 20
+    if enable_sensitive_data:
+        assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None
+        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_streaming_response_with_otel(mock_chat_client, otel_settings):
+async def test_chat_client_streaming_observability(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
     """Test streaming telemetry through the use_observability decorator."""
     client = use_observability(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
-    chat_options = ChatOptions()
+    span_exporter.clear()
+    # Collect all yielded updates
+    updates = []
+    async for update in client.get_streaming_response(messages=messages, ai_model_id="Test"):
+        updates.append(update)
 
-    with (
-        patch("agent_framework.observability._get_span") as mock_response_span,
-        patch("agent_framework.observability._capture_messages") as mock_log_messages,
-        patch("agent_framework.observability._capture_response") as mock_set_output,
-    ):
-        # Collect all yielded updates
-        updates = []
-        async for update in client.get_streaming_response(messages=messages, chat_options=chat_options):
-            updates.append(update)
-
-        # Verify we got the expected updates, this shouldn't be dependent on otel
-        assert len(updates) == 2
-
-        # Verify telemetry calls were made
-        mock_response_span.assert_called_once()
-        if otel_settings.enable_sensitive_data:
-            mock_log_messages.assert_called()
-            assert mock_log_messages.call_count == 2  # One for input, one for output
-        else:
-            mock_log_messages.assert_not_called()
-
-        mock_set_output.assert_called_once()
+    # Verify we got the expected updates, this shouldn't be dependent on otel
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "chat Test"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "Test"
+    if enable_sensitive_data:
+        assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None
+        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
 
 
 def test_prepend_user_agent_with_none_value():
@@ -296,7 +289,7 @@ def test_prepend_user_agent_with_none_value():
     assert AGENT_FRAMEWORK_USER_AGENT in str(result["User-Agent"])
 
 
-# region Test use_agent_telemetry decorator
+# region Test use_agent_observability decorator
 
 
 def test_agent_decorator_with_valid_class():
@@ -325,7 +318,7 @@ def test_agent_decorator_with_valid_class():
             return AgentThread()
 
     # Apply the decorator
-    decorated_class = use_agent_telemetry(MockChatClientAgent)
+    decorated_class = use_agent_observability(MockChatClientAgent)
 
     assert hasattr(decorated_class, OPEN_TELEMETRY_AGENT_MARKER)
 
@@ -338,12 +331,12 @@ def test_agent_decorator_with_missing_methods():
 
     # Apply the decorator - should not raise an error
     with pytest.raises(AgentInitializationError):
-        use_agent_telemetry(MockAgent)
+        use_agent_observability(MockAgent)
 
 
 def test_agent_decorator_with_partial_methods():
     """Test agent decorator when only one method is present."""
-    from agent_framework.observability import use_agent_telemetry
+    from agent_framework.observability import use_agent_observability
 
     class MockAgent:
         AGENT_SYSTEM_NAME = "test_agent_system"
@@ -357,7 +350,7 @@ def test_agent_decorator_with_partial_methods():
             return Mock()
 
     with pytest.raises(AgentInitializationError):
-        use_agent_telemetry(MockAgent)
+        use_agent_observability(MockAgent)
 
 
 # region Test agent telemetry decorator with mock agent
@@ -394,49 +387,55 @@ def mock_chat_agent():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_agent_instrumentation_enabled(mock_chat_agent: AgentProtocol, enable_sensitive_data, otel_settings):
+async def test_agent_instrumentation_enabled(
+    mock_chat_agent: AgentProtocol, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
-    agent = use_agent_telemetry(mock_chat_agent)()
+    agent = use_agent_observability(mock_chat_agent)()
 
-    with (
-        patch("opentelemetry.trace.use_span") as mock_use_span,
-        patch("agent_framework.observability.logger") as mock_logger,
-    ):
-        response = await agent.run("Test message")
-        assert response is not None
-        mock_use_span.assert_called_once()
-        # Check that logger.info was called (telemetry logs input/output)
-        assert mock_logger.info.call_count == (2 if otel_settings.enable_sensitive_data else 0)
+    span_exporter.clear()
+    response = await agent.run("Test message")
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "invoke_agent Test Agent"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
+    assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
+    assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
+    if enable_sensitive_data:
+        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
-    mock_chat_agent: AgentProtocol, otel_settings
+    mock_chat_agent: AgentProtocol, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test agent streaming telemetry through the use_agent_telemetry decorator."""
-    agent = use_agent_telemetry(mock_chat_agent)()
+    """Test agent streaming telemetry through the use_agent_observability decorator."""
+    agent = use_agent_observability(mock_chat_agent)()
+    span_exporter.clear()
+    updates = []
+    async for update in agent.run_stream("Test message"):
+        updates.append(update)
 
-    with (
-        patch("agent_framework.observability._get_span") as mock_get_span,
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
-        patch("agent_framework.observability._capture_response") as mock_capture_response,
-    ):
-        # Collect all yielded updates
-        updates = []
-        async for update in agent.run_stream("Test message"):
-            updates.append(update)
-
-        # Verify we got the expected updates
-        assert len(updates) == 2
-
-        # Verify telemetry calls were made
-        mock_get_span.assert_called_once()
-        mock_capture_response.assert_called_once()
-        if otel_settings.enable_sensitive_data:
-            mock_capture_messages.assert_called()
-        else:
-            mock_capture_messages.assert_not_called()
+    # Verify we got the expected updates
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "invoke_agent Test Agent"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
+    assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    if enable_sensitive_data:
+        assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # Streaming, so no usage yet
 
 
 async def test_agent_run_with_exception_handling(mock_chat_agent: AgentProtocol):
@@ -447,7 +446,7 @@ async def test_agent_run_with_exception_handling(mock_chat_agent: AgentProtocol)
 
     mock_chat_agent.run = run_with_error
 
-    agent = use_agent_telemetry(mock_chat_agent)()
+    agent = use_agent_observability(mock_chat_agent)()
 
     from opentelemetry.trace import Span
 

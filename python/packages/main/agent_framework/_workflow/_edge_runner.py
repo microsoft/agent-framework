@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any
 
-from ..observability import OTEL_SETTINGS, EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
+from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup, SwitchCaseEdgeGroup
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
@@ -87,10 +87,13 @@ class SingleEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the single edge."""
+        global OTEL_SETTINGS
+        from ..observability import OTEL_SETTINGS
+
+        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
         should_execute = False
         target_id = None
         source_id = None
-        OTEL_SETTINGS.setup_observability()
         with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
             edge_group_id=self._edge_group.id,
@@ -156,10 +159,12 @@ class FanOutEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-out edge group."""
+        global OTEL_SETTINGS
+        from ..observability import OTEL_SETTINGS
+
+        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
         deliverable_edges = []
         single_target_edge = None
-
-        OTEL_SETTINGS.setup_observability()
         # Process routing logic within span
         with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
@@ -277,9 +282,12 @@ class FanInEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-in edge group."""
-        execution_data: dict[str, Any] | None = None
+        global OTEL_SETTINGS
+        from ..observability import OTEL_SETTINGS
 
-        OTEL_SETTINGS.setup_observability()
+        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
+
+        execution_data: dict[str, Any] | None = None
         with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
             edge_group_id=self._edge_group.id,
