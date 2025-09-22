@@ -1470,10 +1470,12 @@ public class OpenTelemetryAgentTests
         static async IAsyncEnumerable<AgentRunResponseUpdate> ThrowingAsyncEnumerableAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
-            throw new InvalidOperationException("Streaming error");
-#pragma warning disable CS0162 // Unreachable code detected
+            if (Environment.ProcessorCount > 0) // always true
+            {
+                throw new InvalidOperationException("Streaming error");
+            }
+
             yield break;
-#pragma warning restore CS0162
         }
 
         static async IAsyncEnumerable<AgentRunResponseUpdate> CreateStreamingResponseAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)

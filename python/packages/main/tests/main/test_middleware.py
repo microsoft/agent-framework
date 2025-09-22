@@ -77,6 +77,16 @@ class TestFunctionInvocationContext:
 class TestAgentMiddlewarePipeline:
     """Test cases for AgentMiddlewarePipeline."""
 
+    class PreNextTerminateMiddleware(AgentMiddleware):
+        async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+            context.terminate = True
+            await next(context)
+
+    class PostNextTerminateMiddleware(AgentMiddleware):
+        async def process(self, context: AgentRunContext, next: Any) -> None:
+            await next(context)
+            context.terminate = True
+
     def test_init_empty(self) -> None:
         """Test AgentMiddlewarePipeline initialization with no middlewares."""
         pipeline = AgentMiddlewarePipeline()
@@ -194,9 +204,142 @@ class TestAgentMiddlewarePipeline:
         assert updates[1].text == "chunk2"
         assert execution_order == ["test_before", "test_after", "handler_start", "handler_end"]
 
+    async def test_execute_with_pre_next_termination(self, mock_agent: AgentProtocol) -> None:
+        """Test pipeline execution with termination before next()."""
+        middleware = self.PreNextTerminateMiddleware()
+        pipeline = AgentMiddlewarePipeline([middleware])
+        messages = [ChatMessage(role=Role.USER, text="test")]
+        context = AgentRunContext(agent=mock_agent, messages=messages)
+        execution_order: list[str] = []
+
+        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+            # Handler should not be executed when terminated before next()
+            execution_order.append("handler")
+            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+
+        response = await pipeline.execute(mock_agent, messages, context, final_handler)
+        assert response is not None
+        assert context.terminate
+        # Handler should not be called when terminated before next()
+        assert execution_order == []
+        assert not response.messages
+
+    async def test_execute_with_post_next_termination(self, mock_agent: AgentProtocol) -> None:
+        """Test pipeline execution with termination after next()."""
+        middleware = self.PostNextTerminateMiddleware()
+        pipeline = AgentMiddlewarePipeline([middleware])
+        messages = [ChatMessage(role=Role.USER, text="test")]
+        context = AgentRunContext(agent=mock_agent, messages=messages)
+        execution_order: list[str] = []
+
+        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+            execution_order.append("handler")
+            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+
+        response = await pipeline.execute(mock_agent, messages, context, final_handler)
+        assert response is not None
+        assert len(response.messages) == 1
+        assert response.messages[0].text == "response"
+        assert context.terminate
+        assert execution_order == ["handler"]
+
+    async def test_execute_stream_with_pre_next_termination(self, mock_agent: AgentProtocol) -> None:
+        """Test pipeline streaming execution with termination before next()."""
+        middleware = self.PreNextTerminateMiddleware()
+        pipeline = AgentMiddlewarePipeline([middleware])
+        messages = [ChatMessage(role=Role.USER, text="test")]
+        context = AgentRunContext(agent=mock_agent, messages=messages)
+        execution_order: list[str] = []
+
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+            # Handler should not be executed when terminated before next()
+            execution_order.append("handler_start")
+            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk2")])
+            execution_order.append("handler_end")
+
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
+            updates.append(update)
+
+        assert context.terminate
+        # Handler should not be called when terminated before next()
+        assert execution_order == []
+        assert not updates
+
+    async def test_execute_stream_with_post_next_termination(self, mock_agent: AgentProtocol) -> None:
+        """Test pipeline streaming execution with termination after next()."""
+        middleware = self.PostNextTerminateMiddleware()
+        pipeline = AgentMiddlewarePipeline([middleware])
+        messages = [ChatMessage(role=Role.USER, text="test")]
+        context = AgentRunContext(agent=mock_agent, messages=messages)
+        execution_order: list[str] = []
+
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+            execution_order.append("handler_start")
+            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk2")])
+            execution_order.append("handler_end")
+
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
+            updates.append(update)
+
+        assert len(updates) == 2
+        assert updates[0].text == "chunk1"
+        assert updates[1].text == "chunk2"
+        assert context.terminate
+        assert execution_order == ["handler_start", "handler_end"]
+
 
 class TestFunctionMiddlewarePipeline:
     """Test cases for FunctionMiddlewarePipeline."""
+
+    class PreNextTerminateFunctionMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, next: Any) -> None:
+            context.terminate = True
+            await next(context)
+
+    class PostNextTerminateFunctionMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, next: Any) -> None:
+            await next(context)
+            context.terminate = True
+
+    async def test_execute_with_pre_next_termination(self, mock_function: AIFunction[Any, Any]) -> None:
+        """Test pipeline execution with termination before next()."""
+        middleware = self.PreNextTerminateFunctionMiddleware()
+        pipeline = FunctionMiddlewarePipeline([middleware])
+        arguments = FunctionTestArgs(name="test")
+        context = FunctionInvocationContext(function=mock_function, arguments=arguments)
+        execution_order: list[str] = []
+
+        async def final_handler(ctx: FunctionInvocationContext) -> str:
+            # Handler should not be executed when terminated before next()
+            execution_order.append("handler")
+            return "test result"
+
+        result = await pipeline.execute(mock_function, arguments, context, final_handler)
+        assert result is None
+        assert context.terminate
+        # Handler should not be called when terminated before next()
+        assert execution_order == []
+
+    async def test_execute_with_post_next_termination(self, mock_function: AIFunction[Any, Any]) -> None:
+        """Test pipeline execution with termination after next()."""
+        middleware = self.PostNextTerminateFunctionMiddleware()
+        pipeline = FunctionMiddlewarePipeline([middleware])
+        arguments = FunctionTestArgs(name="test")
+        context = FunctionInvocationContext(function=mock_function, arguments=arguments)
+        execution_order: list[str] = []
+
+        async def final_handler(ctx: FunctionInvocationContext) -> str:
+            execution_order.append("handler")
+            return "test result"
+
+        result = await pipeline.execute(mock_function, arguments, context, final_handler)
+        assert result == "test result"
+        assert context.terminate
+        assert execution_order == ["handler"]
 
     def test_init_empty(self) -> None:
         """Test FunctionMiddlewarePipeline initialization with no middlewares."""
@@ -882,44 +1025,6 @@ class TestMiddlewareExecutionControl:
         assert result is not None
         assert isinstance(result, AgentRunResponse)
         assert result.messages == []  # Empty response
-        assert not handler_called
-
-    async def test_function_middleware_pre_execution_override_with_next(
-        self, mock_function: AIFunction[Any, Any]
-    ) -> None:
-        """Test that function middleware can override result before calling next() - this skips handler execution."""
-
-        class FunctionTestArgs(BaseModel):
-            name: str = Field(description="Test name parameter")
-
-        class PreOverrideFunctionMiddleware(FunctionMiddleware):
-            async def process(
-                self,
-                context: FunctionInvocationContext,
-                next: Callable[[FunctionInvocationContext], Awaitable[None]],
-            ) -> None:
-                # Set override first
-                context.result = "pre-override result"
-                # Then call next() to continue middleware pipeline
-                await next(context)
-
-        middleware = PreOverrideFunctionMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
-        arguments = FunctionTestArgs(name="test")
-        context = FunctionInvocationContext(function=mock_function, arguments=arguments)
-
-        handler_called = False
-
-        async def final_handler(ctx: FunctionInvocationContext) -> str:
-            nonlocal handler_called
-            handler_called = True
-            # This should not be called when result is pre-set
-            return "original result"
-
-        result = await pipeline.execute(mock_function, arguments, context, final_handler)
-
-        # Verify pre-override worked and handler was NOT called (because result was already set)
-        assert result == "pre-override result"
         assert not handler_called
 
 

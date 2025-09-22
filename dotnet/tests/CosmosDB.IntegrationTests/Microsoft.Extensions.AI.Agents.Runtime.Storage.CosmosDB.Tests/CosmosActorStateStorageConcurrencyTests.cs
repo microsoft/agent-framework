@@ -194,9 +194,7 @@ public class CosmosActorStateStorageConcurrencyTests
         };
 
         // Act & Assert - Test null eTag (should create new document)
-#pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
-        var resultWithNullETag = await storage.WriteStateAsync(testActorId, operations, null, cancellationToken);
-#pragma warning restore CS8625 // Cannot convert null literal to non-nullable reference type.
+        var resultWithNullETag = await storage.WriteStateAsync(testActorId, operations, null!, cancellationToken);
         Assert.True(resultWithNullETag.Success);
         Assert.NotNull(resultWithNullETag.ETag);
         Assert.NotEmpty(resultWithNullETag.ETag);
