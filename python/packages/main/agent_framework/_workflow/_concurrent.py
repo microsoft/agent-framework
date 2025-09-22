@@ -145,7 +145,10 @@ class _CallbackAggregator(Executor):
     """
 
     def __init__(self, callback: Callable[..., Any], id: str | None = None) -> None:
-        super().__init__(id)
+        derived_id = getattr(callback, "__name__", "") or ""
+        if not derived_id or derived_id == "<lambda>":
+            derived_id = f"{type(self).__name__}_unnamed"
+        super().__init__(id or derived_id)
         self._callback = callback
         self._param_count = len(inspect.signature(callback).parameters)
 

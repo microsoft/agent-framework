@@ -200,7 +200,7 @@ async def test_sub_workflow_with_interception():
     # Create parent workflow with interception
     parent = ParentOrchestrator(approved_domains={"example.com", "internal.org"})
     workflow_executor = WorkflowExecutor(validation_workflow, id="email_workflow")
-    parent_request_info = RequestInfoExecutor()
+    parent_request_info = RequestInfoExecutor(id="request_info")
 
     main_workflow = (
         WorkflowBuilder()
@@ -280,7 +280,7 @@ async def test_conditional_forwarding() -> None:
 
     # Setup workflows
     email_validator = EmailValidator()
-    request_info = RequestInfoExecutor()
+    request_info = RequestInfoExecutor(id="request_info")
 
     validation_workflow = (
         WorkflowBuilder()
@@ -292,7 +292,7 @@ async def test_conditional_forwarding() -> None:
 
     parent = ConditionalParent()
     workflow_executor = WorkflowExecutor(validation_workflow, id="email_workflow")
-    parent_request_info = RequestInfoExecutor()
+    parent_request_info = RequestInfoExecutor(id="request_info")
 
     main_workflow = (
         WorkflowBuilder()
@@ -364,7 +364,7 @@ async def test_workflow_scoped_interception() -> None:
     # Create two identical sub-workflows
     def create_validation_workflow():
         validator = EmailValidator()
-        request_info = RequestInfoExecutor()
+        request_info = RequestInfoExecutor(id="request_info")
         return (
             WorkflowBuilder()
             .set_start_executor(validator)
@@ -379,7 +379,7 @@ async def test_workflow_scoped_interception() -> None:
     parent = MultiWorkflowParent()
     executor_a = WorkflowExecutor(workflow_a, id="workflow_a")
     executor_b = WorkflowExecutor(workflow_b, id="workflow_b")
-    parent_request_info = RequestInfoExecutor()
+    parent_request_info = RequestInfoExecutor(id="request_info")
 
     main_workflow = (
         WorkflowBuilder()
