@@ -2,7 +2,6 @@
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.Workflows.Declarative.Kit;
-using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -40,7 +39,14 @@ public class ConditionGroupTemplateTest(ITestOutputHelper output) : WorkflowActi
 
         // Assert
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
-        this.AssertGeneratedMethod(nameof(ConditionGroupExecutor.DoneAsync), workflowCode);
+        foreach (ConditionItem condition in model.Conditions)
+        {
+            Assert.Contains(@$"""{condition.Id}""", workflowCode);
+        }
+        if (model.ElseActions?.Actions.Length > 0)
+        {
+            Assert.Contains(@$"""{model.ElseActions.Id}""", workflowCode);
+        }
     }
 
     private ConditionGroup CreateModel(string displayName, bool hasElse = false)

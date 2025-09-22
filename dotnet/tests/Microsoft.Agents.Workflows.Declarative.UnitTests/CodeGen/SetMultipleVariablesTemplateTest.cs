@@ -38,7 +38,7 @@ public class SetMultipleVariablesTemplateTest(ITestOutputHelper output) : Workfl
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
         foreach (AssignmentCase assignment in assignments)
         {
-            this.AssertGeneratedAssignment(PropertyPath.Create(assignment.Path), workflowCode);
+            this.AssertGeneratedAssignment(PropertyPath.TopicVariable(assignment.Path), workflowCode);
         }
     }
 

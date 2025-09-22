@@ -40,7 +40,7 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
     protected void AssertDelegate(string actionId, string rootId, string workflowCode)
     {
         Assert.Contains($"{nameof(DelegateExecutor)} {actionId.FormatName()} = new(", workflowCode);
-        Assert.Contains(@$"""{actionId.FormatType()}""", workflowCode);
-        Assert.Contains(@$"""{rootId.FormatType()}""", workflowCode);
+        Assert.Contains(@$"""{actionId}""", workflowCode);
+        Assert.Contains($"{rootId.FormatName()}.Session", workflowCode);
     }
 }
