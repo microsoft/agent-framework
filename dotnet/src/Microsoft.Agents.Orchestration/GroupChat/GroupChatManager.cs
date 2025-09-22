@@ -59,7 +59,7 @@ public abstract class GroupChatManager
     /// <param name="history">The chat history to filter.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A <see cref="GroupChatManagerResult{TValue}"/> containing the filtered result as a string.</returns>
-    protected internal abstract ValueTask<GroupChatManagerResult<string>> FilterResults(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default);
+    protected internal abstract ValueTask<GroupChatManagerResult<string>> FilterResultsAsync(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Selects the next agent to participate in the group chat based on the provided chat history and team.
@@ -68,7 +68,7 @@ public abstract class GroupChatManager
     /// <param name="team">The group of agents participating in the chat.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A <see cref="GroupChatManagerResult{TValue}"/> containing the identifier of the next agent as a string.</returns>
-    protected internal abstract ValueTask<GroupChatManagerResult<string>> SelectNextAgent(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default);
+    protected internal abstract ValueTask<GroupChatManagerResult<string>> SelectNextAgentAsync(IReadOnlyCollection<ChatMessage> history, GroupChatTeam team, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Determines whether user input should be requested based on the provided chat history.
@@ -76,7 +76,7 @@ public abstract class GroupChatManager
     /// <param name="history">The chat history to consider.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A <see cref="GroupChatManagerResult{TValue}"/> indicating whether user input should be requested.</returns>
-    protected internal abstract ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInput(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default);
+    protected internal abstract ValueTask<GroupChatManagerResult<bool>> ShouldRequestUserInputAsync(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Determines whether the group chat should be terminated based on the provided chat history and invocation count.
@@ -84,7 +84,7 @@ public abstract class GroupChatManager
     /// <param name="history">The chat history to consider.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A <see cref="GroupChatManagerResult{TValue}"/> indicating whether the chat should be terminated.</returns>
-    protected internal virtual ValueTask<GroupChatManagerResult<bool>> ShouldTerminate(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
+    protected internal virtual ValueTask<GroupChatManagerResult<bool>> ShouldTerminateAsync(IReadOnlyCollection<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         bool resultValue = false;
         string reason = "Maximum number of invocations has not been reached.";

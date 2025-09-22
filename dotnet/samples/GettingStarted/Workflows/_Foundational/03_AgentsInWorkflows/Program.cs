@@ -40,13 +40,14 @@ public static class Program
         AIAgent englishAgent = GetTranslationAgent("English", chatClient);
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(frenchAgent);
-        builder.AddEdge(frenchAgent, spanishAgent);
-        builder.AddEdge(spanishAgent, englishAgent);
-        var workflow = builder.Build<ChatMessage>();
+        var workflow = new WorkflowBuilder(frenchAgent)
+            .AddEdge(frenchAgent, spanishAgent)
+            .AddEdge(spanishAgent, englishAgent)
+            .Build<ChatMessage>();
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
+
         // Must send the turn token to trigger the agents.
         // The agents are wrapped as executors. When they receive messages,
         // they will cache the messages and only start processing when they receive a TurnToken.
@@ -66,9 +67,6 @@ public static class Program
     /// <param name="targetLanguage">The target language for translation</param>
     /// <param name="chatClient">The chat client to use for the agent</param>
     /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static ChatClientAgent GetTranslationAgent(string targetLanguage, IChatClient chatClient)
-    {
-        string instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.";
-        return new ChatClientAgent(chatClient, instructions);
-    }
+    private static ChatClientAgent GetTranslationAgent(string targetLanguage, IChatClient chatClient) =>
+        new(chatClient, $"You are a translation assistant that translates the provided text to {targetLanguage}.");
 }

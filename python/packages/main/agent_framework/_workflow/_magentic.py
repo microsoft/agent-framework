@@ -1966,6 +1966,76 @@ class MagenticWorkflow:
         async for event in self._workflow.run_stream(message):
             yield event
 
+    async def _validate_checkpoint_participants(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> None:
+        """Ensure participant roster matches the checkpoint before attempting restoration."""
+        orchestrator = next(
+            (
+                executor
+                for executor in self._workflow.executors.values()
+                if isinstance(executor, MagenticOrchestratorExecutor)
+            ),
+            None,
+        )
+        if orchestrator is None:
+            return
+
+        expected = getattr(orchestrator, "_participants", None)
+        if not expected:
+            return
+
+        checkpoint = None
+        if checkpoint_storage is not None:
+            try:
+                checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
+            except Exception:  # pragma: no cover - best effort
+                checkpoint = None
+
+        if checkpoint is None:
+            runner_context = getattr(self._workflow, "_runner_context", None)
+            has_checkpointing = getattr(runner_context, "has_checkpointing", None)
+            load_checkpoint = getattr(runner_context, "load_checkpoint", None)
+            try:
+                if callable(has_checkpointing) and has_checkpointing() and callable(load_checkpoint):
+                    checkpoint = await load_checkpoint(checkpoint_id)  # type: ignore[func-returns-value]
+            except Exception:  # pragma: no cover - best effort
+                checkpoint = None
+
+        if checkpoint is None or not isinstance(getattr(checkpoint, "executor_states", None), dict):
+            return
+
+        orchestrator_state = checkpoint.executor_states.get(getattr(orchestrator, "id", ""))
+        if orchestrator_state is None:
+            orchestrator_state = checkpoint.executor_states.get("magentic_orchestrator")
+
+        if not isinstance(orchestrator_state, dict):
+            return
+
+        context_payload = orchestrator_state.get("magentic_context")
+        if not isinstance(context_payload, dict):
+            return
+
+        restored_participants = context_payload.get("participant_descriptions")
+        if not isinstance(restored_participants, dict):
+            return
+
+        restored_names = set(restored_participants.keys())
+        expected_names = set(expected.keys())
+
+        if restored_names == expected_names:
+            return
+
+        missing = ", ".join(sorted(expected_names - restored_names)) or "none"
+        unexpected = ", ".join(sorted(restored_names - expected_names)) or "none"
+        raise RuntimeError(
+            "Magentic checkpoint restore failed: participant names do not match the checkpoint. "
+            "Ensure MagenticBuilder.participants keys remain stable across runs. "
+            f"Missing names: {missing}; unexpected names: {unexpected}."
+        )
+
     async def run_stream_from_checkpoint(
         self,
         checkpoint_id: str,
@@ -1973,6 +2043,7 @@ class MagenticWorkflow:
         responses: dict[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Resume orchestration from a checkpoint and stream resulting events."""
+        await self._validate_checkpoint_participants(checkpoint_id, checkpoint_storage)
         async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
             yield event
 

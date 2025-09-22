@@ -130,7 +130,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, inputMessages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         this.LogChatMessages(inputMessages);
@@ -149,7 +149,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, response, error, stopwatch, inputMessages.Count, isStreaming: false);
+            this.TraceResponse(activity, response, error, stopwatch);
         }
     }
 
@@ -162,7 +162,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, inputMessages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
@@ -172,7 +172,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
         catch (Exception ex)
         {
-            this.TraceResponse(activity, response: null, ex, stopwatch, inputMessages.Count, isStreaming: true);
+            this.TraceResponse(activity, response: null, ex, stopwatch);
             throw;
         }
 
@@ -206,7 +206,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch, inputMessages.Count, isStreaming: true);
+            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch);
             await responseEnumerator.DisposeAsync().ConfigureAwait(false);
         }
     }
@@ -214,7 +214,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>
     /// Creates an activity for an agent request, or returns null if not enabled.
     /// </summary>
-    private Activity? CreateAndConfigureActivity(string operationName, IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
+    private Activity? CreateAndConfigureActivity(string operationName, AgentThread? thread)
     {
         // Get the GenAI system name for telemetry
         var chatClientAgent = this.InnerAgent as ChatClientAgent;
@@ -280,9 +280,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         Activity? activity,
         AgentRunResponse? response,
         Exception? error,
-        Stopwatch? stopwatch,
-        int inputMessageCount,
-        bool isStreaming)
+        Stopwatch? stopwatch)
     {
         // Record operation duration metric
         if (this._operationDurationHistogram.Enabled && stopwatch is not null)
@@ -411,22 +409,6 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                     }, OtelContext.Default.SystemOrUserEvent));
             }
         }
-    }
-
-    private void LogChatResponse(ChatResponse response)
-    {
-        if (!this._logger.IsEnabled(EventLogLevel))
-        {
-            return;
-        }
-
-        EventId id = new(1, OpenTelemetryConsts.GenAI.Choice);
-        this.Log(id, JsonSerializer.Serialize(new ChoiceEvent()
-        {
-            FinishReason = response.FinishReason?.Value ?? "error",
-            Index = 0,
-            Message = this.CreateAssistantEvent(response.Messages is { Count: 1 } ? response.Messages[0].Contents : response.Messages.SelectMany(m => m.Contents)),
-        }, OtelContext.Default.ChoiceEvent));
     }
 
     private void LogAgentResponse(AgentRunResponse response)

@@ -15,21 +15,21 @@ internal static class A2APartExtensions
     /// </summary>
     /// <param name="part">The A2A part to convert.</param>
     /// <returns>The corresponding <see cref="AIContent"/>.</returns>
-    internal static AIContent ToAIContent(this Part part)
-    {
-        return part switch
+    internal static AIContent ToAIContent(this Part part) =>
+        part switch
         {
             TextPart textPart => new TextContent(textPart.Text)
             {
                 RawRepresentation = textPart,
                 AdditionalProperties = textPart.Metadata.ToAdditionalProperties()
             },
+
             FilePart filePart when filePart.File is FileWithUri fileWithUrl => new HostedFileContent(fileWithUrl.Uri)
             {
                 RawRepresentation = filePart,
                 AdditionalProperties = filePart.Metadata.ToAdditionalProperties()
             },
+
             _ => throw new NotSupportedException($"Part type '{part.GetType().Name}' is not supported.")
         };
-    }
 }

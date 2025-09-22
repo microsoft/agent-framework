@@ -99,7 +99,7 @@ internal sealed class HttpActorClient(HttpClient httpClient) : IActorClient
         public override bool TryGetResponse([NotNullWhen(true)] out ActorResponse? response)
         {
             response = this._lastResponse;
-            return response != null;
+            return response is not null;
         }
 
         public override async IAsyncEnumerable<ActorRequestUpdate> WatchUpdatesAsync([EnumeratorCancellation] CancellationToken cancellationToken)
@@ -138,7 +138,7 @@ internal sealed class HttpActorClient(HttpClient httpClient) : IActorClient
         private static async IAsyncEnumerable<ActorRequestUpdate> EnumerateAsync(HttpResponseMessage responseMessage, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             var responseStream = await responseMessage.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            var sseParser = SseParser.Create<ActorRequestUpdate?>(responseStream, (eventType, data) =>
+            var sseParser = SseParser.Create(responseStream, (eventType, data) =>
             {
                 if (eventType != "message")
                 {
@@ -159,26 +159,13 @@ internal sealed class HttpActorClient(HttpClient httpClient) : IActorClient
             }
         }
 
-        private async Task<ActorResponse> ReadResponseAsync(HttpResponseMessage responseMessage, CancellationToken cancellationToken)
-        {
-            var response = await responseMessage.Content.ReadFromJsonAsync<ActorResponse>(AgentRuntimeJsonUtilities.DefaultOptions, cancellationToken).ConfigureAwait(false);
-            if (response == null)
-            {
-                throw new InvalidOperationException($"No response found for actor '{actorId}' with message ID '{messageId}'.");
-            }
+        private async Task<ActorResponse> ReadResponseAsync(HttpResponseMessage responseMessage, CancellationToken cancellationToken) =>
+            await responseMessage.Content.ReadFromJsonAsync<ActorResponse>(AgentRuntimeJsonUtilities.DefaultOptions, cancellationToken).ConfigureAwait(false) ??
+            throw new InvalidOperationException($"No response found for actor '{actorId}' with message ID '{messageId}'.");
 
-            return response;
-        }
+        private static bool IsJsonResponse([NotNullWhen(true)] HttpResponseMessage? response) => response?.Content.Headers.ContentType?.MediaType == "application/json";
 
-        private static bool IsJsonResponse([NotNullWhen(true)] HttpResponseMessage? response)
-        {
-            return response?.Content.Headers.ContentType?.MediaType == "application/json";
-        }
-
-        private static bool IsStreamingResponse([NotNullWhen(true)] HttpResponseMessage? response)
-        {
-            return response?.Content.Headers.ContentType?.MediaType == "text/event-stream";
-        }
+        private static bool IsStreamingResponse([NotNullWhen(true)] HttpResponseMessage? response) => response?.Content.Headers.ContentType?.MediaType == "text/event-stream";
 
         protected override void Dispose(bool disposing)
         {

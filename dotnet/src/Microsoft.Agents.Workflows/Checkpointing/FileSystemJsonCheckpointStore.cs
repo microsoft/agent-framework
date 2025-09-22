@@ -55,12 +55,11 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         try
         {
             // read the lines of indexfile and parse them as CheckpointInfos
-            this.CheckpointIndex = new HashSet<CheckpointInfo>();
+            this.CheckpointIndex = [];
             using StreamReader reader = new(this._indexFile, encoding: Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: -1, leaveOpen: true);
             while (reader.ReadLine() is string line)
             {
-                CheckpointInfo? info = JsonSerializer.Deserialize<CheckpointInfo>(line, this.KeyTypeInfo);
-                if (info != null)
+                if (JsonSerializer.Deserialize(line, this.KeyTypeInfo) is { } info)
                 {
                     this.CheckpointIndex.Add(info);
                 }
@@ -83,7 +82,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         Justification = "Throw helper does not exist in NetFx 4.7.2")]
     private void CheckDisposed()
     {
-        if (this._indexFile == null)
+        if (this._indexFile is null)
         {
             throw new ObjectDisposedException($"{nameof(FileSystemJsonCheckpointStore)}({this.Directory.FullName})");
         }

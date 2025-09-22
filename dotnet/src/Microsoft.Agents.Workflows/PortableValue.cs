@@ -30,7 +30,7 @@ public sealed class PortableValue
     /// <inheritdoc />
     public override bool Equals(object? obj)
     {
-        if (obj == null)
+        if (obj is null)
         {
             return false;
         }
@@ -38,12 +38,12 @@ public sealed class PortableValue
         if (obj is not PortableValue other)
         {
             Type targetType = obj.GetType();
-            return this.AsType(targetType)?.Equals(obj) ?? false;
+            return this.AsType(targetType)?.Equals(obj) is true;
         }
 
         return this.TypeId == other.TypeId
-            && ((this.Value == null && other.Value == null)
-                 || this.Value != null && this.Value.Equals(other.Value));
+            && ((this.Value is null && other.Value is null)
+                 || this.Value?.Equals(other.Value) is true);
     }
 
     /// <inheritdoc />
@@ -75,10 +75,10 @@ public sealed class PortableValue
     internal bool IsDelayedDeserialization => this.Value is IDelayedDeserialization;
 
     [JsonIgnore]
-    internal bool IsDeserialized => this._deserializedValueCache != null;
+    internal bool IsDeserialized => this._deserializedValueCache is not null;
 
     private readonly object _value;
-    private object? _deserializedValueCache = null;
+    private object? _deserializedValueCache;
 
     /// <summary>
     /// Gets the raw underlying value represented by this instance.
@@ -103,10 +103,7 @@ public sealed class PortableValue
     {
         if (this.Value is IDelayedDeserialization delayedDeserialization)
         {
-            if (this._deserializedValueCache == null)
-            {
-                this._deserializedValueCache = delayedDeserialization.Deserialize<TValue>();
-            }
+            this._deserializedValueCache ??= delayedDeserialization.Deserialize<TValue>();
         }
 
         if (this.Value is TValue typedValue)
@@ -172,5 +169,5 @@ public sealed class PortableValue
     /// </summary>
     /// <param name="targetType">The type to compare with the current instance. Cannot be null.</param>
     /// <returns>true if the current instance can be assigned to targetType; otherwise, false.</returns>
-    public bool IsType(Type targetType) => this.AsType(targetType) != null;
+    public bool IsType(Type targetType) => this.AsType(targetType) is not null;
 }

@@ -39,13 +39,12 @@ public class AgentThread
         Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = null,
         Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = null)
     {
-        if (serializedThreadState.ValueKind != JsonValueKind.Object)
+        if (serializedThreadState.ValueKind is not JsonValueKind.Object)
         {
             throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
         }
 
-        var state = JsonSerializer.Deserialize(
-            serializedThreadState,
+        var state = serializedThreadState.Deserialize(
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
         this.AIContextProvider = aiContextProviderFactory?.Invoke(state?.AIContextProviderState ?? default, jsonSerializerOptions);
@@ -59,11 +58,9 @@ public class AgentThread
         }
 
         this._messageStore = chatMessageStoreFactory?.Invoke(state?.StoreState ?? default, jsonSerializerOptions);
-        if (this._messageStore is null)
-        {
-            // If we didn't get a custom store, create an in-memory one.
-            this._messageStore = new InMemoryChatMessageStore(state?.StoreState ?? default, jsonSerializerOptions);
-        }
+
+        // If we didn't get a custom store, create an in-memory one.
+        this._messageStore ??= new InMemoryChatMessageStore(state?.StoreState ?? default, jsonSerializerOptions);
     }
 
     /// <summary>

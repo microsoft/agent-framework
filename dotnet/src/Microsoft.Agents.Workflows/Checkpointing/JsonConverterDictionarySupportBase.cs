@@ -23,7 +23,7 @@ internal abstract class JsonConverterDictionarySupportBase<T> : JsonConverterBas
         SequencePosition position = reader.Position;
         string? propertyName = reader.GetString();
 
-        if (propertyName == null)
+        if (propertyName is null)
         {
             throw new JsonException($"Got null trying to read property name at position {position}");
         }

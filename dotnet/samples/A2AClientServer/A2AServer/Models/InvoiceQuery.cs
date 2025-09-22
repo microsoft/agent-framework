@@ -20,10 +20,7 @@ public class Product
         this.Price = price;
     }
 
-    public decimal TotalPrice()
-    {
-        return this.Quantity * this.Price; // Total price for this product  
-    }
+    public decimal TotalPrice() => this.Quantity * this.Price; // Total price for this product  
 }
 
 public class Invoice
@@ -43,82 +40,78 @@ public class Invoice
         this.Products = products;
     }
 
-    public decimal TotalInvoicePrice()
-    {
-        return this.Products.Sum(product => product.TotalPrice()); // Total price of all products in the invoice  
-    }
+    public decimal TotalInvoicePrice() => this.Products.Sum(product => product.TotalPrice()); // Total price of all products in the invoice  
 }
 
 public class InvoiceQuery
 {
     private readonly List<Invoice> _invoices;
-    private static readonly Random s_random = new();
 
     public InvoiceQuery()
     {
         // Extended mock data with quantities and prices  
         this._invoices =
         [
-            new("TICKET-XYZ987", "INV789", "Contoso", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            new("TICKET-XYZ987", "INV789", "Contoso", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 150, 10.00m),
                 new("Hats", 200, 15.00m),
                 new("Glasses", 300, 5.00m)
-            }),
-            new("TICKET-XYZ111", "INV111", "XStore", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ111", "INV111", "XStore", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 2500, 12.00m),
                 new("Hats", 1500, 8.00m),
                 new("Glasses", 200, 20.00m)
-            }),
-            new("TICKET-XYZ222", "INV222",  "Cymbal Direct", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ222", "INV222",  "Cymbal Direct", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 1200, 14.00m),
                 new("Hats", 800, 7.00m),
                 new("Glasses", 500, 25.00m)
-            }),
-            new("TICKET-XYZ333", "INV333", "Contoso", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ333", "INV333", "Contoso", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 400, 11.00m),
                 new("Hats", 600, 15.00m),
                 new("Glasses", 700, 5.00m)
-            }),
-            new("TICKET-XYZ444", "INV444", "XStore", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ444", "INV444", "XStore", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 800, 10.00m),
                 new("Hats", 500, 18.00m),
                 new("Glasses", 300, 22.00m)
-            }),
-            new("TICKET-XYZ555", "INV555", "Cymbal Direct", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ555", "INV555", "Cymbal Direct", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 1100, 9.00m),
                 new("Hats", 900, 12.00m),
                 new("Glasses", 1200, 15.00m)
-            }),
-            new("TICKET-XYZ666", "INV666", "Contoso", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ666", "INV666", "Contoso", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 2500, 8.00m),
                 new("Hats", 1200, 10.00m),
                 new("Glasses", 1000, 6.00m)
-            }),
-            new("TICKET-XYZ777", "INV777", "XStore", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ777", "INV777", "XStore", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 1900, 13.00m),
                 new("Hats", 1300, 16.00m),
                 new("Glasses", 800, 19.00m)
-            }),
-            new("TICKET-XYZ888", "INV888", "Cymbal Direct", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ888", "INV888", "Cymbal Direct", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 2200, 11.00m),
                 new("Hats", 1700, 8.50m),
                 new("Glasses", 600, 21.00m)
-            }),
-            new("TICKET-XYZ999", "INV999", "Contoso", GetRandomDateWithinLastTwoMonths(), new List<Product>
-            {
+            ]),
+            new("TICKET-XYZ999", "INV999", "Contoso", GetRandomDateWithinLastTwoMonths(),
+            [
                 new("T-Shirts", 1400, 10.50m),
                 new("Hats", 1100, 9.00m),
                 new("Glasses", 950, 12.00m)
-            })
+            ])
         ];
     }
 
@@ -132,9 +125,7 @@ public class InvoiceQuery
 
         // Generate a random number of days between 0 and the total number of days in the range  
         int totalDays = (endDate - startDate).Days;
-#pragma warning disable CA5394 // Do not use insecure randomness
-        int randomDays = s_random.Next(0, totalDays + 1); // +1 to include the end date  
-#pragma warning restore CA5394 // Do not use insecure randomness
+        int randomDays = Random.Shared.Next(0, totalDays + 1); // +1 to include the end date  
 
         // Return the random date  
         return startDate.AddDays(randomDays);

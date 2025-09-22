@@ -11,6 +11,7 @@ from agent_framework import (
     AgentRunUpdateEvent,
     ChatMessage,
     Executor,
+    FunctionCallContent,
     FunctionResultContent,
     RequestInfoExecutor,
     RequestInfoMessage,
@@ -76,7 +77,6 @@ class RequestingExecutor(Executor):
 class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
 
-    @pytest.mark.asyncio
     async def test_end_to_end_basic_workflow(self):
         """Test basic end-to-end workflow execution with 2 executors emitting AgentRunEvent."""
         # Create workflow with two executors
@@ -95,8 +95,8 @@ class TestWorkflowAgent:
         assert len(result.messages) >= 2, f"Expected at least 2 messages, got {len(result.messages)}"
 
         # Find messages from each executor
-        step1_messages = []
-        step2_messages = []
+        step1_messages: list[ChatMessage] = []
+        step2_messages: list[ChatMessage] = []
 
         for message in result.messages:
             first_content = message.contents[0]
@@ -112,12 +112,11 @@ class TestWorkflowAgent:
         assert len(step2_messages) >= 1, "Should have received message from Step2 executor"
 
         # Verify the processing worked for both
-        step1_text = step1_messages[0].contents[0].text
-        step2_text = step2_messages[0].contents[0].text
+        step1_text: str = step1_messages[0].contents[0].text  # type: ignore[attr-defined]
+        step2_text: str = step2_messages[0].contents[0].text  # type: ignore[attr-defined]
         assert "Step1: Hello World" in step1_text
         assert "Step2: Step1: Hello World" in step2_text
 
-    @pytest.mark.asyncio
     async def test_end_to_end_basic_workflow_streaming(self):
         """Test end-to-end workflow with streaming executor that emits AgentRunStreamingEvent."""
         # Create a single streaming executor
@@ -130,7 +129,7 @@ class TestWorkflowAgent:
         agent = WorkflowAgent(workflow=workflow, name="Streaming Test Agent")
 
         # Execute workflow streaming to capture streaming events
-        updates = []
+        updates: list[AgentRunResponseUpdate] = []
         async for update in agent.run_stream("Test input"):
             updates.append(update)
 
@@ -139,19 +138,18 @@ class TestWorkflowAgent:
 
         # Verify we got a streaming update
         assert updates[0].contents is not None
-        first_content = updates[0].contents[0]
-        second_content = updates[1].contents[0]
+        first_content: TextContent = updates[0].contents[0]  # type: ignore[assignment]
+        second_content: TextContent = updates[1].contents[0]  # type: ignore[assignment]
         assert isinstance(first_content, TextContent)
         assert "Streaming1: Test input" in first_content.text
         assert isinstance(second_content, TextContent)
         assert "Streaming2: Streaming1: Test input" in second_content.text
 
-    @pytest.mark.asyncio
     async def test_end_to_end_request_info_handling(self):
         """Test end-to-end workflow with RequestInfoEvent handling."""
         # Create workflow with requesting executor -> request info executor (no cycle)
         requesting_executor = RequestingExecutor(id="requester")
-        request_info_executor = RequestInfoExecutor()
+        request_info_executor = RequestInfoExecutor(id="request_info")
 
         workflow = (
             WorkflowBuilder()
@@ -163,21 +161,21 @@ class TestWorkflowAgent:
         agent = WorkflowAgent(workflow=workflow, name="Request Test Agent")
 
         # Execute workflow streaming to get request info event
-        updates = []
+        updates: list[AgentRunResponseUpdate] = []
         async for update in agent.run_stream("Start request"):
             updates.append(update)
         # Should have received a function call for the request info
         assert len(updates) > 0
 
         # Find the function call update (RequestInfoEvent converted to function call)
-        function_call_update = None
+        function_call_update: AgentRunResponseUpdate | None = None
         for update in updates:
-            if update.contents and hasattr(update.contents[0], "name") and update.contents[0].name == "request_info":
+            if update.contents and hasattr(update.contents[0], "name") and update.contents[0].name == "request_info":  # type: ignore[attr-defined]
                 function_call_update = update
                 break
 
         assert function_call_update is not None, "Should have received a request_info function call"
-        function_call = function_call_update.contents[0]
+        function_call: FunctionCallContent = function_call_update.contents[0]  # type: ignore[assignment]
 
         # Verify the function call has expected structure
         assert function_call.call_id is not None
@@ -233,7 +231,7 @@ class TestWorkflowAgent:
                 raise ValueError("Unsupported message type")
 
         # Create a simple workflow
-        executor = _Executor()
+        executor = _Executor(id="test")
         workflow = WorkflowBuilder().set_start_executor(executor).build()
 
         # Try to create an agent with unsupported input types

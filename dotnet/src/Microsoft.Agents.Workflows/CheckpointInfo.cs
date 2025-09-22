@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows;
 /// <summary>
 /// Represents a checkpoint with a unique identifier and a timestamp indicating when it was created.
 /// </summary>
-public class CheckpointInfo : IEquatable<CheckpointInfo>
+public sealed class CheckpointInfo : IEquatable<CheckpointInfo>
 {
     /// <summary>
     /// Gets the unique identifier for the current run.
@@ -37,27 +37,16 @@ public class CheckpointInfo : IEquatable<CheckpointInfo>
     }
 
     /// <inheritdoc/>
-    public bool Equals(CheckpointInfo? other)
-    {
-        if (other == null)
-        {
-            return false;
-        }
-
-        return this.RunId == other.RunId && this.CheckpointId == other.CheckpointId;
-    }
+    public bool Equals(CheckpointInfo? other) =>
+        other is not null &&
+        this.RunId == other.RunId &&
+        this.CheckpointId == other.CheckpointId;
 
     /// <inheritdoc/>
-    public override bool Equals(object? obj)
-    {
-        return this.Equals(obj as CheckpointInfo);
-    }
+    public override bool Equals(object? obj) => this.Equals(obj as CheckpointInfo);
 
     /// <inheritdoc/>
-    public override int GetHashCode()
-    {
-        return HashCode.Combine(this.RunId, this.CheckpointId);
-    }
+    public override int GetHashCode() => HashCode.Combine(this.RunId, this.CheckpointId);
 
     /// <inheritdoc/>
     public override string ToString() => $"CheckpointInfo(RunId: {this.RunId}, CheckpointId: {this.CheckpointId})";

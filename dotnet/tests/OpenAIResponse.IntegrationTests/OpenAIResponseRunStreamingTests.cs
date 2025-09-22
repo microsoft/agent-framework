@@ -9,10 +9,8 @@ public class OpenAIResponseStoreTrueRunStreamingTests() : RunStreamingTests<Open
 {
     private const string SkipReason = "OpenAIResponse does not support empty messages";
     [Fact(Skip = SkipReason)]
-    public override Task RunWithNoMessageDoesNotFailAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public override Task RunWithNoMessageDoesNotFailAsync() =>
+        Task.CompletedTask;
 }
 
 public class OpenAIResponseStoreFalseRunStreamingTests() : RunStreamingTests<OpenAIResponseFixture>(() => new(store: false))
@@ -20,8 +18,6 @@ public class OpenAIResponseStoreFalseRunStreamingTests() : RunStreamingTests<Ope
     private const string SkipReason = "OpenAIResponse does not support empty messages";
 
     [Fact(Skip = SkipReason)]
-    public override Task RunWithNoMessageDoesNotFailAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public override Task RunWithNoMessageDoesNotFailAsync() =>
+        Task.CompletedTask;
 }

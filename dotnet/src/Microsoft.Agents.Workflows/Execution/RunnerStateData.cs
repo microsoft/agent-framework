@@ -5,7 +5,7 @@ using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class RunnerStateData(HashSet<string> instantiatedExecutors, Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> queuedMessages, List<ExternalRequest> outstandingRequests)
+internal sealed class RunnerStateData(HashSet<string> instantiatedExecutors, Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> queuedMessages, List<ExternalRequest> outstandingRequests)
 {
     public HashSet<string> InstantiatedExecutors { get; } = instantiatedExecutors;
     public Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> QueuedMessages { get; } = queuedMessages;

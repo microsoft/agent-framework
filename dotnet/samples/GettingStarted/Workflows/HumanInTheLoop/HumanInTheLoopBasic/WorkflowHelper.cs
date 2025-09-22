@@ -19,12 +19,10 @@ internal static class WorkflowHelper
         JudgeExecutor judgeExecutor = new(42);
 
         // Build the workflow by connecting executors in a loop
-        var workflow = new WorkflowBuilder(numberInputPort)
+        return new WorkflowBuilder(numberInputPort)
             .AddEdge(numberInputPort, judgeExecutor)
             .AddEdge(judgeExecutor, numberInputPort)
             .Build<NumberSignal>();
-
-        return workflow;
     }
 }
 
@@ -44,7 +42,7 @@ internal enum NumberSignal
 internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge"), IMessageHandler<int>
 {
     private readonly int _targetNumber;
-    private int _tries = 0;
+    private int _tries;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="JudgeExecutor"/> class.
