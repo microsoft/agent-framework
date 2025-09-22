@@ -117,6 +117,9 @@ async Task AFAgentAsync()
     }
 
     // Clean up
-    await azureAgentClient.Threads.DeleteThreadAsync(((ChatClientAgentThread)thread).ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await azureAgentClient.Threads.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await azureAgentClient.Administration.DeleteAgentAsync(agent.Id);
 }
