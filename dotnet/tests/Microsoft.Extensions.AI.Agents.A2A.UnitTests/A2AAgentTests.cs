@@ -396,7 +396,7 @@ public sealed class A2AAgentTests : IDisposable
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             // Capture the request content
-#pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist on .NET …
+#pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist downlevel
             var content = await request.Content!.ReadAsStringAsync();
 #pragma warning restore CA2016
 

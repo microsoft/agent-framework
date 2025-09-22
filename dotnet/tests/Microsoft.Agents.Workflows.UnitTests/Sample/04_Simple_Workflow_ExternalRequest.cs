@@ -16,7 +16,7 @@ internal static class Step4EntryPoint
         return new WorkflowBuilder(guessNumber)
             .AddEdge(guessNumber, judge)
             .AddEdge(judge, guessNumber, (NumberSignal signal) => signal != NumberSignal.Matched)
-            .BuildWithOutput<NumberSignal, NumberSignal, string>(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
+            .BuildWithOutput<NumberSignal, NumberSignal, string>(judge, ComputeStreamingOutput, (s, _) => s is NumberSignal.Matched);
     }
 
     public static Workflow<NumberSignal, string> WorkflowInstance

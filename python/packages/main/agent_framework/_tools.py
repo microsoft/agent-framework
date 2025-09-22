@@ -758,7 +758,7 @@ def _handle_function_calls_response(
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
                     # and add them as additional context to the messages
-                    if kwargs.get("store"):
+                    if getattr(kwargs.get("chat_options"), "store", False):
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:

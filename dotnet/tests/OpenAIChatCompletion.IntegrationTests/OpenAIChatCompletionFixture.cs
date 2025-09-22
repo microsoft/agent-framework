@@ -17,14 +17,12 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
     private readonly bool _useReasoningModel;
 
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private ChatClientAgent _agent;
+    private ChatClientAgent _agent = null!;
 
     public OpenAIChatCompletionFixture(bool useReasoningChatModel)
     {
         this._useReasoningModel = useReasoningChatModel;
     }
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
     public AIAgent Agent => this._agent;
 
