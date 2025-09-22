@@ -304,12 +304,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
 
         # other settings
-        if "store" not in options_dict:
+        if chat_options.store:
+            options_dict["store"] = True
+        else:
             options_dict["store"] = False
-        if "conversation_id" in options_dict:
-            options_dict["previous_response_id"] = options_dict["conversation_id"]
-            options_dict.pop("conversation_id")
-        if "model" not in options_dict:
+        if chat_options.conversation_id:
+            options_dict["previous_response_id"] = chat_options.conversation_id
+        if chat_options.ai_model_id is None:
             options_dict["model"] = self.ai_model_id
         return options_dict
 

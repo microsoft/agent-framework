@@ -864,9 +864,7 @@ internal static partial class Throw
     public static double IfLessThan(double argument, double min, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
         // strange conditional needed in order to handle NaN values correctly
-#pragma warning disable S1940 // Boolean checks should not be inverted
         if (!(argument >= min))
-#pragma warning restore S1940 // Boolean checks should not be inverted
         {
             ArgumentOutOfRangeException(paramName, argument, $"Argument less than minimum value {min}");
         }
@@ -885,9 +883,7 @@ internal static partial class Throw
     public static double IfGreaterThan(double argument, double max, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
         // strange conditional needed in order to handle NaN values correctly
-#pragma warning disable S1940 // Boolean checks should not be inverted
         if (!(argument <= max))
-#pragma warning restore S1940 // Boolean checks should not be inverted
         {
             ArgumentOutOfRangeException(paramName, argument, $"Argument greater than maximum value {max}");
         }
@@ -906,9 +902,7 @@ internal static partial class Throw
     public static double IfLessThanOrEqual(double argument, double min, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
         // strange conditional needed in order to handle NaN values correctly
-#pragma warning disable S1940 // Boolean checks should not be inverted
         if (!(argument > min))
-#pragma warning restore S1940 // Boolean checks should not be inverted
         {
             ArgumentOutOfRangeException(paramName, argument, $"Argument less or equal than minimum value {min}");
         }
@@ -927,9 +921,7 @@ internal static partial class Throw
     public static double IfGreaterThanOrEqual(double argument, double max, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
         // strange conditional needed in order to handle NaN values correctly
-#pragma warning disable S1940 // Boolean checks should not be inverted
         if (!(argument < max))
-#pragma warning restore S1940 // Boolean checks should not be inverted
         {
             ArgumentOutOfRangeException(paramName, argument, $"Argument greater or equal than maximum value {max}");
         }
@@ -966,9 +958,7 @@ internal static partial class Throw
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static double IfZero(double argument, [CallerArgumentExpression(nameof(argument))] string paramName = "")
     {
-#pragma warning disable S1244 // Floating point numbers should not be tested for equality
         if (argument == 0.0)
-#pragma warning restore S1244 // Floating point numbers should not be tested for equality
         {
             ArgumentOutOfRangeException(paramName, "Argument is zero");
         }
