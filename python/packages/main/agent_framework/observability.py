@@ -320,10 +320,14 @@ def get_exporters(
 
 
 def _create_resource() -> "Resource":
+    import os
+
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.semconv.attributes import service_attributes
 
-    return Resource.create({service_attributes.SERVICE_NAME: "agent_framework"})
+    service_name = os.getenv("OTEL_SERVICE_NAME", "agent_framework")
+
+    return Resource.create({service_attributes.SERVICE_NAME: service_name})
 
 
 class OtelSettings(AFBaseSettings):
@@ -345,10 +349,10 @@ class OtelSettings(AFBaseSettings):
                     (Env var ENABLE_OTEL)
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
                     (Env var ENABLE_SENSITIVE_DATA)
-        application_insights_connection_string: The Azure Monitor connection string. Default is None.
-                    (Env var APPLICATION_INSIGHTS_CONNECTION_STRING)
-        application_insights_live_metrics: Enable Azure Monitor live metrics. Default is False.
-                    (Env var APPLICATION_INSIGHTS_LIVE_METRICS)
+        applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
+                    (Env var APPLICATIONINSIGHTS_CONNECTION_STRING)
+        applicationinsights_live_metrics: Enable Azure Monitor live metrics. Default is False.
+                    (Env var APPLICATIONINSIGHTS_LIVE_METRICS)
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
                     (Env var OTLP_ENDPOINT)
     """
@@ -357,8 +361,8 @@ class OtelSettings(AFBaseSettings):
 
     enable_otel: bool = False
     enable_sensitive_data: bool = False
-    application_insights_connection_string: str | list[str] | None = None
-    application_insights_live_metrics: bool = False
+    applicationinsights_connection_string: str | list[str] | None = None
+    applicationinsights_live_metrics: bool = False
     otlp_endpoint: str | list[str] | None = None
     _resource: "Resource" = PrivateAttr(default_factory=_create_resource)
     _executed_setup: bool = PrivateAttr(default=False)
@@ -416,7 +420,7 @@ class OtelSettings(AFBaseSettings):
         if (not self.ENABLED and not self.ENABLED) or (self._executed_setup and not force_setup):
             return
 
-        if not self.application_insights_connection_string and not self.otlp_endpoint and not additional_exporters:
+        if not self.applicationinsights_connection_string and not self.otlp_endpoint and not additional_exporters:
             logger.warning("Telemetry is enabled but no connection string or OTLP endpoint is provided.")
 
         global_logger = logging.getLogger()
@@ -428,25 +432,25 @@ class OtelSettings(AFBaseSettings):
                     self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
                 )
             )
-        if self.application_insights_connection_string:
+        if self.applicationinsights_connection_string:
             exporters.extend(
                 _get_azure_monitor_exporters(
                     connection_strings=(
-                        self.application_insights_connection_string
-                        if isinstance(self.application_insights_connection_string, list)
-                        else [self.application_insights_connection_string]
+                        self.applicationinsights_connection_string
+                        if isinstance(self.applicationinsights_connection_string, list)
+                        else [self.applicationinsights_connection_string]
                     ),
                     credential=credential,
                 )
             )
         self.configure_tracing(exporters)
-        if self.application_insights_connection_string and self.application_insights_live_metrics:
+        if self.applicationinsights_connection_string and self.applicationinsights_live_metrics:
             from azure.monitor.opentelemetry import configure_azure_monitor
 
             conn_strings = (
-                self.application_insights_connection_string
-                if isinstance(self.application_insights_connection_string, list)
-                else [self.application_insights_connection_string]
+                self.applicationinsights_connection_string
+                if isinstance(self.applicationinsights_connection_string, list)
+                else [self.applicationinsights_connection_string]
             )
             for con_str in conn_strings:
                 # only configure using this for live_metrics, ignore the rest.
@@ -455,7 +459,7 @@ class OtelSettings(AFBaseSettings):
                     credential=credential,
                     logger_name="agent_framework",
                     resource=self.resource,
-                    enable_live_metrics=self.application_insights_live_metrics,
+                    enable_live_metrics=self.applicationinsights_live_metrics,
                     disable_logging=True,
                     disable_metric=True,
                     disable_tracing=True,
@@ -479,12 +483,12 @@ class OtelSettings(AFBaseSettings):
         Returns:
             True if the connection string is already configured, False otherwise.
         """
-        if not self.application_insights_connection_string:
+        if not self.applicationinsights_connection_string:
             return False
         return connection_string not in (
-            self.application_insights_connection_string
-            if isinstance(self.application_insights_connection_string, list)
-            else [self.application_insights_connection_string]
+            self.applicationinsights_connection_string
+            if isinstance(self.applicationinsights_connection_string, list)
+            else [self.applicationinsights_connection_string]
         )
 
     def configure_tracing(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
@@ -576,8 +580,6 @@ def get_tracer(
 
     If tracer_provider is omitted the current configured one is used.
     """
-    if not OTEL_SETTINGS.is_setup:
-        OTEL_SETTINGS.setup_observability()
     return trace.get_tracer(
         instrumenting_module_name=instrumenting_module_name,
         instrumenting_library_version=instrumenting_library_version,
@@ -608,15 +610,13 @@ def get_meter(
         schema_url: Optional. Specifies the Schema URL of the emitted telemetry.
         attributes: Optional. Attributes that are associated with the emitted telemetry.
     """
-    if not OTEL_SETTINGS.is_setup:
-        OTEL_SETTINGS.setup_observability()
     return metrics.get_meter(name=name, version=version, schema_url=schema_url, attributes=attributes)
 
 
 def setup_observability(
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | list[str] | None = None,
-    application_insights_connection_string: str | list[str] | None = None,
+    applicationinsights_connection_string: str | list[str] | None = None,
     credential: "TokenCredential | None" = None,
     enable_live_metrics: bool | None = None,
     exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
@@ -632,7 +632,7 @@ def setup_observability(
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
             Will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
-        application_insights_connection_string: The Azure Monitor connection string. Default is None.
+        applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
             Will be used to create AzureMonitorExporters.
         credential: The credential to use for Azure Monitor Entra ID authentication.
             Default is None.
@@ -643,8 +643,8 @@ def setup_observability(
     """
     if isinstance(otlp_endpoint, str):
         otlp_endpoint = [otlp_endpoint]
-    if isinstance(application_insights_connection_string, str):
-        application_insights_connection_string = [application_insights_connection_string]
+    if isinstance(applicationinsights_connection_string, str):
+        applicationinsights_connection_string = [applicationinsights_connection_string]
 
     global OTEL_SETTINGS
     # Update the otel settings with the provided values
@@ -652,25 +652,25 @@ def setup_observability(
     if enable_sensitive_data is not None:
         OTEL_SETTINGS.enable_sensitive_data = enable_sensitive_data
     if enable_live_metrics is not None:
-        OTEL_SETTINGS.application_insights_live_metrics = enable_live_metrics
+        OTEL_SETTINGS.applicationinsights_live_metrics = enable_live_metrics
     # Run the initial setup, which will create the providers, and add env setting exporters
     new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
-    if OTEL_SETTINGS.ENABLED and (otlp_endpoint or application_insights_connection_string or exporters):
+    if OTEL_SETTINGS.ENABLED and (otlp_endpoint or applicationinsights_connection_string or exporters):
         # check if endpoints or connection strings are already configured
         if otlp_endpoint:
             otlp_endpoint = [
                 endpoint for endpoint in otlp_endpoint if OTEL_SETTINGS.check_endpoint_already_configured(endpoint)
             ]
-        if application_insights_connection_string:
-            application_insights_connection_string = [
+        if applicationinsights_connection_string:
+            applicationinsights_connection_string = [
                 conn_str
-                for conn_str in application_insights_connection_string
+                for conn_str in applicationinsights_connection_string
                 if OTEL_SETTINGS.check_connection_string_already_configured(conn_str)
             ]
-        if otlp_endpoint or application_insights_connection_string or exporters:
+        if otlp_endpoint or applicationinsights_connection_string or exporters:
             new_exporters = get_exporters(
                 otlp_endpoints=otlp_endpoint,
-                connection_strings=application_insights_connection_string,
+                connection_strings=applicationinsights_connection_string,
                 exporters=exporters,
                 credential=credential,
             )
@@ -733,7 +733,6 @@ def _trace_get_response(
                     messages=messages,
                     **kwargs,
                 )
-            OTEL_SETTINGS.setup_observability()
             if "token_usage_histogram" not in self.additional_properties:
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
@@ -814,7 +813,6 @@ def _trace_get_streaming_response(
                 async for update in func(self, messages=messages, **kwargs):
                     yield update
                 return
-            OTEL_SETTINGS.setup_observability()
             if "token_usage_histogram" not in self.additional_properties:
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
@@ -949,7 +947,6 @@ def _trace_agent_run(
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
 
-        OTEL_SETTINGS.setup_observability()
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1019,7 +1016,6 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
-        OTEL_SETTINGS.setup_observability()
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,

@@ -87,8 +87,6 @@ class WorkflowContext(Generic[T_Out]):
         global OTEL_SETTINGS
         from ..observability import OTEL_SETTINGS
 
-        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
-
         # Create publishing span (inherits current trace context automatically)
         attributes: dict[str, str] = {OtelAttr.MESSAGE_TYPE: type(message).__name__}
         if target_id:

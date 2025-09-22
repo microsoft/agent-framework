@@ -45,9 +45,9 @@ The following environment variables can be set to configure telemetry, the first
 Next we need to know where to send the telemetry, for that you can use either a OTLP endpoint or a connection string for Application Insights:
 - OTLP_ENDPOINT="<url to OTLP endpoint>"
 or
-- APPLICATION_INSIGHTS_CONNECTION_STRING="<connection string>"
+- APPLICATIONINSIGHTS_CONNECTION_STRING="<connection string>"
 Finally, you can enable live metrics streaming to Application Insights:
-- APPLICATION_INSIGHTS_LIVE_METRICS=true
+- APPLICATIONINSIGHTS_LIVE_METRICS=true
 
 ## Samples
 This folder contains different samples demonstrating how to use telemetry in various scenarios.
@@ -70,7 +70,7 @@ This sample shows how to setup telemetry when using the Agent Framework's workfl
 
 1. Open a terminal and navigate to this folder: `python/samples/getting_started/observability/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
-    > Note that `APPLICATION_INSIGHTS_CONNECTION_STRING` and `OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
+    > Note that `APPLICATIONINSIGHTS_CONNECTION_STRING` and `OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
     > Set `ENABLE_OTEL=true` to enable telemetry and `ENABLE_SENSITIVE_DATA=true` to include sensitive information like prompts and responses.
         > Sensitive information should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
 3. Activate your python virtual environment, and then run `python 01-zero_code.py` or others.

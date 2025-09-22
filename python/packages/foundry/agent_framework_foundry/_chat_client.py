@@ -201,7 +201,7 @@ class FoundryChatClient(BaseChatClient):
         from agent_framework.observability import setup_observability
 
         setup_observability(
-            application_insights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
+            applicationinsights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
             enable_live_metrics=enable_live_metrics,
         )
 

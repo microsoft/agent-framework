@@ -90,7 +90,6 @@ class SingleEdgeRunner(EdgeRunner):
         global OTEL_SETTINGS
         from ..observability import OTEL_SETTINGS
 
-        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
         should_execute = False
         target_id = None
         source_id = None
@@ -159,10 +158,6 @@ class FanOutEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-out edge group."""
-        global OTEL_SETTINGS
-        from ..observability import OTEL_SETTINGS
-
-        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
         deliverable_edges = []
         single_target_edge = None
         # Process routing logic within span
@@ -282,11 +277,6 @@ class FanInEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-in edge group."""
-        global OTEL_SETTINGS
-        from ..observability import OTEL_SETTINGS
-
-        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
-
         execution_data: dict[str, Any] | None = None
         with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,

@@ -32,7 +32,7 @@ class GAIATelemetryConfig:
         self,
         enable_tracing: bool = False,
         otlp_endpoint: str | None = None,
-        application_insights_connection_string: str | None = None,
+        applicationinsights_connection_string: str | None = None,
         enable_live_metrics: bool = False,
         trace_to_file: bool = False,
         file_path: str | None = None,
@@ -43,14 +43,14 @@ class GAIATelemetryConfig:
         Args:
             enable_tracing: Whether to enable OpenTelemetry tracing
             otlp_endpoint: OTLP endpoint for trace export
-            application_insights_connection_string: Azure Monitor connection string
+            applicationinsights_connection_string: Azure Monitor connection string
             enable_live_metrics: Enable Azure Monitor live metrics
             trace_to_file: Whether to export traces to local file
             file_path: Path for local file export (defaults to gaia_traces.json)
         """
         self.enable_tracing = enable_tracing
         self.otlp_endpoint = otlp_endpoint
-        self.application_insights_connection_string = application_insights_connection_string
+        self.applicationinsights_connection_string = applicationinsights_connection_string
         self.enable_live_metrics = enable_live_metrics
         self.trace_to_file = trace_to_file
         self.file_path = file_path or "gaia_traces.json"
@@ -65,7 +65,7 @@ class GAIATelemetryConfig:
         setup_observability(
             enable_sensitive_data=True,  # Enable for detailed task traces
             otlp_endpoint=self.otlp_endpoint,
-            application_insights_connection_string=self.application_insights_connection_string,
+            applicationinsights_connection_string=self.applicationinsights_connection_string,
             enable_live_metrics=self.enable_live_metrics,
         )
 
