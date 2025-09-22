@@ -60,9 +60,9 @@ async Task SKAgentAsync()
             {
                 Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
             }
+#pragma warning restore SKEXP0110
         }
     }
-#pragma warning restore SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
     // Clean up
     await thread.DeleteAsync();

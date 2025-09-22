@@ -15,7 +15,7 @@ one of the following categories:
 ## Lab Packages
 
 - [**gaia**](./gaia/): GAIA benchmark implementation (`agent-framework-lab-gaia`)
-- [**lighting**](./lighting/): Reinforcement learning for agents (`agent-framework-lab-lighting`)
+- [**lightning**](./lightning/): Reinforcement learning for agents (`agent-framework-lab-lightning`)
 
 ## How do I contribute?
 
@@ -78,7 +78,7 @@ cookiecutter /path/to/agent-framework/python/packages/lab/cookiecutter-agent-fra
 
 You will be prompted for:
 
-- **package_name**: The name of your lab package (e.g., "lighting", "vision")
+- **package_name**: The name of your lab package (e.g., "lightning", "vision")
 - **package_display_name**: Human-readable name (e.g., "Lighting Tools", "Computer Vision")
 - **package_description**: Brief description (auto-generated from display name)
 - **include_cli_script**: Whether to include a CLI script (y/n)

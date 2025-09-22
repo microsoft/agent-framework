@@ -12,6 +12,7 @@ from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
+from ._middleware import Middleware, use_agent_middleware
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, ToolProtocol
@@ -138,12 +139,14 @@ class BaseAgent(AFBaseModel):
        description: The description of the agent.
        display_name: The display name of the agent, which is either the name or id.
        context_providers: The collection of multiple context providers to include during agent invocation.
+       middleware: List of middleware to intercept agent and function invocations.
     """
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str | None = None
     description: str | None = None
     context_providers: AggregateContextProvider | None = None
+    middleware: Middleware | list[Middleware] | None = None
 
     async def _notify_thread_of_new_messages(
         self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
@@ -189,6 +192,7 @@ class BaseAgent(AFBaseModel):
 # region ChatAgent
 
 
+@use_agent_middleware
 @use_agent_telemetry
 class ChatAgent(BaseAgent):
     """A Chat Client Agent."""
@@ -231,6 +235,7 @@ class ChatAgent(BaseAgent):
         additional_properties: dict[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a ChatAgent.
@@ -266,6 +271,7 @@ class ChatAgent(BaseAgent):
             chat_message_store_factory: factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
             context_providers: The collection of multiple context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
@@ -287,6 +293,7 @@ class ChatAgent(BaseAgent):
             "chat_client": chat_client,
             "chat_message_store_factory": chat_message_store_factory,
             "context_providers": aggregate_context_providers,
+            "middleware": middleware,
             "chat_options": ChatOptions(
                 ai_model_id=model,
                 frequency_penalty=frequency_penalty,

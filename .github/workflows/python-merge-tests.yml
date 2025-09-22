@@ -237,6 +237,8 @@ jobs:
           fail-on-empty: true
           title: Test results
 
+  # TODO: Add python-tests-lab
+
   python-integration-tests-check:
     if: always()
     runs-on: ubuntu-latest

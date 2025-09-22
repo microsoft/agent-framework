@@ -21,12 +21,9 @@ internal abstract class JsonConverterDictionarySupportBase<T> : JsonConverterBas
     public override T ReadAsPropertyName(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         SequencePosition position = reader.Position;
-        string? propertyName = reader.GetString();
 
-        if (propertyName is null)
-        {
+        string? propertyName = reader.GetString() ??
             throw new JsonException($"Got null trying to read property name at position {position}");
-        }
 
         return this.Parse(propertyName);
     }

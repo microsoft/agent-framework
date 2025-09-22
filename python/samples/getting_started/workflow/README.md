@@ -43,6 +43,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Sample | File | Concepts |
 |---|---|---|
 | Checkpoint & Resume | [checkpoint/checkpoint_with_resume.py](./checkpoint/checkpoint_with_resume.py) | Create checkpoints, inspect them, and resume execution |
+| Checkpoint & HITL Resume | [checkpoint/checkpoint_with_human_in_the_loop.py](./checkpoint/checkpoint_with_human_in_the_loop.py) | Combine checkpointing with human approvals and resume pending HITL requests |
 
 ### composition
 | Sample | File | Concepts |

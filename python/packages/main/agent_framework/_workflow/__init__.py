@@ -91,6 +91,7 @@ from ._shared_state import SharedState
 from ._telemetry import EdgeGroupDeliveryStatus, WorkflowTracer, workflow_tracer
 from ._validation import (
     EdgeDuplicationError,
+    ExecutorDuplicationError,
     GraphConnectivityError,
     HandlerOutputAnnotationError,
     TypeCompatibilityError,
@@ -118,6 +119,7 @@ __all__ = [
     "EdgeGroupDeliveryStatus",
     "Executor",
     "ExecutorCompletedEvent",
+    "ExecutorDuplicationError",
     "ExecutorEvent",
     "ExecutorFailedEvent",
     "ExecutorInvokedEvent",

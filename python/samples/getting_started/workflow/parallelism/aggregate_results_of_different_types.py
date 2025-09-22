@@ -72,10 +72,10 @@ class Aggregator(Executor):
 
 async def main() -> None:
     # 1) Create the executors
-    dispatcher = Dispatcher()
-    average = Average()
-    summation = Sum()
-    aggregator = Aggregator()
+    dispatcher = Dispatcher(id="dispatcher")
+    average = Average(id="average")
+    summation = Sum(id="summation")
+    aggregator = Aggregator(id="aggregator")
 
     # 2) Build a simple fan out and fan in workflow
     workflow = (

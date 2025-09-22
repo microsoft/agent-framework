@@ -13,6 +13,7 @@ from ._clients import *  # noqa: F403
 from ._logging import *  # noqa: F403
 from ._mcp import *  # noqa: F403
 from ._memory import *  # noqa: F403
+from ._middleware import *  # noqa: F403
 from ._threads import *  # noqa: F403
 from ._tools import *  # noqa: F403
 from ._types import *  # noqa: F403

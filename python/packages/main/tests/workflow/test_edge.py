@@ -1193,10 +1193,11 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
     assert success
 
     with pytest.raises(RuntimeError):
-        # Although `MockAggregator` can handle `list[MockMessageSecondary]`,
-        # it cannot handle `list[MockMessage | MockMessageSecondary]`. With
-        # the fan-in edge group, the target executor must handle all message
-        # types from the source executors.
+        # Although `MockAggregator` can handle `list[MockMessage]` and `list[MockMessageSecondary]`
+        # separately (i.e., it has handlers for each type individually), it cannot handle
+        # `list[MockMessage | MockMessageSecondary]` (a list containing a mix of both types).
+        # With the fan-in edge group, the target executor must handle all message types from the
+        # source executors as a union.
         data2 = MockMessageSecondary(data="test")
         _ = await edge_runner.send_message(
             Message(data=data2, source_id=source2.id),
