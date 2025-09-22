@@ -286,7 +286,6 @@ def _get_azure_monitor_exporters(
 def get_exporters(
     otlp_endpoints: list[str] | None = None,
     connection_strings: list[str] | None = None,
-    exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
     credential: "TokenCredential | None" = None,
 ) -> list["LogExporter | SpanExporter | MetricExporter"]:
     """Add additional exporters to the existing configuration.
@@ -302,10 +301,9 @@ def get_exporters(
     Args:
         otlp_endpoints: A list of OpenTelemetry Protocol (OTLP) endpoints. Default is None.
         connection_strings: A list of Azure Monitor connection strings. Default is None.
-        exporters: A list of exporters, for logs, metrics or spans, or any combination. Default is None.
         credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
     """
-    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = exporters or []
+    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
     if otlp_endpoints:
         new_exporters.extend(_get_otlp_exporters(endpoints=otlp_endpoints))
 
@@ -443,7 +441,8 @@ class OtelSettings(AFBaseSettings):
                     credential=credential,
                 )
             )
-        self.configure_tracing(exporters)
+        self._configure_providers(exporters)
+        self._executed_setup = True
         if self.applicationinsights_connection_string and self.applicationinsights_live_metrics:
             from azure.monitor.opentelemetry import configure_azure_monitor
 
@@ -491,7 +490,7 @@ class OtelSettings(AFBaseSettings):
             else [self.applicationinsights_connection_string]
         )
 
-    def configure_tracing(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
+    def _configure_providers(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
         """Configure tracing, logging, events and metrics with the provided exporters."""
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.sdk._events import EventLoggerProvider
@@ -559,7 +558,6 @@ class OtelSettings(AFBaseSettings):
             ],
         )
         metrics.set_meter_provider(meter_provider)
-        self._executed_setup = True
 
 
 global OTEL_SETTINGS
@@ -668,11 +666,13 @@ def setup_observability(
                 if OTEL_SETTINGS.check_connection_string_already_configured(conn_str)
             ]
         if otlp_endpoint or applicationinsights_connection_string or exporters:
-            new_exporters = get_exporters(
-                otlp_endpoints=otlp_endpoint,
-                connection_strings=applicationinsights_connection_string,
-                exporters=exporters,
-                credential=credential,
+            new_exporters = exporters or []
+            new_exporters.extend(
+                get_exporters(
+                    otlp_endpoints=otlp_endpoint,
+                    connection_strings=applicationinsights_connection_string,
+                    credential=credential,
+                )
             )
     OTEL_SETTINGS.setup_observability(
         credential=credential, additional_exporters=new_exporters, force_setup=bool(new_exporters)
