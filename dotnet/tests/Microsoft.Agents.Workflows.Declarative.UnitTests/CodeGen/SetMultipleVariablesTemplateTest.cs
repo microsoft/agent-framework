@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
@@ -34,9 +35,10 @@ public class SetMultipleVariablesTemplateTest(ITestOutputHelper output) : Workfl
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
         foreach (AssignmentCase assignment in assignments)
         {
-            Assert.Contains(assignment.Path, workflowCode); // %%% MORE VALIDATION
+            this.AssertGeneratedAssignment(PropertyPath.Create(assignment.Path), workflowCode);
         }
     }
 

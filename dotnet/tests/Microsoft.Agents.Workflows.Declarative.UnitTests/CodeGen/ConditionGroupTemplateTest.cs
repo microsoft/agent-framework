@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -37,7 +39,8 @@ public class ConditionGroupTemplateTest(ITestOutputHelper output) : WorkflowActi
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedMethod(nameof(ConditionGroupExecutor.DoneAsync), workflowCode);
     }
 
     private ConditionGroup CreateModel(string displayName, bool hasElse = false)

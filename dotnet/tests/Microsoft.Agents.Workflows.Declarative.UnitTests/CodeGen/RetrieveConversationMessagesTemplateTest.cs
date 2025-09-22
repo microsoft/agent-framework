@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -62,8 +63,6 @@ public class RetrieveConversationMessagesTemplateTest(ITestOutputHelper output) 
             sortOrder: EnumExpression<AgentMessageSortOrderWrapper>.Literal(AgentMessageSortOrderWrapper.Get(AgentMessageSortOrder.NewestFirst)));
     }
 
-    // %%% TODO: WITH METADATA
-
     private void ExecuteTest(
         string displayName,
         string variableName,
@@ -90,7 +89,8 @@ public class RetrieveConversationMessagesTemplateTest(ITestOutputHelper output) 
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedAssignment(model.Messages?.Path, workflowCode);
     }
 
     private RetrieveConversationMessages CreateModel(

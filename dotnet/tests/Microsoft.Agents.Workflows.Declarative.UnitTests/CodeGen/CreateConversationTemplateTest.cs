@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -31,7 +32,8 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedAssignment(model.ConversationId?.Path, workflowCode);
     }
 
     private CreateConversation CreateModel(string displayName, string variablePath)

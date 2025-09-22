@@ -21,12 +21,12 @@ public class ContinueLoopTemplateTest(ITestOutputHelper output) : WorkflowAction
         ContinueLoop model = this.CreateModel(displayName);
 
         // Act
-        DefaultTemplate template = new(model, "Continue with the next loop value.");
+        DefaultTemplate template = new(model, "workflow_id");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertDelegate(template.Id, "workflow_id", workflowCode);
     }
 
     private ContinueLoop CreateModel(string displayName)

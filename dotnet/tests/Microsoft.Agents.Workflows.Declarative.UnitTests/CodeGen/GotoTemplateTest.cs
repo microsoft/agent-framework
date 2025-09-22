@@ -21,12 +21,12 @@ public class GotoTemplateTest(ITestOutputHelper output) : WorkflowActionTemplate
         GotoAction model = this.CreateModel(displayName, targetId);
 
         // Act
-        DefaultTemplate template = new(model, "Go to another action.");
+        DefaultTemplate template = new(model, "workflow_id");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertDelegate(template.Id, "workflow_id", workflowCode);
     }
 
     private GotoAction CreateModel(string displayName, string targetId)

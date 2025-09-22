@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -117,7 +118,8 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedAssignment(model.Message?.Path, workflowCode);
     }
 
     private AddConversationMessage CreateModel(

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -12,14 +13,13 @@ public class SetTextVariableTemplateTest(ITestOutputHelper output) : WorkflowAct
     public void InitializeTemplate()
     {
         // Act, Assert
-        this.ExecuteTest(nameof(InitializeTemplate), "TestVariable", "// %%% WTF", "// %%% WTF");
+        this.ExecuteTest(nameof(InitializeTemplate), "TestVariable", "Value: {OtherVar}");
     }
 
     private void ExecuteTest(
         string displayName,
         string variableName,
-        string textValue,
-        string expectedValue)
+        string textValue)
     {
         // Arrange
         SetTextVariable model =
@@ -34,7 +34,9 @@ public class SetTextVariableTemplateTest(ITestOutputHelper output) : WorkflowAct
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedAssignment(model.Variable?.Path, workflowCode);
+        Assert.Contains(textValue, workflowCode);
     }
 
     private SetTextVariable CreateModel(string displayName, string variablePath, string textValue)

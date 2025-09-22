@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -54,7 +55,7 @@ public class ClearAllVariablesTemplateTest(ITestOutputHelper output) : WorkflowA
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
     }
 
     private ClearAllVariables CreateModel(

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
@@ -57,7 +58,8 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedAssignment(model.Variable?.Path, workflowCode);
     }
 
     private SetVariable CreateModel(string displayName, string variablePath, ValueExpression.Builder valueExpression)

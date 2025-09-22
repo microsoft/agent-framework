@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
+using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -29,16 +32,6 @@ public class ForeachTemplateTest(ITestOutputHelper output) : WorkflowActionTempl
             "IndexValue");
     }
 
-    [Fact]
-    public void Empty()
-    {
-        // Act, Assert
-        this.ExecuteTest(
-            nameof(LoopNoIndex),
-            ValueExpression.Variable(PropertyPath.TopicVariable("MyItems")),
-            "LoopValue");
-    }
-
     private void ExecuteTest(
         string displayName,
         ValueExpression items,
@@ -59,7 +52,9 @@ public class ForeachTemplateTest(ITestOutputHelper output) : WorkflowActionTempl
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedMethod(nameof(ForeachExecutor.TakeNextAsync), workflowCode);
+        this.AssertGeneratedMethod(nameof(ForeachExecutor.ResetAsync), workflowCode);
     }
 
     private Foreach CreateModel(
@@ -71,7 +66,7 @@ public class ForeachTemplateTest(ITestOutputHelper output) : WorkflowActionTempl
         Foreach.Builder actionBuilder =
             new()
             {
-                Id = this.CreateActionId("goto_action"),
+                Id = this.CreateActionId("loop_action"),
                 DisplayName = this.FormatDisplayName(displayName),
                 Items = items,
                 Value = InitializablePropertyPath.Create(valueName),

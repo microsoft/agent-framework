@@ -21,12 +21,12 @@ public class EndConversationTest(ITestOutputHelper output) : WorkflowActionTempl
         EndConversation model = this.CreateModel(displayName);
 
         // Act
-        DefaultTemplate template = new(model, "Ends the conversation");
+        DefaultTemplate template = new(model, "workflow_id");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        //Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertDelegate(template.Id, "workflow_id", workflowCode);
     }
 
     private EndConversation CreateModel(string displayName)

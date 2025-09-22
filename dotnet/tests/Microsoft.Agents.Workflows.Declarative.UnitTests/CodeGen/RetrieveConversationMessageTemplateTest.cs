@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -18,8 +19,6 @@ public class RetrieveConversationMessageTemplateTest(ITestOutputHelper output) :
             StringExpression.Literal("#cid_3"),
             StringExpression.Literal("#mid_43"));
     }
-
-    // %%% TODO: WITH METADATA
 
     private void ExecuteTest(
         string displayName,
@@ -41,7 +40,8 @@ public class RetrieveConversationMessageTemplateTest(ITestOutputHelper output) :
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        Assert.Contains(variableName, workflowCode); // %%% MORE VALIDATION
+        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedAssignment(model.Message?.Path, workflowCode);
     }
 
     private RetrieveConversationMessage CreateModel(

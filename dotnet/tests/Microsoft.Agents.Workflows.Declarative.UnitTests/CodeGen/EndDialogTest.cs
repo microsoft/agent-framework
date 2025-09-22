@@ -6,19 +6,19 @@ using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 
-public class BreakLoopTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
+public class EndDialogTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public void BreakLoop()
+    public void EndDialog()
     {
         // Act, Assert
-        this.ExecuteTest(nameof(BreakLoop));
+        this.ExecuteTest(nameof(EndDialog));
     }
 
     private void ExecuteTest(string displayName)
     {
         // Arrange
-        BreakLoop model = this.CreateModel(displayName);
+        EndDialog model = this.CreateModel(displayName);
 
         // Act
         DefaultTemplate template = new(model, "workflow_id");
@@ -29,12 +29,12 @@ public class BreakLoopTemplateTest(ITestOutputHelper output) : WorkflowActionTem
         this.AssertDelegate(template.Id, "workflow_id", workflowCode);
     }
 
-    private BreakLoop CreateModel(string displayName)
+    private EndDialog CreateModel(string displayName)
     {
-        BreakLoop.Builder actionBuilder =
+        EndDialog.Builder actionBuilder =
             new()
             {
-                Id = this.CreateActionId("break_loop"),
+                Id = this.CreateActionId("end_Dialog"),
                 DisplayName = this.FormatDisplayName(displayName),
             };
 
