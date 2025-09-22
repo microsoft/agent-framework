@@ -59,7 +59,7 @@ public static class Program
         var workflow = new WorkflowBuilder(startExecutor)
             .AddFanOutEdge(startExecutor, targets: [physicist, chemist])
             .AddFanInEdge(aggregationExecutor, sources: [physicist, chemist])
-            .Build<string>();
+            .Build();
 
         // Execute the workflow in streaming mode
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is temperature?");

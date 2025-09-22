@@ -32,6 +32,11 @@ public class StreamingRun
     }
 
     /// <summary>
+    /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
+    /// </summary>
+    public string RunId => this._stepRunner.RunId;
+
+    /// <summary>
     /// Asynchronously sends the specified response to the external system and signals completion of the current
     /// response wait operation.
     /// </summary>

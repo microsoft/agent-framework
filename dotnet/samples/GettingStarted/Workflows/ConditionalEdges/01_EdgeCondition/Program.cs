@@ -57,7 +57,7 @@ public static class Program
             .AddEdge(spamDetectionExecutor, emailAssistantExecutor, condition: GetCondition(expectedResult: false))
             .AddEdge(emailAssistantExecutor, sendEmailExecutor)
             .AddEdge(spamDetectionExecutor, handleSpamExecutor, condition: GetCondition(expectedResult: true))
-            .Build<ChatMessage>();
+            .Build();
 
         // Read a email from a text file
         string email = Resources.Read("spam.txt");

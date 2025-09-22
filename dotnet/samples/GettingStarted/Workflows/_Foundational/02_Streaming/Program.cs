@@ -29,7 +29,7 @@ public static class Program
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse);
-        var workflow = builder.Build<string>();
+        var workflow = builder.Build();
 
         // Execute the workflow in streaming mode
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Hello, World!");

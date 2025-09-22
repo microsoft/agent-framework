@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
@@ -54,20 +55,71 @@ public class Workflow
     public string StartExecutorId { get; }
 
     /// <summary>
-    /// Gets the type of input expected by the starting executor of the workflow.
-    /// </summary>
-    public Type InputType { get; }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="Workflow"/> class with the specified starting executor identifier
     /// and input type.
     /// </summary>
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    /// <param name="type">The <see cref="Type"/> representing the input data for the workflow. Cannot be <c>null</c>.</param>
-    internal Workflow(string startExecutorId, Type type)
+    internal Workflow(string startExecutorId)
     {
         this.StartExecutorId = Throw.IfNull(startExecutorId);
-        this.InputType = Throw.IfNull(type);
+    }
+
+    /// <summary>
+    /// Attempts to promote the current workflow to a type pre-checked instance that can handle input of type <typeparamref name="TInput"/>.
+    /// </summary>
+    /// <typeparam name="TInput">The desired input type.</typeparam>
+    /// <returns>A type-parametrized workflow definitely able to process input of type <typeparamref name="TInput"/> or
+    /// <see langword="null" /> if the workflow does not accept that type of input.</returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    internal async ValueTask<Workflow<TInput>?> TryPromoteAsync<TInput>()
+    {
+        // Grab the start node, and make sure it has the right type?
+        if (!this.Registrations.TryGetValue(this.StartExecutorId, out ExecutorRegistration? startRegistration))
+        {
+            // TODO: This should never be able to be hit
+            throw new InvalidOperationException($"Start executor with ID '{this.StartExecutorId}' is not bound.");
+        }
+
+        // TODO: Can we cache this somehow to avoid having to instantiate a new one when running?
+        // Does that break some user expectations?
+        Executor startExecutor = await startRegistration.ProviderAsync().ConfigureAwait(false);
+
+        if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(TInput))))
+        {
+            // We have no handlers for the input type T, which means the built workflow will not be able to
+            // process messages of the desired type
+            return null;
+        }
+
+        return new Workflow<TInput>(this.StartExecutorId)
+        {
+            Registrations = this.Registrations,
+            Edges = this.Edges,
+            Ports = this.Ports
+        };
+    }
+
+    internal async ValueTask<WorkflowWithOutput<TInput, TResult>?> TryPromoteWithOutputAsync<TInput, TResult>(IOutputSink<TResult> outputSource)
+    {
+        Workflow<TInput>? promoted = await this.TryPromoteAsync<TInput>().ConfigureAwait(false);
+        if (promoted is null)
+        {
+            return null;
+        }
+
+        return promoted.PromoteWithOutput(outputSource);
+    }
+
+    internal WorkflowWithOutput<TResult> PromoteWithOutput<TResult>(IOutputSink<TResult> outputSource)
+    {
+        Throw.IfNull(outputSource);
+
+        return new WorkflowWithOutput<TResult>(this.StartExecutorId, outputSource)
+        {
+            Registrations = this.Registrations,
+            Edges = this.Edges,
+            Ports = this.Ports
+        };
     }
 }
 
@@ -81,46 +133,24 @@ public class Workflow<T> : Workflow
     /// Initializes a new instance of the <see cref="Workflow{T}"/> class with the specified starting executor identifier
     /// </summary>
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    public Workflow(string startExecutorId) : base(startExecutorId, typeof(T))
+    public Workflow(string startExecutorId) : base(startExecutorId)
     {
     }
 
-    internal Workflow<T, TResult> Promote<TResult>(IOutputSink<TResult> outputSource)
+    internal new WorkflowWithOutput<T, TResult> PromoteWithOutput<TResult>(IOutputSink<TResult> outputSource)
     {
         Throw.IfNull(outputSource);
 
-        return new Workflow<T, TResult>(this.StartExecutorId, outputSource)
+        return new WorkflowWithOutput<T, TResult>(this.StartExecutorId, outputSource)
         {
             Registrations = this.Registrations,
             Edges = this.Edges,
             Ports = this.Ports
         };
     }
-}
-
-/// <summary>
-/// Represents a workflow that operates on data of type <typeparamref name="TInput"/>, resulting in
-/// <typeparamref name="TResult"/>.
-/// </summary>
-/// <typeparam name="TInput">The type of input to the workflow.</typeparam>
-/// <typeparam name="TResult">The type of the output from the workflow.</typeparam>
-public class Workflow<TInput, TResult> : Workflow<TInput>
-{
-    private readonly IOutputSink<TResult> _output;
-
-    internal Workflow(string startExecutorId, IOutputSink<TResult> outputSource)
-        : base(startExecutorId)
-    {
-        this._output = Throw.IfNull(outputSource);
-    }
 
     /// <summary>
-    /// Gets the unique identifier of the output collector.
+    /// Gets the type of input expected by the starting executor of the workflow.
     /// </summary>
-    public string OutputCollectorId => this._output.Id;
-
-    /// <summary>
-    /// The running (partial) output of the workflow, if any.
-    /// </summary>
-    public TResult? RunningOutput => this._output.Result;
+    public Type InputType => typeof(T);
 }

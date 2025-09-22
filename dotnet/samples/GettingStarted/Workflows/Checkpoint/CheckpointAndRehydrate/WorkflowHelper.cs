@@ -16,7 +16,7 @@ internal static class WorkflowHelper
     /// 2. JudgeExecutor: Evaluates the guess and provides feedback.
     /// The workflow continues until the correct number is guessed.
     /// </summary>
-    internal static Workflow<NumberSignal> GetWorkflow()
+    internal static ValueTask<Workflow<NumberSignal>> GetWorkflowAsync()
     {
         // Create the executors
         GuessNumberExecutor guessNumberExecutor = new(1, 100);
@@ -26,7 +26,7 @@ internal static class WorkflowHelper
         return new WorkflowBuilder(guessNumberExecutor)
             .AddEdge(guessNumberExecutor, judgeExecutor)
             .AddEdge(judgeExecutor, guessNumberExecutor)
-            .Build<NumberSignal>();
+            .BuildAsync<NumberSignal>();
     }
 }
 

@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step3EntryPoint
 {
-    public static Workflow<NumberSignal> WorkflowInstance
+    public static Workflow WorkflowInstance
     {
         get
         {
@@ -20,7 +20,7 @@ internal static class Step3EntryPoint
             return new WorkflowBuilder(guessNumber)
                 .AddEdge(guessNumber, judge)
                 .AddEdge(judge, guessNumber)
-                .Build<NumberSignal>();
+                .Build();
         }
     }
 

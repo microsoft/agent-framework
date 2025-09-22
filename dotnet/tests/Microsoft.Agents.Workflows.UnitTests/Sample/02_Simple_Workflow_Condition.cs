@@ -10,7 +10,7 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2EntryPoint
 {
-    public static Workflow<string> WorkflowInstance
+    public static Workflow WorkflowInstance
     {
         get
         {
@@ -23,7 +23,7 @@ internal static class Step2EntryPoint
             return new WorkflowBuilder(detectSpam)
                 .AddEdge(detectSpam, respondToMessage, (bool isSpam) => !isSpam) // If not spam, respond
                 .AddEdge(detectSpam, removeSpam, (bool isSpam) => isSpam) // If spam, remove
-                .Build<string>();
+                .Build();
         }
     }
 

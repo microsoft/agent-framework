@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step4EntryPoint
 {
-    public static Workflow<NumberSignal, string> CreateWorkflowInstance(out JudgeExecutor judge)
+    public static WorkflowWithOutput<string> CreateWorkflowInstance(out JudgeExecutor judge)
     {
         InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
         judge = new("Judge", 42); // Let's say the target number is 42
@@ -16,10 +16,16 @@ internal static class Step4EntryPoint
         return new WorkflowBuilder(guessNumber)
             .AddEdge(guessNumber, judge)
             .AddEdge(judge, guessNumber, (NumberSignal signal) => signal != NumberSignal.Matched)
-            .BuildWithOutput<NumberSignal, NumberSignal, string>(judge, ComputeStreamingOutput, (s, _) => s is NumberSignal.Matched);
+            .BuildWithOutput(judge, ComputeStreamingOutput, (NumberSignal s, string? _) => s == NumberSignal.Matched);
     }
 
-    public static Workflow<NumberSignal, string> WorkflowInstance
+    public static ValueTask<WorkflowWithOutput<NumberSignal, string>?> GetPromotedWorklowInstanceAsync()
+    {
+        WorkflowWithOutput<string> workflow = CreateWorkflowInstance(out _);
+        return workflow.TryPromoteAsync<NumberSignal>();
+    }
+
+    public static WorkflowWithOutput<string> WorkflowInstance
     {
         get
         {
@@ -29,7 +35,7 @@ internal static class Step4EntryPoint
 
     public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback)
     {
-        Workflow<NumberSignal, string> workflow = WorkflowInstance;
+        WorkflowWithOutput<string> workflow = WorkflowInstance;
         StreamingRun<string> handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))

@@ -15,7 +15,7 @@ internal sealed class WorkflowInfo
         Dictionary<string, ExecutorInfo> executors,
         Dictionary<string, List<EdgeInfo>> edges,
         HashSet<InputPortInfo> inputPorts,
-        TypeId inputType,
+        TypeId? inputType,
         string startExecutorId,
         TypeId? outputType,
         string? outputCollectorId)
@@ -24,7 +24,7 @@ internal sealed class WorkflowInfo
         this.Edges = Throw.IfNull(edges);
         this.InputPorts = Throw.IfNull(inputPorts);
 
-        this.InputType = Throw.IfNull(inputType);
+        this.InputType = inputType;
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
 
         if (outputType is not null && outputCollectorId is not null)
@@ -44,20 +44,15 @@ internal sealed class WorkflowInfo
     public Dictionary<string, List<EdgeInfo>> Edges { get; }
     public HashSet<InputPortInfo> InputPorts { get; }
 
-    public TypeId InputType { get; }
+    public TypeId? InputType { get; }
     public string StartExecutorId { get; }
 
     public TypeId? OutputType { get; }
     public string? OutputCollectorId { get; }
 
-    private bool IsMatch(Workflow workflow)
+    public bool IsMatch(Workflow workflow)
     {
         if (workflow is null)
-        {
-            return false;
-        }
-
-        if (!this.InputType.IsMatch(workflow.InputType))
         {
             return false;
         }
@@ -104,9 +99,10 @@ internal sealed class WorkflowInfo
         return true;
     }
 
-    public bool IsMatch<TInput>(Workflow<TInput> workflow) => this.IsMatch(workflow as Workflow);
+    public bool IsMatch<TInput>(Workflow<TInput> workflow) =>
+        this.IsMatch(workflow as Workflow) && this.InputType?.IsMatch<TInput>() == true;
 
-    public bool IsMatch<TInput, TResult>(Workflow<TInput, TResult> workflow)
+    public bool IsMatch<TInput, TResult>(WorkflowWithOutput<TInput, TResult> workflow)
         => this.IsMatch(workflow as Workflow)
            && this.OutputType?.IsMatch(typeof(TResult)) is true
            && this.OutputCollectorId is not null && this.OutputCollectorId == workflow.OutputCollectorId;

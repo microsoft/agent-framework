@@ -14,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.InProc;
 
-internal sealed class InProcessRunnerContext<TExternalInput> : IRunnerContext
+internal sealed class InProcessRunnerContext : IRunnerContext
 {
     private StepContext _nextStep = new();
     private readonly Dictionary<string, ExecutorRegistration> _executorRegistrations;
@@ -94,7 +94,7 @@ internal sealed class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
     internal StateManager StateManager { get; } = new();
 
-    private sealed class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
+    private sealed class BoundContext(InProcessRunnerContext RunnerContext, string ExecutorId) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);

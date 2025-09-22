@@ -30,7 +30,7 @@ public static class Program
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse);
-        var workflow = builder.Build<string>();
+        var workflow = builder.Build();
 
         // Execute the workflow with input data
         Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");

@@ -15,7 +15,7 @@ internal static class Step5EntryPoint
     {
         checkpointManager ??= CheckpointManager.Default;
 
-        Workflow<NumberSignal, string> workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
+        WorkflowWithOutput<string> workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
         Checkpointed<StreamingRun<string>> checkpointed =
             await InProcessExecution.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
                                     .ConfigureAwait(false);
@@ -34,7 +34,7 @@ internal static class Step5EntryPoint
 
         if (rehydrateToRestore)
         {
-            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, CancellationToken.None)
+            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellation: CancellationToken.None)
                                                    .ConfigureAwait(false);
             handle = checkpointed.Run;
         }

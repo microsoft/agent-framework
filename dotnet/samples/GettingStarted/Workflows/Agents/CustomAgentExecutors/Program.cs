@@ -47,7 +47,7 @@ public static class Program
         var workflow = new WorkflowBuilder(sloganWriter)
             .AddEdge(sloganWriter, feedbackProvider)
             .AddEdge(feedbackProvider, sloganWriter)
-            .Build<string>();
+            .Build();
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Create a slogan for a new electric SUV that is affordable and fun to drive.");

@@ -82,6 +82,11 @@ public class Run
     }
 
     /// <summary>
+    /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
+    /// </summary>
+    public string RunId => this._streamingRun.RunId;
+
+    /// <summary>
     /// Gets the current execution status of the workflow run.
     /// </summary>
     public RunStatus Status { get; private set; }

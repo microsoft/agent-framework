@@ -53,7 +53,7 @@ internal sealed class Program
 
         Stopwatch timer = Stopwatch.StartNew();
 
-        Workflow<string> workflow = this.CreateWorkflow();
+        Workflow workflow = this.CreateWorkflow();
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
@@ -100,7 +100,7 @@ internal sealed class Program
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    private Workflow<string> CreateWorkflow()
+    private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         DeclarativeWorkflowOptions options =

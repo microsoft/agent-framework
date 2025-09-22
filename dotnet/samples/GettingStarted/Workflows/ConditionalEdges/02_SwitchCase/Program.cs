@@ -72,7 +72,7 @@ public static class Program
         )
         // After the email assistant writes a response, it will be sent to the send email executor
         .AddEdge(emailAssistantExecutor, sendEmailExecutor);
-        var workflow = builder.Build<ChatMessage>();
+        var workflow = builder.Build();
 
         // Read a email from a text file
         string email = Resources.Read("ambiguous_email.txt");

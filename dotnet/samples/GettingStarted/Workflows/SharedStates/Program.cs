@@ -33,7 +33,7 @@ public static class Program
         var workflow = new WorkflowBuilder(fileRead)
             .AddFanOutEdge(fileRead, targets: [wordCount, paragraphCount])
             .AddFanInEdge(aggregate, sources: [wordCount, paragraphCount])
-            .Build<string>();
+            .Build();
 
         // Execute the workflow with input data
         Run run = await InProcessExecution.RunAsync(workflow, "Lorem_Ipsum.txt");

@@ -382,7 +382,7 @@ public class AgentWorkflowBuilderTests
     }
 
     private static async Task<(string UpdateText, List<ChatMessage>? Result)> RunWorkflowAsync(
-        Workflow<List<ChatMessage>> workflow, List<ChatMessage> input)
+        Workflow workflow, List<ChatMessage> input)
     {
         StringBuilder sb = new();
 

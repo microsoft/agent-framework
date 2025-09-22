@@ -84,7 +84,7 @@ public static class Program
                 throw new InvalidOperationException("Invalid workflow type.");
         }
 
-        static async Task<List<ChatMessage>> RunWorkflowAsync(Workflow<List<ChatMessage>> workflow, List<ChatMessage> messages)
+        static async Task<List<ChatMessage>> RunWorkflowAsync(Workflow workflow, List<ChatMessage> messages)
         {
             string? lastExecutorId = null;
 

@@ -81,7 +81,7 @@ public static class Program
             condition: analysisResult => analysisResult?.EmailLength <= LongEmailThreshold)
         // Save the analysis result to the database with summary
         .AddEdge(emailSummaryExecutor, databaseAccessExecutor);
-        var workflow = builder.Build<ChatMessage>();
+        var workflow = builder.Build();
 
         // Read a email from a text file
         string email = Resources.Read("email.txt");

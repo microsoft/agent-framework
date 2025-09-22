@@ -26,7 +26,7 @@ public static partial class AgentWorkflowBuilder
     /// </summary>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
-    public static Workflow<List<ChatMessage>> BuildSequential(params IEnumerable<AIAgent> agents)
+    public static Workflow BuildSequential(params IEnumerable<AIAgent> agents)
     {
         Throw.IfNull(agents);
 
@@ -61,7 +61,7 @@ public static partial class AgentWorkflowBuilder
         Debug.Assert(builder is not null);
         builder.AddEdge(previous, new ConvertMessageListToCompletedEventExecutor());
 
-        return builder.Build<List<ChatMessage>>();
+        return builder.Build();
     }
 
     /// <summary>
@@ -75,14 +75,14 @@ public static partial class AgentWorkflowBuilder
     /// from each agent that produced at least one message.
     /// </param>
     /// <returns>The built workflow composed of the supplied concurrent <paramref name="agents"/>.</returns>
-    public static Workflow<List<ChatMessage>> BuildConcurrent(
+    public static Workflow BuildConcurrent(
         IEnumerable<AIAgent> agents,
         Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
     {
         Throw.IfNull(agents);
 
         // A workflow needs a starting executor, so we create one that forwards everything to each agent.
-        ForwardingExecutor start = new();
+        ChatForwardingExecutor start = new("Start");
         WorkflowBuilder builder = new(start);
 
         // For each agent, we create an executor to host it and an accumulator to batch up its output messages,
@@ -90,7 +90,7 @@ public static partial class AgentWorkflowBuilder
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
         ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
-        ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new BatchChatMessagesToListExecutor()];
+        ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new BatchChatMessagesToListExecutor($"Batcher/{agent.Id}")];
         builder.AddFanOutEdge(start, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
@@ -104,7 +104,7 @@ public static partial class AgentWorkflowBuilder
         ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
         builder.AddFanInEdge(end, sources: accumulators);
 
-        return builder.Build<List<ChatMessage>>();
+        return builder.Build();
     }
 
     /// <summary>Creates a new <see cref="HandoffsWorkflowBuilder"/> using <paramref name="initialAgent"/> as the starting agent in the workflow.</summary>
@@ -189,7 +189,7 @@ public static partial class AgentWorkflowBuilder
     /// Provides an executor that batches received chat messages that it then publishes as the final result
     /// when receiving a <see cref="TurnToken"/>.
     /// </summary>
-    private sealed class ConvertMessageListToCompletedEventExecutor : Executor
+    private sealed class ConvertMessageListToCompletedEventExecutor() : Executor(id: "OutputMessages")
     {
         private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -206,17 +206,21 @@ public static partial class AgentWorkflowBuilder
     }
 
     /// <summary>Executor that forwards all messages.</summary>
-    private sealed class ForwardingExecutor : Executor
+    private sealed class ChatForwardingExecutor(string id) : Executor(id)
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<object>((message, context) => context.SendMessageAsync(message));
+            routeBuilder
+                    .AddHandler<string>((message, context) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message)))
+                    .AddHandler<ChatMessage>((message, context) => context.SendMessageAsync(message))
+                    .AddHandler<List<ChatMessage>>((messages, context) => context.SendMessageAsync(messages))
+                    .AddHandler<TurnToken>((turnToken, context) => context.SendMessageAsync(turnToken));
     }
 
     /// <summary>
     /// Provides an executor that batches received chat messages that it then releases when
     /// receiving a <see cref="TurnToken"/>.
     /// </summary>
-    private sealed class BatchChatMessagesToListExecutor : Executor
+    private sealed class BatchChatMessagesToListExecutor(string id) : Executor(id)
     {
         private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -245,7 +249,7 @@ public static partial class AgentWorkflowBuilder
         private List<List<ChatMessage>> _allResults;
         private int _remaining;
 
-        public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator)
+        public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator) : base("ConcurrentEnd")
         {
             this._expectedInputs = expectedInputs;
             this._aggregator = Throw.IfNull(aggregator);
@@ -414,7 +418,7 @@ public static partial class AgentWorkflowBuilder
         /// agent to process messages selected by the current agent.
         /// </summary>
         /// <returns>The workflow built based on the handoffs in the builder.</returns>
-        public Workflow<List<ChatMessage>> Build()
+        public Workflow Build()
         {
             StartHandoffsExecutor start = new();
             EndHandoffsExecutor end = new();
@@ -434,7 +438,7 @@ public static partial class AgentWorkflowBuilder
             }
 
             // Build the workflow.
-            return builder.Build<List<ChatMessage>>();
+            return builder.Build();
         }
 
         /// <summary>Describes a handoff to a specific target <see cref="AIAgent"/>.</summary>
@@ -445,7 +449,7 @@ public static partial class AgentWorkflowBuilder
         }
 
         /// <summary>Executor used at the start of a handoffs workflow to accumulate messages and emit them as HandoffState upon receiving a turn token.</summary>
-        private sealed class StartHandoffsExecutor : Executor
+        private sealed class StartHandoffsExecutor() : Executor("HandoffStart")
         {
             private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -465,7 +469,7 @@ public static partial class AgentWorkflowBuilder
         }
 
         /// <summary>Executor used at the end of a handoff workflow to raise a final completed event.</summary>
-        private sealed class EndHandoffsExecutor : Executor
+        private sealed class EndHandoffsExecutor() : Executor("HandoffEnd")
         {
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
                 routeBuilder.AddHandler<HandoffState>((handoff, context) =>
@@ -740,11 +744,11 @@ public static partial class AgentWorkflowBuilder
         }
 
         /// <summary>
-        /// Builds a <see cref="Workflow{T}"/> composed of agents that operate via group chat, with the next
+        /// Builds a <see cref="Workflow"/> composed of agents that operate via group chat, with the next
         /// agent to process messages selected by the group chat manager.
         /// </summary>
         /// <returns>The workflow built based on the group chat in the builder.</returns>
-        public Workflow<List<ChatMessage>> Build()
+        public Workflow Build()
         {
             AIAgent[] agents = this._participants.ToArray();
             Dictionary<AIAgent, ExecutorIsh> agentMap = agents.ToDictionary(a => a, a => (ExecutorIsh)new AgentRunStreamingExecutor(a, includeInputInOutput: true));
@@ -760,10 +764,10 @@ public static partial class AgentWorkflowBuilder
                     .AddEdge(participant, host);
             }
 
-            return builder.Build<List<ChatMessage>>();
+            return builder.Build();
         }
 
-        private sealed class GroupChatHost(AIAgent[] agents, Dictionary<AIAgent, ExecutorIsh> agentMap, Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) : Executor
+        private sealed class GroupChatHost(AIAgent[] agents, Dictionary<AIAgent, ExecutorIsh> agentMap, Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) : Executor("GroupChatHost")
         {
             private readonly AIAgent[] _agents = agents;
             private readonly Dictionary<AIAgent, ExecutorIsh> _agentMap = agentMap;
