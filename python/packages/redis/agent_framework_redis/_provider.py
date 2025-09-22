@@ -197,6 +197,10 @@ class RedisProvider(ContextProvider):
         """Validate that existing index schema matches current configuration.
 
         Raises ServiceInitializationError if schemas don't match, with helpful guidance.
+
+        self._build_schema_dict returns a minimal schema while Redis returns an expanded
+        schema with all defaults filled in. To compare for incompatibilities, compare
+        significant parts of the schema by creating signatures with normalized default values.
         """
         # Defaults for attr normalization
         TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
