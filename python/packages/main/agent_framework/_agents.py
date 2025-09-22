@@ -210,7 +210,7 @@ class BaseAgent(AFBaseModel):
 
         # Create dynamic input model with the specified argument name
         field_info = Field(..., description=argument_description)
-        input_model = create_model(f"{self.display_name}_Task", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
+        input_model = create_model(f"{name or self.name or "agent"}_task", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
 
         # Check if callback is async once, outside the wrapper
         is_async_callback = stream_callback is not None and inspect.iscoroutinefunction(stream_callback)
