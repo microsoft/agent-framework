@@ -259,6 +259,9 @@ export function WorkflowInputForm({
   className,
 }: WorkflowInputFormProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Check if we're in embedded mode (being used inside another modal)
+  const isEmbedded = className?.includes('embedded');
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(false);
 
@@ -309,8 +312,10 @@ export function WorkflowInputForm({
       onSubmit(formData);
     }
 
-    // Close modal after submission
-    setIsModalOpen(false);
+    // Only close modal if not embedded
+    if (!isEmbedded) {
+      setIsModalOpen(false);
+    }
     setLoading(false);
   };
 
@@ -320,6 +325,51 @@ export function WorkflowInputForm({
       [fieldName]: value,
     }));
   };
+
+  // If embedded, just show the form directly
+  if (isEmbedded) {
+    return (
+      <form onSubmit={handleSubmit} className={className}>
+        <div className="grid grid-cols-1 gap-4">
+          {/* Simple input */}
+          {isSimpleInput && primaryField && (
+            <FormField
+              name="Input"
+              schema={inputSchema}
+              value={formData.value}
+              onChange={(value) => updateField("value", value)}
+            />
+          )}
+
+          {/* Complex form fields */}
+          {!isSimpleInput && (
+            <>
+              {fieldNames.map((fieldName) => (
+                <FormField
+                  key={fieldName}
+                  name={fieldName}
+                  schema={properties[fieldName] as JSONSchemaProperty}
+                  value={formData[fieldName]}
+                  onChange={(value) => updateField(fieldName, value)}
+                />
+              ))}
+            </>
+          )}
+        </div>
+
+        <div className="flex gap-2 mt-4 justify-end">
+          <Button
+            type="submit"
+            disabled={loading || !canSubmit}
+            size="default"
+          >
+            <Send className="h-4 w-4" />
+            {loading ? "Running..." : "Run Workflow"}
+          </Button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <>

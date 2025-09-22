@@ -6,6 +6,8 @@ import {
   Clock,
   Loader2,
   AlertCircle,
+  Play,
+  Flag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -173,12 +175,37 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
         isRunning ? config.glow : "shadow-sm",
       )}
     >
+      {/* Start/End Badge */}
+      {(nodeData.isStartNode || nodeData.isEndNode) && (
+        <div className={cn(
+          "absolute -top-6 left-2 px-2 py-1 rounded-t text-xs font-medium text-white flex items-center gap-1 z-10 shadow-sm",
+          nodeData.isStartNode ? "bg-green-600" : "bg-red-600"
+        )}>
+          {nodeData.isStartNode ? (
+            <>
+              <Play className="w-3 h-3" />
+              START
+            </>
+          ) : (
+            <>
+              <Flag className="w-3 h-3" />
+              END
+            </>
+          )}
+        </div>
+      )}
       {/* Only show target handle if not a start node */}
       {!nodeData.isStartNode && (
         <Handle
           type="target"
           position={Position.Left}
-          className="!bg-accent !w-2 !h-5 !rounded-r-sm !-ml-1 !border-0 hover:!bg-accent/80 transition-colors"
+          className="!w-2 !h-5 !rounded-r-sm !-ml-1 !border-0 transition-colors"
+          style={{
+            backgroundColor: nodeData.state === "running" ? "#3b82f6" :
+                           nodeData.state === "completed" ? "#10b981" :
+                           nodeData.state === "failed" ? "#ef4444" :
+                           nodeData.state === "cancelled" ? "#f97316" : "#9ca3af"
+          }}
         />
       )}
 
@@ -187,7 +214,13 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
         <Handle
           type="source"
           position={Position.Right}
-          className="!bg-accent !w-2 !h-5 !rounded-l-sm !-mr-1 !border-0 hover:!bg-accent/80 transition-colors"
+          className="!w-2 !h-5 !rounded-l-sm !-mr-1 !border-0 transition-colors"
+          style={{
+            backgroundColor: nodeData.state === "running" ? "#3b82f6" :
+                           nodeData.state === "completed" ? "#10b981" :
+                           nodeData.state === "failed" ? "#ef4444" :
+                           nodeData.state === "cancelled" ? "#f97316" : "#9ca3af"
+          }}
         />
       )}
 
@@ -201,15 +234,11 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
-              {nodeData.isStartNode && "🟢 "}
-              {nodeData.isEndNode && "🔴 "}
               {nodeData.name || nodeData.executorId}
             </h3>
             {nodeData.executorType && (
               <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                 {nodeData.executorType}
-                {nodeData.isStartNode && " (Start)"}
-                {nodeData.isEndNode && " (End)"}
               </p>
             )}
           </div>

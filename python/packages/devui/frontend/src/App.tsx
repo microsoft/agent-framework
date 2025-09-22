@@ -127,8 +127,12 @@ export default function App() {
   }, []);
 
   // Handle debug events from active view
-  const handleDebugEvent = useCallback((event: ExtendedResponseStreamEvent) => {
-    setDebugEvents((prev) => [...prev, event]);
+  const handleDebugEvent = useCallback((event: ExtendedResponseStreamEvent | 'clear') => {
+    if (event === 'clear') {
+      setDebugEvents([]);
+    } else {
+      setDebugEvents((prev) => [...prev, event]);
+    }
   }, []);
 
   // Show loading state while initializing

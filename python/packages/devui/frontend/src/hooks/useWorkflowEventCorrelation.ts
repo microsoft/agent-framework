@@ -67,7 +67,7 @@ export function useWorkflowEventCorrelation(
         const eventType = data.event_type;
 
         // Update state based on event type
-        if (eventType === "ExecutorInvokeEvent") {
+        if (eventType === "ExecutorInvokedEvent") {
           executor.state = "running";
           executor.inputData = data.data;
           if (!activeExecutors.includes(executorId)) {

@@ -327,7 +327,7 @@ export function processWorkflowEvents(
       let error: string | undefined;
 
       // Map event types to executor states
-      if (eventType === "ExecutorInvokeEvent") {
+      if (eventType === "ExecutorInvokedEvent") {
         state = "running";
       } else if (eventType === "ExecutorCompletedEvent") {
         state = "completed";
@@ -408,7 +408,7 @@ export function getCurrentlyExecutingExecutors(
 
       if (
         executorId &&
-        (eventType === "ExecutorInvokeEvent" ||
+        (eventType === "ExecutorInvokedEvent" ||
           eventType === "ExecutorCompletedEvent")
       ) {
         executorTimeline[executorId] = {
@@ -421,7 +421,7 @@ export function getCurrentlyExecutingExecutors(
 
   // Find executors that were invoked but haven't completed yet
   const currentlyExecuting = Object.entries(executorTimeline)
-    .filter(([, timeline]) => timeline.lastEvent === "ExecutorInvokeEvent")
+    .filter(([, timeline]) => timeline.lastEvent === "ExecutorInvokedEvent")
     .map(([executorId]) => executorId);
 
   return currentlyExecuting;
@@ -458,7 +458,7 @@ export function updateEdgesWithSequenceAnalysis(
           executorStates[executorId] = { completed: false, invoked: false };
         }
 
-        if (eventType === "ExecutorInvokeEvent") {
+        if (eventType === "ExecutorInvokedEvent") {
           executorStates[executorId].invoked = true;
         } else if (eventType === "ExecutorCompletedEvent") {
           executorStates[executorId].completed = true;

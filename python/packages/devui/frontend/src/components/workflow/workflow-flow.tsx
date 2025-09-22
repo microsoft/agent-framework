@@ -1,10 +1,30 @@
 import { useMemo, useCallback, useEffect } from "react";
 import {
+  MoreVertical,
+  Map,
+  Grid3X3,
+  RotateCcw,
+  Maximize,
+  Shuffle,
+  Zap,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   BackgroundVariant,
   type NodeTypes,
   type Node,
@@ -18,6 +38,7 @@ import {
   processWorkflowEvents,
   updateNodesWithEvents,
   updateEdgesWithSequenceAnalysis,
+  type NodeUpdate,
 } from "@/utils/workflow-utils";
 import type { ExtendedResponseStreamEvent } from "@/types";
 import type { Workflow } from "@/types/workflow";
@@ -26,12 +47,161 @@ const nodeTypes: NodeTypes = {
   executor: ExecutorNode,
 };
 
+// ViewOptions panel component that renders inside ReactFlow
+function ViewOptionsPanel({
+  workflowDump,
+  onNodeSelect,
+  viewOptions,
+  onToggleViewOption,
+}: {
+  workflowDump?: Workflow;
+  onNodeSelect?: (executorId: string, data: ExecutorNodeData) => void;
+  viewOptions: { showMinimap: boolean; showGrid: boolean; animateRun: boolean };
+  onToggleViewOption?: (key: keyof typeof viewOptions) => void;
+}) {
+  const { fitView, setViewport, setNodes } = useReactFlow();
+
+  const handleResetZoom = () => {
+    setViewport({ x: 0, y: 0, zoom: 1 });
+  };
+
+  const handleFitToScreen = () => {
+    fitView({ padding: 0.2 });
+  };
+
+  const handleAutoArrange = () => {
+    if (!workflowDump) return;
+    const currentNodes = convertWorkflowDumpToNodes(workflowDump, onNodeSelect);
+    const currentEdges = convertWorkflowDumpToEdges(workflowDump);
+    const layoutedNodes = applyDagreLayout(currentNodes, currentEdges, "LR");
+    setNodes(layoutedNodes);
+  };
+
+  return (
+    <div className="absolute top-4 right-4 z-10">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0 bg-white/90 backdrop-blur-sm border-gray-200 shadow-sm hover:bg-white dark:bg-gray-800/90 dark:border-gray-600 dark:hover:bg-gray-800"
+          >
+            <MoreVertical className="h-4 w-4" />
+            <span className="sr-only">View options</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem
+            className="flex items-center justify-between"
+            onClick={() => onToggleViewOption?.("showMinimap")}
+          >
+            <div className="flex items-center">
+              <Map className="mr-2 h-4 w-4" />
+              Show Minimap
+            </div>
+            <Checkbox checked={viewOptions.showMinimap} onChange={() => {}} />
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="flex items-center justify-between"
+            onClick={() => onToggleViewOption?.("showGrid")}
+          >
+            <div className="flex items-center">
+              <Grid3X3 className="mr-2 h-4 w-4" />
+              Show Grid
+            </div>
+            <Checkbox checked={viewOptions.showGrid} onChange={() => {}} />
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="flex items-center justify-between"
+            onClick={() => onToggleViewOption?.("animateRun")}
+          >
+            <div className="flex items-center">
+              <Zap className="mr-2 h-4 w-4" />
+              Animate Run
+            </div>
+            <Checkbox checked={viewOptions.animateRun} onChange={() => {}} />
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleResetZoom}>
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Reset Zoom
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleFitToScreen}>
+            <Maximize className="mr-2 h-4 w-4" />
+            Fit to Screen
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleAutoArrange}>
+            <Shuffle className="mr-2 h-4 w-4" />
+            Auto-arrange
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
 interface WorkflowFlowProps {
   workflowDump?: Workflow;
   events: ExtendedResponseStreamEvent[];
   isStreaming: boolean;
   onNodeSelect?: (executorId: string, data: ExecutorNodeData) => void;
   className?: string;
+  viewOptions?: {
+    showMinimap: boolean;
+    showGrid: boolean;
+    animateRun: boolean;
+  };
+  onToggleViewOption?: (
+    key: keyof NonNullable<WorkflowFlowProps["viewOptions"]>
+  ) => void;
+}
+
+// Animation handler component that runs inside ReactFlow context
+function WorkflowAnimationHandler({
+  nodes,
+  nodeUpdates,
+  isStreaming,
+  animateRun,
+}: {
+  nodes: Node<ExecutorNodeData>[];
+  nodeUpdates: Record<string, NodeUpdate>;
+  isStreaming: boolean;
+  animateRun: boolean;
+}) {
+  const { fitView } = useReactFlow();
+
+  // Smooth animation to center on running node when workflow starts/progresses
+  useEffect(() => {
+    if (!animateRun) return;
+
+    if (isStreaming) {
+      // Zoom in on running nodes during execution
+      const runningNodes = nodes.filter(
+        (node) => node.data.state === "running"
+      );
+      if (runningNodes.length > 0) {
+        const targetNode = runningNodes[0];
+
+        // Use fitView to smoothly focus on the running node with animation
+        fitView({
+          nodes: [targetNode],
+          duration: 800,
+          padding: 0.3,
+          minZoom: 0.8,
+          maxZoom: 1.5,
+        });
+      }
+    } else if (nodes.length > 0) {
+      // Zoom back out to show full workflow when execution completes
+      fitView({
+        duration: 1000,
+        padding: 0.2,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeUpdates, isStreaming, animateRun, nodes]);
+
+  return null; // This component doesn't render anything
 }
 
 export function WorkflowFlow({
@@ -40,6 +210,8 @@ export function WorkflowFlow({
   isStreaming,
   onNodeSelect,
   className = "",
+  viewOptions = { showMinimap: false, showGrid: true, animateRun: true },
+  onToggleViewOption,
 }: WorkflowFlowProps) {
   // Create initial nodes and edges from workflow dump
   const { initialNodes, initialEdges } = useMemo(() => {
@@ -94,9 +266,13 @@ export function WorkflowFlow({
   // Update edges with sequence-based analysis (separate from nodeUpdates)
   useMemo(() => {
     if (events.length > 0) {
-      setEdges((currentEdges) =>
-        updateEdgesWithSequenceAnalysis(currentEdges, events)
-      );
+      setEdges((currentEdges) => {
+        const updatedEdges = updateEdgesWithSequenceAnalysis(
+          currentEdges,
+          events
+        );
+        return updatedEdges;
+      });
     } else {
       // Reset all edges to default state when events are cleared
       setEdges((currentEdges) =>
@@ -184,14 +360,17 @@ export function WorkflowFlow({
         nodesDraggable={!isStreaming} // Disable dragging during execution
         nodesConnectable={false} // Disable connecting nodes
         elementsSelectable={true}
+        proOptions={{ hideAttribution: true }}
       >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1}
-          color="#e5e7eb"
-          className="dark:opacity-30"
-        />
+        {viewOptions.showGrid && (
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            color="#e5e7eb"
+            className="dark:opacity-30"
+          />
+        )}
         <Controls
           position="bottom-left"
           showInteractive={false}
@@ -202,31 +381,46 @@ export function WorkflowFlow({
           }}
           className="dark:!bg-gray-800/90 dark:!border-gray-600"
         />
-        {/* <MiniMap
-          nodeColor={(node: Node) => {
-            const data = node.data as ExecutorNodeData;
-            const state = data?.state;
-            switch (state) {
-              case "running":
-                return "#3b82f6";
-              case "completed":
-                return "#10b981";
-              case "failed":
-                return "#ef4444";
-              case "cancelled":
-                return "#f97316";
-              default:
-                return "#6b7280";
-            }
-          }}
-          maskColor="rgba(0, 0, 0, 0.1)"
-          position="bottom-right"
-          style={{
-            backgroundColor: "rgba(255, 255, 255, 0.9)",
-            border: "1px solid #e5e7eb",
-            borderRadius: "8px",
-          }}
-        /> */}
+        {viewOptions.showMinimap && (
+          <MiniMap
+            nodeColor={(node: Node) => {
+              const data = node.data as ExecutorNodeData;
+              const state = data?.state;
+              switch (state) {
+                case "running":
+                  return "#3b82f6";
+                case "completed":
+                  return "#10b981";
+                case "failed":
+                  return "#ef4444";
+                case "cancelled":
+                  return "#f97316";
+                default:
+                  return "#6b7280";
+              }
+            }}
+            maskColor="rgba(0, 0, 0, 0.1)"
+            position="bottom-right"
+            style={{
+              backgroundColor: "rgba(255, 255, 255, 0.9)",
+              border: "1px solid #e5e7eb",
+              borderRadius: "8px",
+            }}
+            className="dark:!bg-gray-800/90 dark:!border-gray-600"
+          />
+        )}
+        <WorkflowAnimationHandler
+          nodes={nodes}
+          nodeUpdates={nodeUpdates}
+          isStreaming={isStreaming}
+          animateRun={viewOptions.animateRun}
+        />
+        <ViewOptionsPanel
+          workflowDump={workflowDump}
+          onNodeSelect={onNodeSelect}
+          viewOptions={viewOptions}
+          onToggleViewOption={onToggleViewOption}
+        />
       </ReactFlow>
 
       {/* CSS for custom edge animations and dark theme controls */}

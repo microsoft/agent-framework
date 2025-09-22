@@ -34,7 +34,10 @@ export interface ResponseInputFileParam {
   filename: string;
 }
 
-export type ResponseInputContent = ResponseInputTextParam | ResponseInputImageParam | ResponseInputFileParam;
+export type ResponseInputContent =
+  | ResponseInputTextParam
+  | ResponseInputImageParam
+  | ResponseInputFileParam;
 
 export interface EasyInputMessage {
   type?: "message";
@@ -49,21 +52,21 @@ export type ResponseInputParam = ResponseInputItem[];
 export interface AgentFrameworkExtraBody {
   entity_id: string;
   thread_id?: string;
-  input_data?: Record<string, any>;
+  input_data?: Record<string, unknown>;
 }
 
 // Agent Framework Request - OpenAI ResponseCreateParams with extensions
 export interface AgentFrameworkRequest {
   model: string;
-  input: string | ResponseInputParam;  // Union type matching OpenAI
+  input: string | ResponseInputParam; // Union type matching OpenAI
   stream?: boolean;
 
   // Common OpenAI optional fields
   instructions?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   temperature?: number;
   max_output_tokens?: number;
-  tools?: Record<string, any>[];
+  tools?: Record<string, unknown>[];
 
   // Agent Framework extension - strongly typed
   extra_body?: AgentFrameworkExtraBody;
@@ -235,7 +238,7 @@ export interface AgentThread {
 
 // Workflow events
 export interface WorkflowEvent {
-  type?: string; // Event class name like "WorkflowCompletedEvent", "ExecutorInvokeEvent", etc.
+  type?: string; // Event class name like "WorkflowCompletedEvent", "ExecutorInvokedEvent", etc.
   data?: unknown;
   executor_id?: string; // Present for executor-related events
 }

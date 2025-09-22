@@ -36,7 +36,7 @@ interface ChatState {
   isStreaming: boolean;
 }
 
-type DebugEventHandler = (event: ExtendedResponseStreamEvent) => void;
+type DebugEventHandler = (event: ExtendedResponseStreamEvent | 'clear') => void;
 
 interface AgentViewProps {
   selectedAgent: AgentInfo;
@@ -155,6 +155,27 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       try {
         const threads = await apiClient.getThreads(selectedAgent.id);
         setAvailableThreads(threads);
+
+        // Auto-select the most recent thread if available
+        if (threads.length > 0) {
+          const mostRecentThread = threads[0]; // Assuming threads are sorted by creation date (newest first)
+          setCurrentThread(mostRecentThread);
+
+          // Load messages for the selected thread
+          try {
+            const threadMessages = await apiClient.getThreadMessages(mostRecentThread.id);
+            setChatState({
+              messages: threadMessages,
+              isStreaming: false,
+            });
+          } catch (error) {
+            console.error("Failed to load thread messages:", error);
+            setChatState({
+              messages: [],
+              isStreaming: false,
+            });
+          }
+        }
       } catch (error) {
         console.error("Failed to load threads:", error);
         setAvailableThreads([]);
@@ -404,6 +425,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         // Clear text accumulator for new response
         accumulatedText.current = "";
+
+        // Clear debug panel events for new agent run
+        onDebugEvent('clear');
 
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamAgentExecutionOpenAI(
@@ -699,7 +723,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             ))
           )}
 
-          {chatState.isStreaming && <TypingIndicator />}
+          {chatState.isStreaming && !isSubmitting && <TypingIndicator />}
 
           <div ref={messagesEndRef} />
         </div>
