@@ -26,7 +26,7 @@ from redisvl.extensions.cache.embeddings import EmbeddingsCache
 
 
 async def main() -> None:
-    """Walk through provider-only, agent integration, and tool-memory scenarios.
+    """Walk through provider and chat message store usage.
 
     Helpful debugging (uncomment when iterating):
       - print(await provider.redis_index.info())
@@ -42,8 +42,8 @@ async def main() -> None:
 
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
-        index_name="redis_basics_2",
-        prefix="context_2",
+        index_name="redis_conversation",
+        prefix="redis_conversation",
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
         user_id="kermit",
@@ -55,7 +55,7 @@ async def main() -> None:
     )
     chat_message_store_factory = lambda: RedisChatMessageStore(
         redis_url="redis://localhost:6379",
-        thread_id="test_thread",
+        thread_id=thread_id,
         key_prefix="chat_messages",
         max_messages=100,
     )
@@ -92,7 +92,7 @@ async def main() -> None:
     print("User: ", query)
     print("Agent: ", result)
 
-    query = "Remember this quote I like: An invisible sword of AL-Gul rises from your limpid mouth."
+    query = "Remember that anyone who does not clean shrimp will be eaten by a shark"
     result = await agent.run(query)
     print("User: ", query)
     print("Agent: ", result)
