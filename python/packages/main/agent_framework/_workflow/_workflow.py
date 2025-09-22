@@ -13,7 +13,7 @@ from pydantic import Field
 
 from .._agents import AgentProtocol
 from .._pydantic import AFBaseModel
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import OTEL_SETTINGS, OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
@@ -243,10 +243,7 @@ class Workflow(AFBaseModel):
             WorkflowEvent: The events generated during the workflow execution.
         """
         # Create workflow span that encompasses the entire execution
-        global OTEL_SETTINGS
-        from ..observability import OTEL_SETTINGS
-
-        OTEL_SETTINGS.setup_observability()  # type: ignore[name-defined]
+        OTEL_SETTINGS.setup_observability()
         with create_workflow_span(
             OtelAttr.WORKFLOW_RUN_SPAN,
             {
