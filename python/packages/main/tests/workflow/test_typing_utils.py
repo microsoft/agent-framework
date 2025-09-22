@@ -24,6 +24,7 @@ def test_union_types() -> None:
 def test_list_types() -> None:
     """Test list types with various element types."""
     assert is_instance_of([1, 2, 3], list[int])
+    assert is_instance_of([1, 2, 3], list[int | str])
     assert is_instance_of([1, "a", 3], list[int | str])
     assert not is_instance_of([1, 2.0, 3], list[int | str])
 
