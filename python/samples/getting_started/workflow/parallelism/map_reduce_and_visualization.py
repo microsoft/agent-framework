@@ -61,7 +61,7 @@ class Split(Executor):
 
     def __init__(self, map_executor_ids: list[str], id: str | None = None):
         """Store mapper ids so we can assign non overlapping ranges per mapper."""
-        super().__init__(id)
+        super().__init__(id=id or "split")
         self._map_executor_ids = map_executor_ids
 
     @handler
@@ -145,7 +145,7 @@ class Shuffle(Executor):
 
     def __init__(self, reducer_ids: list[str], id: str | None = None):
         """Remember reducer ids so we can partition work deterministically."""
-        super().__init__(id)
+        super().__init__(id=id or "shuffle")
         self._reducer_ids = reducer_ids
 
     @handler
