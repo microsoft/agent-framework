@@ -1,15 +1,38 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any, Generic, TypeVar
+import logging
+from typing import Any, Generic, TypeVar, cast, get_args
 
 from opentelemetry.propagate import inject
 
-from ._events import WorkflowEvent
+from ._events import (
+    WorkflowEvent,
+    WorkflowEventSource,
+    WorkflowFailedEvent,
+    WorkflowLifecycleEvent,
+    WorkflowStartedEvent,
+    WorkflowStatusEvent,
+    WorkflowWarningEvent,
+)
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 from ._telemetry import workflow_tracer
 
 T_Out = TypeVar("T_Out")
+
+
+logger = logging.getLogger(__name__)
+
+
+_FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
+    tuple[type[WorkflowEvent], ...],
+    tuple(get_args(WorkflowLifecycleEvent))
+    or (
+        WorkflowStartedEvent,
+        WorkflowStatusEvent,
+        WorkflowFailedEvent,
+    ),
+)
 
 
 class WorkflowContext(Generic[T_Out]):
@@ -77,6 +100,16 @@ class WorkflowContext(Generic[T_Out]):
 
     async def add_event(self, event: WorkflowEvent) -> None:
         """Add an event to the workflow context."""
+        if event.origin == WorkflowEventSource.EXECUTOR and isinstance(event, _FRAMEWORK_LIFECYCLE_EVENT_TYPES):
+            event_name = event.__class__.__name__
+            warning_msg = (
+                f"Executor '{self._executor_id}' attempted to emit {event_name}, "
+                "which is reserved for framework lifecycle notifications. The "
+                "event was ignored."
+            )
+            logger.warning(warning_msg)
+            await self._runner_context.add_event(WorkflowWarningEvent(warning_msg))
+            return
         await self._runner_context.add_event(event)
 
     async def get_shared_state(self, key: str) -> Any:
