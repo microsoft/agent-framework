@@ -249,33 +249,74 @@ FINISH_REASON_MAP = {
 # region Telemetry utils
 
 
-def _get_exporters(
-    endpoints: list[str] | None = None,
-    connection_strings: list[str] | None = None,
-    credential: "TokenCredential | None" = None,
-) -> list["LogExporter | SpanExporter | MetricExporter"]:
-    """Create the different exporters based on the connection string and endpoint."""
-    from azure.monitor.opentelemetry.exporter import (
-        AzureMonitorLogExporter,
-        AzureMonitorMetricExporter,
-        AzureMonitorTraceExporter,
-    )
+def _get_otlp_exporters(endpoints: list[str]) -> list["LogExporter | SpanExporter | MetricExporter"]:
+    """Create standard OTLP Exporters for the supplied endpoints."""
     from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
     exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
-    if endpoints:
-        for endpoint in endpoints:
-            exporters.append(OTLPLogExporter(endpoint=endpoint))
-            exporters.append(OTLPSpanExporter(endpoint=endpoint))
-            exporters.append(OTLPMetricExporter(endpoint=endpoint))
-    if connection_strings:
-        for conn_string in connection_strings:
-            exporters.append(AzureMonitorLogExporter(connection_string=conn_string, credential=credential))
-            exporters.append(AzureMonitorTraceExporter(connection_string=conn_string, credential=credential))
-            exporters.append(AzureMonitorMetricExporter(connection_string=conn_string, credential=credential))
+
+    for endpoint in endpoints:
+        exporters.append(OTLPLogExporter(endpoint=endpoint))
+        exporters.append(OTLPSpanExporter(endpoint=endpoint))
+        exporters.append(OTLPMetricExporter(endpoint=endpoint))
     return exporters
+
+
+def _get_azure_monitor_exporters(
+    connection_strings: list[str],
+    credential: "TokenCredential | None" = None,
+) -> list["LogExporter | SpanExporter | MetricExporter"]:
+    """Create Azure Monitor Exporters, based on the connection strings and optionally the credential."""
+    from azure.monitor.opentelemetry.exporter import (
+        AzureMonitorLogExporter,
+        AzureMonitorMetricExporter,
+        AzureMonitorTraceExporter,
+    )
+
+    exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
+    for conn_string in connection_strings:
+        exporters.append(AzureMonitorLogExporter(connection_string=conn_string, credential=credential))
+        exporters.append(AzureMonitorTraceExporter(connection_string=conn_string, credential=credential))
+        exporters.append(AzureMonitorMetricExporter(connection_string=conn_string, credential=credential))
+    return exporters
+
+
+def get_exporters(
+    otlp_endpoints: list[str] | None = None,
+    connection_strings: list[str] | None = None,
+    exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
+    credential: "TokenCredential | None" = None,
+) -> list["LogExporter | SpanExporter | MetricExporter"]:
+    """Add additional exporters to the existing configuration.
+
+    If you supply exporters, those will be added to the relevant providers directly.
+    If you supply endpoints or connection strings, new exporters will be created and added.
+    OTLP_endpoints will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
+    Connection_strings will be used to create AzureMonitorExporters.
+
+    If a endpoint or connection string is already configured, through the environment variables, it will be skipped.
+    If you call this method twice with the same additional endpoint or connection string, it will be added twice.
+
+    Args:
+        otlp_endpoints: A list of OpenTelemetry Protocol (OTLP) endpoints. Default is None.
+        connection_strings: A list of Azure Monitor connection strings. Default is None.
+        exporters: A list of exporters, for logs, metrics or spans, or any combination. Default is None.
+        credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
+    """
+    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = exporters or []
+    if otlp_endpoints:
+        new_exporters.extend(_get_otlp_exporters(endpoints=otlp_endpoints))
+
+    if connection_strings:
+        new_exporters.extend(
+            _get_azure_monitor_exporters(
+                connection_strings=connection_strings,
+                credential=credential,
+            )
+        )
+    return new_exporters
 
 
 def _create_resource() -> "Resource":
@@ -360,35 +401,53 @@ class OtelSettings(AFBaseSettings):
         """Get the resource."""
         return self._resource
 
-    def setup_observability(self, credential: "TokenCredential | None" = None) -> None:
+    @resource.setter
+    def resource(self, value: "Resource") -> None:
+        """Set the resource."""
+        self._resource = value
+
+    def setup_observability(
+        self,
+        credential: "TokenCredential | None" = None,
+        additional_exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
+        force_setup: bool = False,
+    ) -> None:
         """Setup telemetry based on the settings.
 
         If both connection_string and otlp_endpoint both will be used.
 
         Args:
             credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
+            additional_exporters: A list of additional exporters to add to the configuration. Default is None.
+            force_setup: Force the setup to be executed even if it has already been executed. Default is False.
         """
-        if (not self.ENABLED and not self.WORKFLOW_ENABLED) or self._executed_setup:
+        if (not self.ENABLED and not self.WORKFLOW_ENABLED) or (self._executed_setup and not force_setup):
             return
 
-        if not self.application_insights_connection_string and not self.otlp_endpoint:
+        if not self.application_insights_connection_string and not self.otlp_endpoint and not additional_exporters:
             logger.warning("Telemetry is enabled but no connection string or OTLP endpoint is provided.")
 
         global_logger = logging.getLogger()
         global_logger.setLevel(logging.NOTSET)
-        exporters = _get_exporters(
-            endpoints=self.otlp_endpoint
-            if self.otlp_endpoint is None or isinstance(self.otlp_endpoint, list)
-            else [self.otlp_endpoint],
-            connection_strings=(
-                self.application_insights_connection_string
-                if self.application_insights_connection_string is None
-                or isinstance(self.application_insights_connection_string, list)
-                else [self.application_insights_connection_string]
-            ),
-            credential=credential,
-        )
-        self._configure_tracing(exporters)
+        exporters: list["LogExporter | SpanExporter | MetricExporter"] = additional_exporters or []
+        if self.otlp_endpoint:
+            exporters.extend(
+                _get_otlp_exporters(
+                    self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
+                )
+            )
+        if self.application_insights_connection_string:
+            exporters.extend(
+                _get_azure_monitor_exporters(
+                    connection_strings=(
+                        self.application_insights_connection_string
+                        if isinstance(self.application_insights_connection_string, list)
+                        else [self.application_insights_connection_string]
+                    ),
+                    credential=credential,
+                )
+            )
+        self.configure_tracing(exporters)
         if self.application_insights_connection_string and self.application_insights_live_metrics:
             from azure.monitor.opentelemetry import configure_azure_monitor
 
@@ -410,7 +469,7 @@ class OtelSettings(AFBaseSettings):
                     disable_tracing=True,
                 )
 
-    def _check_endpoint_already_configured(self, otlp_endpoint: str) -> bool:
+    def check_endpoint_already_configured(self, otlp_endpoint: str) -> bool:
         """Check if the endpoint is already configured.
 
         Returns:
@@ -422,7 +481,7 @@ class OtelSettings(AFBaseSettings):
             self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
         )
 
-    def _check_connection_string_already_configured(self, connection_string: str) -> bool:
+    def check_connection_string_already_configured(self, connection_string: str) -> bool:
         """Check if the connection string is already configured.
 
         Returns:
@@ -436,53 +495,8 @@ class OtelSettings(AFBaseSettings):
             else [self.application_insights_connection_string]
         )
 
-    def add_exporters(
-        self,
-        otlp_endpoints: list[str] | None = None,
-        connection_strings: list[str] | None = None,
-        exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
-        credential: "TokenCredential | None" = None,
-    ) -> None:
-        """Add additional exporters to the existing configuration.
-
-        If you supply exporters, those will be added to the relevant providers directly.
-        If you supply endpoints or connection strings, new exporters will be created and added.
-        OTLP_endpoints will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
-        Connection_strings will be used to create AzureMonitorExporters.
-
-        If a endpoint or connection string is already configured, through the environment variables, it will be skipped.
-        If you call this method twice with the same additional endpoint or connection string, it will be added twice.
-
-        Args:
-            otlp_endpoints: A list of OpenTelemetry Protocol (OTLP) endpoints. Default is None.
-            connection_strings: A list of Azure Monitor connection strings. Default is None.
-            exporters: A list of exporters, for logs, metrics or spans, or any combination. Default is None.
-            credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
-        """
-        new_endpoints: list[str] = []
-        if otlp_endpoints is not None:
-            for endpoint in otlp_endpoints:
-                if self._check_endpoint_already_configured(endpoint):
-                    logger.warning(f"OTLP endpoint {endpoint} is already configured, skipping.")
-                else:
-                    new_endpoints.append(endpoint)
-
-        new_connection_strings: list[str] = []
-        if connection_strings is not None:
-            for conn_string in connection_strings:
-                if self._check_connection_string_already_configured(conn_string):
-                    logger.warning(f"Connection string {conn_string} is already configured, skipping.")
-                else:
-                    new_connection_strings.append(conn_string)
-
-        new_exporters = _get_exporters(
-            endpoints=new_endpoints,
-            connection_strings=new_connection_strings,
-            credential=credential,
-        )
-        self._configure_tracing([*(exporters if exporters else []), *new_exporters])
-
-    def _configure_tracing(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
+    def configure_tracing(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
+        """Configure tracing, logging, events and metrics with the provided exporters."""
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.sdk._events import EventLoggerProvider
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
@@ -655,15 +669,30 @@ def setup_observability(
     if enable_live_metrics is not None:
         OTEL_SETTINGS.application_insights_live_metrics = enable_live_metrics
     # Run the initial setup, which will create the providers, and add env setting exporters
-    OTEL_SETTINGS.setup_observability(credential=credential)
+    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
+    if OTEL_SETTINGS.ENABLED and (otlp_endpoint or application_insights_connection_string or exporters):
+        # check if endpoints or connection strings are already configured
+        if otlp_endpoint:
+            otlp_endpoint = [
+                endpoint for endpoint in otlp_endpoint if OTEL_SETTINGS.check_endpoint_already_configured(endpoint)
+            ]
+        if application_insights_connection_string:
+            application_insights_connection_string = [
+                conn_str
+                for conn_str in application_insights_connection_string
+                if OTEL_SETTINGS.check_connection_string_already_configured(conn_str)
+            ]
+        if otlp_endpoint or application_insights_connection_string or exporters:
+            new_exporters = get_exporters(
+                otlp_endpoints=otlp_endpoint,
+                connection_strings=application_insights_connection_string,
+                exporters=exporters,
+                credential=credential,
+            )
+    OTEL_SETTINGS.setup_observability(
+        credential=credential, additional_exporters=new_exporters, force_setup=bool(new_exporters)
+    )
     # Add any additional exporters
-    if otlp_endpoint or application_insights_connection_string or exporters:
-        OTEL_SETTINGS.add_exporters(
-            credential=credential,
-            otlp_endpoints=otlp_endpoint,
-            exporters=exporters,
-            connection_strings=application_insights_connection_string,
-        )
 
 
 # region Chat Client Telemetry
