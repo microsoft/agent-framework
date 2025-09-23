@@ -21,8 +21,7 @@
   </ItemGroup>
   
   <ItemGroup>
-    <ProjectReference Include="C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\Microsoft.Agents.Workflows.Declarative.csproj" />
-    <!--<ProjectReference Include="..\..\..\..\src\Microsoft.Agents.Workflows.Declarative\Microsoft.Agents.Workflows.Declarative.csproj" /> // %%% DYNAMIC PATH -->
+    <ProjectReference Include="{PROJECTPATH}" />
   </ItemGroup>
 
 </Project>

@@ -65,10 +65,11 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     private void BuildWorkflow(string workflowPath)
     {
         string projectPath = Path.Combine("Projects", Path.GetFileNameWithoutExtension(workflowPath) + $"{DateTime.UtcNow:YYMMdd-HHmmss-fff}");
-
+        string referencePath = Path.Combine(GetRepoFolder(), "dotnet/src/Microsoft.Agents.Workflows.Declarative/Microsoft.Agents.Workflows.Declarative.csproj");
         DirectoryInfo projectDirectory = Directory.CreateDirectory(Path.GetFullPath(projectPath));
         File.Copy(Path.GetFullPath(workflowPath), Path.Combine(projectDirectory.FullName, "Workflow.cs"));
-        File.Copy(Path.GetFullPath("Workflows/TestProject.csproj"), Path.Combine(projectDirectory.FullName, "TestProject.csproj"));
+        string projectText = File.ReadAllText(Path.GetFullPath("Workflows/TestProject.csproj"));
+        File.WriteAllText(Path.Combine(projectDirectory.FullName, "TestProject.csproj"), projectText.Replace("{PROJECTPATH}", referencePath));
         ProcessStartInfo startInfo =
             new()
             {
@@ -87,5 +88,23 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         buildProcess.WaitForExit();
         this.Output.WriteLine(buildProcess.StandardOutput.ReadToEnd());
         Assert.Equal(0, buildProcess.ExitCode);
+
+        static string GetRepoFolder()
+        {
+            DirectoryInfo? current = new(Directory.GetCurrentDirectory());
+
+            while (current is not null)
+            {
+                if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+                {
+                    return current.FullName;
+                }
+
+                current = current.Parent;
+            }
+
+            Assert.Fail("Could not find repository root folder.");
+            return string.Empty;
+        }
     }
 }
