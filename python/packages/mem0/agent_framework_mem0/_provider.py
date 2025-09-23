@@ -139,10 +139,11 @@ class Mem0Provider(ContextProvider):
         )
 
         # Depending on the API version, the response schema varies slightly
+        memories: list[dict[str, Any]]
         if isinstance(search_response, dict) and "results" in search_response:
-            memories: list[dict[str, Any]] = search_response["results"]  # type: ignore[misc]
+            memories = search_response["results"]  # type: ignore[misc]
         else:
-            memories: list[dict[str, Any]] = search_response  # type: ignore[misc]
+            memories = search_response  # type: ignore[misc]
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
         content = TextContent(f"{self.context_prompt}\n{line_separated_memories}") if line_separated_memories else None
