@@ -28,7 +28,7 @@ public sealed class FunctionCallMiddlewareAgentTests
         static Task CallbackAsync(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next) => next(context);
 
         // Act
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, CallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, CallbackAsync);
 
         // Assert
         Assert.NotNull(middleware);
@@ -47,7 +47,7 @@ public sealed class FunctionCallMiddlewareAgentTests
         static Task CallbackAsync(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next) => next(context);
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new FunctionCallMiddlewareAgent(null!, CallbackAsync));
+        Assert.Throws<ArgumentNullException>(() => new FunctionInvocationDelegatingAgent(null!, CallbackAsync));
     }
     #endregion
 
@@ -80,7 +80,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             executionOrder.Add("Middleware-Post");
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -134,7 +134,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             executionOrder.Add($"Middleware-Post-{context.Function.Name}");
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [function1, function2] });
@@ -175,7 +175,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             await next(context);
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -214,7 +214,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             throw expectedException;
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act & Assert
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -254,7 +254,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             }
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -289,7 +289,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             context.FunctionResult = ModifiedResult;
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -361,8 +361,8 @@ public sealed class FunctionCallMiddlewareAgentTests
         }
 
         // Create nested middleware chain
-        var firstMiddleware = new FunctionCallMiddlewareAgent(innerAgent, FirstMiddlewareAsync);
-        var secondMiddleware = new FunctionCallMiddlewareAgent(firstMiddleware, SecondMiddlewareAsync);
+        var firstMiddleware = new FunctionInvocationDelegatingAgent(innerAgent, FirstMiddlewareAsync);
+        var secondMiddleware = new FunctionInvocationDelegatingAgent(firstMiddleware, SecondMiddlewareAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -408,8 +408,8 @@ public sealed class FunctionCallMiddlewareAgentTests
         }
 
         // Create middleware chain: Function -> Running -> Inner
-        var runningMiddleware = new RunningMiddlewareAgent(innerAgent, RunningMiddlewareCallbackAsync);
-        var functionMiddleware = new FunctionCallMiddlewareAgent(runningMiddleware, FunctionMiddlewareCallbackAsync);
+        var runningMiddleware = new RunDelegatingAgent(innerAgent, RunningMiddlewareCallbackAsync);
+        var functionMiddleware = new FunctionInvocationDelegatingAgent(runningMiddleware, FunctionMiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -467,7 +467,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             executionOrder.Add("Middleware-Post");
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -508,7 +508,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             await next(context);
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         await middleware.RunAsync(messages, null, null, CancellationToken.None);
@@ -540,7 +540,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             await next(context);
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
@@ -577,7 +577,7 @@ public sealed class FunctionCallMiddlewareAgentTests
             return Task.CompletedTask;
         }
 
-        var middleware = new FunctionCallMiddlewareAgent(innerAgent, MiddlewareCallbackAsync);
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });

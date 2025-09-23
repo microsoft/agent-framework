@@ -13,15 +13,15 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
-/// Internal agent decorator that adds function invocation callback middleware logic.
+/// Internal agent decorator that adds run middleware logic.
 /// </summary>
-internal sealed class RunningMiddlewareAgent : DelegatingAIAgent
+internal sealed class RunDelegatingAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentRunContext, Func<AgentRunContext, Task>, Task> _callbackFunc;
+    private readonly Func<AgentRunContext, Func<AgentRunContext, Task>, Task> _delegateFunc;
 
-    internal RunningMiddlewareAgent(AIAgent innerAgent, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> callbackFunc) : base(innerAgent)
+    internal RunDelegatingAgent(AIAgent innerAgent, Func<AgentRunContext, Func<AgentRunContext, Task>, Task> delegateFunc) : base(innerAgent)
     {
-        this._callbackFunc = Throw.IfNull(callbackFunc);
+        this._delegateFunc = Throw.IfNull(delegateFunc);
     }
 
     /// <inheritdoc/>
@@ -36,7 +36,7 @@ internal sealed class RunningMiddlewareAgent : DelegatingAIAgent
             ctx.SetRunResponse(response);
         }
 
-        await this._callbackFunc(context, CoreLogicAsync).ConfigureAwait(false);
+        await this._delegateFunc(context, CoreLogicAsync).ConfigureAwait(false);
 
         return context.RunResponse!;
     }
@@ -54,7 +54,7 @@ internal sealed class RunningMiddlewareAgent : DelegatingAIAgent
             return Task.CompletedTask;
         }
 
-        await this._callbackFunc(context, CoreLogicAsync).ConfigureAwait(false);
+        await this._delegateFunc(context, CoreLogicAsync).ConfigureAwait(false);
 
         await foreach (var update in context.RunStreamingResponse!.ConfigureAwait(false))
         {

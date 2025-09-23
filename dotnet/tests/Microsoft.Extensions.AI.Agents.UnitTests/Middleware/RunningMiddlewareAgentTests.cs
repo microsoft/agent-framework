@@ -38,7 +38,7 @@ public sealed class RunningMiddlewareAgentTests
             .ReturnsAsync(expectedResponse);
 
         AgentRunContext? capturedContext = null;
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) =>
         {
             capturedContext = context;
             return next(context);
@@ -82,7 +82,7 @@ public sealed class RunningMiddlewareAgentTests
             .Returns(expectedUpdates.ToAsyncEnumerable());
 
         AgentRunContext? capturedContext = null;
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) =>
         {
             capturedContext = context;
             return next(context);
@@ -123,7 +123,7 @@ public sealed class RunningMiddlewareAgentTests
             .ReturnsAsync(expectedResponse);
 
         AgentRunContext? capturedContext = null;
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) =>
         {
             capturedContext = context;
             return next(context);
@@ -170,7 +170,7 @@ public sealed class RunningMiddlewareAgentTests
                 (messages, thread, options, ct) => capturedMessages = messages)
             .ReturnsAsync(expectedResponse);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) =>
         {
             // Modify messages before calling next
             context.Messages.Clear();
@@ -214,7 +214,7 @@ public sealed class RunningMiddlewareAgentTests
                 (messages, thread, options, ct) => capturedThread = thread)
             .ReturnsAsync(expectedResponse);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) =>
         {
             // Note: Thread property is read-only, so we test that the original thread is passed through
             // In a real scenario, middleware would modify thread contents, not replace the reference
@@ -251,7 +251,7 @@ public sealed class RunningMiddlewareAgentTests
                 (messages, thread, options, ct) => capturedOptions = options)
             .ReturnsAsync(expectedResponse);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) =>
         {
             // Modify options before calling next
             context.Options = modifiedOptions;
@@ -288,7 +288,7 @@ public sealed class RunningMiddlewareAgentTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(originalResponse);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             await next(context);
             // Modify response after inner agent execution
@@ -328,7 +328,7 @@ public sealed class RunningMiddlewareAgentTests
                 It.IsAny<CancellationToken>()))
             .Returns(originalUpdates.ToAsyncEnumerable());
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             await next(context);
             // Modify streaming response after inner agent execution
@@ -372,7 +372,7 @@ public sealed class RunningMiddlewareAgentTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(originalResponse);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             await next(context);
             // Completely replace the response
@@ -413,21 +413,21 @@ public sealed class RunningMiddlewareAgentTests
             .ReturnsAsync(response);
 
         // Create middleware chain: Middleware1 -> Middleware2 -> Middleware3 -> InnerAgent
-        var middleware3 = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware3 = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             executionOrder.Add("Middleware3-Pre");
             await next(context);
             executionOrder.Add("Middleware3-Post");
         });
 
-        var middleware2 = new RunningMiddlewareAgent(middleware3, async (context, next) =>
+        var middleware2 = new RunDelegatingAgent(middleware3, async (context, next) =>
         {
             executionOrder.Add("Middleware2-Pre");
             await next(context);
             executionOrder.Add("Middleware2-Post");
         });
 
-        var middleware1 = new RunningMiddlewareAgent(middleware2, async (context, next) =>
+        var middleware1 = new RunDelegatingAgent(middleware2, async (context, next) =>
         {
             executionOrder.Add("Middleware1-Pre");
             await next(context);
@@ -473,14 +473,14 @@ public sealed class RunningMiddlewareAgentTests
             .ReturnsAsync(response);
 
         // Middleware1: Adds a system message
-        var middleware2 = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware2 = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             context.Messages.Insert(0, new ChatMessage(ChatRole.System, "System message"));
             await next(context);
         });
 
         // Middleware1: Adds a user message
-        var middleware1 = new RunningMiddlewareAgent(middleware2, async (context, next) =>
+        var middleware1 = new RunDelegatingAgent(middleware2, async (context, next) =>
         {
             context.Messages.Add(new ChatMessage(ChatRole.User, "Added by middleware1"));
             await next(context);
@@ -511,7 +511,7 @@ public sealed class RunningMiddlewareAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
         var expectedException = new InvalidOperationException("Pre-invocation error");
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) => throw expectedException);
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) => throw expectedException);
 
         // Act & Assert
         var actualException = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -546,7 +546,7 @@ public sealed class RunningMiddlewareAgentTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             await next(context);
             throw expectedException;
@@ -585,7 +585,7 @@ public sealed class RunningMiddlewareAgentTests
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(innerException);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             try
             {
@@ -625,7 +625,7 @@ public sealed class RunningMiddlewareAgentTests
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(innerException);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             try
             {
@@ -658,7 +658,7 @@ public sealed class RunningMiddlewareAgentTests
         var expectedException = new InvalidOperationException("Middleware2 error");
         var cleanupExecuted = new List<string>();
 
-        var middleware2 = new RunningMiddlewareAgent(mockInnerAgent.Object, (context, next) =>
+        var middleware2 = new RunDelegatingAgent(mockInnerAgent.Object, (context, next) =>
         {
             try
             {
@@ -670,7 +670,7 @@ public sealed class RunningMiddlewareAgentTests
             }
         });
 
-        var middleware1 = new RunningMiddlewareAgent(middleware2, async (context, next) =>
+        var middleware1 = new RunDelegatingAgent(middleware2, async (context, next) =>
         {
             try
             {
@@ -711,14 +711,14 @@ public sealed class RunningMiddlewareAgentTests
             .ThrowsAsync(innerException);
 
         // Middleware2: Throws an exception
-        var middleware2 = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware2 = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             await next(context); // This will throw
             throw new InvalidOperationException("Additional error from middleware2");
         });
 
         // Middleware1: Catches and handles all exceptions
-        var middleware1 = new RunningMiddlewareAgent(middleware2, async (context, next) =>
+        var middleware1 = new RunDelegatingAgent(middleware2, async (context, next) =>
         {
             try
             {
@@ -766,7 +766,7 @@ public sealed class RunningMiddlewareAgentTests
                 (messages, thread, options, ct) => capturedToken = ct)
             .ReturnsAsync(response);
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             // Verify the cancellation token in context matches the expected token
             Assert.Equal(expectedToken, context.CancellationToken);
@@ -809,7 +809,7 @@ public sealed class RunningMiddlewareAgentTests
                 (messages, thread, options, ct) => capturedMessages = messages)
             .Returns(originalUpdates.ToAsyncEnumerable());
 
-        var middleware = new RunningMiddlewareAgent(mockInnerAgent.Object, async (context, next) =>
+        var middleware = new RunDelegatingAgent(mockInnerAgent.Object, async (context, next) =>
         {
             // Verify streaming context
             Assert.True(context.IsStreaming);

@@ -7,15 +7,17 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
-/// Represents the context for a callback during the invocation of an agent function.
+/// Represents the invocation context of a <see cref="AIFunction"/> during an Agent run operation.
 /// </summary>
 /// <remarks>This context provides information about the agent and the function invocation, as well as a
 /// cancellation token to monitor for cancellation requests during the callback execution. It is intended for use within
 /// the lifecycle of an agent function invocation.</remarks>
-public class AgentFunctionInvocationContext : AgentMiddlewareContext
+public sealed class AgentFunctionInvocationContext
 {
-    internal AgentFunctionInvocationContext(AIAgent agent, FunctionInvocationContext functionInvocationContext, CancellationToken cancellationToken) : base(agent, cancellationToken)
+    internal AgentFunctionInvocationContext(AIAgent agent, FunctionInvocationContext functionInvocationContext, CancellationToken cancellationToken)
     {
+        this.Agent = Throw.IfNull(agent);
+        this.CancellationToken = cancellationToken;
         this._functionInvocationContext = functionInvocationContext;
     }
 
@@ -24,6 +26,16 @@ public class AgentFunctionInvocationContext : AgentMiddlewareContext
     /// <see cref="FunctionInvocationContext"/> start with this as the target function.
     /// </summary>
     private readonly FunctionInvocationContext _functionInvocationContext;
+
+    /// <summary>
+    /// Gets the agent instance associated with this context.
+    /// </summary>
+    public AIAgent Agent { get; }
+
+    /// <summary>
+    /// Gets the cancellation token for the operation.
+    /// </summary>
+    public CancellationToken CancellationToken { get; }
 
     /// <summary>Gets or sets the AI function to be invoked.</summary>
     public AIFunction Function

@@ -14,7 +14,7 @@ namespace Microsoft.Extensions.AI.Agents;
 public static class AIAgentBuilderExtensions
 {
     /// <summary>
-    /// Adds a middleware to the AI agent pipeline that intercepts and processes agent running invocation operations.
+    /// Adds a middleware to the AI agent pipeline that intercepts and processes agent runs.
     /// </summary>
     /// <param name="builder">The <see cref="AIAgentBuilder"/> to which the middleware is added.</param>
     /// <param name="callback">A delegate that processes agent running invocations. The delegate takes the current <see
@@ -29,7 +29,7 @@ public static class AIAgentBuilderExtensions
     }
 
     /// <summary>
-    /// Adds a middleware to the AI agent pipeline that intercepts and processes agent running invocation operations.
+    /// Adds a middleware to the AI agent pipeline that intercepts and processes agent runs.
     /// </summary>
     /// <param name="builder">The <see cref="AIAgentBuilder"/> to which the middleware is added.</param>
     /// <param name="callback">A delegate that processes agent running invocations. The delegate takes the current <see
@@ -40,7 +40,7 @@ public static class AIAgentBuilderExtensions
     {
         _ = Throw.IfNull(builder);
         _ = Throw.IfNull(callback);
-        return builder.Use((innerAgent, _) => new RunningMiddlewareAgent(innerAgent, callback));
+        return builder.Use((innerAgent, _) => new RunDelegatingAgent(innerAgent, callback));
     }
 
     /// <summary>
@@ -60,10 +60,10 @@ public static class AIAgentBuilderExtensions
             // Function calling requires a ChatClientAgent inner agent.
             if (innerAgent.GetService<ChatClientAgent>() is null)
             {
-                throw new InvalidOperationException($"The {nameof(FunctionCallMiddlewareAgent)} can only be used with agents that derives or decorates a {nameof(ChatClientAgent)}.");
+                throw new InvalidOperationException($"The {nameof(FunctionInvocationDelegatingAgent)} can only be used with agents that derives or decorates a {nameof(ChatClientAgent)}.");
             }
 
-            return new FunctionCallMiddlewareAgent(innerAgent, callback);
+            return new FunctionInvocationDelegatingAgent(innerAgent, callback);
         });
     }
 
@@ -84,10 +84,10 @@ public static class AIAgentBuilderExtensions
             // Function calling requires a ChatClientAgent inner agent.
             if (innerAgent.GetService<ChatClientAgent>() is null)
             {
-                throw new InvalidOperationException($"The {nameof(FunctionCallMiddlewareAgent)} can only be used with agents that are decorations of a {nameof(ChatClientAgent)}.");
+                throw new InvalidOperationException($"The {nameof(FunctionInvocationDelegatingAgent)} can only be used with agents that are decorations of a {nameof(ChatClientAgent)}.");
             }
 
-            return new FunctionCallMiddlewareAgent(innerAgent, callback);
+            return new FunctionInvocationDelegatingAgent(innerAgent, callback);
         });
     }
 }

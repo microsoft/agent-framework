@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Provides context information for agent run middleware.
 /// </summary>
-public sealed class AgentRunContext : AgentMiddlewareContext
+public sealed class AgentRunContext
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentRunContext"/> class.
@@ -21,20 +21,31 @@ public sealed class AgentRunContext : AgentMiddlewareContext
     /// <param name="options">The options for the agent invocation.</param>
     /// <param name="isStreaming">A value indicating whether this is a streaming invocation.</param>
     /// <param name="cancellationToken">The cancellation token for the operation.</param>
-    public AgentRunContext(
+    internal AgentRunContext(
         AIAgent agent,
         IEnumerable<ChatMessage> messages,
         AgentThread? thread,
         AgentRunOptions? options,
         bool isStreaming,
         CancellationToken cancellationToken)
-        : base(agent, cancellationToken)
     {
+        this.Agent = Throw.IfNull(agent);
+        this.CancellationToken = cancellationToken;
         this.Messages = Throw.IfNull(messages).ToList();
         this.Thread = thread;
         this.Options = options;
         this.IsStreaming = isStreaming;
     }
+
+    /// <summary>
+    /// Gets the agent instance associated with this context.
+    /// </summary>
+    public AIAgent Agent { get; }
+
+    /// <summary>
+    /// Gets the cancellation token for the operation.
+    /// </summary>
+    public CancellationToken CancellationToken { get; }
 
     /// <summary>
     /// Gets the messages being passed to the agent.

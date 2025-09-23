@@ -12,15 +12,15 @@ using System.Threading.Tasks;
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
-/// Internal agent decorator that adds function invocation callback middleware logic.
+/// Internal agent decorator that adds function invocation middleware logic.
 /// </summary>
-internal sealed class FunctionCallMiddlewareAgent : DelegatingAIAgent
+internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> _callbackFunc;
+    private readonly Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> _delegateFunc;
 
-    internal FunctionCallMiddlewareAgent(AIAgent innerAgent, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> callbackFunc) : base(innerAgent)
+    internal FunctionInvocationDelegatingAgent(AIAgent innerAgent, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> delegateFunc) : base(innerAgent)
     {
-        this._callbackFunc = callbackFunc;
+        this._delegateFunc = delegateFunc;
     }
 
     public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -53,8 +53,8 @@ internal sealed class FunctionCallMiddlewareAgent : DelegatingAIAgent
             IList<AITool>? LocalTransformer(IList<AITool>? tools)
                 => tools?.Select(tool => tool is AIFunction aiFunction
                     ? aiFunction is ApprovalRequiredAIFunction approvalRequiredAiFunction
-                    ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._callbackFunc))
-                    : new MiddlewareEnabledFunction(this, aiFunction, this._callbackFunc)
+                    ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._delegateFunc))
+                    : new MiddlewareEnabledFunction(this, aiFunction, this._delegateFunc)
                     : tool)
                 .ToList();
         }

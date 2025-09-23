@@ -13,7 +13,7 @@ namespace Microsoft.Extensions.AI.Agents.UnitTests.Middleware;
 /// <summary>
 /// Unit tests for AIAgentBuilderExtensions middleware functionality.
 /// </summary>
-public sealed class AIAgentBuilderExtensionsTests
+public sealed class AIAgentBuilderRunExtensionsTests
 {
     #region UseRunningContext Tests
 
@@ -84,7 +84,7 @@ public sealed class AIAgentBuilderExtensionsTests
         var result = builder.UseRunningContext(callbackAsync).Build();
 
         // Assert
-        Assert.IsType<RunningMiddlewareAgent>(result);
+        Assert.IsType<RunDelegatingAgent>(result);
 
         // Verify the callback is properly set by checking if it gets executed
         // This is an indirect test since RunningMiddlewareAgent is internal
@@ -259,7 +259,7 @@ public sealed class AIAgentBuilderExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => builder.Use(callbackAsync).Build());
-        Assert.Contains("FunctionCallMiddlewareAgent", exception.Message);
+        Assert.Contains("FunctionInvocationDelegatingAgent", exception.Message);
         Assert.Contains("ChatClientAgent", exception.Message);
     }
 
@@ -302,14 +302,11 @@ public sealed class AIAgentBuilderExtensionsTests
         Assert.NotNull(result);
         // The outermost agent should be a FunctionCallMiddlewareAgent (function middleware added)
         Console.WriteLine($"Result type: {result.GetType().Name}");
-        Assert.IsType<FunctionCallMiddlewareAgent>(result);
+        var functionMiddleware = Assert.IsType<FunctionInvocationDelegatingAgent>(result);
 
         // Verify the middleware chain structure by checking inner agents
-        var functionMiddleware = (FunctionCallMiddlewareAgent)result;
         var innerAgent = GetInnerAgent(functionMiddleware);
-        Assert.IsType<RunningMiddlewareAgent>(innerAgent); // Should be the second RunningMiddleware
-
-        var runningMiddleware = (RunningMiddlewareAgent)innerAgent;
+        var runningMiddleware = Assert.IsType<RunDelegatingAgent>(innerAgent); // Should be the first RunningMiddleware
         var coreAgent = GetInnerAgent(runningMiddleware);
         Assert.IsType<ChatClientAgent>(coreAgent); // Should be the first RunningMiddleware
     }
@@ -354,7 +351,7 @@ public sealed class AIAgentBuilderExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Assert.IsType<FunctionCallMiddlewareAgent>(result);
+        Assert.IsType<FunctionInvocationDelegatingAgent>(result);
     }
 
     #endregion

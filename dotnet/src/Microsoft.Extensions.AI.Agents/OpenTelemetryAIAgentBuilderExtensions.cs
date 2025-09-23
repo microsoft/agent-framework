@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents;
 public static class OpenTelemetryAIAgentBuilderExtensions
 {
     /// <summary>
-    /// Adds OpenTelemetry support to the agent pipeline, following the OpenTelemetry Semantic Conventions for Generative AI systems.
+    /// Adds OpenTelemetry support to the agent pipeline for agent runs, following the OpenTelemetry Semantic Conventions for Generative AI systems.
     /// </summary>
     /// <remarks>
     /// The draft specification this follows is available at <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/" />.

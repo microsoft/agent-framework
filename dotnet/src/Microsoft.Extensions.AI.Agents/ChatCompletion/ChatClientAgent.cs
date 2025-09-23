@@ -169,9 +169,9 @@ public sealed class ChatClientAgent : AIAgent
     /// instance may differ from the input <paramref name="chatClient"/>.</returns>
     private static IChatClient ApplyRunOptionsTransformations(AgentRunOptions? options, ChatOptions? chatOptions, IChatClient chatClient)
     {
-        if (chatOptions is not null && options is ChatClientAgentRunOptions agentChatOptions)
+        if (options is ChatClientAgentRunOptions agentChatOptions)
         {
-            if (agentChatOptions.AIToolsTransformer is not null)
+            if (chatOptions?.Tools is { Count: > 0 } && agentChatOptions.AIToolsTransformer is not null)
             {
                 chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
             }
