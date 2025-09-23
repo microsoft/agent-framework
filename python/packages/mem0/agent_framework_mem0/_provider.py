@@ -6,7 +6,7 @@ from typing import Any
 
 from agent_framework import ChatMessage, Context, ContextProvider, TextContent
 from agent_framework.exceptions import ServiceInitializationError
-from mem0 import AsyncMemoryClient
+from mem0 import AsyncMemory, AsyncMemoryClient
 from pydantic import PrivateAttr
 
 if sys.version_info >= (3, 11):
@@ -16,7 +16,7 @@ else:
 
 
 class Mem0Provider(ContextProvider):
-    mem0_client: AsyncMemoryClient
+    mem0_client: AsyncMemory | AsyncMemoryClient
     api_key: str | None = None
     application_id: str | None = None
     agent_id: str | None = None
@@ -36,7 +36,7 @@ class Mem0Provider(ContextProvider):
         user_id: str | None = None,
         scope_to_per_operation_thread_id: bool = False,
         context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
-        mem0_client: AsyncMemoryClient | None = None,
+        mem0_client: AsyncMemory | AsyncMemoryClient | None = None,
     ) -> None:
         """Initializes a new instance of the Mem0Provider class.
 
@@ -72,13 +72,13 @@ class Mem0Provider(ContextProvider):
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
-        if self.mem0_client:
-            await self.mem0_client.__aenter__()
+        if self.mem0_client and hasattr(self.mem0_client, "__aenter__"):
+            await self.mem0_client.__aenter__()  # type: ignore[misc]
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit."""
-        if self._should_close_client and self.mem0_client:
+        if self._should_close_client and self.mem0_client and hasattr(self.mem0_client, "__aexit__"):
             await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore
 
     async def thread_created(self, thread_id: str | None = None) -> None:
@@ -138,6 +138,9 @@ class Mem0Provider(ContextProvider):
             run_id=self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id,
         )
 
+        # Depending on the API version, the response schema varies slightly
+        if isinstance(memories, dict) and "results" in memories:
+            memories: list[dict[str, Any]] = memories["results"]  # type: ignore[misc]
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
         content = TextContent(f"{self.context_prompt}\n{line_separated_memories}") if line_separated_memories else None
