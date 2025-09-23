@@ -1,7 +1,7 @@
-kind: AdaptiveDialog
-beginDialog:
+kind: Workflow
+trigger:
 
-  kind: OnActivity
+  kind: OnConversationStart
   id: workflow_test
   actions:
 

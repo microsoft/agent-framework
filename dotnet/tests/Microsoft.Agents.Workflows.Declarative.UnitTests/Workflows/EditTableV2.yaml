@@ -1,13 +1,15 @@
-kind: AdaptiveDialog
-beginDialog:
-  kind: OnActivity
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
   id: my_workflow
-  type: Message
   actions:
+
     - kind: SetVariable
       id: set_var
       variable: Topic.MyTable
       value: =[{id: 3}]
+
     - kind: EditTableV2
       id: edit_var
       itemsVariable: Topic.MyTable
