@@ -288,6 +288,7 @@
     <Project Path="tests/Microsoft.Agents.Workflows.UnitTests/Microsoft.Agents.Workflows.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.A2A.UnitTests/Microsoft.Extensions.AI.Agents.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests/Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Extensions.AI.Agents.AzureAI.UnitTests/Microsoft.Extensions.AI.Agents.AzureAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests/Microsoft.Extensions.AI.Agents.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests/Microsoft.Extensions.AI.Agents.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Extensions.AI.Agents.OpenAI.UnitTests/Microsoft.Extensions.AI.Agents.OpenAI.UnitTests.csproj" />
