@@ -15,6 +15,8 @@ Please begin with the [Foundational](./_Foundational) samples in order. These th
 | [Executors and Edges](./_Foundational/01_ExecutorsAndEdges) | Minimal workflow with basic executors and edges |
 | [Streaming](./_Foundational/02_Streaming) | Extends workflows with event streaming |
 | [Agents](./_Foundational/03_AgentsInWorkflows) | Use agents in workflows |
+| [Agentic Workflow Patterns](./_Foundational/04_AgentWorkflowPatterns) | Demonstrates common agentic workflow patterns |
+| [Multi-Service Workflows](./_Foundational/05_MultiModelService) | Shows using multiple AI services in the same workflow |
 
 Once completed, please proceed to other samples listed below.
 

@@ -1,11 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-using System;
+
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
+using Moq;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 
@@ -27,7 +28,11 @@ internal sealed class MockAgent(int index) : AIAgent
 
     public override string? Description => $"test {index}";
 
-    public override AgentThread GetNewThread() => new() { ConversationId = Guid.NewGuid().ToString() };
+    public override AgentThread GetNewThread()
+        => new Mock<AgentThread>().Object;
+
+    public override AgentThread DeserializeThread(System.Text.Json.JsonElement serializedThread, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+        => new Mock<AgentThread>().Object;
 
     public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {

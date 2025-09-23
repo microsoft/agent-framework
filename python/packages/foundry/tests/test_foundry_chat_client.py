@@ -372,32 +372,32 @@ async def test_foundry_chat_client_async_context_manager(mock_ai_project_client:
     mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
 
 
-def test_foundry_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
+async def test_foundry_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with basic ChatOptions."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
     chat_options = ChatOptions(max_tokens=100, temperature=0.7)
 
-    run_options, tool_results = chat_client._create_run_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = await chat_client._create_run_options(messages, chat_options)  # type: ignore
 
     assert run_options is not None
     assert tool_results is None
 
 
-def test_foundry_chat_client_create_run_options_no_chat_options(mock_ai_project_client: MagicMock) -> None:
+async def test_foundry_chat_client_create_run_options_no_chat_options(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with no ChatOptions."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
-    run_options, tool_results = chat_client._create_run_options(messages, None)  # type: ignore
+    run_options, tool_results = await chat_client._create_run_options(messages, None)  # type: ignore
 
     assert run_options is not None
     assert tool_results is None
 
 
-def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_project_client: MagicMock) -> None:
+async def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with image content."""
 
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
@@ -405,7 +405,7 @@ def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_proje
     image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
-    run_options, _ = chat_client._create_run_options(messages, None)  # type: ignore
+    run_options, _ = await chat_client._create_run_options(messages, None)  # type: ignore
 
     assert "additional_messages" in run_options
     assert len(run_options["additional_messages"]) == 1
@@ -415,13 +415,14 @@ def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_proje
 
 
 def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_ai_project_client: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output with None input."""
+    """Test _convert_required_action_to_tool_output with None input."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output(None)  # type: ignore
+    run_id, tool_outputs, tool_approvals = chat_client._convert_required_action_to_tool_output(None)  # type: ignore
 
     assert run_id is None
     assert tool_outputs is None
+    assert tool_approvals is None
 
 
 async def test_foundry_chat_client_close_client_when_should_close_true(mock_ai_project_client: MagicMock) -> None:
@@ -476,7 +477,7 @@ def test_foundry_chat_client_update_agent_name_with_none_input(mock_ai_project_c
     assert chat_client.agent_name is None
 
 
-def test_foundry_chat_client_create_run_options_with_messages(mock_ai_project_client: MagicMock) -> None:
+async def test_foundry_chat_client_create_run_options_with_messages(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with different message types."""
     chat_client = create_test_foundry_chat_client(mock_ai_project_client)
 
@@ -486,7 +487,7 @@ def test_foundry_chat_client_create_run_options_with_messages(mock_ai_project_cl
         ChatMessage(role=Role.USER, text="Hello"),
     ]
 
-    run_options, _ = chat_client._create_run_options(messages, None)  # type: ignore
+    run_options, _ = await chat_client._create_run_options(messages, None)  # type: ignore
 
     assert "instructions" in run_options
     assert "You are a helpful assistant" in run_options["instructions"]

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Threading;
@@ -33,6 +34,18 @@ public class AIContextProviderTests
         var element = default(JsonElement);
         var actual = provider.DeserializeAsync(element);
         Assert.Equal(default, actual);
+    }
+
+    [Fact]
+    public void InvokingContext_Constructor_ThrowsForNullMessages()
+    {
+        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokingContext(null!));
+    }
+
+    [Fact]
+    public void InvokedContext_Constructor_ThrowsForNullMessages()
+    {
+        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!));
     }
 
     private sealed class TestAIContextProvider : AIContextProvider

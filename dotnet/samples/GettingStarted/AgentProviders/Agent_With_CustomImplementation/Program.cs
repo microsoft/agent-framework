@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -30,6 +31,12 @@ namespace SampleApp
     // Custom agent that parrot's the user input back in upper case.
     internal sealed class UpperCaseParrotAgent : AIAgent
     {
+        public override AgentThread GetNewThread()
+            => new CustomAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => new CustomAgentThread(serializedThread, jsonSerializerOptions);
+
         public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
@@ -96,5 +103,17 @@ namespace SampleApp
 
                 return messageClone;
             });
+
+        /// <summary>
+        /// A thread type for our custom agent that only supports in memory storage of messages.
+        /// </summary>
+        internal sealed class CustomAgentThread : InMemoryAgentThread
+        {
+            internal CustomAgentThread()
+                : base() { }
+
+            internal CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+                : base(serializedThreadState, jsonSerializerOptions) { }
+        }
     }
 }
