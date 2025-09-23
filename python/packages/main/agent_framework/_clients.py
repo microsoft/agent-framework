@@ -428,7 +428,6 @@ class BaseChatClient(AFBaseModel, ABC):
                 tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
-                **kwargs,
             )
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)

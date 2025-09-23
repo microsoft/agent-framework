@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
     AIFunction,
     BaseChatClient,
     ChatMessage,
@@ -27,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.telemetry import AGENT_FRAMEWORK_USER_AGENT, use_telemetry
+from agent_framework.observability import use_observability
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -97,7 +98,7 @@ TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 
 
 @use_function_invocation
-@use_telemetry
+@use_observability
 class FoundryChatClient(BaseChatClient):
     """Azure AI Foundry Chat client."""
 
@@ -190,17 +191,17 @@ class FoundryChatClient(BaseChatClient):
         )
         self._should_close_client = should_close_client
 
-    async def setup_foundry_telemetry(self, enable_live_metrics: bool = False) -> None:
+    async def setup_foundry_observability(self, enable_live_metrics: bool = False) -> None:
         """Call this method to setup tracing with Foundry.
 
         This will take the connection string from the project client.
         It will override any connection string that is set in the environment variables.
         It will disable any OTLP endpoint that might have been set.
         """
-        from agent_framework.telemetry import setup_telemetry
+        from agent_framework.observability import setup_observability
 
-        setup_telemetry(
-            application_insights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
+        setup_observability(
+            applicationinsights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
             enable_live_metrics=enable_live_metrics,
         )
 

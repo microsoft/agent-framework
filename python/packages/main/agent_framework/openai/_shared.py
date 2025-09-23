@@ -22,9 +22,9 @@ from pydantic.types import StringConstraints
 
 from .._logging import get_logger
 from .._pydantic import AFBaseModel, AFBaseSettings
+from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from .._types import ChatOptions, Contents, SpeechToTextOptions, TextToSpeechOptions
 from ..exceptions import ServiceInitializationError
-from ..telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 
 logger: logging.Logger = get_logger("agent_framework.openai")
 

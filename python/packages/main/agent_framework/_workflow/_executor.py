@@ -9,13 +9,15 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from textwrap import shorten
-from typing import Any, ClassVar, Generic, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast, overload
 
 from pydantic import Field
 
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
-from agent_framework._pydantic import AFBaseModel
-
+from .._agents import AgentProtocol
+from .._pydantic import AFBaseModel
+from .._threads import AgentThread
+from .._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from ..observability import create_processing_span
 from ._checkpoint import WorkflowCheckpoint
 from ._events import (
     AgentRunEvent,
@@ -25,16 +27,17 @@ from ._events import (
     ExecutorInvokedEvent,
     RequestInfoEvent,
     WorkflowErrorDetails,
-    _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
+    _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
 from ._runner_context import Message, RunnerContext, _decode_checkpoint_value
 from ._shared_state import SharedState
-from ._telemetry import workflow_tracer
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext, validate_function_signature
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    pass
 
+logger = logging.getLogger(__name__)
 # region Executor
 
 
@@ -262,18 +265,19 @@ class Executor(AFBaseModel):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        # Create processing span for tracing.
-        with workflow_tracer.create_processing_span(
+        # Create processing span for tracing (gracefully handles disabled tracing)
+
+        # Handle case where Message wrapper is passed instead of raw data
+        if isinstance(message, Message):
+            message = message.data
+
+        with create_processing_span(
             self.id,
             self.__class__.__name__,
             type(message).__name__,
             source_trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
         ):
-            # Handle case where Message wrapper is passed instead of raw data
-            if isinstance(message, Message):
-                message = message.data
-
             # Find the handler and handler spec that matches the message type
             handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
             ctx_annotation = None

@@ -40,7 +40,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..telemetry import use_telemetry
+from ..observability import use_observability
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
 
@@ -451,7 +451,7 @@ TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
 
 @use_function_invocation
-@use_telemetry
+@use_observability
 class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
     """OpenAI Chat completion class."""
 

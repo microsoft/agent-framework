@@ -20,9 +20,9 @@ from agent_framework import (
     TextContent,
     UsageDetails,
 )
-from agent_framework._pydantic import AFBaseModel
-from agent_framework.exceptions import AgentExecutionException
 
+from .._pydantic import AFBaseModel
+from ..exceptions import AgentExecutionException
 from ._events import (
     AgentRunUpdateEvent,
     RequestInfoEvent,
