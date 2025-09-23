@@ -53,7 +53,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
                         Instructions = additionalInstructions,
                     });
 
-            AgentThread agentThread = new() { ConversationId = conversationId };
+            AgentThread agentThread = conversationId is not null && agent is ChatClientAgent chatClientAgent ? chatClientAgent.GetNewThread(conversationId) : agent.GetNewThread();
             IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
                 inputMessages is not null ?
                     agent.RunStreamingAsync([.. inputMessages.ToChatMessages()], agentThread, options, cancellationToken) :

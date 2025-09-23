@@ -37,6 +37,5 @@ AgentThread thread = agent1.GetNewThread();
 Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Cleanup for sample purposes.
-await assistantClient.DeleteThreadAsync(thread.ConversationId);
 await assistantClient.DeleteAssistantAsync(agent1.Id);
 await assistantClient.DeleteAssistantAsync(agent2.Id);

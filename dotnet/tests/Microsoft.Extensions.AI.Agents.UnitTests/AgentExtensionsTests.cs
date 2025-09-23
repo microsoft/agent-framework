@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -296,6 +297,12 @@ public class AgentExtensionsTests
             this.Description = description;
             this._exceptionToThrow = exceptionToThrow;
         }
+
+        public override AgentThread GetNewThread()
+            => throw new NotImplementedException();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
 
         public override string? Name { get; }
         public override string? Description { get; }
