@@ -92,6 +92,8 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New(true));
+        this.State.Bind();
+
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
@@ -107,6 +109,8 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New(321));
+        this.State.Bind();
+
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
@@ -122,6 +126,8 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New("Test"));
+        this.State.Bind();
+
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert

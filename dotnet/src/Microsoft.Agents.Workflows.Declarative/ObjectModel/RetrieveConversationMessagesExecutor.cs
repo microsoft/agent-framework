@@ -18,7 +18,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        string conversationId = this.State.Evaluator.GetValue(Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}")).Value;
+        string conversationId = this.Evaluator.GetValue(Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}")).Value;
 
         ChatMessage[] messages = await agentProvider.GetMessagesAsync(
             conversationId,
@@ -40,7 +40,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
             return null;
         }
 
-        long limit = this.State.Evaluator.GetValue(this.Model.Limit).Value;
+        long limit = this.Evaluator.GetValue(this.Model.Limit).Value;
         return Convert.ToInt32(Math.Min(limit, 100));
     }
 
@@ -51,7 +51,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
             return null;
         }
 
-        return this.State.Evaluator.GetValue(messagExpression).Value;
+        return this.Evaluator.GetValue(messagExpression).Value;
     }
 
     private bool IsDescending()
@@ -61,7 +61,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
             return false;
         }
 
-        AgentMessageSortOrderWrapper sortOrderWrapper = this.State.Evaluator.GetValue(this.Model.SortOrder).Value;
+        AgentMessageSortOrderWrapper sortOrderWrapper = this.Evaluator.GetValue(this.Model.SortOrder).Value;
 
         return sortOrderWrapper.Value == AgentMessageSortOrder.NewestFirst;
     }

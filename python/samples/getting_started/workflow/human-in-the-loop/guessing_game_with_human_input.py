@@ -15,8 +15,8 @@ from agent_framework import (
     RequestResponse,  # Correlates a human response with the original request
     Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for assembling the graph
-    WorkflowCompletedEvent,  # Terminal event used to finish the workflow
     WorkflowContext,  # Per run context and event bus
+    WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowRunState,  # Enum of workflow run states
     WorkflowStatusEvent,  # Event emitted on run state changes
     handler,  # Decorator to expose an Executor method as a step
@@ -30,8 +30,7 @@ Sample: Human in the loop guessing game
 
 An agent guesses a number, then a human guides it with higher, lower, or
 correct via RequestInfoExecutor. The loop continues until the human confirms
-correct, at which point the workflow
-completes.
+correct, at which point the workflow completes when idle with no pending work.
 
 Purpose:
 Show how to integrate a human step in the middle of an LLM workflow using RequestInfoExecutor and correlated
@@ -132,7 +131,7 @@ class TurnManager(Executor):
     async def on_human_feedback(
         self,
         feedback: RequestResponse[HumanFeedbackRequest, str],
-        ctx: WorkflowContext[AgentExecutorRequest | WorkflowCompletedEvent],
+        ctx: WorkflowContext[AgentExecutorRequest, str],
     ) -> None:
         """Continue the game or finish based on human feedback.
 
@@ -144,7 +143,7 @@ class TurnManager(Executor):
         last_guess = getattr(feedback.original_request, "guess", None)
 
         if reply == "correct":
-            await ctx.add_event(WorkflowCompletedEvent(f"Guessed correctly: {last_guess}"))
+            await ctx.yield_output(f"Guessed correctly: {last_guess}")
             return
 
         # Provide feedback to the agent to try again.
@@ -195,7 +194,8 @@ async def main() -> None:
 
     # Human in the loop run: alternate between invoking the workflow and supplying collected responses.
     pending_responses: dict[str, str] | None = None
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
+    workflow_output: str | None = None
 
     # User guidance printing:
     # If you want to instruct users up front, print a short banner before the loop.
@@ -219,15 +219,16 @@ async def main() -> None:
         events = [event async for event in stream]
         pending_responses = None
 
-        # Collect human requests and the terminal completion if present.
+        # Collect human requests, workflow outputs, and check for completion.
         requests: list[tuple[str, str]] = []  # (request_id, prompt)
         for event in events:
-            if isinstance(event, WorkflowCompletedEvent):
-                completed = event
-            elif isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanFeedbackRequest):
+            if isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanFeedbackRequest):
                 # RequestInfoEvent for our HumanFeedbackRequest.
                 requests.append((event.request_id, event.data.prompt))
-            # Other events are ignored for brevity.
+            elif isinstance(event, WorkflowOutputEvent):
+                # Capture workflow output as they're yielded
+                workflow_output = str(event.data)
+                completed = True  # In this sample, we finish after one output.
 
         # Detect run state transitions for a better developer experience.
         pending_status = any(
@@ -258,9 +259,8 @@ async def main() -> None:
                 responses[req_id] = answer
             pending_responses = responses
 
-    # Show final result.
-    print(completed)
-
+    # Show final result from workflow output captured during streaming.
+    print(f"Workflow output: {workflow_output}")
     """
     Sample Output:
 
@@ -272,7 +272,7 @@ async def main() -> None:
     Enter higher/lower/correct/exit: lower
     HITL> The agent guessed: 9. Type one of: higher (your number is higher than this guess), lower (your number is lower than this guess), correct, or exit.
     Enter higher/lower/correct/exit: correct
-    WorkflowCompletedEvent(data=Guessed correctly: 9)
+    Workflow output: Guessed correctly: 9
     """  # noqa: E501
 
 

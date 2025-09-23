@@ -10,7 +10,6 @@ from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
     Executor,
-    WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
@@ -30,6 +29,7 @@ Demonstrates:
 - A @handler that converts AgentExecutorRequest -> AgentExecutorResponse
 - ConcurrentBuilder().participants([...]) to build fan-out/fan-in
 - Default aggregator returning list[ChatMessage] (one user + one assistant per agent)
+- Workflow completion when all participants become idle
 
 Prerequisites:
 - Azure OpenAI configured for AzureChatClient (az login + required env vars)
@@ -105,14 +105,12 @@ async def main() -> None:
 
     workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
 
-    completion: WorkflowCompletedEvent | None = None
-    async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
+    events = await workflow.run("We are launching a new budget-friendly electric bike for urban commuters.")
+    outputs = events.get_outputs()
 
-    if completion:
+    if outputs:
         print("===== Final Aggregated Conversation (messages) =====")
-        messages: list[ChatMessage] | Any = completion.data
+        messages: list[ChatMessage] | Any = outputs[0]  # Get the first (and typically only) output
         for i, msg in enumerate(messages, start=1):
             name = msg.author_name if msg.author_name else "user"
             print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")

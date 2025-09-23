@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Text.Json;
 using Moq;
 
 namespace Microsoft.Extensions.AI.Agents.UnitTests.ChatCompletion;
@@ -165,8 +164,8 @@ public class ChatClientAgentOptionsTests
         const string Name = "Test name";
         const string Description = "Test description";
         var tools = new List<AITool> { AIFunctionFactory.Create(() => "test") };
-        static IChatMessageStore ChatMessageStoreFactory(JsonElement jse, JsonSerializerOptions? jso) => new Mock<IChatMessageStore>().Object;
-        static AIContextProvider AIContextProviderFactory(JsonElement jse, JsonSerializerOptions? jso) => new Mock<AIContextProvider>().Object;
+        static IChatMessageStore ChatMessageStoreFactory(ChatClientAgentOptions.ChatMessageStoreFactoryContext ctx) => new Mock<IChatMessageStore>().Object;
+        static AIContextProvider AIContextProviderFactory(ChatClientAgentOptions.AIContextProviderFactoryContext ctx) => new Mock<AIContextProvider>().Object;
 
         var original = new ChatClientAgentOptions(Instructions, Name, Description, tools)
         {

@@ -6,16 +6,16 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
+from agent_framework.observability import get_tracer
 from agent_framework_foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
-from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import Field
 
 """
 This sample shows you can can setup telemetry with a agent from Foundry.
-We once again call the `setup_foundry_telemetry` method to set up telemetry in order to include the overall spans.
+We once again call the `setup_foundry_observability` method to set up telemetry in order to include the overall spans.
 """
 
 
@@ -35,12 +35,11 @@ async def main():
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
-        # this calls `setup_foundry_telemetry` through the context manager
+        # this calls `setup_foundry_observability` through the context manager
         FoundryChatClient(client=project) as client,
     ):
-        await client.setup_foundry_telemetry(enable_live_metrics=True)
-        tracer = trace.get_tracer("agent_framework")
-        with tracer.start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):
+        await client.setup_foundry_observability(enable_live_metrics=True)
+        with get_tracer().start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):
             print("Running Single Agent Chat")
             print("Welcome to the chat, type 'exit' to quit.")
             agent = ChatAgent(

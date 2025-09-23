@@ -253,7 +253,7 @@ class WorkflowViz:
         """Emit DOT subgraphs for any WorkflowExecutor instances found in the workflow."""
         # Lazy import to avoid any potential import cycles
         try:
-            from ._executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor  # type: ignore
         except ImportError:  # pragma: no cover - best-effort; if unavailable, skip subgraphs
             return
 
@@ -327,7 +327,7 @@ class WorkflowViz:
 
     def _emit_sub_workflows_mermaid(self, wf: Workflow, lines: list[str], indent: str) -> None:
         try:
-            from ._executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor  # type: ignore
         except ImportError:  # pragma: no cover
             return
 
