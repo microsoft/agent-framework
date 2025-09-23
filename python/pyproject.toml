@@ -9,7 +9,7 @@ dependencies = [
     "agent-framework-copilotstudio",
     "agent-framework-foundry",
     "agent-framework-mem0",
-    "agent-framework-redis"
+    "agent-framework-redis",
     "agent-framework-devui",
     "agent-framework-lab-gaia",
 ]
