@@ -358,6 +358,113 @@ public sealed class AIAgentBuilderExtensionsTests
     }
 
     #endregion
+
+    #region Extension Method Working Middleware Tests
+
+    /// <summary>
+    /// Tests that Use extension method with AgentFunctionInvocationContext creates working middleware.
+    /// </summary>
+    [Fact]
+    public async Task Use_AgentFunctionInvocationContext_WorkingMiddlewareAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var testFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Function-Executed");
+            return "Function result";
+        }, "TestFunction", "A test function");
+
+        var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
+        var mockChatClient = new Mock<IChatClient>();
+
+        // Setup sequence: first call returns function call, subsequent calls return final response
+        var responseWithFunctionCall = new ChatResponse([
+            new ChatMessage(ChatRole.Assistant, [functionCall])
+        ]);
+        var finalResponse = new ChatResponse([
+            new ChatMessage(ChatRole.Assistant, "Final response")
+        ]);
+
+        mockChatClient.SetupSequence(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(responseWithFunctionCall)
+            .ReturnsAsync(finalResponse);
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+        var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
+
+        async Task MiddlewareCallbackAsync(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
+        {
+            executionOrder.Add("Middleware-Pre");
+            await next(context);
+            executionOrder.Add("Middleware-Post");
+        }
+
+        // Act - Use the extension method
+        var agent = innerAgent.AsBuilder()
+            .Use(MiddlewareCallbackAsync)
+            .Build();
+
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
+        var response = await agent.RunAsync(messages, null, options, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(response);
+        Assert.Contains("Middleware-Pre", executionOrder);
+        Assert.Contains("Function-Executed", executionOrder);
+        Assert.Contains("Middleware-Post", executionOrder);
+        var expectedOrder = new[] { "Middleware-Pre", "Function-Executed", "Middleware-Post" };
+        Assert.Equal(expectedOrder, executionOrder);
+    }
+
+    /// <summary>
+    /// Tests that UseRunningContext extension method creates working middleware.
+    /// </summary>
+    [Fact]
+    public async Task UseRunningContext_WorkingMiddlewareAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var mockChatClient = new Mock<IChatClient>();
+        var finalResponse = new ChatResponse([
+            new ChatMessage(ChatRole.Assistant, "Final response")
+        ]);
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(finalResponse);
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+        var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
+
+        async Task MiddlewareCallbackAsync(AgentRunContext context, Func<AgentRunContext, Task> next)
+        {
+            executionOrder.Add("Middleware-Pre");
+            await next(context);
+            executionOrder.Add("Middleware-Post");
+        }
+
+        // Act - Use the UseRunningContext extension method
+        var agent = innerAgent.AsBuilder()
+            .UseRunningContext(MiddlewareCallbackAsync)
+            .Build();
+
+        var response = await agent.RunAsync(messages, null, null, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(response);
+        Assert.Contains("Middleware-Pre", executionOrder);
+        Assert.Contains("Middleware-Post", executionOrder);
+        var expectedOrder = new[] { "Middleware-Pre", "Middleware-Post" };
+        Assert.Equal(expectedOrder, executionOrder);
+    }
+
+    #endregion
 }
 
 /// <summary>
