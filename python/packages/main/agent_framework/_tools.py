@@ -21,19 +21,19 @@ from typing import (
     runtime_checkable,
 )
 
-from opentelemetry import metrics
+from opentelemetry.metrics import Histogram
 from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, ValidationError, create_model, field_validator
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from .exceptions import ChatClientInitializationError, ToolException
-from .telemetry import (
+from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
-    _capture_exception,  # type: ignore
+    capture_exception,  # type: ignore
     get_function_span,
     get_function_span_attributes,
-    meter,
+    get_meter,
 )
 
 if TYPE_CHECKING:
@@ -358,6 +358,16 @@ class HostedFileSearchTool(BaseTool):
         super().__init__(**args, **kwargs)
 
 
+def _default_histogram() -> Histogram:
+    """Get the default histogram for function invocation duration."""
+    return get_meter().create_histogram(
+        name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+        unit=OtelAttr.DURATION_UNIT,
+        description="Measures the duration of a function's execution",
+        explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
+    )
+
+
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """A AITool that is callable as code.
 
@@ -371,14 +381,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
     func: Callable[..., Awaitable[ReturnT] | ReturnT]
     input_model: type[ArgsT]
-    _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
-        default_factory=lambda: meter.create_histogram(
-            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
-            unit=OtelAttr.DURATION_UNIT,
-            description="Measures the duration of a function's execution",
-            explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
-        )
-    )
+    _invocation_duration_histogram: Histogram = PrivateAttr(default_factory=_default_histogram)
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
@@ -398,7 +401,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
         """
         global OTEL_SETTINGS
-        from .telemetry import OTEL_SETTINGS, setup_telemetry
+        from .observability import OTEL_SETTINGS
 
         tool_call_id = kwargs.pop("tool_call_id", None)
         if arguments is not None:
@@ -414,7 +417,6 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             logger.debug(f"Function result: {result or 'None'}")
             return result  # type: ignore[reportReturnType]
 
-        setup_telemetry()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
         if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({
@@ -438,7 +440,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             except Exception as exception:
                 end_time_stamp = perf_counter()
                 attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
-                _capture_exception(span=span, exception=exception, timestamp=time_ns())
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:

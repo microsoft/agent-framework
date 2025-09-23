@@ -7,9 +7,9 @@ from copy import copy
 from typing import Any, ClassVar, Final
 
 from agent_framework._pydantic import AFBaseSettings, HTTPsUrl
+from agent_framework._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._shared import OpenAIBase
-from agent_framework.telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureOpenAI
 from pydantic import ConfigDict, SecretStr, model_validator, validate_call

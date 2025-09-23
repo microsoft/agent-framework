@@ -394,3 +394,135 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
     # messages_adding should be called with the service thread ID from response
     assert mock_provider.messages_adding_called
     assert mock_provider.messages_adding_thread_id == "service-thread-123"  # Updated thread ID from response
+
+
+# Tests for as_tool method
+async def test_chat_agent_as_tool_basic(chat_client: ChatClientProtocol) -> None:
+    """Test basic as_tool functionality."""
+    agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent for as_tool")
+
+    tool = agent.as_tool()
+
+    assert tool.name == "TestAgent"
+    assert tool.description == "Test agent for as_tool"
+    assert hasattr(tool, "func")
+    assert hasattr(tool, "input_model")
+
+
+async def test_chat_agent_as_tool_custom_parameters(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool with custom parameters."""
+    agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Original description")
+
+    tool = agent.as_tool(
+        name="CustomTool",
+        description="Custom description",
+        arg_name="query",
+        arg_description="Custom input description",
+    )
+
+    assert tool.name == "CustomTool"
+    assert tool.description == "Custom description"
+
+    # Check that the input model has the custom field name
+    schema = tool.input_model.model_json_schema()
+    assert "query" in schema["properties"]
+    assert schema["properties"]["query"]["description"] == "Custom input description"
+
+
+async def test_chat_agent_as_tool_defaults(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool with default parameters."""
+    agent = ChatAgent(
+        chat_client=chat_client,
+        name="TestAgent",
+        # No description provided
+    )
+
+    tool = agent.as_tool()
+
+    assert tool.name == "TestAgent"
+    assert tool.description == ""  # Should default to empty string
+
+    # Check default input field
+    schema = tool.input_model.model_json_schema()
+    assert "task" in schema["properties"]
+    assert "Task for TestAgent" in schema["properties"]["task"]["description"]
+
+
+async def test_chat_agent_as_tool_no_name(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool when agent has no name (should raise ValueError)."""
+    agent = ChatAgent(chat_client=chat_client)  # No name provided
+
+    # Should raise ValueError since agent has no name
+    with raises(ValueError, match="Agent tool name cannot be None"):
+        agent.as_tool()
+
+
+async def test_chat_agent_as_tool_function_execution(chat_client: ChatClientProtocol) -> None:
+    """Test that the generated AIFunction can be executed."""
+    agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent")
+
+    tool = agent.as_tool()
+
+    # Test function execution
+    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
+
+    # Should return the agent's response text
+    assert isinstance(result, str)
+    assert result == "test response"  # From mock chat client
+
+
+async def test_chat_agent_as_tool_with_stream_callback(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool with stream callback functionality."""
+    agent = ChatAgent(chat_client=chat_client, name="StreamingAgent")
+
+    # Collect streaming updates
+    collected_updates: list[AgentRunResponseUpdate] = []
+
+    def stream_callback(update: AgentRunResponseUpdate) -> None:
+        collected_updates.append(update)
+
+    tool = agent.as_tool(stream_callback=stream_callback)
+
+    # Execute the tool
+    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
+
+    # Should have collected streaming updates
+    assert len(collected_updates) > 0
+    assert isinstance(result, str)
+    # Result should be concatenation of all streaming updates
+    expected_text = "".join(update.text for update in collected_updates)
+    assert result == expected_text
+
+
+async def test_chat_agent_as_tool_with_custom_arg_name(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool with custom argument name."""
+    agent = ChatAgent(chat_client=chat_client, name="CustomArgAgent")
+
+    tool = agent.as_tool(arg_name="prompt", arg_description="Custom prompt input")
+
+    # Test that the custom argument name works
+    result = await tool.invoke(arguments=tool.input_model(prompt="Test prompt"))
+    assert result == "test response"
+
+
+async def test_chat_agent_as_tool_with_async_stream_callback(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool with async stream callback functionality."""
+    agent = ChatAgent(chat_client=chat_client, name="AsyncStreamingAgent")
+
+    # Collect streaming updates using an async callback
+    collected_updates: list[AgentRunResponseUpdate] = []
+
+    async def async_stream_callback(update: AgentRunResponseUpdate) -> None:
+        collected_updates.append(update)
+
+    tool = agent.as_tool(stream_callback=async_stream_callback)
+
+    # Execute the tool
+    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
+
+    # Should have collected streaming updates
+    assert len(collected_updates) > 0
+    assert isinstance(result, str)
+    # Result should be concatenation of all streaming updates
+    expected_text = "".join(update.text for update in collected_updates)
+    assert result == expected_text

@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import MutableSequence, Sequence
 from contextlib import AsyncExitStack
 from types import TracebackType
+from typing import ClassVar
 
 from ._pydantic import AFBaseModel
 from ._types import ChatMessage, Contents
@@ -46,6 +47,11 @@ class ContextProvider(AFBaseModel, ABC):
     It can listen to changes in the conversation and provide additional context to the AI model
     just before invocation.
     """
+
+    # Default prompt to be used by all context providers when assembling memories/instructions
+    DEFAULT_CONTEXT_PROMPT: ClassVar[str] = (
+        "## Memories\nConsider the following memories when answering user questions:"
+    )
 
     async def thread_created(self, thread_id: str | None) -> None:
         """Called just after a new thread is created.

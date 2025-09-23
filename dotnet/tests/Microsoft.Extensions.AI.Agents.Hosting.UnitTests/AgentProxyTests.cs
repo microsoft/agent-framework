@@ -236,7 +236,7 @@ public class AgentProxyTests
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
         {
-            await foreach (var _ in proxy.RunStreamingAsync(Array.Empty<ChatMessage>(), invalidThread, cancellationToken: CancellationToken.None))
+            await foreach (var _ in proxy.RunStreamingAsync([], invalidThread, cancellationToken: CancellationToken.None))
             {
             }
         });
@@ -255,7 +255,7 @@ public class AgentProxyTests
         var proxyThread = new AgentProxyThread();
 
         // Act & Assert
-        await foreach (var _ in proxy.RunStreamingAsync(Array.Empty<ChatMessage>(), proxyThread, cancellationToken: CancellationToken.None))
+        await foreach (var _ in proxy.RunStreamingAsync([], proxyThread, cancellationToken: CancellationToken.None))
         {
             // No items expected
         }

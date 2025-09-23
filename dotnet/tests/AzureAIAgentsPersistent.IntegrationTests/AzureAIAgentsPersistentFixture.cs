@@ -17,10 +17,8 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 {
     private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
 
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private ChatClientAgent _agent;
-    private PersistentAgentsClient _persistentAgentsClient;
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+    private ChatClientAgent _agent = null!;
+    private PersistentAgentsClient _persistentAgentsClient = null!;
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
