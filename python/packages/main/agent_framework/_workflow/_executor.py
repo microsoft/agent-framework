@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from textwrap import shorten
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast, overload
+from typing import Any, ClassVar, Generic, TypeVar, cast, overload
 
 from pydantic import Field
 
@@ -33,9 +33,6 @@ from ._runner_context import Message, RunnerContext, _decode_checkpoint_value
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext, validate_function_signature
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 # region Executor
@@ -82,7 +79,7 @@ class Executor(AFBaseModel):
     ```python
     class MyExecutor(Executor):
         @handler
-        async def handle_string(self, message: str, ctx: WorkflowContext[int]) -> None:
+        async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
             # This executor can handle 'str' input types
     ```
     Access via the `input_types` property.
@@ -115,7 +112,7 @@ class Executor(AFBaseModel):
         async def handle_request(
             self,
             request: MyRequest,
-            ctx: WorkflowContext[Any],
+            ctx: WorkflowContext,
         ) -> RequestResponse[MyRequest, str]:
             # Can intercept 'MyRequest' from sub-workflows
     ```
@@ -139,7 +136,7 @@ class Executor(AFBaseModel):
     class ParentExecutor(Executor):
         @intercepts_request
         async def check_domain(
-            self, request: DomainRequest, ctx: WorkflowContext[Any]
+            self, request: DomainRequest, ctx: WorkflowContext
         ) -> RequestResponse[DomainRequest, bool]:
             if self.is_allowed(request.domain):
                 return RequestResponse.handled(True)
@@ -228,7 +225,7 @@ class Executor(AFBaseModel):
 
         super().__init__(**kwargs)
 
-        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
+        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]] = {}
         self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
         self._handler_specs: list[dict[str, Any]] = []
         self._discover_handlers()
@@ -278,15 +275,10 @@ class Executor(AFBaseModel):
             source_trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
         ):
-            # Find the handler and handler spec that matches the message type
-            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            # Find the handler and handler spec that matches the message type.
+            # This includes the self._handle_sub_workflow_request handler for SubWorkflowRequestInfo.
+            handler: Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]] | None = None
             ctx_annotation = None
-
-            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-                # Special case: always handle SubWorkflowRequestInfo if we have interceptors defined
-                handler = self._handle_sub_workflow_request
-                ctx_annotation = WorkflowContext[RequestInfoMessage]
-
             for message_type in self._handlers:
                 if is_instance_of(message, message_type):
                     handler = self._handlers[message_type]
@@ -442,9 +434,9 @@ class Executor(AFBaseModel):
         """
         # Try to find a matching interceptor for the request and execute it
         for request_type, interceptor_list in self._request_interceptors.items():
-            if self._does_request_matches_type(request.data, request_type):
+            if self._does_request_match_type(request.data, request_type):
                 for interceptor_info in interceptor_list:
-                    if self._does_interceptor_applies_to_request(request, interceptor_info):
+                    if self._does_interceptor_apply_to_request(request, interceptor_info):
                         logger.debug(
                             f"Executor {self.id} intercepting request {request.request_id} "
                             f"of type {type(request.data).__name__} from sub-workflow {request.sub_workflow_id}"
@@ -459,7 +451,7 @@ class Executor(AFBaseModel):
         # No interceptor found - forward inner request to RequestInfoExecutor
         await ctx.send_message(request.data)
 
-    def _does_request_matches_type(self, request_data: Any, request_type: type | str) -> bool:
+    def _does_request_match_type(self, request_data: Any, request_type: type | str) -> bool:
         """Check if request data matches the expected type.
 
         Args:
@@ -478,7 +470,7 @@ class Executor(AFBaseModel):
             and request_data.__class__.__name__ == request_type
         )
 
-    def _does_interceptor_applies_to_request(
+    def _does_interceptor_apply_to_request(
         self, request: "SubWorkflowRequestInfo", interceptor_info: dict[str, Any]
     ) -> bool:
         """Check if an interceptor applies to the given request.

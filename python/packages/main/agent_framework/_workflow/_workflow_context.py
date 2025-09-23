@@ -155,6 +155,14 @@ def validate_workflow_context_annotation(
 
     # Validate type arguments for WorkflowContext[T] or WorkflowContext[T, U]
     type_args = get_args(annotation)
+
+    if len(type_args) > 2:
+        raise ValueError(
+            f"{context_description} {parameter_name} must have at most 2 type arguments, "
+            "WorkflowContext, WorkflowContext[T], or WorkflowContext[T, U], "
+            f"got {len(type_args)} arguments"
+        )
+
     if type_args:
         # Helper function to check if a value is a valid type annotation
         def _is_type_like(x: Any) -> bool:

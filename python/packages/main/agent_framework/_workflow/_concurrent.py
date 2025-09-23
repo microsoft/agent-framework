@@ -6,6 +6,8 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import AgentProtocol, ChatMessage, Role
 
 from ._executor import AgentExecutorRequest, AgentExecutorResponse, Executor, handler
@@ -28,11 +30,10 @@ Notes:
     yield output), or
   - a callback function with signature:
         def cb(results: list[AgentExecutorResponse]) -> Any | None
-        def cb(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None
+        def cb(results: list[AgentExecutorResponse], ctx: WorkflowContext) -> Any | None
     The callback is wrapped in _CallbackAggregator.
-    If the callback returns a non-None value, _CallbackAggregator yields that as output
-    and the workflow becomes idle.
-    If it returns None, the callback may have already emitted a completion event via ctx, so no further action is taken.
+    If the callback returns a non-None value, _CallbackAggregator yields that as output.
+    If it returns None, the callback may have already yielded an output via ctx, so no further action is taken.
 """
 
 
@@ -73,7 +74,7 @@ class _AggregateAgentConversations(Executor):
 
     @handler
     async def aggregate(
-        self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any, list[ChatMessage]]
+        self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, list[ChatMessage]]
     ) -> None:
         if not results:
             logger.error("Concurrent aggregator received empty results list")
@@ -145,7 +146,7 @@ class _CallbackAggregator(Executor):
     Notes:
     - Async callbacks are awaited directly.
     - Sync callbacks are executed via asyncio.to_thread to avoid blocking the event loop.
-    - If the callback returns a non-None value, it is yielded as an output and the workflow becomes idle.
+    - If the callback returns a non-None value, it is yielded as an output.
     """
 
     def __init__(self, callback: Callable[..., Any], id: str | None = None) -> None:
@@ -157,7 +158,7 @@ class _CallbackAggregator(Executor):
         self._param_count = len(inspect.signature(callback).parameters)
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any, Any]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, Any]) -> None:
         # Call according to provided signature, always non-blocking for sync callbacks
         if self._param_count >= 2:
             if inspect.iscoroutinefunction(self._callback):
@@ -253,7 +254,7 @@ class ConcurrentBuilder:
           output and the workflow becomes idle.
         - Callback: sync or async callable with one of the signatures:
           `(results: list[AgentExecutorResponse]) -> Any | None` or
-          `(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None`.
+          `(results: list[AgentExecutorResponse], ctx: WorkflowContext) -> Any | None`.
           If the callback returns a non-None value, it becomes the workflow's output.
 
         Example:
