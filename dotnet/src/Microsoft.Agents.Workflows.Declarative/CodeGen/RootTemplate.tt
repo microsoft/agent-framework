@@ -13,8 +13,8 @@ internal sealed class <#= this.TypeName #>Executor<TInput>(
     where TInput : notnull
 {
     protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
-    {
-<# if (this.TypeInfo.EnvironmentVariables.Count > 0)
+    {<# 
+if (this.TypeInfo.EnvironmentVariables.Count > 0)
 { #>
         // Set environment variables<#
     foreach (string variableName in this.TypeInfo.EnvironmentVariables)
@@ -25,7 +25,8 @@ internal sealed class <#= this.TypeName #>Executor<TInput>(
 
 if (this.TypeInfo.UserVariables.Count > 0)
 { 
-#>        // Initialize variables<#
+#>
+        // Initialize variables<#
     foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
     {#>
         await context.QueueStateUpdateAsync("<#= variableInfo.Path.VariableName #>", UnassignedValue.Instance, "<#= variableInfo.Path.VariableScopeName #>").ConfigureAwait(false);<#

@@ -50,10 +50,11 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line hidden
             this.Write("\", options, inputTransform)\n    where TInput : notnull\n{\n    protected override a" +
                     "sync ValueTask ExecuteAsync(TInput message, IWorkflowContext context, Cancellati" +
-                    "onToken cancellationToken)\n    {\n");
+                    "onToken cancellationToken)\n    {");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
- if (this.TypeInfo.EnvironmentVariables.Count > 0)
+ 
+if (this.TypeInfo.EnvironmentVariables.Count > 0)
 { 
             
             #line default
@@ -94,7 +95,7 @@ if (this.TypeInfo.UserVariables.Count > 0)
             
             #line default
             #line hidden
-            this.Write("        // Initialize variables");
+            this.Write("\n        // Initialize variables");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 

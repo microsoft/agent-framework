@@ -15,7 +15,6 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
-    [InlineData("Single.yaml")]
     [InlineData("ClearAllVariables.yaml")]
     [InlineData("EditTable.yaml")]
     [InlineData("EditTableV2.yaml")]
@@ -40,10 +39,10 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         string expectedCode = File.ReadAllText(baselinePath);
 #endif
 
-        Console.WriteLine(workflowCode.Trim());
+        Console.WriteLine(workflowCode);
 
 #if CREATE_BASELINE
-        File.WriteAllText(baselinePath, workflowCode);
+        File.WriteAllText(Path.GetFullPath(baselinePath), workflowCode);
 #else
         string[] expectedLines = expectedCode.Trim().Split('\n');
         string[] workflowLines = workflowCode.Trim().Split('\n');

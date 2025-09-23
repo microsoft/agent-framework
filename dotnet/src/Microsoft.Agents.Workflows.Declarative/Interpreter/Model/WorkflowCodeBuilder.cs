@@ -32,7 +32,7 @@ internal sealed class WorkflowCodeBuilder : IModelBuilder<string>
                 Prefix = workflowPrefix,
             };
 
-        return template.TransformText();
+        return template.TransformText().Trim();
     }
 
     public void Connect(IModeledAction source, IModeledAction target, string? condition)
