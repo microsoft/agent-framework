@@ -272,7 +272,28 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:
-                response_tools.append(tool if isinstance(tool, dict) else dict(tool))
+                # Handle raw dictionary tools
+                tool_dict = tool if isinstance(tool, dict) else dict(tool)
+
+                # Special handling for image_generation tools
+                if tool_dict.get("type") == "image_generation":
+                    # Create a copy to avoid modifying the original
+                    mapped_tool = tool_dict.copy()
+
+                    # Map user-friendly parameter names to OpenAI API parameter names
+                    parameter_mapping = {
+                        "format": "output_format",
+                        "compression": "output_compression",
+                    }
+
+                    for user_param, api_param in parameter_mapping.items():
+                        if user_param in mapped_tool:
+                            # Map the parameter name and remove the old one
+                            mapped_tool[api_param] = mapped_tool.pop(user_param)
+
+                    response_tools.append(mapped_tool)
+                else:
+                    response_tools.append(tool_dict)
         return response_tools
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
@@ -304,13 +325,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
 
         # other settings
-        if chat_options.store:
-            options_dict["store"] = True
-        else:
+        if "store" not in options_dict:
             options_dict["store"] = False
-        if chat_options.conversation_id:
-            options_dict["previous_response_id"] = chat_options.conversation_id
-        if chat_options.ai_model_id is None:
+        if "conversation_id" in options_dict:
+            options_dict["previous_response_id"] = options_dict["conversation_id"]
+            options_dict.pop("conversation_id")
+        if "model" not in options_dict:
             options_dict["model"] = self.ai_model_id
         return options_dict
 
@@ -634,9 +654,46 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     if item.result:
+                        # Handle the result as either a proper data URI or raw base64 string
+                        uri = item.result
+                        media_type = None
+                        if not uri.startswith("data:"):
+                            # Raw base64 string - convert to proper data URI format
+                            # Detect format from base64 data
+                            import base64
+
+                            try:
+                                # Decode a small portion to detect format
+                                decoded_data = base64.b64decode(uri[:100])  # First ~75 bytes should be enough
+                                if decoded_data.startswith(b"\x89PNG"):
+                                    format_type = "png"
+                                elif decoded_data.startswith(b"\xff\xd8\xff"):
+                                    format_type = "jpeg"
+                                elif decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
+                                    format_type = "webp"
+                                elif decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
+                                    format_type = "gif"
+                                else:
+                                    # Default to png if format cannot be detected
+                                    format_type = "png"
+                            except Exception:
+                                # Fallback to png if decoding fails
+                                format_type = "png"
+                            uri = f"data:image/{format_type};base64,{uri}"
+                            media_type = f"image/{format_type}"
+                        else:
+                            # Parse media type from existing data URI
+                            try:
+                                # Extract media type from data URI (e.g., "data:image/png;base64,...")
+                                if ";" in uri and uri.startswith("data:"):
+                                    media_type = uri.split(";")[0].split(":", 1)[1]
+                            except Exception:
+                                # Fallback if parsing fails
+                                media_type = "image"
                         contents.append(
                             DataContent(
-                                uri=item.result,
+                                uri=uri,
+                                media_type=media_type,
                                 raw_representation=item,
                             )
                         )
