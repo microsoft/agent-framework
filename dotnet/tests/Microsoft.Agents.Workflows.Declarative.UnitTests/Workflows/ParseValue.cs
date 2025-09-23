@@ -8,6 +8,7 @@
 #pragma warning disable IDE0005 // Extra using directive is ok.
 
 using System;
+using System.Collections;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
@@ -45,6 +46,17 @@ public static class WorkflowProvider
         }
     }
     
+    /// <summary>
+    /// Parses a string or untyped value to the provided data type. When the input is a string, it will be treated as JSON.
+    /// </summary>
+    internal sealed class ParseVarExecutor(FormulaSession session) : ActionExecutor(id: "parse_var", session)
+    {
+        // <inheritdoc />
+        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+        }
+    }
+    
     public static Workflow<TInput> CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
@@ -54,12 +66,14 @@ public static class WorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
+        ParseVarExecutor parseVar = new(myWorkflowRoot.Session);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(myWorkflowRoot);
 
         // Connect executors
         builder.AddEdge(myWorkflowRoot, myWorkflow);
+        builder.AddEdge(myWorkflow, parseVar);
 
         // Build the workflow
         return builder.Build<TInput>();

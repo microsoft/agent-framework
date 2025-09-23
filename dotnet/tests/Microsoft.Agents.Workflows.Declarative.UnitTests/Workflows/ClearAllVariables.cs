@@ -8,6 +8,7 @@
 #pragma warning disable IDE0005 // Extra using directive is ok.
 
 using System;
+using System.Collections;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
@@ -52,7 +53,7 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             string? targetScopeName = "Topic";
-            await context.QueueClearScopeAsync(topicToClear).ConfigureAwait(false);
+            await context.QueueClearScopeAsync(targetScopeName).ConfigureAwait(false);
         }
     }
     

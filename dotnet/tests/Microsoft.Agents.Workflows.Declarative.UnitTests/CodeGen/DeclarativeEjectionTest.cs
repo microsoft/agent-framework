@@ -35,7 +35,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         string workflowCode = DeclarativeWorkflowBuilder.Eject(yamlReader, DeclarativeWorkflowLanguage.CSharp, "Test.Workflow");
 
         string baselinePath = Path.Combine("Workflows", Path.ChangeExtension(workflowFile, ".cs"));
-        string generatedPath = Path.Combine("Workflows", Path.ChangeExtension($"{workflowFile}_g", ".cs"));
+        string generatedPath = Path.Combine("Workflows", Path.ChangeExtension(workflowFile, ".g.cs"));
         string expectedCode = File.ReadAllText(baselinePath);
 
         this.Output.WriteLine($"WRITING BASELINE TO: {Path.GetFullPath(generatedPath)}\n");
@@ -44,8 +44,8 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         File.WriteAllText(Path.GetFullPath(generatedPath), workflowCode);
         this.BuildWorkflow(generatedPath);
 
-        string[] expectedLines = expectedCode.Split('\n');
-        string[] workflowLines = workflowCode.Split('\n');
+        string[] expectedLines = expectedCode.Trim().Split('\n');
+        string[] workflowLines = workflowCode.Trim().Split('\n');
 
         Assert.Equal(expectedLines.Length, workflowLines.Length);
 

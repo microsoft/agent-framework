@@ -62,7 +62,7 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             this._index = 0;
-            object? evaluatedValue = await context.EvaluateExpressionAsync("["a", "b", "c", "d", "e", "f"]").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
     
             if (evaluatedValue == null)
             {
