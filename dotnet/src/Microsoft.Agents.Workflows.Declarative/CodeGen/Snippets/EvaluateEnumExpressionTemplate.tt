@@ -11,7 +11,7 @@ void EvaluateEnumExpression<TWrapper, TValue>(
     string resultType = $"{GetTypeAlias<TValue>()}{(isNullable ? "?" : "")}";
     if (expression is null)
     {#>
-        <#= resultType #> <#= targetVariable #> = <#= Format<TValue>(defaultValue) #>;<#+ 
+        <#= resultType #> <#= targetVariable #> = <#= FormatValue<TValue>(defaultValue) #>;<#+ 
     }
     else if (expression.IsLiteral)
     { 
@@ -22,7 +22,7 @@ void EvaluateEnumExpression<TWrapper, TValue>(
         }
         else
         {#>
-        <#= resultType #> <#= targetVariable #> = <#= Format<TValue>(resultValue) #>;<#+ 
+        <#= resultType #> <#= targetVariable #> = <#= FormatValue<TValue>(resultValue) #>;<#+ 
         }
     }
     else if (expression.IsVariableReference)
@@ -30,8 +30,8 @@ void EvaluateEnumExpression<TWrapper, TValue>(
         <#= resultType #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultType #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    { // %%% FORMAT: ESCAPE QUOTES #>
-        <#= resultType #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= resultType #>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    {#>
+        <#= resultType #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= resultType #>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
     else
     {

@@ -10,15 +10,15 @@ void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVa
     }
     else if (expression.IsLiteral)
     {#>
-        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = <#= Format(expression.LiteralValue) #>;<#+ 
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = <#= FormatDataValue(expression.LiteralValue) #>;<#+ 
     }
     else if (expression.IsVariableReference)
     {#>
         <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.ReadStateAsync<<#= GetTypeAlias<TValue>() #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    { // %%% FORMAT: ESCAPE QUOTES #>
-        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync("""<#= expression.ExpressionText #>""").ConfigureAwait(false);<#+ 
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
     else
     {

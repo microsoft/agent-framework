@@ -218,11 +218,11 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         }
     }
 
-    protected override void Visit(Question item) // %%% TODO
+    protected override void Visit(Question item)
     {
         this.Trace(item);
 
-        //this.ContinueWith(new QuestionTemplate(item));
+        this.ContinueWith(new QuestionTemplate(item));  // %%% TODO
     }
 
     protected override void Visit(EndDialog item)
@@ -268,11 +268,11 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.ContinueWith(new CopyConversationMessagesTemplate(item));
     }
 
-    protected override void Visit(InvokeAzureAgent item) // %%% TODO
+    protected override void Visit(InvokeAzureAgent item)
     {
         this.Trace(item);
 
-        //this.ContinueWith(new InvokeAzureAgentTemplate(item));
+        this.ContinueWith(new InvokeAzureAgentTemplate(item));
     }
 
     protected override void Visit(RetrieveConversationMessage item)
@@ -324,25 +324,25 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.ContinueWith(new ResetVariableTemplate(item));
     }
 
-    protected override void Visit(EditTable item) // %%% TODO
+    protected override void Visit(EditTable item)
     {
         this.Trace(item);
 
-        //this.ContinueWith(new EditTableTemplate(item));
+        //this.ContinueWith(new EditTableTemplate(item)); // %%% NEEDED ???
     }
 
-    protected override void Visit(EditTableV2 item) // %%% TODO
+    protected override void Visit(EditTableV2 item)
     {
         this.Trace(item);
 
-        //this.ContinueWith(new EditTableV2Template(item));
+        this.ContinueWith(new EditTableV2Template(item));
     }
 
-    protected override void Visit(ParseValue item) // %%% TODO
+    protected override void Visit(ParseValue item)
     {
         this.Trace(item);
 
-        //this.ContinueWith(new ParseValueTemplate(item));
+        this.ContinueWith(new ParseValueTemplate(item));
     }
 
     protected override void Visit(SendActivity item)

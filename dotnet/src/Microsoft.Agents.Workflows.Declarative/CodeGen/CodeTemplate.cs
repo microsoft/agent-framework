@@ -30,16 +30,36 @@ internal abstract class CodeTemplate
     public static string VariableName(PropertyPath path) => Throw.IfNull(path.VariableName);
     public static string VariableScope(PropertyPath path) => Throw.IfNull(path.VariableScopeName);
 
-    public static string Format<TValue>(string? value)
+    public static string FormatStringValue(string? value)
     {
         if (value is null)
         {
             return "null";
         }
 
+        if (value.Contains('\n') || value.Contains('\r'))
+        {
+            return @$"""""""{Environment.NewLine}{value}{Environment.NewLine}""""""";
+        }
+
+        if (value.Contains('"') || value.Contains('\\'))
+        {
+            return @$"""""""{value}""""""";
+        }
+
+        return @$"""{value}""";
+    }
+
+    public static string FormatValue<TValue>(string? value)
+    {
         if (typeof(TValue) == typeof(string))
         {
-            return @$"""{value}""";
+            return FormatStringValue(value);
+        }
+
+        if (value is null)
+        {
+            return "null";
         }
 
         if (typeof(TValue).IsEnum)
@@ -50,7 +70,7 @@ internal abstract class CodeTemplate
         return $"{value}";
     }
 
-    public static string Format(DataValue value) =>
+    public static string FormatDataValue(DataValue value) =>
         value switch
         {
             BlankDataValue => "null",
@@ -60,19 +80,32 @@ internal abstract class CodeTemplate
             DateDataValue dateValue => $"new DateTime({dateValue.Value.Ticks}, DateTimeKind.{dateValue.Value.Kind})",
             DateTimeDataValue datetimeValue => $"new DateTimeOffset({datetimeValue.Value.Ticks}, TimeSpan.FromTicks({datetimeValue.Value.Offset}))",
             TimeDataValue timeValue => $"TimeSpan.FromTicks({timeValue.Value.Ticks})",
-            StringDataValue stringValue => @$"""{stringValue.Value}""", // %%% INCOMPLETE: MULTILINE
+            StringDataValue stringValue => FormatStringValue(stringValue.Value),
             OptionDataValue optionValue => @$"""{optionValue.Value}""",
             // Indenting is important here to make the generated code readable.  Don't change it without testing the output.
             RecordDataValue recordValue =>
                 $"""
                 [
-                                {string.Join(",\n                ", recordValue.Properties.Select(p => $"[\"{p.Key}\"] = {Format(p.Value)}"))}
+                                {string.Join(",\n                ", recordValue.Properties.Select(p => $"[\"{p.Key}\"] = {FormatDataValue(p.Value)}"))}
                             ]
                 """,
-            _ => $"throw new InvalidOperationException(); // Unable to format '{value.GetType().Name}'",
+            _ => throw new DeclarativeModelException($"Unable to format '{value.GetType().Name}'"),
         };
 
-    public static TTarget FormatEnum<TSource, TTarget>(TSource value, IDictionary<TSource, TTarget> map) => map[value]; // %%% TRYGET ???
+    public static TTarget FormatEnum<TSource, TTarget>(TSource value, IDictionary<TSource, TTarget> map, TTarget? defaultValue = default)
+    {
+        if (map.TryGetValue(value, out TTarget? target))
+        {
+            return target;
+        }
+
+        if (defaultValue is null)
+        {
+            throw new DeclarativeModelException($"No default value suppied for '{typeof(TTarget).Name}'");
+        }
+
+        return defaultValue;
+    }
 
     public static string GetTypeAlias<TValue>() => GetTypeAlias(typeof(TValue));
 
@@ -290,12 +323,14 @@ internal abstract class CodeTemplate
     /// <summary>
     /// Utility class to produce culture-oriented representation of an object as a string.
     /// </summary>
-    public class ToStringInstanceHelper
+    public sealed class ToStringInstanceHelper
     {
         /// <summary>
         /// This is called from the compile/run appdomain to convert objects within an expression block to a string
         /// </summary>
+#pragma warning disable CA1822 // Required to be non-static for use in generated code
         public string ToStringWithCulture(object objectToConvert) => $"{objectToConvert}";
+#pragma warning restore CA1822
     }
 
     /// <summary>

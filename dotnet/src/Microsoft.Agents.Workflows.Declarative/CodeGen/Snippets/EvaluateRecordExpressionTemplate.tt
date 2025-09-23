@@ -9,15 +9,15 @@ void EvaluateRecordExpression<TValue>(ObjectExpression<RecordDataValue> expressi
     else if (expression.IsLiteral)
     {#>
         <#= resultTypeName #> <#= targetVariable #> =
-            <#= Format(expression.LiteralValue) #>;<#+ 
+            <#= FormatDataValue(expression.LiteralValue) #>;<#+ 
     }
     else if (expression.IsVariableReference)
     {#>
         <#= resultTypeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultTypeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    { // %%% FORMAT: ESCAPE QUOTES #>
-        <#= resultTypeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    {#>
+        <#= resultTypeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
     else
     {

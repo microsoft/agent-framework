@@ -335,21 +335,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync<bool>(\"");
+this.Write(" = await context.EvaluateExpressionAsync<bool>(");
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write("\").ConfigureAwait(false);");
+this.Write(").ConfigureAwait(false);");
 
         
         #line default
@@ -422,7 +422,7 @@ this.Write(" = ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(Format<TValue>(defaultValue)));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatValue<TValue>(defaultValue)));
 
         
         #line default
@@ -555,7 +555,7 @@ this.Write(" = ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(Format<TValue>(resultValue)));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatValue<TValue>(resultValue)));
 
         
         #line default
@@ -707,21 +707,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
-this.Write("(\"");
+this.Write("(");
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
-this.Write("\").ConfigureAwait(false);");
+this.Write(").ConfigureAwait(false);");
 
         
         #line default
@@ -982,21 +982,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync<int>(\"");
+this.Write(" = await context.EvaluateExpressionAsync<int>(");
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
-this.Write("\").ConfigureAwait(false);");
+this.Write(").ConfigureAwait(false);");
 
         
         #line default
@@ -1106,7 +1106,7 @@ this.Write(" =\n            ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(Format(expression.LiteralValue)));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatDataValue(expression.LiteralValue)));
 
         
         #line default
@@ -1243,21 +1243,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync(\"");
+this.Write(" = await context.EvaluateExpressionAsync(");
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
-this.Write("\").ConfigureAwait(false);");
+this.Write(").ConfigureAwait(false);");
 
         
         #line default
@@ -1434,21 +1434,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write(" = \"");
+this.Write(" = ");
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.LiteralValue)));
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write("\";");
+this.Write(";");
 
         
         #line default
@@ -1579,21 +1579,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync(\"");
+this.Write(" = await context.EvaluateExpressionAsync(");
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write("\").ConfigureAwait(false);");
+this.Write(").ConfigureAwait(false);");
 
         
         #line default
@@ -1665,7 +1665,7 @@ this.Write(" = ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(Format(expression.LiteralValue)));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatDataValue(expression.LiteralValue)));
 
         
         #line default
@@ -1802,21 +1802,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync(\"");
+this.Write(" = await context.EvaluateExpressionAsync(");
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write("\").ConfigureAwait(false);");
+this.Write(").ConfigureAwait(false);");
 
         
         #line default

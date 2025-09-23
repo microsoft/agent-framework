@@ -16,8 +16,8 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
             """;<#+ 
         }
         else
-        { // %%% FORMAT: ESCAPE QUOTES #>
-        <#= typeName #> <#= targetVariable #> = "<#= expression.LiteralValue #>";<#+ 
+        {#>
+        <#= typeName #> <#= targetVariable #> = <#= FormatStringValue(expression.LiteralValue) #>;<#+ 
         }
     }
     else if (expression.IsVariableReference)
@@ -25,8 +25,8 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
         <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= typeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    { // %%% FORMAT: ESCAPE QUOTES #>
-        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    {#>
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
     else
     {
