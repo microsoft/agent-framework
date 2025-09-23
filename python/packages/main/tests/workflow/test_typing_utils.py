@@ -24,26 +24,45 @@ def test_union_types() -> None:
 
 def test_list_types() -> None:
     """Test list types with various element types."""
+    assert is_instance_of([1, 2, 3], list)
     assert is_instance_of([1, 2, 3], list[int])
     assert is_instance_of([1, 2, 3], list[int | str])
     assert is_instance_of([1, "a", 3], list[int | str])
     assert is_instance_of([1, "a", 3], list[Union[int, str]])
+    assert not is_instance_of([1, 2.0, 3], dict)
     assert not is_instance_of([1, 2.0, 3], list[int | str])
 
 
 def test_tuple_types() -> None:
     """Test tuple types with fixed and variable lengths."""
+    assert is_instance_of((1, "a"), tuple)
     assert is_instance_of((1, "a"), tuple[int, str])
     assert is_instance_of((1, "a", 3), tuple[int | str, ...])
-    assert not is_instance_of((1, 2.0, 3), tuple[int | str, ...])
     assert is_instance_of((1, 2.0, "a"), tuple[...])  # type: ignore
+    assert not is_instance_of((1, 2.0, 3), tuple[int | str, ...])
+    assert not is_instance_of((1, 2.0, 3), dict)
 
 
 def test_dict_types() -> None:
     """Test dictionary types with typed keys and values."""
+    assert is_instance_of({"key": "value"}, dict)
     assert is_instance_of({"key": "value"}, dict[str, str])
     assert is_instance_of({"key": 5, "another_key": "value"}, dict[str, int | str])
     assert not is_instance_of({"key": 5, "another_key": 3.0}, dict[str, int | str])
+    assert not is_instance_of({"key": 5, "another_key": 3.0}, list)
+
+
+def test_set_types() -> None:
+    """Test set types with various element types."""
+    assert is_instance_of({1, 2, 3}, set)
+    assert is_instance_of({1, 2, 3}, set[int])
+    assert is_instance_of({1, 2, 3}, set[int | str])
+    assert is_instance_of({1, "a", 3}, set[int | str])
+    assert is_instance_of({1, "a", 3}, set[Union[int, str]])
+    assert is_instance_of(set(), set[int])  # Empty set should be valid
+    assert not is_instance_of({1, 2.0, 3}, set[int | str])
+    assert not is_instance_of({1, 2, 3}, list)
+    assert not is_instance_of({1, 2, 3}, dict)
 
 
 def test_any_type() -> None:
