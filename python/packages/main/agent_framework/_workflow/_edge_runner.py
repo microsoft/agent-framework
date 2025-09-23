@@ -87,9 +87,6 @@ class SingleEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the single edge."""
-        global OTEL_SETTINGS
-        from ..observability import OTEL_SETTINGS
-
         should_execute = False
         target_id = None
         source_id = None
