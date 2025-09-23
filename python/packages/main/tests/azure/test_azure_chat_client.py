@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
 import pytest
-from agent_framework_azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from httpx import Request, Response
 from openai import AsyncAzureOpenAI, AsyncStream
@@ -30,6 +29,7 @@ from agent_framework import (
     ai_function,
 )
 from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import (
     ContentFilterResultSeverity,

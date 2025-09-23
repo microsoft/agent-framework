@@ -103,14 +103,13 @@ class AzureFoundrySettings(AFBaseSettings):
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
-    Attributes:
+    Args:
         project_endpoint: The Azure AI Foundry project endpoint URL.
             (Env var AZURE_FOUNDRY_PROJECT_ENDPOINT)
         model_deployment_name: The name of the model deployment to use.
             (Env var AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME)
         agent_name: Default name for automatically created agents.
             (Env var AZURE_FOUNDRY_AGENT_NAME)
-    Parameters:
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """

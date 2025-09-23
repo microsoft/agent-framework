@@ -5,7 +5,6 @@ from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework_azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
@@ -21,6 +20,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     TextContent,
 )
+from agent_framework.azure import AzureOpenAIAssistantsClient
 from agent_framework.exceptions import ServiceInitializationError
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
@@ -547,8 +547,8 @@ def test_azure_assistants_client_entra_id_authentication() -> None:
     mock_credential = MagicMock()
 
     with (
-        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
-        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
         mock_settings = MagicMock()
@@ -583,7 +583,7 @@ def test_azure_assistants_client_entra_id_authentication() -> None:
 
 def test_azure_assistants_client_no_authentication_error() -> None:
     """Test authentication validation error when no auth provided."""
-    with patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class:
+    with patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class:
         mock_settings = MagicMock()
         mock_settings.chat_deployment_name = "test-deployment"
         mock_settings.api_key = None  # No API key
@@ -602,8 +602,8 @@ def test_azure_assistants_client_no_authentication_error() -> None:
 def test_azure_assistants_client_ad_token_authentication() -> None:
     """Test ad_token authentication client parameter path."""
     with (
-        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
-        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
         mock_settings = MagicMock()
@@ -636,8 +636,8 @@ def test_azure_assistants_client_ad_token_provider_authentication() -> None:
     mock_token_provider = MagicMock(spec=AsyncAzureADTokenProvider)
 
     with (
-        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
-        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
         mock_settings = MagicMock()
@@ -666,8 +666,8 @@ def test_azure_assistants_client_ad_token_provider_authentication() -> None:
 def test_azure_assistants_client_base_url_configuration() -> None:
     """Test base_url client parameter path."""
     with (
-        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
-        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
         mock_settings = MagicMock()
@@ -695,8 +695,8 @@ def test_azure_assistants_client_base_url_configuration() -> None:
 def test_azure_assistants_client_azure_endpoint_configuration() -> None:
     """Test azure_endpoint client parameter path."""
     with (
-        patch("agent_framework_azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
-        patch("agent_framework_azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
+        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
         mock_settings = MagicMock()

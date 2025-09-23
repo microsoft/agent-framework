@@ -3,12 +3,12 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from agent_framework_azure._entra_id_authentication import (
+from azure.core.exceptions import ClientAuthenticationError
+
+from agent_framework.azure._entra_id_authentication import (
     get_entra_auth_token,
     get_entra_auth_token_async,
 )
-from azure.core.exceptions import ClientAuthenticationError
-
 from agent_framework.exceptions import ServiceInvalidAuthError
 
 
