@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import sys
-from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, create_model
 
 from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
@@ -15,7 +16,7 @@ from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._pydantic import AFBaseModel
 from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
-from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
 from ._types import (
     AgentRunResponse,
     AgentRunResponseUpdate,
@@ -172,6 +173,70 @@ class BaseAgent(AFBaseModel):
         thread: AgentThread = self.get_new_thread()
         await deserialize_thread_state(thread, serialized_thread, **kwargs)
         return thread
+
+    def as_tool(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        arg_name: str = "task",
+        arg_description: str | None = None,
+        stream_callback: Callable[[AgentRunResponseUpdate], None]
+        | Callable[[AgentRunResponseUpdate], Awaitable[None]]
+        | None = None,
+    ) -> AIFunction[BaseModel, str]:
+        """Create an AIFunction tool that wraps this agent.
+
+        Args:
+            name: The name for the tool. If None, uses the agent's name.
+            description: The description for the tool. If None, uses the agent's description or empty string.
+            arg_name: The name of the function argument (default: "task").
+            arg_description: The description for the function argument.
+                If None, defaults to "Input for {self.display_name}".
+            stream_callback: Optional callback for streaming responses. If provided, uses run_stream.
+
+        Returns:
+            An AIFunction that can be used as a tool by other agents.
+        """
+        # Verify that self implements AgentProtocol
+        if not isinstance(self, AgentProtocol):
+            raise TypeError(f"Agent {self.__class__.__name__} must implement AgentProtocol to be used as a tool")
+
+        tool_name = name or self.name
+        if tool_name is None:
+            raise ValueError("Agent tool name cannot be None. Either provide a name parameter or set the agent's name.")
+        tool_description = description or self.description or ""
+        argument_description = arg_description or f"Task for {tool_name}"
+
+        # Create dynamic input model with the specified argument name
+        field_info = Field(..., description=argument_description)
+        input_model = create_model(f"{name or self.name or 'agent'}_task", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
+
+        # Check if callback is async once, outside the wrapper
+        is_async_callback = stream_callback is not None and inspect.iscoroutinefunction(stream_callback)
+
+        async def agent_wrapper(**kwargs: Any) -> str:
+            """Wrapper function that calls the agent."""
+            # Extract the input from kwargs using the specified arg_name
+            input_text = kwargs.get(arg_name, "")
+
+            if stream_callback is None:
+                # Use non-streaming mode
+                return (await self.run(input_text)).text
+
+            # Use streaming mode - accumulate updates and create final response
+            response_updates: list[AgentRunResponseUpdate] = []
+            async for update in self.run_stream(input_text):
+                response_updates.append(update)
+                if is_async_callback:
+                    await stream_callback(update)  # type: ignore[misc]
+                else:
+                    stream_callback(update)
+
+            # Create final text from accumulated updates
+            return AgentRunResponse.from_agent_run_response_updates(response_updates).text
+
+        return AIFunction(name=tool_name, description=tool_description, func=agent_wrapper, input_model=input_model)
 
     def _normalize_messages(
         self,
