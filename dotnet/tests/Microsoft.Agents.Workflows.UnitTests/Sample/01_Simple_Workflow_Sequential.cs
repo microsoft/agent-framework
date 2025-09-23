@@ -49,7 +49,7 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     {
         string result = string.Concat(message.Reverse());
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);
+        await context.AddEventAsync(new RequestHaltEvent(result)).ConfigureAwait(false);
         return result;
     }
 }

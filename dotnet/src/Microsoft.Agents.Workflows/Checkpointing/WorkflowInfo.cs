@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -17,8 +16,7 @@ internal sealed class WorkflowInfo
         HashSet<InputPortInfo> inputPorts,
         TypeId? inputType,
         string startExecutorId,
-        TypeId? outputType,
-        string? outputCollectorId)
+        HashSet<string>? outputExecutorIds)
     {
         this.Executors = Throw.IfNull(executors);
         this.Edges = Throw.IfNull(edges);
@@ -26,18 +24,7 @@ internal sealed class WorkflowInfo
 
         this.InputType = inputType;
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
-
-        if (outputType is not null && outputCollectorId is not null)
-        {
-            this.OutputType = outputType;
-            this.OutputCollectorId = outputCollectorId;
-        }
-        else if (outputCollectorId is not null)
-        {
-            throw new InvalidOperationException(
-                $"Either both or none of OutputType and OutputCollectorId must be set. ({nameof(outputType)}: {outputType} vs. {nameof(outputCollectorId)}: {outputCollectorId})"
-            );
-        }
+        this.OutputExecutorIds = outputExecutorIds ?? [];
     }
 
     public Dictionary<string, ExecutorInfo> Executors { get; }
@@ -47,8 +34,7 @@ internal sealed class WorkflowInfo
     public TypeId? InputType { get; }
     public string StartExecutorId { get; }
 
-    public TypeId? OutputType { get; }
-    public string? OutputCollectorId { get; }
+    public HashSet<string> OutputExecutorIds { get; }
 
     public bool IsMatch(Workflow workflow)
     {
@@ -96,14 +82,21 @@ internal sealed class WorkflowInfo
             return false;
         }
 
+        // Validate the outputs
+        if (workflow.OutputExecutors.Count != this.OutputExecutorIds.Count ||
+            this.OutputExecutorIds.Any(id => !workflow.OutputExecutors.Contains(id)))
+        {
+            return false;
+        }
+
         return true;
     }
 
     public bool IsMatch<TInput>(Workflow<TInput> workflow) =>
         this.IsMatch(workflow as Workflow) && this.InputType?.IsMatch<TInput>() == true;
 
-    public bool IsMatch<TInput, TResult>(WorkflowWithOutput<TInput, TResult> workflow)
-        => this.IsMatch(workflow as Workflow)
-           && this.OutputType?.IsMatch(typeof(TResult)) is true
-           && this.OutputCollectorId is not null && this.OutputCollectorId == workflow.OutputCollectorId;
+    //public bool IsMatch<TInput, TResult>(WorkflowWithOutput<TInput, TResult> workflow)
+    //    => this.IsMatch(workflow as Workflow)
+    //       && this.OutputType?.IsMatch(typeof(TResult)) is true
+    //       && this.OutputCollectorId is not null && this.OutputCollectorId == workflow.OutputCollectorId;
 }

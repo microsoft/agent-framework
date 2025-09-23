@@ -40,9 +40,9 @@ public static class Program
                     await handle.SendResponseAsync(response).ConfigureAwait(false);
                     break;
 
-                case WorkflowCompletedEvent workflowCompleteEvt:
-                    // The workflow has completed successfully
-                    Console.WriteLine($"Workflow completed with result: {workflowCompleteEvt.Data}");
+                case WorkflowOutputEvent outputEvt:
+                    // The workflow has yielded output
+                    Console.WriteLine($"Workflow completed with result: {outputEvt.Data}");
                     return;
             }
         }

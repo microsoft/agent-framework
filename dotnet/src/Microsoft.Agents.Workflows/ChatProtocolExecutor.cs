@@ -15,7 +15,7 @@ internal class ChatProtocolExecutorOptions
 
 internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOptions? options = null) : Executor(id)
 {
-    private readonly List<ChatMessage> _pendingMessages = [];
+    private List<ChatMessage> _pendingMessages = [];
     private readonly ChatRole? _stringMessageChatRole = options?.StringMessageChatRole;
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
@@ -33,11 +33,11 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
     public async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context)
     {
         await this.TakeTurnAsync(this._pendingMessages, context, token.EmitEvents).ConfigureAwait(false);
-        this._pendingMessages.Clear();
+        this._pendingMessages = new();
         await context.SendMessageAsync(token).ConfigureAwait(false);
     }
 
-    protected abstract ValueTask TakeTurnAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default);
+    protected abstract ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default);
 
     private const string PendingMessagesStateKey = nameof(_pendingMessages);
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)

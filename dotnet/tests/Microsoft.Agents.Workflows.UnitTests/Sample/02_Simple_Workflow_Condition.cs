@@ -23,6 +23,7 @@ internal static class Step2EntryPoint
             return new WorkflowBuilder(detectSpam)
                 .AddEdge(detectSpam, respondToMessage, (bool isSpam) => !isSpam) // If not spam, respond
                 .AddEdge(detectSpam, removeSpam, (bool isSpam) => isSpam) // If spam, remove
+                .WithOutputFrom(respondToMessage, removeSpam)
                 .Build();
         }
     }
@@ -34,9 +35,9 @@ internal static class Step2EntryPoint
         {
             switch (evt)
             {
-                case WorkflowCompletedEvent workflowCompleteEvt:
+                case WorkflowOutputEvent workflowOutputEvt:
                     // The workflow has completed successfully, return the result
-                    string workflowResult = workflowCompleteEvt.Data!.ToString()!;
+                    string workflowResult = workflowOutputEvt.As<string>()!;
                     writer.WriteLine($"Result: {workflowResult}");
                     return workflowResult;
                 case ExecutorCompletedEvent executorCompletedEvt:
@@ -45,7 +46,7 @@ internal static class Step2EntryPoint
             }
         }
 
-        throw new InvalidOperationException("Workflow failed to yield the completion event.");
+        throw new InvalidOperationException("Workflow failed to yield an output.");
     }
 }
 
@@ -84,7 +85,7 @@ internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<R
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(ActionResult))
+        await context.YieldOutputAsync(ActionResult)
                      .ConfigureAwait(false);
     }
 }
@@ -103,7 +104,7 @@ internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveS
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(ActionResult))
+        await context.YieldOutputAsync(ActionResult)
                      .ConfigureAwait(false);
     }
 }

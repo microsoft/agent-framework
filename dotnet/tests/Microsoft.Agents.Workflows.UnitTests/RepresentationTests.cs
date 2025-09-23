@@ -79,9 +79,6 @@ public class RepresentationTests
     {
         await RunExecutorishInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
         await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestInputPort));
-
-        OutputCollectorExecutor<ChatMessage, IEnumerable<ChatMessage>> outputCollector = new("OutputCollector", StreamingAggregators.Union<ChatMessage>());
-        await RunExecutorishInfoMatchTestAsync(outputCollector);
     }
 
     private static string Source(int id) => $"Source/{id}";
@@ -168,7 +165,7 @@ public class RepresentationTests
 
         RunWorkflowInfoMatchTest((await Step3EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
 
-        RunWorkflowWithOutputInfoMatchTest((await Step4EntryPoint.GetPromotedWorklowInstanceAsync())!);
+        RunWorkflowInfoMatchTest((await Step4EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
 
         // Step 5 reuses the workflow from Step 4, so we don't need to test it separately.
         RunWorkflowInfoMatchTest((await Step6EntryPoint.CreateWorkflow(2).TryPromoteAsync<List<ChatMessage>>())!);
@@ -177,17 +174,6 @@ public class RepresentationTests
         RunWorkflowInfoMatchTest(workflowStep1, workflowStep2, expect: false);
 
         static void RunWorkflowInfoMatchTest<TInput>(Workflow<TInput> workflow, Workflow<TInput>? comparator = null, bool expect = true)
-        {
-            comparator ??= workflow;
-
-            WorkflowInfo info = workflow.ToWorkflowInfo();
-            info.IsMatch(comparator).Should().Be(expect);
-        }
-
-        void RunWorkflowWithOutputInfoMatchTest<TInput, TResult>(
-            WorkflowWithOutput<TInput, TResult> workflow,
-            WorkflowWithOutput<TInput, TResult>? comparator = null,
-            bool expect = true)
         {
             comparator ??= workflow;
 

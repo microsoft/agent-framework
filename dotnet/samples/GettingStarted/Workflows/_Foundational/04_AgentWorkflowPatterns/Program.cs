@@ -108,10 +108,10 @@ public static class Program
                         Console.WriteLine($"  [Calling function '{call.Name}' with arguments: {JsonSerializer.Serialize(call.Arguments)}]");
                     }
                 }
-                else if (evt is WorkflowCompletedEvent completed)
+                else if (evt is WorkflowOutputEvent output)
                 {
                     Console.WriteLine();
-                    return (List<ChatMessage>)completed.Data!;
+                    return output.As<List<ChatMessage>>()!;
                 }
             }
 

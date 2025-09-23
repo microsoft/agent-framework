@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Checkpointing;
-using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -21,6 +20,7 @@ public class Workflow
     internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = [];
 
     internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
+    internal HashSet<string> OutputExecutors { get; init; } = [];
 
     /// <summary>
     /// Gets the collection of edges grouped by their source node identifier.
@@ -95,30 +95,8 @@ public class Workflow
         {
             Registrations = this.Registrations,
             Edges = this.Edges,
-            Ports = this.Ports
-        };
-    }
-
-    internal async ValueTask<WorkflowWithOutput<TInput, TResult>?> TryPromoteWithOutputAsync<TInput, TResult>(IOutputSink<TResult> outputSource)
-    {
-        Workflow<TInput>? promoted = await this.TryPromoteAsync<TInput>().ConfigureAwait(false);
-        if (promoted is null)
-        {
-            return null;
-        }
-
-        return promoted.PromoteWithOutput(outputSource);
-    }
-
-    internal WorkflowWithOutput<TResult> PromoteWithOutput<TResult>(IOutputSink<TResult> outputSource)
-    {
-        Throw.IfNull(outputSource);
-
-        return new WorkflowWithOutput<TResult>(this.StartExecutorId, outputSource)
-        {
-            Registrations = this.Registrations,
-            Edges = this.Edges,
-            Ports = this.Ports
+            Ports = this.Ports,
+            OutputExecutors = this.OutputExecutors
         };
     }
 }
@@ -135,18 +113,6 @@ public class Workflow<T> : Workflow
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
     public Workflow(string startExecutorId) : base(startExecutorId)
     {
-    }
-
-    internal new WorkflowWithOutput<T, TResult> PromoteWithOutput<TResult>(IOutputSink<TResult> outputSource)
-    {
-        Throw.IfNull(outputSource);
-
-        return new WorkflowWithOutput<T, TResult>(this.StartExecutorId, outputSource)
-        {
-            Registrations = this.Registrations,
-            Edges = this.Edges,
-            Ports = this.Ports
-        };
     }
 
     /// <summary>

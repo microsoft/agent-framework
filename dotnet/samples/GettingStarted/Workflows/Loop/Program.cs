@@ -31,15 +31,16 @@ public static class Program
         var workflow = await new WorkflowBuilder(guessNumberExecutor)
             .AddEdge(guessNumberExecutor, judgeExecutor)
             .AddEdge(judgeExecutor, guessNumberExecutor)
+            .WithOutputFrom(judgeExecutor)
             .BuildAsync<NumberSignal>();
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is WorkflowCompletedEvent workflowCompleteEvt)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"Result: {workflowCompleteEvt}");
+                Console.WriteLine($"Result: {outputEvent}");
             }
         }
     }
@@ -126,7 +127,7 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"{this._targetNumber} found in {this._tries} tries!"))
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!")
                          .ConfigureAwait(false);
         }
         else if (message < this._targetNumber)

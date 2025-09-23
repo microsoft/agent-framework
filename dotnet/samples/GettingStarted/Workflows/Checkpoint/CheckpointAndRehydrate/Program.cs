@@ -57,9 +57,9 @@ public static class Program
                 }
             }
 
-            if (evt is WorkflowCompletedEvent workflowCompletedEvt)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                Console.WriteLine($"Workflow completed with result: {outputEvent.Data}");
             }
         }
 
@@ -86,9 +86,9 @@ public static class Program
                 Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
             }
 
-            if (evt is WorkflowCompletedEvent workflowCompletedEvt)
+            if (evt is WorkflowOutputEvent workflowOutputEvt)
             {
-                Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
             }
         }
     }

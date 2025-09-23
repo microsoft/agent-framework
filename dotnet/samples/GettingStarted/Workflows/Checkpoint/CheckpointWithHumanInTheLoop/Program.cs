@@ -63,8 +63,8 @@ public static class Program
                         Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
                     }
                     break;
-                case WorkflowCompletedEvent workflowCompletedEvt:
-                    Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                case WorkflowOutputEvent workflowOutputEvt:
+                    Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
                     break;
             }
         }
@@ -93,8 +93,8 @@ public static class Program
                 case ExecutorCompletedEvent executorCompletedEvt:
                     Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
                     break;
-                case WorkflowCompletedEvent workflowCompletedEvt:
-                    Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                case WorkflowOutputEvent workflowOutputEvt:
+                    Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
                     break;
             }
         }

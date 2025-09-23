@@ -29,6 +29,7 @@ internal static class WorkflowHelper
         return new WorkflowBuilder(startExecutor)
             .AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent])
             .AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent])
+            .WithOutputFrom(aggregationExecutor)
             .BuildAsync<List<ChatMessage>>();
     }
 
@@ -84,7 +85,7 @@ internal static class WorkflowHelper
             if (this._messages.Count == 2)
             {
                 var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.Text}"));
-                await context.AddEventAsync(new WorkflowCompletedEvent(formattedMessages));
+                await context.YieldOutputAsync(formattedMessages);
             }
         }
     }

@@ -47,6 +47,7 @@ public static class Program
         var workflow = new WorkflowBuilder(sloganWriter)
             .AddEdge(sloganWriter, feedbackProvider)
             .AddEdge(feedbackProvider, sloganWriter)
+            .WithOutputFrom(feedbackProvider)
             .Build();
 
         // Execute the workflow
@@ -59,9 +60,9 @@ public static class Program
                 Console.WriteLine($"{evt}");
             }
 
-            if (evt is WorkflowCompletedEvent completedEvent)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"{completedEvent}");
+                Console.WriteLine($"{outputEvent}");
             }
         }
     }
@@ -221,13 +222,13 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
 
         if (feedback.Rating >= this.MinimumRating)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"The following slogan was accepted:\n\n{message.Slogan}"));
+            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}");
             return;
         }
 
         if (this._attempts >= this.MaxAttempts)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}"));
+            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}");
             return;
         }
 

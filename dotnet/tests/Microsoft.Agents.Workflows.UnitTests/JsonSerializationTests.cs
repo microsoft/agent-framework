@@ -155,7 +155,7 @@ public class JsonSerializationTests
     private static InputPortInfo IntToString => InputPort.Create<int, string>(IntToStringId).ToPortInfo();
     private static InputPortInfo StringToInt => InputPort.Create<string, int>(StringToIntId).ToPortInfo();
 
-    private static ValueTask<WorkflowWithOutput<string, int>> CreateTestWorkflowAsync()
+    private static ValueTask<Workflow<string>> CreateTestWorkflowAsync()
     {
         ForwardMessageExecutor<string> forwardString = new(ForwardStringId);
         ForwardMessageExecutor<int> forwardInt = new(ForwardIntId);
@@ -166,16 +166,15 @@ public class JsonSerializationTests
         WorkflowBuilder builder = new(forwardString);
         builder.AddEdge(forwardString, stringToInt)
                .AddEdge(stringToInt, forwardInt)
-               .AddEdge(forwardInt, intToString);
+               .AddEdge(forwardInt, intToString)
+               .AddEdge(intToString, StreamingAggregators.Last<int>().AsExecutor("Aggregate"));
 
-        return builder.BuildWithOutputAsync<string, int, int>(
-            intToString,
-            StreamingAggregators.Last<int>(), (_, __) => true);
+        return builder.BuildAsync<string>();
     }
 
     private static async ValueTask<WorkflowInfo> CreateTestWorkflowInfoAsync()
     {
-        WorkflowWithOutput<string, int> testWorkflow = await CreateTestWorkflowAsync().ConfigureAwait(false);
+        Workflow<string> testWorkflow = await CreateTestWorkflowAsync().ConfigureAwait(false);
         return testWorkflow.ToWorkflowInfo();
     }
 
@@ -187,8 +186,8 @@ public class JsonSerializationTests
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());
         actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
 
-        actual.OutputType.Should().NotBeNull().And.Match(prototype.OutputType!.CreateValidator());
-        actual.OutputCollectorId.Should().NotBeNull().And.Be(prototype.OutputCollectorId);
+        actual.OutputExecutorIds.Should().HaveCount(prototype.OutputExecutorIds.Count)
+                            .And.AllSatisfy(id => prototype.OutputExecutorIds.Contains(id));
 
         void ValidateExecutorDictionary(Dictionary<string, ExecutorInfo> expected,
                                         Dictionary<string, List<EdgeInfo>> expectedEdges,

@@ -50,7 +50,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         await base.OnCheckpointRestoredAsync(context, cancellation).ConfigureAwait(false);
     }
 
-    protected override async ValueTask TakeTurnAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
     {
         emitEvents ??= this._emitEvents;
         IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(messages, this.EnsureThread(context), cancellationToken: cancellation);

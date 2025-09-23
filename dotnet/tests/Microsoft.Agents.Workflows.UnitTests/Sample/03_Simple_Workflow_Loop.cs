@@ -20,6 +20,7 @@ internal static class Step3EntryPoint
             return new WorkflowBuilder(guessNumber)
                 .AddEdge(guessNumber, judge)
                 .AddEdge(judge, guessNumber)
+                .WithOutputFrom(guessNumber)
                 .Build();
         }
     }
@@ -32,9 +33,9 @@ internal static class Step3EntryPoint
         {
             switch (evt)
             {
-                case WorkflowCompletedEvent workflowCompleteEvt:
+                case WorkflowOutputEvent workflowOutputEvt:
                     // The workflow has completed successfully, return the result
-                    string workflowResult = workflowCompleteEvt.Data!.ToString()!;
+                    string workflowResult = workflowOutputEvt.As<string>()!;
                     writer.WriteLine($"Result: {workflowResult}");
                     return workflowResult;
                 case ExecutorCompletedEvent executorCompletedEvt:
@@ -43,7 +44,7 @@ internal static class Step3EntryPoint
             }
         }
 
-        throw new InvalidOperationException("Workflow failed to yield the completion event.");
+        throw new InvalidOperationException("Workflow failed to yield an output.");
     }
 }
 
@@ -60,7 +61,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     public int LowerBound { get; private set; }
     public int UpperBound { get; private set; }
 
-    public GuessNumberExecutor(string id, int lowerBound, int upperBound) : base(id)
+    public GuessNumberExecutor(string id, int lowerBound, int upperBound) : base(id, new ExecutorOptions { AutoYieldOutputHandlerResultObject = false })
     {
         this.LowerBound = lowerBound;
         this.UpperBound = upperBound;
@@ -74,7 +75,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
         switch (message)
         {
             case NumberSignal.Matched:
-                await context.AddEventAsync(new WorkflowCompletedEvent($"Guessed the number: {this._currGuess}"))
+                await context.YieldOutputAsync($"Guessed the number: {this._currGuess}")
                              .ConfigureAwait(false);
                 break;
 

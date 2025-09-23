@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -31,6 +30,7 @@ public class WorkflowBuilder
     private readonly HashSet<string> _unboundExecutors = [];
     private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
     private readonly Dictionary<string, InputPort> _inputPorts = [];
+    private readonly HashSet<string> _outputExecutors = [];
 
     private readonly string _startExecutorId;
 
@@ -89,6 +89,23 @@ public class WorkflowBuilder
         }
 
         return executorish;
+    }
+
+    /// <summary>
+    /// Register executors as an output source. Executors can use <see cref="IWorkflowContext.YieldOutputAsync"/> to yield output values.
+    /// By default, message handlers with a non-void return type will also be yielded, unless <see cref="ExecutorOptions.AutoYieldOutputHandlerResultObject"/>
+    /// is set to <see langword="false"/>.
+    /// </summary>
+    /// <param name="executors"></param>
+    /// <returns></returns>
+    public WorkflowBuilder WithOutputFrom(params ExecutorIsh[] executors)
+    {
+        foreach (ExecutorIsh executor in executors)
+        {
+            this._outputExecutors.Add(this.Track(executor).Id);
+        }
+
+        return this;
     }
 
     /// <summary>
@@ -327,7 +344,8 @@ public class WorkflowBuilder
         {
             Registrations = this._executors,
             Edges = this._edges,
-            Ports = this._inputPorts
+            Ports = this._inputPorts,
+            OutputExecutors = this._outputExecutors
         };
     }
 

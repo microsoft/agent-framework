@@ -59,9 +59,11 @@ public static partial class AgentWorkflowBuilder
         // Add an ending executor that batches up all messages from the last agent
         // so that it's published as a single list result.
         Debug.Assert(builder is not null);
-        builder.AddEdge(previous, new ConvertMessageListToCompletedEventExecutor());
 
-        return builder.Build();
+        OutputMessagesExecutor end = new();
+        return builder.AddEdge(previous, end)
+                      .WithOutputFrom(end)
+                      .Build();
     }
 
     /// <summary>
@@ -104,7 +106,7 @@ public static partial class AgentWorkflowBuilder
         ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
         builder.AddFanInEdge(end, sources: accumulators);
 
-        return builder.Build();
+        return builder.WithOutputFrom(end).Build();
     }
 
     /// <summary>Creates a new <see cref="HandoffsWorkflowBuilder"/> using <paramref name="initialAgent"/> as the starting agent in the workflow.</summary>
@@ -189,20 +191,10 @@ public static partial class AgentWorkflowBuilder
     /// Provides an executor that batches received chat messages that it then publishes as the final result
     /// when receiving a <see cref="TurnToken"/>.
     /// </summary>
-    private sealed class ConvertMessageListToCompletedEventExecutor() : Executor(id: "OutputMessages")
+    private sealed class OutputMessagesExecutor() : ChatProtocolExecutor("OutputMessages")
     {
-        private readonly List<ChatMessage> _pendingMessages = [];
-
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder
-                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
-                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
-                .AddHandler<TurnToken>(async (token, context) =>
-                {
-                    var messages = new List<ChatMessage>(this._pendingMessages);
-                    this._pendingMessages.Clear();
-                    await context.AddEventAsync(new WorkflowCompletedEvent(messages)).ConfigureAwait(false);
-                });
+        protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
+            => context.YieldOutputAsync(messages);
     }
 
     /// <summary>Executor that forwards all messages.</summary>
@@ -220,22 +212,10 @@ public static partial class AgentWorkflowBuilder
     /// Provides an executor that batches received chat messages that it then releases when
     /// receiving a <see cref="TurnToken"/>.
     /// </summary>
-    private sealed class BatchChatMessagesToListExecutor(string id) : Executor(id)
+    private sealed class BatchChatMessagesToListExecutor(string id) : ChatProtocolExecutor(id)
     {
-        private readonly List<ChatMessage> _pendingMessages = [];
-
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder
-                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
-                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
-                .AddHandler<TurnToken>(async (token, context) =>
-                {
-                    var messages = new List<ChatMessage>(this._pendingMessages);
-                    this._pendingMessages.Clear();
-
-                    await context.SendMessageAsync(messages).ConfigureAwait(false);
-                    await context.SendMessageAsync(token).ConfigureAwait(false);
-                });
+        protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
+            => context.SendMessageAsync(messages);
     }
 
     /// <summary>
@@ -276,8 +256,7 @@ public static partial class AgentWorkflowBuilder
 
                     var results = this._allResults;
                     this._allResults = new List<List<ChatMessage>>(this._expectedInputs);
-
-                    await context.AddEventAsync(new WorkflowCompletedEvent(this._aggregator(results))).ConfigureAwait(false);
+                    await context.YieldOutputAsync(this._aggregator(results)).ConfigureAwait(false);
                 }
             });
     }
@@ -438,7 +417,7 @@ public static partial class AgentWorkflowBuilder
             }
 
             // Build the workflow.
-            return builder.Build();
+            return builder.WithOutputFrom(end).Build();
         }
 
         /// <summary>Describes a handoff to a specific target <see cref="AIAgent"/>.</summary>
@@ -473,7 +452,7 @@ public static partial class AgentWorkflowBuilder
         {
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
                 routeBuilder.AddHandler<HandoffState>((handoff, context) =>
-                    context.AddEventAsync(new WorkflowCompletedEvent(handoff.Messages)));
+                    context.YieldOutputAsync(handoff.Messages));
         }
 
         /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
@@ -764,7 +743,7 @@ public static partial class AgentWorkflowBuilder
                     .AddEdge(participant, host);
             }
 
-            return builder.Build();
+            return builder.WithOutputFrom(host).Build();
         }
 
         private sealed class GroupChatHost(AIAgent[] agents, Dictionary<AIAgent, ExecutorIsh> agentMap, Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) : Executor("GroupChatHost")
@@ -805,7 +784,7 @@ public static partial class AgentWorkflowBuilder
                     }
 
                     this._manager = null;
-                    await context.AddEventAsync(new WorkflowCompletedEvent(messages)).ConfigureAwait(false);
+                    await context.YieldOutputAsync(messages).ConfigureAwait(false);
                 });
         }
     }

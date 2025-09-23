@@ -26,6 +26,7 @@ internal static class WorkflowHelper
         return new WorkflowBuilder(guessNumberExecutor)
             .AddEdge(guessNumberExecutor, judgeExecutor)
             .AddEdge(judgeExecutor, guessNumberExecutor)
+            .WithOutputFrom(judgeExecutor)
             .BuildAsync<NumberSignal>();
     }
 }
@@ -126,8 +127,7 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"{this._targetNumber} found in {this._tries} tries!"))
-                         .ConfigureAwait(false);
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!").ConfigureAwait(false);
         }
         else if (message < this._targetNumber)
         {

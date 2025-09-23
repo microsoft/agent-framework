@@ -41,6 +41,26 @@ public abstract class Executor : IIdentified
     /// </summary>
     protected abstract RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder);
 
+    /// <summary>
+    /// Override this method to declare the types of messages this executor can send.
+    /// </summary>
+    /// <returns></returns>
+    protected virtual ISet<Type> ConfigureSentTypes() => new HashSet<Type>([typeof(object)]);
+
+    /// <summary>
+    /// Override this method to declare the types of messages this executor can yield as workflow outputs.
+    /// </summary>
+    /// <returns></returns>
+    protected virtual ISet<Type> ConfigureYieldTypes()
+    {
+        if (this._options.AutoYieldOutputHandlerResultObject)
+        {
+            return this.Router.DefaultOutputTypes;
+        }
+
+        return new HashSet<Type>();
+    }
+
     private MessageRouter? _router;
     internal MessageRouter Router
     {
@@ -106,6 +126,10 @@ public abstract class Executor : IIdentified
         {
             await context.SendMessageAsync(result.Result).ConfigureAwait(false);
         }
+        if (result.Result is not null && this._options.AutoYieldOutputHandlerResultObject)
+        {
+            await context.YieldOutputAsync(result.Result).ConfigureAwait(false);
+        }
 
         return result.Result;
     }
@@ -134,7 +158,7 @@ public abstract class Executor : IIdentified
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can produce as output.
     /// </summary>
-    public virtual ISet<Type> OutputTypes { get; } = new HashSet<Type>([typeof(object)]);
+    public ISet<Type> OutputTypes { get; } = new HashSet<Type>([typeof(object)]);
 
     /// <summary>
     /// Checks if the executor can handle a specific message type.
@@ -144,6 +168,19 @@ public abstract class Executor : IIdentified
     public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
 
     internal bool CanHandle(TypeId messageType) => this.Router.CanHandle(messageType);
+
+    internal bool CanOutput(Type messageType)
+    {
+        foreach (Type type in this.OutputTypes)
+        {
+            if (type.IsAssignableFrom(messageType))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 /// <summary>

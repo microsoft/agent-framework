@@ -48,7 +48,7 @@ internal static class RepresentationExtensions
 
         HashSet<InputPortInfo> inputPorts = new(workflow.Ports.Values.Select(ToPortInfo));
 
-        return new WorkflowInfo(executors, edges, inputPorts, inputType, workflow.StartExecutorId, outputType, outputExecutorId);
+        return new WorkflowInfo(executors, edges, inputPorts, inputType, workflow.StartExecutorId, workflow.OutputExecutors);
     }
 
     public static WorkflowInfo ToWorkflowInfo(this Workflow workflow)
@@ -56,14 +56,4 @@ internal static class RepresentationExtensions
 
     public static WorkflowInfo ToWorkflowInfo<TInput>(this Workflow<TInput> workflow)
         => workflow.ToWorkflowInfo(inputType: new(workflow.InputType), outputType: null, outputExecutorId: null);
-
-    public static WorkflowInfo ToWorkflowInfo<TResult>(this WorkflowWithOutput<TResult> workflow)
-        => workflow.ToWorkflowInfo(inputType: null,
-                                   outputType: new TypeId(typeof(TResult)),
-                                   outputExecutorId: workflow.OutputCollectorId);
-
-    public static WorkflowInfo ToWorkflowInfo<TInput, TResult>(this WorkflowWithOutput<TInput, TResult> workflow)
-        => workflow.ToWorkflowInfo(inputType: new(workflow.InputType),
-                                   outputType: new TypeId(typeof(TResult)),
-                                   outputExecutorId: workflow.OutputCollectorId);
 }
