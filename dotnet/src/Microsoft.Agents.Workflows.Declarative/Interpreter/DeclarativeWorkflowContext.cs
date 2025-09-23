@@ -38,7 +38,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     {
         if (scopeName is not null)
         {
-            if (ManagedScopes.Contains(Throw.IfNull(scopeName)))
+            if (ManagedScopes.Contains(scopeName))
             {
                 // Copy keys to array to avoid modifying collection during enumeration.
                 foreach (string key in this.State.Keys(scopeName).ToArray())
