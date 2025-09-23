@@ -110,7 +110,7 @@ public static class WorkflowProvider
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
         DelegateExecutor gotoEnd = new(id: "goto_end", myWorkflowRoot.Session);
-        DelegateExecutor endAll = new(id: "end_all", Ends the conversation with the user. This action does not delete any conversation history..Session);
+        DelegateExecutor endAll = new(id: "end_all", myWorkflowRoot.Session);
         DelegateExecutor gotoEndRestart = new(id: "goto_end_Restart", myWorkflowRoot.Session);
         SendActivity1Executor sendActivity1 = new(myWorkflowRoot.Session);
         SendActivity2Executor sendActivity2 = new(myWorkflowRoot.Session);

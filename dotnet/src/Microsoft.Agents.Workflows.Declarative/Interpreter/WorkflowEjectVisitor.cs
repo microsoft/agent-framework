@@ -229,10 +229,8 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        const string ExecutorComment = "Ends the conversation with the user. This action does not delete any conversation history.";
-
         // Represent action with default executor
-        DefaultTemplate template = new(item, ExecutorComment);
+        DefaultTemplate template = new(item, this._rootId);
         this.ContinueWith(template);
         // Define a clean-start to ensure "end" is not a source for any edge
         this.RestartAfter(template.Id, template.ParentId);
@@ -242,10 +240,8 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        const string ExecutorComment = "Ends the conversation with the user. This action does not delete any conversation history.";
-
         // Represent action with default executor
-        DefaultTemplate template = new(item, ExecutorComment);
+        DefaultTemplate template = new(item, this._rootId);
         this.ContinueWith(template);
         // Define a clean-start to ensure "end" is not a source for any edge
         this.RestartAfter(template.Id, template.ParentId);
@@ -457,10 +453,8 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         return actionId;
     }
 
-    private void RestartAfter(string actionId, string parentId)
-    {
+    private void RestartAfter(string actionId, string parentId) =>
         this._workflowModel.AddNode(new EmptyTemplate(WorkflowActionVisitor.Steps.Restart(actionId), this._rootId), parentId);
-    }
 
     private static string GetParentId(BotElement item) =>
         item.GetParentId() ??
@@ -484,6 +478,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         {
             parentId = WorkflowActionVisitor.Steps.Root(parentId);
         }
+
         Debug.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(parentId))}{FormatItem(item)} => {FormatParent(item)}");
     }
 
