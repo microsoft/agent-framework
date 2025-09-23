@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
@@ -129,10 +130,17 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
                 and data.original_request is not None
                 and not is_instance_of(data.original_request, request_type)
             ):
-                coerced = _coerce_to_type(data.original_request, request_type)
-                if coerced is None:
+                # Checkpoint decoding can leave original_request as a plain mapping. In that
+                # case we coerce it back into the expected request type so downstream handlers
+                # and validators still receive a fully typed RequestResponse instance.
+                original_request = data.original_request
+                if isinstance(original_request, Mapping):
+                    coerced = _coerce_to_type(dict(original_request), request_type)
+                    if coerced is None or not isinstance(coerced, request_type):
+                        return False
+                    data.original_request = coerced
+                else:
                     return False
-                data.original_request = coerced
             if hasattr(data, "data") and data.data is not None and not is_instance_of(data.data, response_type):
                 return False
         return True
