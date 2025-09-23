@@ -1,7 +1,0 @@
-kind: AdaptiveDialog
-beginDialog:
-  kind: OnActivity
-  id: my_workflow
-  actions:
-    - kind: EndConversation
-      id: end_all
