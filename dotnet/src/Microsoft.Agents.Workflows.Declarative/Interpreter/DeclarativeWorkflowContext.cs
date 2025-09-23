@@ -49,9 +49,9 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             {
                 await this.Source.QueueClearScopeAsync(scopeName).ConfigureAwait(false);
             }
-        }
 
-        this.State.Bind();
+            this.State.Bind();
+        }
     }
 
     /// <inheritdoc/>
