@@ -48,8 +48,6 @@ public static class DeclarativeWorkflowBuilder
         Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
     {
-        ProductContext.SetContext(Product.Foundry);
-
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Workflow undefined.");
 
         if (rootElement is not AdaptiveDialog workflowElement)
