@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 from urllib.parse import urljoin
 
-from agent_framework import use_function_invocation
+from agent_framework import use_chat_middleware, use_function_invocation
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from agent_framework.telemetry import use_telemetry
@@ -23,6 +23,7 @@ TAzureResponsesClient = TypeVar("TAzureResponsesClient", bound="AzureResponsesCl
 
 @use_telemetry
 @use_function_invocation
+@use_chat_middleware
 class AzureResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient):
     """Azure Responses completion class."""
 

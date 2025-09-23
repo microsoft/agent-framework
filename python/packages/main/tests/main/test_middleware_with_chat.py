@@ -1,0 +1,269 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+from collections.abc import Awaitable, Callable
+
+from agent_framework import (
+    ChatAgent,
+    ChatContext,
+    ChatMessage,
+    ChatMiddleware,
+    ChatResponse,
+    Role,
+    chat_middleware,
+)
+
+from .conftest import MockBaseChatClient
+
+
+class TestChatMiddleware:
+    """Test cases for chat middleware functionality."""
+
+    async def test_class_based_chat_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test class-based chat middleware with ChatClient."""
+        execution_order: list[str] = []
+
+        class LoggingChatMiddleware(ChatMiddleware):
+            async def process(
+                self,
+                context: ChatContext,
+                next: Callable[[ChatContext], Awaitable[None]],
+            ) -> None:
+                execution_order.append("chat_middleware_before")
+                await next(context)
+                execution_order.append("chat_middleware_after")
+
+        # Add middleware to chat client
+        chat_client_base.middleware = [LoggingChatMiddleware()]
+
+        # Execute chat client directly
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await chat_client_base.get_response(messages)
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].role == Role.ASSISTANT
+
+        # Verify middleware execution order
+        assert execution_order == ["chat_middleware_before", "chat_middleware_after"]
+
+    async def test_function_based_chat_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test function-based chat middleware with ChatClient."""
+        execution_order: list[str] = []
+
+        @chat_middleware
+        async def logging_chat_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("function_middleware_before")
+            await next(context)
+            execution_order.append("function_middleware_after")
+
+        # Add middleware to chat client
+        chat_client_base.middleware = [logging_chat_middleware]
+
+        # Execute chat client directly
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await chat_client_base.get_response(messages)
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].role == Role.ASSISTANT
+
+        # Verify middleware execution order
+        assert execution_order == ["function_middleware_before", "function_middleware_after"]
+
+    async def test_chat_middleware_can_modify_messages(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test that chat middleware can modify messages before sending to model."""
+
+        @chat_middleware
+        async def message_modifier_middleware(
+            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
+            # Modify the first message by adding a prefix
+            if context.messages and len(context.messages) > 0:
+                original_text = context.messages[0].text or ""
+                context.messages[0] = ChatMessage(role=context.messages[0].role, text=f"MODIFIED: {original_text}")
+            await next(context)
+
+        # Add middleware to chat client
+        chat_client_base.middleware = [message_modifier_middleware]
+
+        # Execute chat client
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await chat_client_base.get_response(messages)
+
+        # Verify that the message was modified (MockChatClient echoes back the input)
+        assert response is not None
+        assert len(response.messages) > 0
+        # The mock client should receive the modified message
+        assert "MODIFIED: test message" in response.messages[0].text
+
+    async def test_chat_middleware_can_override_response(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test that chat middleware can override the response."""
+
+        @chat_middleware
+        async def response_override_middleware(
+            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
+            # Override the response without calling next()
+            context.result = ChatResponse(
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Middleware overridden response")],
+                response_id="middleware-response-123",
+            )
+            context.terminate = True
+
+        # Add middleware to chat client
+        chat_client_base.middleware = [response_override_middleware]
+
+        # Execute chat client
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await chat_client_base.get_response(messages)
+
+        # Verify that the response was overridden
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].text == "Middleware overridden response"
+        assert response.response_id == "middleware-response-123"
+
+    async def test_multiple_chat_middleware_execution_order(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test that multiple chat middleware execute in the correct order."""
+        execution_order: list[str] = []
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("first_before")
+            await next(context)
+            execution_order.append("first_after")
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("second_before")
+            await next(context)
+            execution_order.append("second_after")
+
+        # Add middleware to chat client (order should be preserved)
+        chat_client_base.middleware = [first_middleware, second_middleware]
+
+        # Execute chat client
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await chat_client_base.get_response(messages)
+
+        # Verify response
+        assert response is not None
+
+        # Verify middleware execution order (nested execution)
+        expected_order = ["first_before", "second_before", "second_after", "first_after"]
+        assert execution_order == expected_order
+
+    async def test_chat_agent_with_chat_middleware(self) -> None:
+        """Test ChatAgent with chat middleware specified at agent level."""
+        execution_order: list[str] = []
+
+        @chat_middleware
+        async def agent_level_chat_middleware(
+            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("agent_chat_middleware_before")
+            await next(context)
+            execution_order.append("agent_chat_middleware_after")
+
+        chat_client = MockBaseChatClient()
+
+        # Create ChatAgent with chat middleware
+        agent = ChatAgent(chat_client=chat_client, middleware=[agent_level_chat_middleware])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].role == Role.ASSISTANT
+
+        # Verify middleware execution order
+        assert execution_order == ["agent_chat_middleware_before", "agent_chat_middleware_after"]
+
+    async def test_chat_agent_with_multiple_chat_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test that ChatAgent can have multiple chat middleware."""
+        execution_order: list[str] = []
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("first_before")
+            await next(context)
+            execution_order.append("first_after")
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("second_before")
+            await next(context)
+            execution_order.append("second_after")
+
+        # Create ChatAgent with multiple chat middleware
+        agent = ChatAgent(chat_client=chat_client_base, middleware=[first_middleware, second_middleware])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+
+        # Verify both middleware executed (nested execution order)
+        expected_order = ["first_before", "second_before", "second_after", "first_after"]
+        assert execution_order == expected_order
+
+    async def test_chat_middleware_with_streaming(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test chat middleware with streaming responses."""
+        execution_order: list[str] = []
+
+        @chat_middleware
+        async def streaming_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("streaming_before")
+            # Verify it's a streaming context
+            assert context.is_streaming is True
+            await next(context)
+            execution_order.append("streaming_after")
+
+        # Add middleware to chat client
+        chat_client_base.middleware = [streaming_middleware]
+
+        # Execute streaming response
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        updates: list[object] = []
+        async for update in chat_client_base.get_streaming_response(messages):
+            updates.append(update)
+
+        # Verify we got updates
+        assert len(updates) > 0
+
+        # Verify middleware executed
+        assert execution_order == ["streaming_before", "streaming_after"]
+
+    async def test_run_level_middleware_isolation(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test that run-level middleware is isolated and doesn't persist across calls."""
+        execution_count = {"count": 0}
+
+        @chat_middleware
+        async def counting_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_count["count"] += 1
+            await next(context)
+
+        # First call with run-level middleware
+        messages = [ChatMessage(role=Role.USER, text="first message")]
+        response1 = await chat_client_base.get_response(messages, middleware=[counting_middleware])
+        assert response1 is not None
+        assert execution_count["count"] == 1
+
+        # Second call WITHOUT run-level middleware - should not execute the middleware
+        messages = [ChatMessage(role=Role.USER, text="second message")]
+        response2 = await chat_client_base.get_response(messages)
+        assert response2 is not None
+        assert execution_count["count"] == 1  # Should still be 1, not 2
+
+        # Third call with run-level middleware again - should execute
+        messages = [ChatMessage(role=Role.USER, text="third message")]
+        response3 = await chat_client_base.get_response(messages, middleware=[counting_middleware])
+        assert response3 is not None
+        assert execution_count["count"] == 2  # Should be 2 now

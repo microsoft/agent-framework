@@ -11,6 +11,7 @@ from agent_framework import (
     ChatResponseUpdate,
     CitationAnnotation,
     TextContent,
+    use_chat_middleware,
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -41,6 +42,7 @@ TAzureChatClient = TypeVar("TAzureChatClient", bound="AzureChatClient")
 
 @use_function_invocation
 @use_telemetry
+@use_chat_middleware
 class AzureChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
     """Azure Chat completion class."""
 

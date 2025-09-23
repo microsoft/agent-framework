@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, ContextProvider
-from ._middleware import Middleware
+from ._middleware import ChatMiddleware, ChatMiddlewareCallable, Middleware
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import ToolProtocol
@@ -189,6 +189,7 @@ class BaseChatClient(AFBaseModel, ABC):
     """Base class for chat clients."""
 
     additional_properties: dict[str, Any] = Field(default_factory=dict)
+    middleware: "ChatMiddleware | ChatMiddlewareCallable | list[ChatMiddleware | ChatMiddlewareCallable] | None" = None
     OTEL_PROVIDER_NAME: str = "unknown"
     # This is used for OTel setup, should be overridden in subclasses
 

@@ -23,6 +23,7 @@ from agent_framework import (
     UriContent,
     UsageContent,
     UsageDetails,
+    use_chat_middleware,
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -98,6 +99,7 @@ TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 
 @use_function_invocation
 @use_telemetry
+@use_chat_middleware
 class FoundryChatClient(BaseChatClient):
     """Azure AI Foundry Chat client."""
 
