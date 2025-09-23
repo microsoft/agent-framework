@@ -24,6 +24,7 @@ def test_union_types() -> None:
 
 def test_list_types() -> None:
     """Test list types with various element types."""
+    assert is_instance_of([], list)
     assert is_instance_of([1, 2, 3], list)
     assert is_instance_of([1, 2, 3], list[int])
     assert is_instance_of([1, 2, 3], list[int | str])
@@ -59,7 +60,7 @@ def test_set_types() -> None:
     assert is_instance_of({1, 2, 3}, set[int | str])
     assert is_instance_of({1, "a", 3}, set[int | str])
     assert is_instance_of({1, "a", 3}, set[Union[int, str]])
-    assert is_instance_of(set(), set[int])  # Empty set should be valid
+    assert is_instance_of(set(), set[int])
     assert not is_instance_of({1, 2.0, 3}, set[int | str])
     assert not is_instance_of({1, 2, 3}, list)
     assert not is_instance_of({1, 2, 3}, dict)

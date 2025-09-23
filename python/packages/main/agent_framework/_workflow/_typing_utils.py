@@ -87,7 +87,9 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
 
     # Case 3: target_type is a generic type
     if origin in [list, set]:
-        return isinstance(data, origin) and all(any(is_instance_of(item, arg) for arg in args) for item in data)  # type: ignore
+        return isinstance(data, origin) and (
+            not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)
+        )  # type: ignore
 
     # Case 4: target_type is a tuple
     if origin is tuple:
@@ -95,6 +97,8 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
             element_type = args[0]
             return isinstance(data, tuple) and all(is_instance_of(item, element_type) for item in data)
         if len(args) == 1 and args[0] is Ellipsis:  # Tuple[...] case
+            return isinstance(data, tuple)
+        if len(args) == 0:
             return isinstance(data, tuple)
         return (
             isinstance(data, tuple)
@@ -104,9 +108,12 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
 
     # Case 5: target_type is a dict
     if origin is dict:
-        return isinstance(data, dict) and all(
-            is_instance_of(key, args[0]) and is_instance_of(value, args[1])
-            for key, value in data.items()  # type: ignore
+        return isinstance(data, dict) and (
+            not args
+            or all(
+                is_instance_of(key, args[0]) and is_instance_of(value, args[1])
+                for key, value in data.items()  # type: ignore
+            )
         )
 
     # Case 6: target_type is RequestResponse[T, U] - validate generic parameters
