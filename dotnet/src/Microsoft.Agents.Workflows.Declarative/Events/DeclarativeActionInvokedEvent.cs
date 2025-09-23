@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 /// <summary>
 /// Event that indicates a declarative action has completed.
 /// </summary>
-public sealed class DeclarativeActionCompletedEvent : WorkflowEvent
+public sealed class DeclarativeActionInvokedEvent : WorkflowEvent
 {
     /// <summary>
     /// The declarative action identifier.
@@ -25,10 +25,16 @@ public sealed class DeclarativeActionCompletedEvent : WorkflowEvent
     /// </summary>
     public string? ParentActionId { get; }
 
-    internal DeclarativeActionCompletedEvent(DialogAction action) : base(action)
+    /// <summary>
+    /// Identifier of the previous action.
+    /// </summary>
+    public string? PriorActionId { get; }
+
+    internal DeclarativeActionInvokedEvent(DialogAction action, string? priorActionId) : base(action)
     {
         this.ActionId = action.GetId();
         this.ActionType = action.GetType().Name;
         this.ParentActionId = action.GetParentId();
+        this.PriorActionId = priorActionId;
     }
 }
