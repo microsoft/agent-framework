@@ -24,9 +24,6 @@ internal static class IWorkflowContextExtensions
     public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.VariableScopeName));
 
-    public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.VariableScopeName));
-
     public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.VariableScopeName));
 
