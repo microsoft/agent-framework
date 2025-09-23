@@ -45,7 +45,6 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     - WorkflowContext[Union[str, int], Union[bool, int]] -> ([str, int], [bool, int])
     - WorkflowContext[Any] -> ([Any], [])
     - WorkflowContext[Any, Any] -> ([Any], [Any])
-    - WorkflowContext -> ([], [])
     - WorkflowContext[Never, Never] -> ([], [])
     - WorkflowContext[Never, int] -> ([], [int])
 
@@ -78,12 +77,10 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
             return [cast(type[Any], Any)], []
 
         if t_origin in (Union, UnionType):
-            message_types = [
-                arg for arg in get_args(t) if arg is not Any and arg is not type(None) and arg is not Never
-            ]
+            message_types = [arg for arg in get_args(t) if arg is not Any and arg is not Never]
             return message_types, []
 
-        if t is type(None) or t is Never:
+        if t is Never:
             return [], []
         return [t], []
 
@@ -95,11 +92,9 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     t_out_origin = get_origin(t_out)
     if t_out is Any:
         message_types = [cast(type[Any], Any)]
-    elif t_out is not type(None) and t_out is not Never:
+    elif t_out is not Never:
         if t_out_origin in (Union, UnionType):
-            message_types = [
-                arg for arg in get_args(t_out) if arg is not Any and arg is not type(None) and arg is not Never
-            ]
+            message_types = [arg for arg in get_args(t_out) if arg is not Any and arg is not Never]
         else:
             message_types = [t_out]
 
@@ -108,11 +103,9 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     t_w_out_origin = get_origin(t_w_out)
     if t_w_out is Any:
         workflow_output_types = [cast(type[Any], Any)]
-    elif t_w_out is not type(None) and t_w_out is not Never:
+    elif t_w_out is not Never:
         if t_w_out_origin in (Union, UnionType):
-            workflow_output_types = [
-                arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None) and arg is not Never
-            ]
+            workflow_output_types = [arg for arg in get_args(t_w_out) if arg is not Any and arg is not Never]
         else:
             workflow_output_types = [t_w_out]
 
@@ -171,17 +164,15 @@ def validate_workflow_context_annotation(
         for i, type_arg in enumerate(type_args):
             param_description = "T_Out" if i == 0 else "T_W_Out"
 
-            # Allow Any and None explicitly
-            if type_arg is Any or type_arg is type(None):
+            # Allow Any explicitly
+            if type_arg is Any:
                 continue
 
             # Check if it's a union type and validate each member
             union_origin = get_origin(type_arg)
             if union_origin in (Union, UnionType):
                 union_members = get_args(type_arg)
-                invalid_members = [
-                    m for m in union_members if not _is_type_like(m) and m is not type(None) and m is not Any
-                ]
+                invalid_members = [m for m in union_members if not _is_type_like(m) and m is not Any]
                 if invalid_members:
                     raise ValueError(
                         f"{context_description} {parameter_name} {param_description} "

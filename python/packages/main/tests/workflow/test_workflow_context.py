@@ -150,7 +150,7 @@ async def test_workflow_context_type_annotations_message_type_parameter() -> Non
 async def test_workflow_context_type_annotations_message_and_output_type_parameters() -> None:
     # Test function-based executor
     @executor(id="func1")
-    async def func1(text: str, ctx: WorkflowContext[str, None]) -> None:
+    async def func1(text: str, ctx: WorkflowContext[str]) -> None:
         await ctx.send_message("world")
 
     @executor(id="func2")
@@ -167,7 +167,7 @@ async def test_workflow_context_type_annotations_message_and_output_type_paramet
     # Test class-based executor
     class _exec1(Executor):
         @handler
-        async def func1(self, text: str, ctx: WorkflowContext[str, None]) -> None:
+        async def func1(self, text: str, ctx: WorkflowContext[str]) -> None:
             await ctx.send_message("world")
 
     class _exec2(Executor):
