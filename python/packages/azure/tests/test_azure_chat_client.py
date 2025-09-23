@@ -18,12 +18,12 @@ from agent_framework import (
     TextContent,
     ai_function,
 )
+from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
 )
-from agent_framework.telemetry import USER_AGENT_KEY
 from azure.identity import AzureCliCredential
 from httpx import Request, Response
 from openai import AsyncAzureOpenAI, AsyncStream

@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
 from agent_framework import (
@@ -15,9 +16,7 @@ from agent_framework import (
 )
 from agent_framework._tools import _parse_inputs
 from agent_framework.exceptions import ToolException
-from agent_framework.telemetry import OtelAttr
-
-from .utils import CopyingMock
+from agent_framework.observability import OtelAttr
 
 # region AIFunction and ai_function decorator tests
 
@@ -85,8 +84,7 @@ async def test_ai_function_decorator_with_async():
     assert (await async_test_tool(1, 2)) == 3
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_ai_function_invoke_telemetry_enabled(otel_settings):
+async def test_ai_function_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter):
     """Test the ai_function invoke method with telemetry enabled."""
 
     @ai_function(
@@ -97,52 +95,83 @@ async def test_ai_function_invoke_telemetry_enabled(otel_settings):
         """A function that adds two numbers for telemetry testing."""
         return x + y
 
-    # Mock the tracer and span
-    with (
-        patch("agent_framework.telemetry.tracer"),
-        # the span creation uses a form of deepcopy, so need to mock that way
-        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
-    ):
-        mock_span = Mock()
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_span)
-        mock_context_manager.__exit__ = Mock(return_value=None)
-        mock_start_span.return_value = mock_context_manager
+    # Mock the histogram
+    mock_histogram = Mock()
+    telemetry_test_tool._invocation_duration_histogram = mock_histogram
+    span_exporter.clear()
+    # Call invoke
+    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
-        # Mock the histogram
-        mock_histogram = Mock()
-        telemetry_test_tool._invocation_duration_histogram = mock_histogram
+    # Verify result
+    assert result == 3
 
-        # Call invoke
-        result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+    # Verify telemetry calls
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
+    assert "telemetry_test_tool" in span.name
+    assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'
+    assert span.attributes[OtelAttr.TOOL_RESULT] == "3"
 
-        # Verify result
-        assert result == 3
-
-        # Verify telemetry calls
-        mock_start_span.assert_called_once_with(
-            attributes={
-                OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-                OtelAttr.TOOL_NAME: "telemetry_test_tool",
-                OtelAttr.TOOL_CALL_ID: "test_call_id",
-                OtelAttr.TOOL_TYPE: "function",
-                OtelAttr.TOOL_DESCRIPTION: "A test tool for telemetry",
-                OtelAttr.TOOL_ARGUMENTS: '{"x": 1, "y": 2}',
-            }
-        )
-        assert mock_span.set_attribute.call_count == 2
-
-        # Verify histogram was called with correct attributes
-        mock_histogram.record.assert_called_once()
-        call_args = mock_histogram.record.call_args
-        assert call_args[0][0] > 0  # duration should be positive
-        attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-        assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    # Verify histogram was called with correct attributes
+    mock_histogram.record.assert_called_once()
+    call_args = mock_histogram.record.call_args
+    assert call_args[0][0] > 0  # duration should be positive
+    attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
+    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_ai_function_invoke_telemetry_sensitive_disabled(span_exporter: InMemorySpanExporter):
+    """Test the ai_function invoke method with telemetry enabled."""
+
+    @ai_function(
+        name="telemetry_test_tool",
+        description="A test tool for telemetry",
+    )
+    def telemetry_test_tool(x: int, y: int) -> int:
+        """A function that adds two numbers for telemetry testing."""
+        return x + y
+
+    # Mock the histogram
+    mock_histogram = Mock()
+    telemetry_test_tool._invocation_duration_histogram = mock_histogram
+    span_exporter.clear()
+    # Call invoke
+    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+
+    # Verify result
+    assert result == 3
+
+    # Verify telemetry calls
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
+    assert "telemetry_test_tool" in span.name
+    assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"
+    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
+    assert OtelAttr.TOOL_RESULT not in span.attributes
+
+    # Verify histogram was called with correct attributes
+    mock_histogram.record.assert_called_once()
+    call_args = mock_histogram.record.call_args
+    assert call_args[0][0] > 0  # duration should be positive
+    attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
+    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+
+
+async def test_ai_function_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
     """Test the ai_function invoke method with Pydantic model arguments."""
 
     @ai_function(
@@ -156,42 +185,27 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(otel_settings):
     # Create arguments as Pydantic model instance
     args_model = pydantic_test_tool.input_model(x=5, y=10)
 
-    with (
-        patch("agent_framework.telemetry.tracer"),
-        # the span creation uses a form of deepcopy, so need to mock that way
-        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
-    ):
-        mock_span = Mock()
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_span)
-        mock_context_manager.__exit__ = Mock(return_value=None)
-        mock_start_span.return_value = mock_context_manager
+    mock_histogram = Mock()
+    pydantic_test_tool._invocation_duration_histogram = mock_histogram
+    span_exporter.clear()
+    # Call invoke with Pydantic model
+    result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
-        mock_histogram = Mock()
-        pydantic_test_tool._invocation_duration_histogram = mock_histogram
-
-        # Call invoke with Pydantic model
-        result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
-
-        # Verify result
-        assert result == 15
-
-        # Verify telemetry calls
-        mock_start_span.assert_called_once_with(
-            attributes={
-                OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-                OtelAttr.TOOL_NAME: "pydantic_test_tool",
-                OtelAttr.TOOL_CALL_ID: "pydantic_call",
-                OtelAttr.TOOL_TYPE: "function",
-                OtelAttr.TOOL_DESCRIPTION: "A test tool with Pydantic args",
-                OtelAttr.TOOL_ARGUMENTS: '{"x":5,"y":10}',
-            }
-        )
-        assert mock_span.set_attribute.call_count == 2
+    # Verify result
+    assert result == 15
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
+    assert "pydantic_test_tool" in span.name
+    assert span.attributes[OtelAttr.TOOL_NAME] == "pydantic_test_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x":5,"y":10}'
 
 
-@pytest.mark.parametrize("otel_settings", [(True, True)], indirect=True)
-async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
+async def test_ai_function_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
     """Test the ai_function invoke method with telemetry when an exception occurs."""
 
     @ai_function(
@@ -202,41 +216,33 @@ async def test_ai_function_invoke_telemetry_with_exception(otel_settings):
         """A function that raises an exception for telemetry testing."""
         raise ValueError("Test exception for telemetry")
 
-    with (
-        patch("agent_framework.telemetry.tracer"),
-        # the span creation uses a form of deepcopy, so need to mock that way
-        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
-    ):
-        mock_span = Mock()
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_span)
-        mock_context_manager.__exit__ = Mock(return_value=None)
-        mock_start_span.return_value = mock_context_manager
+    mock_histogram = Mock()
+    exception_test_tool._invocation_duration_histogram = mock_histogram
+    span_exporter.clear()
+    # Call invoke and expect exception
+    with pytest.raises(ValueError, match="Test exception for telemetry"):
+        await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
+    assert "exception_test_tool" in span.name
+    assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'
+    assert span.attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    assert span.status.status_code == trace.StatusCode.ERROR
 
-        mock_histogram = Mock()
-        exception_test_tool._invocation_duration_histogram = mock_histogram
-
-        # Call invoke and expect exception
-        with pytest.raises(ValueError, match="Test exception for telemetry"):
-            await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
-
-        # Verify telemetry calls
-        mock_start_span.assert_called_once()
-
-        # Verify span exception recording
-        mock_span.record_exception.assert_called_once()
-        mock_span.set_attribute.assert_called()
-        mock_span.set_status.assert_called_once()
-
-        # Verify histogram was called with error attributes
-        mock_histogram.record.assert_called_once()
-        call_args = mock_histogram.record.call_args
-        attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    # Verify histogram was called with error attributes
+    mock_histogram.record.assert_called_once()
+    call_args = mock_histogram.record.call_args
+    attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_ai_function_invoke_telemetry_async_function(otel_settings):
+async def test_ai_function_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):
     """Test the ai_function invoke method with telemetry on async function."""
 
     @ai_function(
@@ -247,44 +253,30 @@ async def test_ai_function_invoke_telemetry_async_function(otel_settings):
         """An async function for telemetry testing."""
         return x * y
 
-    with (
-        patch("agent_framework.telemetry.tracer"),
-        # the span creation uses a form of deepcopy, so need to mock that way
-        patch("agent_framework._tools.get_function_span", new_callable=CopyingMock) as mock_start_span,
-    ):
-        mock_span = Mock()
-        mock_context_manager = Mock()
-        mock_context_manager.__enter__ = Mock(return_value=mock_span)
-        mock_context_manager.__exit__ = Mock(return_value=None)
-        mock_start_span.return_value = mock_context_manager
+    mock_histogram = Mock()
+    async_telemetry_test._invocation_duration_histogram = mock_histogram
+    span_exporter.clear()
+    # Call invoke
+    result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
-        mock_histogram = Mock()
-        async_telemetry_test._invocation_duration_histogram = mock_histogram
+    # Verify result
+    assert result == 12
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
+    assert "async_telemetry_test" in span.name
+    assert span.attributes[OtelAttr.TOOL_NAME] == "async_telemetry_test"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "async_call"
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "An async test tool for telemetry"
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 3, "y": 4}'
 
-        # Call invoke
-        result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
-
-        # Verify result
-        assert result == 12
-
-        # Verify telemetry calls
-        mock_start_span.assert_called_once_with(
-            attributes={
-                OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-                OtelAttr.TOOL_NAME: "async_telemetry_test",
-                OtelAttr.TOOL_CALL_ID: "async_call",
-                OtelAttr.TOOL_TYPE: "function",
-                OtelAttr.TOOL_DESCRIPTION: "An async test tool for telemetry",
-                OtelAttr.TOOL_ARGUMENTS: '{"x": 3, "y": 4}',
-            }
-        )
-        assert mock_span.set_attribute.call_count == 2
-
-        # Verify histogram recording
-        mock_histogram.record.assert_called_once()
-        call_args = mock_histogram.record.call_args
-        attributes = call_args[1]["attributes"]
-        assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "async_telemetry_test"
+    # Verify histogram recording
+    mock_histogram.record.assert_called_once()
+    call_args = mock_histogram.record.call_args
+    attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "async_telemetry_test"
 
 
 async def test_ai_function_invoke_invalid_pydantic_args():

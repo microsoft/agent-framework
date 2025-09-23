@@ -273,7 +273,11 @@ def _process_update(
         if response.additional_properties is None:
             response.additional_properties = {}
         response.additional_properties.update(update.additional_properties)
-
+    if response.raw_representation is None:
+        response.raw_representation = []
+    if not isinstance(response.raw_representation, list):
+        response.raw_representation = [response.raw_representation]
+    response.raw_representation.append(update.raw_representation)
     if isinstance(response, ChatResponse) and isinstance(update, ChatResponseUpdate):
         if update.conversation_id is not None:
             response.conversation_id = update.conversation_id
@@ -347,7 +351,7 @@ class BaseAnnotation(AFBaseModel):
 
     annotated_regions: list[AnnotatedRegions] | None = None
     additional_properties: dict[str, Any] | None = None
-    raw_representation: Any | None = Field(default=None, repr=False)
+    raw_representation: Any | None = Field(default=None, repr=False, exclude=True)
 
 
 class CitationAnnotation(BaseAnnotation):
@@ -2033,6 +2037,7 @@ class AgentRunResponse(AFBaseModel):
     response_id: str | None = None
     created_at: CreatedAtT | None = None  # use a datetimeoffset type?
     usage_details: UsageDetails | None = None
+    value: Any | None = None
     raw_representation: Any | None = None
     additional_properties: dict[str, Any] | None = None
 
@@ -2042,6 +2047,7 @@ class AgentRunResponse(AFBaseModel):
         response_id: str | None = None,
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | None = None,
+        value: Any | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -2053,6 +2059,7 @@ class AgentRunResponse(AFBaseModel):
         response_id: The ID of the chat response.
         created_at: A timestamp for the chat response.
         usage_details: The usage details for the chat response.
+        value: The structured output of the agent run response, if applicable.
         additional_properties: Any additional properties associated with the chat response.
         raw_representation: The raw representation of the chat response from an underlying implementation.
         **kwargs: Additional properties to set on the response.
@@ -2069,6 +2076,7 @@ class AgentRunResponse(AFBaseModel):
             response_id=response_id,  # type: ignore[reportCallIssue]
             created_at=created_at,  # type: ignore[reportCallIssue]
             usage_details=usage_details,  # type: ignore[reportCallIssue]
+            value=value,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,  # type: ignore[reportCallIssue]
             raw_representation=raw_representation,  # type: ignore[reportCallIssue]
             **kwargs,

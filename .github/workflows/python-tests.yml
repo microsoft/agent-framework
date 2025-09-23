@@ -102,6 +102,35 @@ jobs:
           name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
           path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}.xml
 
+      # Lab package tests
+      - name: Set environment variables - lab - win
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=lab" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Set environment variables - lab
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: |
+          echo "PACKAGE_NAME=lab" >> $GITHUB_ENV
+      - name: Test with pytest - lab - gaia
+        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/gaia test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
+        working-directory: ./python
+      - name: Test with pytest - lab - tau2
+        run: |
+          uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/tau2 setup-data
+          uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/tau2 test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
+          uv run poe --directory ./packages/${{ env.PACKAGE_NAME }}/tau2 purge-data
+        working-directory: ./python
+      - name: Move coverage file - lab
+        run: |
+          mv ./packages/${{ env.PACKAGE_NAME }}/gaia/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}_gaia.xml
+          mv ./packages/${{ env.PACKAGE_NAME }}/tau2/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}_tau2.xml
+        working-directory: ./python
+      - name: Upload coverage artifact - lab
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ env.PACKAGE_NAME }}
+          path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ env.PACKAGE_NAME }}_*.xml
+
       # Surface failing tests
       - name: Surface failing tests
         if: always()

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.CopilotStudio.Client;
@@ -40,6 +41,22 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
+    public override sealed AgentThread GetNewThread()
+        => new CopilotStudioAgentThread();
+
+    /// <summary>
+    /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
+    /// </summary>
+    /// <param name="conversationId">The conversation id to continue.</param>
+    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
+    public AgentThread GetNewThread(string conversationId)
+        => new CopilotStudioAgentThread() { ConversationId = conversationId };
+
+    /// <inheritdoc/>
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);
+
+    /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
@@ -51,11 +68,16 @@ public class CopilotStudioAgent : AIAgent
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
         thread ??= this.GetNewThread();
-        thread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        if (thread is not CopilotStudioAgentThread typedThread)
+        {
+            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+        }
+
+        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, thread.ConversationId, cancellationToken), streaming: false, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: false, this._logger);
         var responseMessagesList = new List<ChatMessage>();
         await foreach (var message in responseMessages.ConfigureAwait(false))
         {
@@ -84,11 +106,16 @@ public class CopilotStudioAgent : AIAgent
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
         thread ??= this.GetNewThread();
-        thread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        if (thread is not CopilotStudioAgentThread typedThread)
+        {
+            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+        }
+
+        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, thread.ConversationId, cancellationToken), streaming: true, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))

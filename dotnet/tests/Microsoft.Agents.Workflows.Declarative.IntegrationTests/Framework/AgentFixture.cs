@@ -12,7 +12,7 @@ public sealed class AgentFixture : IDisposable
 {
     private static IReadOnlyDictionary<string, string?>? s_agentMap;
 
-    internal async Task<IReadOnlyDictionary<string, string?>> GetAgentsAsync(AzureAIConfiguration config, CancellationToken cancellationToken = default)
+    internal static async Task<IReadOnlyDictionary<string, string?>> GetAgentsAsync(AzureAIConfiguration config, CancellationToken cancellationToken = default)
     {
         s_agentMap ??= await AgentFactory.CreateAsync("Agents", config, cancellationToken);
 

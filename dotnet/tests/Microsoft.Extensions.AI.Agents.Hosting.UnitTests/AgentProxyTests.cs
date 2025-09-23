@@ -107,7 +107,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy(AgentName, mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act
         var result = await proxy.RunAsync(s_emptyMessages, thread);
@@ -144,7 +144,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy(AgentName, mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -179,7 +179,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy(AgentName, mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -214,7 +214,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy(AgentName, mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<NotSupportedException>(() =>
@@ -236,7 +236,7 @@ public class AgentProxyTests
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
         {
-            await foreach (var _ in proxy.RunStreamingAsync(Array.Empty<ChatMessage>(), invalidThread, cancellationToken: CancellationToken.None))
+            await foreach (var _ in proxy.RunStreamingAsync([], invalidThread, cancellationToken: CancellationToken.None))
             {
             }
         });
@@ -255,7 +255,7 @@ public class AgentProxyTests
         var proxyThread = new AgentProxyThread();
 
         // Act & Assert
-        await foreach (var _ in proxy.RunStreamingAsync(Array.Empty<ChatMessage>(), proxyThread, cancellationToken: CancellationToken.None))
+        await foreach (var _ in proxy.RunStreamingAsync([], proxyThread, cancellationToken: CancellationToken.None))
         {
             // No items expected
         }
@@ -286,7 +286,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act
         var results = new List<AgentRunResponseUpdate>();
@@ -329,7 +329,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act
         var results = new List<AgentRunResponseUpdate>();
@@ -377,7 +377,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act
         var results = new List<AgentRunResponseUpdate>();
@@ -432,7 +432,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -568,7 +568,7 @@ public class AgentProxyTests
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
 
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
@@ -645,7 +645,7 @@ public class AgentProxyTests
             .ReturnsAsync(fakeHandle);
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
@@ -690,7 +690,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
         var messages = new List<ChatMessage>
         {
             new(ChatRole.User, "first"),
@@ -733,7 +733,7 @@ public class AgentProxyTests
             .ReturnsAsync(mockHandle.Object);
 
         var proxy = new AgentProxy("agentName", mockClient.Object);
-        var thread = proxy.GetThread(ThreadId);
+        var thread = proxy.GetNewThread(ThreadId);
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act

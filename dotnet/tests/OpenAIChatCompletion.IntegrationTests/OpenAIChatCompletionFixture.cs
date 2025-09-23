@@ -17,21 +17,23 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
     private readonly bool _useReasoningModel;
 
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private ChatClientAgent _agent;
+    private ChatClientAgent _agent = null!;
 
     public OpenAIChatCompletionFixture(bool useReasoningChatModel)
     {
         this._useReasoningModel = useReasoningChatModel;
     }
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
     public AIAgent Agent => this._agent;
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread) =>
-        thread.MessageStore is null ? [] : (await thread.MessageStore.GetMessagesAsync()).ToList();
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    {
+        var typedThread = (ChatClientAgentThread)thread;
+
+        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+    }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
         string name = "HelpfulAssistant",

@@ -87,7 +87,7 @@ class TurnManager(Executor):
     """
 
     def __init__(self, id: str | None = None):
-        super().__init__(id=id)
+        super().__init__(id=id or "turn_manager")
 
     @handler
     async def start(self, _: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:

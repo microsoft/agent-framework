@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
@@ -15,12 +16,22 @@ if TYPE_CHECKING:
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
 
+
+class MiddlewareType(Enum):
+    """Enum representing the type of middleware."""
+
+    AGENT = "agent"
+    FUNCTION = "function"
+
+
 __all__ = [
     "AgentMiddleware",
     "AgentRunContext",
     "FunctionInvocationContext",
     "FunctionMiddleware",
     "Middleware",
+    "agent_middleware",
+    "function_middleware",
     "use_agent_middleware",
 ]
 
@@ -38,6 +49,8 @@ class AgentRunContext:
                 to see the actual execution result or can be set to override the execution result.
                 For non-streaming: should be AgentRunResponse
                 For streaming: should be AsyncIterable[AgentRunResponseUpdate]
+        terminate: A flag indicating whether to terminate execution after current middleware.
+                When set to True, execution will stop as soon as control returns to framework.
     """
 
     agent: "AgentProtocol"
@@ -45,6 +58,7 @@ class AgentRunContext:
     is_streaming: bool = False
     metadata: dict[str, Any] = field(default_factory=lambda: {})
     result: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None
+    terminate: bool = False
 
 
 @dataclass
@@ -57,12 +71,15 @@ class FunctionInvocationContext:
         metadata: Metadata dictionary for sharing data between function middleware.
         result: Function execution result. Can be observed after calling next()
                 to see the actual execution result or can be set to override the execution result.
+        terminate: A flag indicating whether to terminate execution after current middleware.
+                When set to True, execution will stop as soon as control returns to framework.
     """
 
     function: "AIFunction[Any, Any]"
     arguments: "BaseModel"
     metadata: dict[str, Any] = field(default_factory=lambda: {})
     result: Any = None
+    terminate: bool = False
 
 
 class AgentMiddleware(ABC):
@@ -129,6 +146,53 @@ FunctionMiddlewareCallable = Callable[
 
 # Type alias for all middleware types
 Middleware: TypeAlias = AgentMiddleware | AgentMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable
+
+
+# Middleware type markers for decorators
+def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
+    """Decorator to mark a function as agent middleware.
+
+    This decorator explicitly identifies a function as agent middleware,
+    which processes AgentRunContext objects.
+
+    Args:
+        func: The middleware function to mark as agent middleware.
+
+    Returns:
+        The same function with agent middleware marker.
+
+    Example:
+        @agent_middleware
+        async def my_middleware(context: AgentRunContext, next):
+            # Process agent invocation
+            await next(context)
+    """
+    # Add marker attribute to identify this as agent middleware
+    func._middleware_type: MiddlewareType = MiddlewareType.AGENT  # type: ignore
+    return func
+
+
+def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareCallable:
+    """Decorator to mark a function as function middleware.
+
+    This decorator explicitly identifies a function as function middleware,
+    which processes FunctionInvocationContext objects.
+
+    Args:
+        func: The middleware function to mark as function middleware.
+
+    Returns:
+        The same function with function middleware marker.
+
+    Example:
+        @function_middleware
+        async def my_middleware(context: FunctionInvocationContext, next):
+            # Process function invocation
+            await next(context)
+    """
+    # Add marker attribute to identify this as function middleware
+    func._middleware_type: MiddlewareType = MiddlewareType.FUNCTION  # type: ignore
+    return func
 
 
 class AgentMiddlewareWrapper(AgentMiddleware):
@@ -271,6 +335,10 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middlewares):
 
                 async def final_wrapper(c: AgentRunContext) -> None:
+                    # If terminate was set, skip execution
+                    if c.terminate:
+                        return
+
                     # Execute actual handler and populate context for observability
                     result = await final_handler(c)
                     result_container["result"] = result
@@ -282,6 +350,10 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             next_handler = create_next_handler(index + 1)
 
             async def current_handler(c: AgentRunContext) -> None:
+                # If terminate is set, don't continue the pipeline
+                if c.terminate:
+                    return
+
                 await middleware.process(c, next_handler)
                 # After middleware execution, check if response was overridden
                 if c.result is not None and isinstance(c.result, AgentRunResponse):
@@ -337,6 +409,10 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middlewares):
 
                 async def final_wrapper(c: AgentRunContext) -> None:  # noqa: RUF029
+                    # If terminate was set, skip execution
+                    if c.terminate:
+                        return
+
                     # Execute actual handler and populate context for observability
                     result = final_handler(c)
                     result_container["result_stream"] = result
@@ -349,6 +425,9 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
 
             async def current_handler(c: AgentRunContext) -> None:
                 await middleware.process(c, next_handler)
+                # If terminate is set, don't continue the pipeline
+                if c.terminate:
+                    return
 
             return current_handler
 
@@ -424,8 +503,8 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
 
         # Custom final handler that handles pre-existing results
         async def function_final_handler(c: FunctionInvocationContext) -> Any:
-            # If result was set before calling next(), skip execution
-            if c.result is not None:
+            # If terminate was set, skip execution and return the result (which might be None)
+            if c.terminate:
                 return c.result
             # Execute actual handler and populate context for observability
             return await final_handler(c)
@@ -446,6 +525,10 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     This decorator adds middleware functionality to any agent class.
     It wraps the run() and run_stream() methods to provide middleware execution.
 
+    The middleware execution can be terminated at any point by setting the
+    context.terminate property to True. Once set, the pipeline will stop executing
+    further middleware as soon as control returns to the pipeline.
+
     Args:
         agent_class: The agent class to add middleware support to.
 
@@ -458,12 +541,101 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     original_run = agent_class.run  # type: ignore[attr-defined]
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
 
-    def _initialize_middleware_pipelines(self: Any, middlewares: Middleware | list[Middleware] | None) -> None:
-        """Initialize agent and function middleware pipelines from the provided middleware list."""
-        if not middlewares:
-            return
+    def _determine_middleware_type(middleware: Any) -> MiddlewareType:
+        """Determine middleware type using decorator and/or parameter type annotation.
 
-        middleware_list: list[Middleware] = middlewares if isinstance(middlewares, list) else [middlewares]  # type: ignore
+        Args:
+            middleware: The middleware function to analyze.
+
+        Returns:
+            MiddlewareType.AGENT or MiddlewareType.FUNCTION indicating the middleware type.
+
+        Raises:
+            ValueError: When middleware type cannot be determined or there's a mismatch.
+        """
+        # Check for decorator marker
+        decorator_type: MiddlewareType | None = getattr(middleware, "_middleware_type", None)
+
+        # Check for parameter type annotation
+        param_type: MiddlewareType | None = None
+        try:
+            sig = inspect.signature(middleware)
+            params = list(sig.parameters.values())
+
+            # Must have at least 2 parameters (context and next)
+            if len(params) >= 2:
+                first_param = params[0]
+                if hasattr(first_param.annotation, "__name__"):
+                    annotation_name = first_param.annotation.__name__
+                    if annotation_name == "AgentRunContext":
+                        param_type = MiddlewareType.AGENT
+                    elif annotation_name == "FunctionInvocationContext":
+                        param_type = MiddlewareType.FUNCTION
+            else:
+                # Not enough parameters - can't be valid middleware
+                raise ValueError(
+                    f"Middleware function must have at least 2 parameters (context, next), "
+                    f"but {middleware.__name__} has {len(params)}"
+                )
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise  # Re-raise our custom errors
+            # Signature inspection failed - continue with other checks
+            pass
+
+        if decorator_type and param_type:
+            # Both decorator and parameter type specified - they must match
+            if decorator_type != param_type:
+                raise ValueError(
+                    f"Middleware type mismatch: decorator indicates '{decorator_type.value}' "
+                    f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
+                )
+            return decorator_type
+
+        if decorator_type:
+            # Just decorator specified - rely on decorator
+            return decorator_type
+
+        if param_type:
+            # Just parameter type specified - rely on types
+            return param_type
+
+        # Neither decorator nor parameter type specified - throw exception
+        raise ValueError(
+            f"Cannot determine middleware type for function {middleware.__name__}. "
+            f"Please either use @agent_middleware/@function_middleware decorators "
+            f"or specify parameter types (AgentRunContext or FunctionInvocationContext)."
+        )
+
+    def _build_middleware_pipelines(
+        agent_level_middlewares: Middleware | list[Middleware] | None,
+        run_level_middlewares: Middleware | list[Middleware] | None = None,
+    ) -> tuple[AgentMiddlewarePipeline, FunctionMiddlewarePipeline]:
+        """Build fresh agent and function middleware pipelines from the provided middleware lists.
+
+        Args:
+            agent_level_middlewares: Agent-level middleware (executed first)
+            run_level_middlewares: Run-level middleware (executed after agent middleware)
+        """
+        # Merge middleware lists: agent middleware first, then run middleware
+        combined_middlewares: list[Middleware] = []
+
+        if agent_level_middlewares:
+            if isinstance(agent_level_middlewares, list):
+                combined_middlewares.extend(agent_level_middlewares)  # type: ignore[arg-type]
+            else:
+                combined_middlewares.append(agent_level_middlewares)
+
+        if run_level_middlewares:
+            if isinstance(run_level_middlewares, list):
+                combined_middlewares.extend(run_level_middlewares)  # type: ignore[arg-type]
+            else:
+                combined_middlewares.append(run_level_middlewares)
+
+        if not combined_middlewares:
+            return AgentMiddlewarePipeline(), FunctionMiddlewarePipeline()
+
+        middleware_list = combined_middlewares
 
         # Separate agent and function middleware using isinstance checks
         agent_middlewares: list[AgentMiddleware | AgentMiddlewareCallable] = []
@@ -475,75 +647,42 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             elif isinstance(middleware, FunctionMiddleware):
                 function_middlewares.append(middleware)
             elif callable(middleware):  # type: ignore[arg-type]
-                # Check function signature to determine type
-                try:
-                    sig = inspect.signature(middleware)
-                    params = list(sig.parameters.values())
-                    if len(params) >= 1:
-                        first_param = params[0]
-                        # Check if first parameter is AgentRunContext or FunctionInvocationContext
-                        if (
-                            hasattr(first_param.annotation, "__name__")
-                            and first_param.annotation.__name__ == "AgentRunContext"
-                        ):
-                            agent_middlewares.append(middleware)  # type: ignore
-                        elif (
-                            hasattr(first_param.annotation, "__name__")
-                            and first_param.annotation.__name__ == "FunctionInvocationContext"
-                        ):
-                            function_middlewares.append(middleware)  # type: ignore
-                        else:
-                            # Default to agent middleware if uncertain
-                            agent_middlewares.append(middleware)  # type: ignore
-                    else:
-                        agent_middlewares.append(middleware)  # type: ignore
-                except Exception:
-                    # If signature inspection fails, assume it's an agent middleware
+                # Determine middleware type using decorator and/or parameter type annotation
+                middleware_type = _determine_middleware_type(middleware)
+                if middleware_type == MiddlewareType.AGENT:
                     agent_middlewares.append(middleware)  # type: ignore
+                elif middleware_type == MiddlewareType.FUNCTION:
+                    function_middlewares.append(middleware)  # type: ignore
+                else:
+                    # This should not happen if _determine_middleware_type is implemented correctly
+                    raise ValueError(f"Unknown middleware type: {middleware_type}")
             else:
                 # Fallback
                 agent_middlewares.append(middleware)  # type: ignore
 
-        self._agent_middleware_pipeline = AgentMiddlewarePipeline(agent_middlewares)
-        self._function_middleware_pipeline = FunctionMiddlewarePipeline(function_middlewares)
+        return AgentMiddlewarePipeline(agent_middlewares), FunctionMiddlewarePipeline(function_middlewares)
 
     async def middleware_enabled_run(
         self: Any,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Middleware-enabled run method."""
-        # Initialize middleware pipelines if not already done
-        if (
-            hasattr(self, "middleware")
-            and self.middleware
-            and not (
-                hasattr(self, "_agent_middleware_pipeline")
-                and hasattr(self, "_function_middleware_pipeline")
-                and (
-                    self._agent_middleware_pipeline.has_middlewares
-                    or self._function_middleware_pipeline.has_middlewares
-                )
-            )
-        ):
-            _initialize_middleware_pipelines(self, self.middleware)
-
-        # Ensure pipelines exist even if empty
-        if not hasattr(self, "_agent_middleware_pipeline"):
-            self._agent_middleware_pipeline = AgentMiddlewarePipeline()
-        if not hasattr(self, "_function_middleware_pipeline"):
-            self._function_middleware_pipeline = FunctionMiddlewarePipeline()
+        # Build fresh middleware pipelines from current middleware collection and run-level middleware
+        agent_middleware = getattr(self, "middleware", None)
+        agent_pipeline, function_pipeline = _build_middleware_pipelines(agent_middleware, middleware)
 
         # Add function middleware pipeline to kwargs if available
-        if self._function_middleware_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
+        if function_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = function_pipeline
 
         normalized_messages = self._normalize_messages(messages)
 
         # Execute with middleware if available
-        if self._agent_middleware_pipeline.has_middlewares:
+        if agent_pipeline.has_middlewares:
             context = AgentRunContext(
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
@@ -553,7 +692,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             async def _execute_handler(ctx: AgentRunContext) -> AgentRunResponse:
                 return await original_run(self, ctx.messages, thread=thread, **kwargs)  # type: ignore
 
-            result = await self._agent_middleware_pipeline.execute(
+            result = await agent_pipeline.execute(
                 self,  # type: ignore[arg-type]
                 normalized_messages,
                 context,
@@ -570,38 +709,22 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Middleware-enabled run_stream method."""
-        # Initialize middleware pipelines if not already done
-        if (
-            hasattr(self, "middleware")
-            and self.middleware
-            and not (
-                hasattr(self, "_agent_middleware_pipeline")
-                and hasattr(self, "_function_middleware_pipeline")
-                and (
-                    self._agent_middleware_pipeline.has_middlewares
-                    or self._function_middleware_pipeline.has_middlewares
-                )
-            )
-        ):
-            _initialize_middleware_pipelines(self, self.middleware)
-
-        # Ensure pipelines exist even if empty
-        if not hasattr(self, "_agent_middleware_pipeline"):
-            self._agent_middleware_pipeline = AgentMiddlewarePipeline()
-        if not hasattr(self, "_function_middleware_pipeline"):
-            self._function_middleware_pipeline = FunctionMiddlewarePipeline()
+        # Build fresh middleware pipelines from current middleware collection and run-level middleware
+        agent_middleware = getattr(self, "middleware", None)
+        agent_pipeline, function_pipeline = _build_middleware_pipelines(agent_middleware, middleware)
 
         # Add function middleware pipeline to kwargs if available
-        if self._function_middleware_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = self._function_middleware_pipeline
+        if function_pipeline.has_middlewares:
+            kwargs["_function_middleware_pipeline"] = function_pipeline
 
         normalized_messages = self._normalize_messages(messages)
 
         # Execute with middleware if available
-        if self._agent_middleware_pipeline.has_middlewares:
+        if agent_pipeline.has_middlewares:
             context = AgentRunContext(
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
@@ -613,7 +736,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                     yield update
 
             async def _stream_generator() -> AsyncIterable[AgentRunResponseUpdate]:
-                async for update in self._agent_middleware_pipeline.execute_stream(
+                async for update in agent_pipeline.execute_stream(
                     self,  # type: ignore[arg-type]
                     normalized_messages,
                     context,

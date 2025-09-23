@@ -20,7 +20,7 @@ namespace Microsoft.Agents.Workflows;
 /// <see cref="ExecutorIsh.Type.Unbound"/>.</remarks>
 public class WorkflowBuilder
 {
-    private record struct EdgeConnection(string SourceId, string TargetId)
+    private readonly record struct EdgeConnection(string SourceId, string TargetId)
     {
         public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
     }
@@ -221,7 +221,7 @@ public class WorkflowBuilder
             return null;
         }
 
-        return (object? maybeObj, int count) =>
+        return (maybeObj, count) =>
         {
             if (typeof(T) != typeof(object) && maybeObj is PortableValue portableValue)
             {

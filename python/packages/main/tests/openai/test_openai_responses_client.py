@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import base64
 import os
 from typing import Annotated
 from unittest.mock import MagicMock, patch
@@ -23,6 +24,7 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    DataContent,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
@@ -677,6 +679,85 @@ def test_create_response_content_with_mcp_approval_request() -> None:
     assert req.function_call.additional_properties["server_label"] == "My_MCP"
 
 
+def test_tools_to_response_tools_with_raw_image_generation() -> None:
+    """Test that raw image_generation tool dict is handled correctly with parameter mapping."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test with raw tool dict using user-friendly parameter names
+    tool = {
+        "type": "image_generation",
+        "size": "1536x1024",
+        "quality": "high",
+        "format": "webp",  # Will be mapped to output_format
+        "compression": 75,  # Will be mapped to output_compression
+        "background": "transparent",
+    }
+
+    resp_tools = client._tools_to_response_tools([tool])
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+
+    image_tool = resp_tools[0]
+    assert isinstance(image_tool, dict)
+    assert image_tool["type"] == "image_generation"
+    assert image_tool["size"] == "1536x1024"
+    assert image_tool["quality"] == "high"
+    assert image_tool["background"] == "transparent"
+    # Check parameter name mapping
+    assert image_tool["output_format"] == "webp"
+    assert image_tool["output_compression"] == 75
+
+
+def test_tools_to_response_tools_with_raw_image_generation_openai_responses_params() -> None:
+    """Test raw image_generation tool with OpenAI-specific parameters."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test with OpenAI-specific parameters
+    tool = {
+        "type": "image_generation",
+        "size": "1024x1024",
+        "model": "gpt-image-1",
+        "input_fidelity": "high",
+        "moderation": "strict",
+        "partial_images": 2,  # Should be integer 0-3
+    }
+
+    resp_tools = client._tools_to_response_tools([tool])
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+
+    image_tool = resp_tools[0]
+    assert isinstance(image_tool, dict)
+    assert image_tool["type"] == "image_generation"
+
+    # Cast to dict for easier access to ImageGeneration-specific fields
+    tool_dict = dict(image_tool)
+    assert tool_dict["size"] == "1024x1024"
+    # Check OpenAI-specific parameters are included
+    assert tool_dict["model"] == "gpt-image-1"
+    assert tool_dict["input_fidelity"] == "high"
+    assert tool_dict["moderation"] == "strict"
+    assert tool_dict["partial_images"] == 2
+
+
+def test_tools_to_response_tools_with_raw_image_generation_minimal() -> None:
+    """Test raw image_generation tool with minimal configuration."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test with minimal parameters (just type)
+    tool = {"type": "image_generation"}
+
+    resp_tools = client._tools_to_response_tools([tool])
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+
+    image_tool = resp_tools[0]
+    assert isinstance(image_tool, dict)
+    assert image_tool["type"] == "image_generation"
+    # Should only have the type parameter when created with minimal config
+    assert len(image_tool) == 1
+
+
 def test_create_streaming_response_content_with_mcp_approval_request() -> None:
     """Test that a streaming mcp_approval_request event is parsed into FunctionApprovalRequestContent."""
     client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
@@ -702,7 +783,7 @@ def test_create_streaming_response_content_with_mcp_approval_request() -> None:
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
-def test_end_to_end_mcp_approval_flow(otel_settings) -> None:
+def test_end_to_end_mcp_approval_flow() -> None:
     """End-to-end mocked test:
     model issues an mcp_approval_request, user approves, client sends mcp_approval_response.
     """
@@ -1330,6 +1411,42 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
 
 
 @skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_raw_image_generation_tool():
+    """Test OpenAI Responses Client agent with raw image_generation tool through OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can generate images.",
+        tools=[{"type": "image_generation", "size": "1024x1024", "quality": "low", "format": "png"}],
+    ) as agent:
+        # Test image generation functionality
+        response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")
+
+        assert isinstance(response, AgentRunResponse)
+
+        # For image generation, we expect to get some response content
+        # This could be DataContent with image data, UriContent
+        assert response.messages is not None and len(response.messages) > 0
+
+        # Check that we have some kind of content in the response
+        total_contents = sum(len(message.contents) for message in response.messages)
+        assert total_contents > 0, f"Expected some content in response messages, got {total_contents} contents"
+
+        # Verify we got image content - look for DataContent with URI starting with "data:image"
+        image_content_found = False
+        for message in response.messages:
+            for content in message.contents:
+                uri = getattr(content, "uri", None)
+                if uri and uri.startswith("data:image"):
+                    image_content_found = True
+                    break
+            if image_content_found:
+                break
+
+        # The test passes if we got image content (which we did based on the visible base64 output)
+        assert image_content_found, "Expected to find image content in response"
+
+
+@skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Responses Client."""
 
@@ -1774,3 +1891,156 @@ def test_streaming_reasoning_events_preserve_metadata() -> None:
         # Content types should be different
         assert isinstance(text_response.contents[0], TextContent)
         assert isinstance(reasoning_response.contents[0], TextReasoningContent)
+
+
+def test_create_response_content_image_generation_raw_base64():
+    """Test image generation response parsing with raw base64 string."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Create a mock response with raw base64 image data (PNG signature)
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-response-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1234567890
+
+    # Mock image generation output item with raw base64 (PNG format)
+    png_signature = b"\x89PNG\r\n\x1a\n"
+    mock_base64 = base64.b64encode(png_signature + b"fake_png_data_here").decode()
+
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.result = mock_base64
+
+    mock_response.output = [mock_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+
+    # Verify the response contains DataContent with proper URI and media_type
+    assert len(response.messages[0].contents) == 1
+    content = response.messages[0].contents[0]
+    assert isinstance(content, DataContent)
+    assert content.uri.startswith("data:image/png;base64,")
+    assert content.media_type == "image/png"
+
+
+def test_create_response_content_image_generation_existing_data_uri():
+    """Test image generation response parsing with existing data URI."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Create a mock response with existing data URI
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-response-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1234567890
+
+    # Mock image generation output item with existing data URI (valid WEBP header)
+    webp_signature = b"RIFF" + b"\x12\x00\x00\x00" + b"WEBP"
+    valid_webp_base64 = base64.b64encode(webp_signature + b"VP8 fake_data").decode()
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.result = f"data:image/webp;base64,{valid_webp_base64}"
+
+    mock_response.output = [mock_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+
+    # Verify the response contains DataContent with proper media_type parsed from URI
+    assert len(response.messages[0].contents) == 1
+    content = response.messages[0].contents[0]
+    assert isinstance(content, DataContent)
+    assert content.uri == f"data:image/webp;base64,{valid_webp_base64}"
+    assert content.media_type == "image/webp"
+
+
+def test_create_response_content_image_generation_format_detection():
+    """Test different image format detection from base64 data."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Test JPEG detection
+    jpeg_signature = b"\xff\xd8\xff"
+    mock_base64_jpeg = base64.b64encode(jpeg_signature + b"fake_jpeg_data").decode()
+
+    mock_response_jpeg = MagicMock()
+    mock_response_jpeg.output_parsed = None
+    mock_response_jpeg.metadata = {}
+    mock_response_jpeg.usage = None
+    mock_response_jpeg.id = "test-id"
+    mock_response_jpeg.model = "test-model"
+    mock_response_jpeg.created_at = 1234567890
+
+    mock_item_jpeg = MagicMock()
+    mock_item_jpeg.type = "image_generation_call"
+    mock_item_jpeg.result = mock_base64_jpeg
+    mock_response_jpeg.output = [mock_item_jpeg]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response_jpeg = client._create_response_content(mock_response_jpeg, chat_options=ChatOptions())  # type: ignore
+    content_jpeg = response_jpeg.messages[0].contents[0]
+    assert isinstance(content_jpeg, DataContent)
+    assert content_jpeg.media_type == "image/jpeg"
+    assert "data:image/jpeg;base64," in content_jpeg.uri
+
+    # Test WEBP detection
+    webp_signature = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP"
+    mock_base64_webp = base64.b64encode(webp_signature + b"fake_webp_data").decode()
+
+    mock_response_webp = MagicMock()
+    mock_response_webp.output_parsed = None
+    mock_response_webp.metadata = {}
+    mock_response_webp.usage = None
+    mock_response_webp.id = "test-id"
+    mock_response_webp.model = "test-model"
+    mock_response_webp.created_at = 1234567890
+
+    mock_item_webp = MagicMock()
+    mock_item_webp.type = "image_generation_call"
+    mock_item_webp.result = mock_base64_webp
+    mock_response_webp.output = [mock_item_webp]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response_webp = client._create_response_content(mock_response_webp, chat_options=ChatOptions())  # type: ignore
+    content_webp = response_webp.messages[0].contents[0]
+    assert isinstance(content_webp, DataContent)
+    assert content_webp.media_type == "image/webp"
+    assert "data:image/webp;base64," in content_webp.uri
+
+
+def test_create_response_content_image_generation_fallback():
+    """Test image generation with invalid base64 falls back to PNG."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+
+    # Create a mock response with invalid base64
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-response-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1234567890
+
+    # Mock image generation output item with unrecognized format (should fall back to PNG)
+    unrecognized_data = b"UNKNOWN_FORMAT" + b"some_binary_data"
+    unrecognized_base64 = base64.b64encode(unrecognized_data).decode()
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.result = unrecognized_base64
+
+    mock_response.output = [mock_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+
+    # Verify it falls back to PNG format for unrecognized binary data
+    assert len(response.messages[0].contents) == 1
+    content = response.messages[0].contents[0]
+    assert isinstance(content, DataContent)
+    assert content.media_type == "image/png"
+    assert f"data:image/png;base64,{unrecognized_base64}" == content.uri

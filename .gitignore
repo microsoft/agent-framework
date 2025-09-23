@@ -203,3 +203,8 @@ data_gaia_hub/
 **/data_gaia_hub/
 python/packages/lab/gaia/**/*.jsonl
 
+# TAU2 data directories
+python/packages/lab/tau2/**/data/
+python/packages/lab/tau2/**/results/
+
+agents.md

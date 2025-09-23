@@ -5,9 +5,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import (
     Executor,
@@ -27,54 +24,7 @@ from agent_framework._workflow._edge import (
     SwitchCaseEdgeGroupDefault,
 )
 from agent_framework._workflow._edge_runner import create_edge_runner
-from agent_framework._workflow._telemetry import EdgeGroupDeliveryStatus, workflow_tracer
-
-
-@pytest.fixture
-def tracing_enabled():
-    """Enable tracing for tests."""
-    import os
-
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = "true"
-
-    # Force reload the settings to pick up the environment variable
-    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
-
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-    yield
-
-    # Restore original value
-    if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS", None)
-    else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = original_value
-
-    # Reload settings again
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-
-@pytest.fixture
-def span_exporter(tracing_enabled):
-    """Set up OpenTelemetry test infrastructure."""
-
-    # Use the built-in InMemorySpanExporter for better compatibility
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-
-    # Store original tracer
-    original_tracer = workflow_tracer.tracer
-
-    # Set up our test tracer
-    workflow_tracer.tracer = tracer_provider.get_tracer("agent_framework")
-
-    yield exporter
-
-    # Clean up
-    exporter.clear()
-    workflow_tracer.tracer = original_tracer
+from agent_framework.observability import EdgeGroupDeliveryStatus
 
 
 @dataclass

@@ -1,0 +1,101 @@
+[project]
+name = "agent-framework-devui"
+description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API server."
+authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.1.0b1"
+license-files = ["LICENSE"]
+urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: Pydantic :: 2",
+  "Typing :: Typed",
+]
+dependencies = [
+    "agent-framework",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0", "watchdog>=3.0.0"]
+all = ["pytest>=7.0.0", "watchdog>=3.0.0"]
+
+[project.scripts]
+devui = "agent_framework_devui:main"
+
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'"
+]
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = []
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
+[tool.pyright]
+extend = "../../pyproject.toml"
+exclude = ['tests']
+
+[tool.mypy]
+plugins = ['pydantic.mypy']
+strict = true
+python_version = "3.10"
+ignore_missing_imports = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+show_error_codes = true
+warn_unused_ignores = false
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_any_unimported = true
+
+[tool.bandit]
+targets = ["agent_framework_devui"]
+exclude_dirs = ["tests"]
+
+[tool.poe]
+executor.type = "uv"
+include = "../../shared_tasks.toml"
+[tool.poe.tasks]
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_devui"
+test = "pytest --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests"
+
+[tool.uv.build-backend]
+module-name = "agent_framework_devui"
+module-root = ""
+
+[build-system]
+requires = ["uv_build>=0.8.2,<0.9.0"]
+build-backend = "uv_build"

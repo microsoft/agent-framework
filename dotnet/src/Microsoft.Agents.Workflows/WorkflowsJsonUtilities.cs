@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -31,6 +32,12 @@ internal static partial class WorkflowsJsonUtilities
     /// </para>
     /// </remarks>
     public static JsonSerializerOptions DefaultOptions { get; } = CreateDefaultOptions();
+
+    public static JsonElement Serialize(this IEnumerable<ChatMessage> messages) =>
+        JsonSerializer.SerializeToElement(messages, DefaultOptions.GetTypeInfo(typeof(IEnumerable<ChatMessage>)));
+
+    public static List<ChatMessage> DeserializeMessages(this JsonElement element) =>
+        (List<ChatMessage>?)element.Deserialize(DefaultOptions.GetTypeInfo(typeof(List<ChatMessage>))) ?? [];
 
     /// <summary>
     /// Creates default options to use for agents-related serialization.
@@ -87,6 +94,7 @@ internal static partial class WorkflowsJsonUtilities
     //   For now this is okay, because we never serialize WorkflowEvents into
     //   checkpoints.
     [JsonSerializable(typeof(JsonElement))]
+
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
 }

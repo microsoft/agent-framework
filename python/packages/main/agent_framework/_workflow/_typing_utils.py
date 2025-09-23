@@ -1,6 +1,57 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
+from dataclasses import fields, is_dataclass
 from typing import Any, Union, get_args, get_origin
+
+logger = logging.getLogger(__name__)
+
+
+def _coerce_to_type(value: Any, target_type: type) -> Any | None:
+    """Best-effort conversion of value into target_type."""
+    if isinstance(value, target_type):
+        return value
+
+    # Convert dataclass instances or objects with __dict__ into dict first
+    if not isinstance(value, dict):
+        if is_dataclass(value):
+            value = {f.name: getattr(value, f.name) for f in fields(value)}
+        else:
+            value_dict = getattr(value, "__dict__", None)
+            if isinstance(value_dict, dict):
+                value = dict(value_dict)
+
+    if isinstance(value, dict):
+        ctor_kwargs: dict[str, Any] = dict(value)
+
+        if is_dataclass(target_type):
+            field_names = {f.name for f in fields(target_type)}
+            ctor_kwargs = {k: v for k, v in value.items() if k in field_names}
+
+        try:
+            return target_type(**ctor_kwargs)  # type: ignore[arg-type]
+        except TypeError as exc:
+            logger.debug(f"_coerce_to_type could not call {target_type.__name__}(**..): {exc}")
+        except Exception as exc:  # pragma: no cover - unexpected constructor failure
+            logger.warning(
+                f"_coerce_to_type encountered unexpected error calling {target_type.__name__} constructor: {exc}"
+            )
+        try:
+            instance: Any = object.__new__(target_type)
+        except Exception as exc:  # pragma: no cover - pathological type
+            logger.debug(f"_coerce_to_type could not allocate {target_type.__name__} without __init__: {exc}")
+            return None
+        for key, val in value.items():
+            try:
+                setattr(instance, key, val)
+            except Exception as exc:
+                logger.debug(
+                    f"_coerce_to_type could not set {target_type.__name__}.{key} during fallback assignment: {exc}"
+                )
+                continue
+        return instance
+
+    return None
 
 
 def is_instance_of(data: Any, target_type: type) -> bool:
@@ -63,7 +114,10 @@ def is_instance_of(data: Any, target_type: type) -> bool:
                 and data.original_request is not None
                 and not is_instance_of(data.original_request, request_type)
             ):
-                return False
+                coerced = _coerce_to_type(data.original_request, request_type)
+                if coerced is None:
+                    return False
+                data.original_request = coerced
             if hasattr(data, "data") and data.data is not None and not is_instance_of(data.data, response_type):
                 return False
         return True
