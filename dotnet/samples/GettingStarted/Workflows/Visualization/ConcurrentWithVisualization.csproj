@@ -2,10 +2,9 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <TargetFramework>net9.0</TargetFramework>
+    
     <Nullable>enable</Nullable>
-    <RootNamespace>ConcurrentWithVisualizationSample</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
