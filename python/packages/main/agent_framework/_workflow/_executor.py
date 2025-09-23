@@ -34,7 +34,7 @@ from ._runner_context import Message, RunnerContext, _decode_checkpoint_value
 from ._shared_state import SharedState
 from ._telemetry import workflow_tracer
 from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext, WorkflowOutputContext, infer_output_types_from_ctx_annotation
+from ._workflow_context import WorkflowContext, validate_function_signature
 
 logger = logging.getLogger(__name__)
 
@@ -211,24 +211,9 @@ class Executor(AFBaseModel):
             source_span_ids: Optional source span IDs from multiple sources for linking.
 
         Returns:
-            WorkflowContext[Any] or WorkflowOutputContext[Any] based on the handler's context annotation.
+            WorkflowContext[Any] based on the handler's context annotation.
         """
-        from typing import get_origin
-
-        # If ctx_annotation indicates WorkflowOutputContext, create that
-        if ctx_annotation is not None:
-            origin = get_origin(ctx_annotation)
-            if origin is WorkflowOutputContext:
-                return WorkflowOutputContext(
-                    executor_id=self.id,
-                    source_executor_ids=source_executor_ids,
-                    shared_state=shared_state,
-                    runner_context=runner_context,
-                    trace_contexts=trace_contexts,
-                    source_span_ids=source_span_ids,
-                )
-
-        # Default to WorkflowContext
+        # Create WorkflowContext
         return WorkflowContext(
             executor_id=self.id,
             source_executor_ids=source_executor_ids,
@@ -515,7 +500,7 @@ class Executor(AFBaseModel):
         """Get the list of workflow output types that this executor can produce via yield_output().
 
         Returns:
-            A list of the workflow output types inferred from handlers' WorkflowOutputContext[T, U] annotations.
+            A list of the workflow output types inferred from handlers' WorkflowContext[T, U] annotations.
         """
         output_types: set[type[Any]] = set()
 
@@ -548,7 +533,7 @@ class Executor(AFBaseModel):
 
 
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
-ContextT = TypeVar("ContextT", bound="WorkflowContext[Any]")
+ContextT = TypeVar("ContextT", bound="WorkflowContext[Any, Any]")
 
 
 def handler(
@@ -581,26 +566,13 @@ def handler(
     def decorator(
         func: Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
     ) -> Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]:
-        # Extract the message type from a handler function.
+        # Extract the message type and validate using unified validation
+        message_type, ctx_annotation, inferred_output_types, inferred_workflow_output_types = (
+            validate_function_signature(func, "Handler method")
+        )
+
+        # Get signature for preservation
         sig = inspect.signature(func)
-        params = list(sig.parameters.values())
-
-        if len(params) != 3:  # self, message, ctx
-            raise ValueError(f"Handler must have exactly 3 parameters, got {len(params)}")
-
-        message_type = params[1].annotation
-        if message_type is inspect.Parameter.empty:
-            raise ValueError("Handler's second parameter must have a type annotation")
-
-        ctx_annotation = params[2].annotation
-        if ctx_annotation is inspect.Parameter.empty:
-            # Allow missing ctx annotation, but we can't infer outputs
-            inferred_output_types: list[type[Any]] = []
-            inferred_workflow_output_types: list[type[Any]] = []
-        else:
-            inferred_output_types, inferred_workflow_output_types = infer_output_types_from_ctx_annotation(
-                ctx_annotation
-            )
 
         @functools.wraps(func)
         async def wrapper(self: ExecutorT, message: Any, ctx: ContextT) -> Any:

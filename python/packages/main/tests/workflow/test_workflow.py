@@ -18,7 +18,6 @@ from agent_framework import (
     WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,
-    WorkflowOutputContext,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -40,7 +39,7 @@ class IncrementExecutor(Executor):
     increment: int = 1
 
     @handler
-    async def mock_handler(self, message: NumberMessage, ctx: WorkflowOutputContext[NumberMessage, int]) -> None:
+    async def mock_handler(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
         if message.data < self.limit:
             await ctx.send_message(NumberMessage(data=message.data + self.increment))
         else:
@@ -52,7 +51,7 @@ class AggregatorExecutor(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
     @handler
-    async def mock_handler(self, messages: list[NumberMessage], ctx: WorkflowOutputContext[Any, int]) -> None:
+    async def mock_handler(self, messages: list[NumberMessage], ctx: WorkflowContext[Any, int]) -> None:
         # This mock simply returns the sum of the data
         await ctx.yield_output(sum(msg.data for msg in messages))
         await ctx.add_event(WorkflowCompletedEvent())
@@ -78,7 +77,7 @@ class MockExecutorRequestApproval(Executor):
     async def mock_handler_b(
         self,
         message: RequestResponse[RequestInfoMessage, ApprovalMessage],
-        ctx: WorkflowOutputContext[NumberMessage, int],
+        ctx: WorkflowContext[NumberMessage, int],
     ) -> None:
         """A mock handler that processes the approval response."""
         data = await ctx.get_shared_state(self.id)
@@ -515,7 +514,7 @@ class StateTrackingExecutor(Executor):
     """An executor that tracks state in shared state to test context reset behavior."""
 
     @handler
-    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowOutputContext[Any, list]) -> None:
+    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any, list]) -> None:
         """Handle the message and track it in shared state."""
         # Get existing messages from shared state
         try:

@@ -8,7 +8,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
-    WorkflowOutputContext,
     handler,
 )
 
@@ -34,7 +33,7 @@ class SimpleSubExecutor(Executor):
         super().__init__(id="simple_sub")
 
     @handler
-    async def process(self, request: SimpleRequest, ctx: WorkflowOutputContext[None, SimpleResponse]) -> None:
+    async def process(self, request: SimpleRequest, ctx: WorkflowContext[None, SimpleResponse]) -> None:
         """Process a simple request."""
         # Just echo back with prefix and complete
         response = SimpleResponse(result=f"processed: {request.text}")

@@ -10,9 +10,9 @@ from agent_framework import (
     AgentRunResponse,
     Executor,
     WorkflowCompletedEvent,
+    WorkflowContext,
     WorkflowEvent,
     WorkflowEventSource,
-    WorkflowOutputContext,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -35,7 +35,7 @@ class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
     @handler
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowOutputContext[MockMessage, int]) -> None:
+    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage, int]) -> None:
         if message.data < 10:
             await ctx.send_message(MockMessage(data=message.data + 1))
         else:

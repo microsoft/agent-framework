@@ -1,10 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import inspect
 import logging
+from collections.abc import Callable
 from types import UnionType
-from typing import Any, Generic, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, Generic, Union, cast, get_args, get_origin
 
 from opentelemetry.propagate import inject
+from typing_extensions import TypeVar
 
 from ._events import (
     WorkflowEvent,
@@ -21,25 +26,30 @@ from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 from ._telemetry import workflow_tracer
 
-T_Out = TypeVar("T_Out")
-T_W_Out = TypeVar("T_W_Out")
+T_Out = TypeVar("T_Out", default=None)
+T_W_Out = TypeVar("T_W_Out", default=None)
 
 
 logger = logging.getLogger(__name__)
 
 
 def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[type[Any]], list[type[Any]]]:
-    """Infer output types from the WorkflowContext generic parameter.
+    """Infer message types and workflow output types from the WorkflowContext generic parameters.
 
     Examples:
+    - WorkflowContext -> ([], [])
     - WorkflowContext[str] -> ([str], [])
-    - WorkflowOutputContext[str, int] -> ([], [int])
-    - WorkflowOutputContext[str | int, bool] -> ([], [bool])
-    - WorkflowContext[Union[str, int]] -> ([str, int], [])
-    - WorkflowContext[Any] -> ([], [])
+    - WorkflowContext[str, int] -> ([str], [int])
+    - WorkflowContext[str | int, bool | int] -> ([str, int], [bool, int])
+    - WorkflowContext[Union[str, int], Union[bool, int]] -> ([str, int], [bool, int])
+    - WorkflowContext[Any] -> ([Any], [])
+    - WorkflowContext[Any, Any] -> ([Any], [Any])
+    - WorkflowContext[None] -> ([], [])
+    - WorkflowContext[None, None] -> ([], [])
+    - WorkflowContext[None, int] -> ([], [int])
 
     Returns:
-        Tuple of (output_types, workflow_output_types)
+        Tuple of (message_types, workflow_output_types)
     """
     # If no annotation or not parameterized, return empty lists
     try:
@@ -51,71 +61,198 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     if origin is None:
         return [], []
 
-    # Expecting WorkflowContext[T] or WorkflowOutputContext[T, U]
-    if origin is not WorkflowContext and origin is not WorkflowOutputContext:
+    # Expecting WorkflowContext[T_Out, T_W_Out]
+    if origin is not WorkflowContext:
         return [], []
 
     args = list(get_args(ctx_annotation))
     if not args:
         return [], []
 
-    if origin is WorkflowContext:
-        # WorkflowContext[T] -> output_types from T, no workflow output types
-        if not args:
-            return [], []
+    # WorkflowContext[T_Out] -> message_types from T_Out, no workflow output types
+    if len(args) == 1:
         t = args[0]
         t_origin = get_origin(t)
         if t is Any:
-            return [], []
+            return [cast(type[Any], Any)], []
 
         if t_origin in (Union, UnionType):
-            output_types = [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
-            return output_types, []
+            message_types = [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
+            return message_types, []
 
-        if t is Any or t is type(None):
+        if t is type(None):
             return [], []
         return [t], []
 
-    if origin is WorkflowOutputContext:
-        # WorkflowOutputContext[T_Out, T_W_Out] -> output_types from T_Out, workflow_output_types from T_W_Out
-        if len(args) < 2:
-            # Only one generic parameter, treat as workflow output type for backward compatibility
-            t = args[0]
-            t_origin = get_origin(t)
-            if t is Any:
-                return [], []
+    # WorkflowContext[T_Out, T_W_Out] -> message_types from T_Out, workflow_output_types from T_W_Out
+    t_out, t_w_out = args[:2]  # Take first two args in case there are more
 
-            if t_origin in (Union, UnionType):
-                output_types = [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
-                return [], output_types
+    # Process T_Out for message_types
+    message_types = []
+    t_out_origin = get_origin(t_out)
+    if t_out is Any:
+        message_types = [cast(type[Any], Any)]
+    elif t_out is not type(None):
+        if t_out_origin in (Union, UnionType):
+            message_types = [arg for arg in get_args(t_out) if arg is not Any and arg is not type(None)]
+        else:
+            message_types = [t_out]
 
-            if t is Any or t is type(None):
-                return [], []
-            return [], [t]
-        # Two generic parameters: T_Out and T_W_Out
-        t_out, t_w_out = args
+    # Process T_W_Out for workflow_output_types
+    workflow_output_types = []
+    t_w_out_origin = get_origin(t_w_out)
+    if t_w_out is Any:
+        workflow_output_types = [cast(type[Any], Any)]
+    elif t_w_out is not type(None):
+        if t_w_out_origin in (Union, UnionType):
+            workflow_output_types = [arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None)]
+        else:
+            workflow_output_types = [t_w_out]
 
-        # Process T_Out for output_types
-        output_types = []
-        t_out_origin = get_origin(t_out)
-        if t_out is not Any and t_out is not type(None):
-            if t_out_origin in (Union, UnionType):
-                output_types = [arg for arg in get_args(t_out) if arg is not Any and arg is not type(None)]
+    return message_types, workflow_output_types
+
+
+def _is_workflow_context_type(annotation: Any) -> bool:
+    """Check if an annotation represents WorkflowContext, WorkflowContext[T], or WorkflowContext[T, U]."""
+    origin = get_origin(annotation)
+    if origin is WorkflowContext:
+        return True
+    # Also handle the case where the raw class is used
+    return annotation is WorkflowContext
+
+
+def validate_workflow_context_annotation(
+    annotation: Any,
+    parameter_name: str,
+    context_description: str,
+) -> tuple[list[type[Any]], list[type[Any]]]:
+    """Validate a WorkflowContext annotation and return inferred types.
+
+    Args:
+        annotation: The type annotation to validate
+        parameter_name: Name of the parameter (for error messages)
+        context_description: Description of the context (e.g., "Function func1", "Handler method")
+
+    Returns:
+        Tuple of (output_types, workflow_output_types)
+
+    Raises:
+        ValueError: If the annotation is invalid
+    """
+    if annotation == inspect.Parameter.empty:
+        raise ValueError(
+            f"{context_description} {parameter_name} must have a WorkflowContext, "
+            f"WorkflowContext[T] or WorkflowContext[T, U] type annotation, "
+            f"where T is output message type and U is workflow output type"
+        )
+
+    if not _is_workflow_context_type(annotation):
+        raise ValueError(
+            f"{context_description} {parameter_name} must be annotated as "
+            f"WorkflowContext, WorkflowContext[T], or WorkflowContext[T, U], "
+            f"got {annotation}"
+        )
+
+    # Validate type arguments for WorkflowContext[T] or WorkflowContext[T, U]
+    type_args = get_args(annotation)
+    if type_args:
+        # Helper function to check if a value is a valid type annotation
+        def _is_type_like(x: Any) -> bool:
+            """Check if a value is a type-like entity (class, type, or typing construct)."""
+            return isinstance(x, type) or get_origin(x) is not None
+
+        for i, type_arg in enumerate(type_args):
+            param_description = "T_Out" if i == 0 else "T_W_Out"
+
+            # Allow Any and None explicitly
+            if type_arg is Any or type_arg is type(None):
+                continue
+
+            # Check if it's a union type and validate each member
+            union_origin = get_origin(type_arg)
+            if union_origin in (Union, UnionType):
+                union_members = get_args(type_arg)
+                invalid_members = [
+                    m for m in union_members if not _is_type_like(m) and m is not type(None) and m is not Any
+                ]
+                if invalid_members:
+                    raise ValueError(
+                        f"{context_description} {parameter_name} {param_description} "
+                        f"contains invalid type entries: {invalid_members}. "
+                        f"Use proper types or typing generics"
+                    )
             else:
-                output_types = [t_out]
+                # Check if it's a valid type
+                if not _is_type_like(type_arg):
+                    raise ValueError(
+                        f"{context_description} {parameter_name} {param_description} "
+                        f"contains invalid type entry: {type_arg}. "
+                        f"Use proper types or typing generics"
+                    )
 
-        # Process T_W_Out for workflow_output_types
-        workflow_output_types = []
-        t_w_out_origin = get_origin(t_w_out)
-        if t_w_out is not Any and t_w_out is not type(None):
-            if t_w_out_origin in (Union, UnionType):
-                workflow_output_types = [arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None)]
-            else:
-                workflow_output_types = [t_w_out]
+    return infer_output_types_from_ctx_annotation(annotation)
 
-        return output_types, workflow_output_types
 
-    return [], []
+def validate_function_signature(
+    func: Callable[..., Any], context_description: str
+) -> tuple[type, Any, list[type[Any]], list[type[Any]]]:
+    """Validate function signature for executor functions.
+
+    Args:
+        func: The function to validate
+        context_description: Description for error messages (e.g., "Function", "Handler method")
+
+    Returns:
+        Tuple of (message_type, ctx_annotation, output_types, workflow_output_types)
+
+    Raises:
+        ValueError: If the function signature is invalid
+    """
+    signature = inspect.signature(func)
+    params = list(signature.parameters.values())
+
+    # Determine expected parameter count based on context
+    expected_counts: tuple[int, ...]
+    if context_description.startswith("Function"):
+        # Function executor: (message) or (message, ctx)
+        expected_counts = (1, 2)
+        param_description = "(message: T) or (message: T, ctx: WorkflowContext[U])"
+    else:
+        # Handler method: (self, message, ctx)
+        expected_counts = (3,)
+        param_description = "(self, message: T, ctx: WorkflowContext[U])"
+
+    if len(params) not in expected_counts:
+        raise ValueError(
+            f"{context_description} {func.__name__} must have {param_description}. Got {len(params)} parameters."
+        )
+
+    # Extract message parameter (index 0 for functions, index 1 for methods)
+    message_param_idx = 0 if context_description.startswith("Function") else 1
+    message_param = params[message_param_idx]
+
+    # Check message parameter has type annotation
+    if message_param.annotation == inspect.Parameter.empty:
+        raise ValueError(f"{context_description} {func.__name__} must have a type annotation for the message parameter")
+
+    message_type = message_param.annotation
+
+    # Check if there's a context parameter
+    ctx_param_idx = message_param_idx + 1
+    if len(params) > ctx_param_idx:
+        ctx_param = params[ctx_param_idx]
+        output_types, workflow_output_types = validate_workflow_context_annotation(
+            ctx_param.annotation, f"parameter '{ctx_param.name}'", context_description
+        )
+        ctx_annotation = ctx_param.annotation
+    else:
+        # No context parameter (only valid for function executors)
+        if not context_description.startswith("Function"):
+            raise ValueError(f"{context_description} {func.__name__} must have a WorkflowContext parameter")
+        output_types, workflow_output_types = [], []
+        ctx_annotation = None
+
+    return message_type, ctx_annotation, output_types, workflow_output_types
 
 
 _FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
@@ -129,7 +266,7 @@ _FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
 )
 
 
-class WorkflowContext(Generic[T_Out]):
+class WorkflowContext(Generic[T_Out, T_W_Out]):
     """Context for executors in a workflow.
 
     This class is used to provide a way for executors to interact with the workflow
@@ -137,6 +274,7 @@ class WorkflowContext(Generic[T_Out]):
 
     Type Parameters:
         T_Out: The type for send_message() outputs
+        T_W_Out: The type for yield_output() workflow outputs
     """
 
     def __init__(
@@ -194,6 +332,17 @@ class WorkflowContext(Generic[T_Out]):
                 msg.source_span_ids = [format(span.get_span_context().span_id, "016x")]
 
             await self._runner_context.send_message(msg)
+
+    async def yield_output(self, output: T_W_Out) -> None:
+        """Set the output of the workflow.
+
+        Args:
+            output: The output to yield. This must conform to the workflow output type(s)
+                    declared on this context.
+        """
+        with _framework_event_origin():
+            event = WorkflowOutputEvent(data=output, source_executor_id=self._executor_id)
+        await self._runner_context.add_event(event)
 
     async def add_event(self, event: WorkflowEvent) -> None:
         """Add an event to the workflow context."""
@@ -254,27 +403,3 @@ class WorkflowContext(Generic[T_Out]):
         if hasattr(self._runner_context, "get_state"):
             return await self._runner_context.get_state(self._executor_id)  # type: ignore[return-value]
         return None
-
-
-class WorkflowOutputContext(WorkflowContext[T_Out], Generic[T_Out, T_W_Out]):
-    """Specialized context for executors that produce workflow output to external caller.
-
-    This class extends WorkflowContext to provide additional functionality
-    for the executor that uses it, specifically the ability to yield the overall
-    workflow output.
-
-    Generic Parameters:
-        T_Out: The type for send_message() outputs
-        T_W_Out: The type for yield_output() workflow outputs
-    """
-
-    async def yield_output(self, output: T_W_Out) -> None:
-        """Set the output of the workflow.
-
-        Args:
-            output: The output to yield. This must conform to the workflow output type(s)
-                    declared on this context.
-        """
-        with _framework_event_origin():
-            event = WorkflowOutputEvent(data=output, source_executor_id=self._executor_id)
-        await self._runner_context.add_event(event)

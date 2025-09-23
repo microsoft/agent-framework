@@ -6,7 +6,6 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
-    WorkflowOutputContext,
     WorkflowContext,
     executor,
     handler,
@@ -20,11 +19,11 @@ What this example shows
     1) Custom class that subclasses Executor with an async method marked by @handler.
          Signatures: 
             - (text: str, ctx: WorkflowContext[str]) -> None, or
-            - (text: str, ctx: WorkflowOutputContext[None, str]) -> None.
+            - (text: str, ctx: WorkflowContext[None, str]) -> None.
          The first parameter is the typed input to this node.
-         The second parameter is a WorkflowContext or WorkflowOutputContext.
+         The second parameter is a WorkflowContext or WorkflowContext.
          WorkflowContext is used for nodes that send messages to downstream nodes.
-         WorkflowOutputContext is used for nodes that also yield workflow output.
+         WorkflowContext is used for nodes that also yield workflow output.
     2) Standalone async function decorated with @executor using the same signature.
          Simple steps can use this form; a terminal step can emit a
          WorkflowCompletedEvent to end the workflow.
@@ -76,12 +75,12 @@ class UpperCase(Executor):
 # -----------------------------------------------
 #
 # For simple steps you can skip subclassing and define an async function with the
-# same signature pattern (typed input + WorkflowOutputContext[T]) and decorate it with
+# same signature pattern (typed input + WorkflowContext[T]) and decorate it with
 # @executor. This creates a fully functional node that can be wired into a flow.
 
 
 @executor(id="reverse_text_executor")
-async def reverse_text(text: str, ctx: WorkflowOutputContext[None, str]) -> None:
+async def reverse_text(text: str, ctx: WorkflowContext[None, str]) -> None:
     """Reverse the input string, yield the output, and signal workflow completion.
 
     This node yields the final output using ctx.yield_output(result),

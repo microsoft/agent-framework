@@ -21,7 +21,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework._workflow._executor import AgentExecutorResponse, Executor
-from agent_framework._workflow._workflow_context import WorkflowOutputContext
+from agent_framework._workflow._workflow_context import WorkflowContext
 
 
 class _SimpleAgent(BaseAgent):
@@ -55,7 +55,7 @@ class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
     @handler
-    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowOutputContext[None, dict]) -> None:
+    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[None, dict]) -> None:
         full = response.full_conversation
         # The AgentExecutor contract guarantees full_conversation is populated.
         assert full is not None

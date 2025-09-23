@@ -15,21 +15,6 @@ from ._workflow_executor import WorkflowExecutor
 logger = logging.getLogger(__name__)
 
 
-def _is_type_like(x: Any) -> bool:
-    """Check if a value is a type-like entity.
-
-    A "type-like" entry is either a class/type or a typing alias
-    (e.g., list[str] has an origin and args).
-
-    Args:
-        x: The value to check
-
-    Returns:
-        True if the value is type-like, False otherwise
-    """
-    return isinstance(x, type) or get_origin(x) is not None
-
-
 # region Enums and Base Classes
 class ValidationTypeEnum(Enum):
     """Enumeration of workflow validation types."""
@@ -107,23 +92,6 @@ class GraphConnectivityError(WorkflowValidationError):
 
     def __init__(self, message: str):
         super().__init__(message, validation_type=ValidationTypeEnum.GRAPH_CONNECTIVITY)
-
-
-class HandlerOutputAnnotationError(WorkflowValidationError):
-    """Exception raised when a handler's WorkflowContext output annotation is invalid or missing."""
-
-    def __init__(self, executor_id: str, handler_name: str, reason: str):
-        super().__init__(
-            message=(
-                "Invalid WorkflowContext output annotation in handler "
-                f"'{handler_name}' of executor '{executor_id}': {reason}. "
-                "Handlers must annotate their third parameter as WorkflowContext[T]. "
-                "Use WorkflowContext[None] if the handler emits no messages."
-            ),
-            validation_type=ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION,
-        )
-        self.executor_id = executor_id
-        self.handler_name = handler_name
 
 
 class InterceptorConflictError(WorkflowValidationError):
@@ -224,178 +192,18 @@ class WorkflowGraphValidator:
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
 
-        Requirements:
-        - WorkflowContext annotation must be present
-        - T_Out must be provided; if no outputs, it must be None
-                - T_Out elements must be valid types (class) or typing generics (e.g., list[str]);
-                    values like int() or 123 are invalid
+        Note: This validation is now primarily handled at handler registration time
+        via the unified validation functions in _workflow_context.py when the @handler
+        decorator is applied. This method is kept minimal for any edge cases.
         """
-        from ._workflow_context import WorkflowContext, WorkflowOutputContext  # Local import to avoid cycles
-
-        # Iterate over all registered executors in the workflow graph
-        for executor_id, executor in self._executors.items():
-            for attr_name in dir(executor.__class__):
-                if attr_name.startswith("_"):
-                    continue
-                # Retrieve attributes without binding (so the first parameter remains 'self').
-                # This ensures inspect.signature sees all three parameters: (self, message, ctx).
-                attr = None
-                from contextlib import suppress
-
-                with suppress(Exception):
-                    attr = inspect.getattr_static(executor.__class__, attr_name)
-                if attr is None:
-                    continue
-                # Consider only callables that were decorated with @handler
-                if not callable(attr) or not hasattr(attr, "_handler_spec"):
-                    continue
-
-                handler_spec = attr._handler_spec  # type: ignore[attr-defined]
-                handler_name = handler_spec.get("name", attr_name)
-
-                try:
-                    # Inspect the function signature of the unbound function
-                    sig = inspect.signature(attr)
-                except (TypeError, ValueError):
-                    continue
-
-                params = list(sig.parameters.values())
-                # Handlers must have exactly three parameters: (self, message, ctx)
-                if len(params) != 3:
-                    continue
-
-                ctx_param = params[2]
-                ctx_ann = ctx_param.annotation
-
-                # If ctx lacks an annotation entirely, fail fast with a clear message
-                if ctx_ann is inspect.Parameter.empty:
-                    raise HandlerOutputAnnotationError(executor_id, handler_name, "missing type annotation for ctx")
-
-                # Validate that the ctx annotation is WorkflowContext[...] or
-                # WorkflowOutputContext[...] and is properly parameterized
-                ctx_origin = get_origin(ctx_ann)
-                if ctx_origin is None:
-                    # If it's exactly the WorkflowContext class, T_Out is missing (e.g., WorkflowContext)
-                    if ctx_ann is WorkflowContext:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                        )
-                    if ctx_ann is WorkflowOutputContext:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            "T_Out and T_W_Out are missing; use "
-                            "WorkflowOutputContext[None, OutputType] or specify concrete types",
-                        )
-                else:
-                    # The annotation is parameterized, but must be for WorkflowContext or WorkflowOutputContext
-                    if ctx_origin is not WorkflowContext and ctx_origin is not WorkflowOutputContext:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            f"ctx must be WorkflowContext[T] or WorkflowOutputContext[T, U], got {ctx_ann}",
-                        )
-
-                # Extract and validate T_Out
-                type_args = get_args(ctx_ann)
-                if not type_args:
-                    raise HandlerOutputAnnotationError(
-                        executor_id,
-                        handler_name,
-                        "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                    )
-
-                t_out = type_args[0]
-
-                # Allow Any for T_Out (unspecified outputs). We accept this here and
-                # skip type compatibility later, but still enforce shape validity elsewhere.
-                if t_out is Any:
-                    continue
-
-                # Allow None (no outputs) explicitly declared
-                if t_out is type(None):
-                    continue
-
-                # If T_Out is a union, validate each member (e.g., str | int)
-                union_origin = get_origin(t_out)
-                type_items: list[Any]
-                type_items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
-
-                invalid = [x for x in type_items if not _is_type_like(x) and x is not type(None)]
-                if invalid:
-                    raise HandlerOutputAnnotationError(
-                        executor_id,
-                        handler_name,
-                        f"T_Out contains invalid entries: {invalid}. Use proper types or typing generics",
-                    )
-
-            # Also validate instance-level handler specs if present
-            if hasattr(executor, "_handler_specs"):
-                for spec in executor._handler_specs:
-                    handler_name = spec.get("name", "unknown")
-                    ctx_ann = spec.get("ctx_annotation")
-
-                    if ctx_ann is None:
-                        continue  # Skip if no annotation stored
-
-                    # Validate that the ctx annotation is WorkflowContext[...]
-                    # or WorkflowOutputContext[...] and is properly parameterized
-                    ctx_origin = get_origin(ctx_ann)
-                    if ctx_origin is None:
-                        if ctx_ann is WorkflowContext:
-                            raise HandlerOutputAnnotationError(
-                                executor_id,
-                                handler_name,
-                                "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                            )
-                        if ctx_ann is WorkflowOutputContext:
-                            raise HandlerOutputAnnotationError(
-                                executor_id,
-                                handler_name,
-                                "T_Out and T_W_Out are missing; use "
-                                "WorkflowOutputContext[None, OutputType] or specify concrete types",
-                            )
-                    else:
-                        if ctx_origin is not WorkflowContext and ctx_origin is not WorkflowOutputContext:
-                            raise HandlerOutputAnnotationError(
-                                executor_id,
-                                handler_name,
-                                f"ctx must be WorkflowContext[T] or WorkflowOutputContext[T, U], got {ctx_ann}",
-                            )
-
-                    # Extract and validate T_Out
-                    type_args = get_args(ctx_ann)
-                    if not type_args:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                        )
-
-                    t_out = type_args[0]
-
-                    # Allow Any for T_Out (unspecified outputs)
-                    if t_out is Any:
-                        continue
-
-                    # Allow None (no outputs) explicitly declared
-                    if t_out is type(None):
-                        continue
-
-                    # If T_Out is a union, validate each member
-                    union_origin = get_origin(t_out)
-                    instance_type_items: list[Any]
-                    instance_type_items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
-
-                    invalid = [x for x in instance_type_items if not _is_type_like(x) and x is not type(None)]
-                    if invalid:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            f"T_Out contains invalid entries: {invalid}. Use proper types or typing generics",
-                        )
+        # The comprehensive validation is already done during handler registration:
+        # 1. @handler decorator calls validate_function_signature()
+        # 2. FunctionExecutor constructor calls validate_function_signature()
+        # 3. Both use validate_workflow_context_annotation() for WorkflowContext validation
+        #
+        # All executors in the workflow must have gone through one of these paths,
+        # so redundant validation here is unnecessary and has been removed.
+        pass
 
     # endregion
 

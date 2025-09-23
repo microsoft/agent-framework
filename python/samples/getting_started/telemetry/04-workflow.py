@@ -9,7 +9,6 @@ from agent_framework import (
     WorkflowCompletedEvent,
     WorkflowOutputEvent,
     WorkflowContext,
-    WorkflowOutputContext,
     handler,
 )
 from agent_framework.telemetry import setup_telemetry
@@ -44,7 +43,7 @@ class ReverseTextExecutor(Executor):
     """An executor that reverses text."""
 
     @handler
-    async def reverse_text(self, text: str, ctx: WorkflowOutputContext[Any, str]) -> None:
+    async def reverse_text(self, text: str, ctx: WorkflowContext[Any, str]) -> None:
         """Execute the task by reversing the input string."""
         print(f"ReverseTextExecutor: Processing '{text}'")
         result = text[::-1]

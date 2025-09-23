@@ -11,7 +11,7 @@ from agent_framework import AgentProtocol, ChatMessage, Role
 from ._events import WorkflowCompletedEvent
 from ._executor import AgentExecutorRequest, AgentExecutorResponse, Executor, handler
 from ._workflow import Workflow, WorkflowBuilder
-from ._workflow_context import WorkflowContext, WorkflowOutputContext
+from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ Notes:
     yield output and add a WorkflowCompletedEvent), or
   - a callback function with signature:
         def cb(results: list[AgentExecutorResponse]) -> Any | None
-        def cb(results: list[AgentExecutorResponse], ctx: WorkflowOutputContext[Any]) -> Any | None
+        def cb(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None
     The callback is wrapped in _CallbackAggregator.
     If the callback returns a non-None value, _CallbackAggregator yields that as output
     and adds a WorkflowCompletedEvent.
@@ -74,7 +74,7 @@ class _AggregateAgentConversations(Executor):
 
     @handler
     async def aggregate(
-        self, results: list[AgentExecutorResponse], ctx: WorkflowOutputContext[Any, list[ChatMessage]]
+        self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any, list[ChatMessage]]
     ) -> None:
         if not results:
             logger.error("Concurrent aggregator received empty results list")
@@ -159,7 +159,7 @@ class _CallbackAggregator(Executor):
         self._param_count = len(inspect.signature(callback).parameters)
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowOutputContext[Any, Any]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any, Any]) -> None:
         # Call according to provided signature, always non-blocking for sync callbacks
         if self._param_count >= 2:
             if inspect.iscoroutinefunction(self._callback):

@@ -14,7 +14,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
-    WorkflowOutputContext,
     handler,
     intercepts_request,
 )
@@ -54,7 +53,7 @@ class EmailValidator(Executor):
 
     @handler
     async def validate_request(
-        self, request: EmailValidationRequest, ctx: WorkflowOutputContext[RequestInfoMessage, ValidationResult]
+        self, request: EmailValidationRequest, ctx: WorkflowContext[RequestInfoMessage, ValidationResult]
     ) -> None:
         """Validate an email address."""
         # Extract domain and check if it's approved
@@ -71,7 +70,7 @@ class EmailValidator(Executor):
 
     @handler
     async def handle_domain_response(
-        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowOutputContext[None, ValidationResult]
+        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext[None, ValidationResult]
     ) -> None:
         """Handle domain check response with correlation."""
         # Use the original email from the correlated response

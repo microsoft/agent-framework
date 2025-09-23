@@ -50,7 +50,7 @@ from ._executor import (
     handler,
 )
 from ._workflow import Workflow, WorkflowBuilder
-from ._workflow_context import WorkflowContext, WorkflowOutputContext
+from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +87,7 @@ class _CompleteWithConversation(Executor):
     """Terminates the workflow by emitting the final conversation context."""
 
     @handler
-    async def complete(
-        self, conversation: list[ChatMessage], ctx: WorkflowOutputContext[Any, list[ChatMessage]]
-    ) -> None:
+    async def complete(self, conversation: list[ChatMessage], ctx: WorkflowContext[Any, list[ChatMessage]]) -> None:
         await ctx.yield_output(list(conversation))
         await ctx.add_event(WorkflowCompletedEvent())
 
