@@ -2,7 +2,6 @@
 
 using System;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
@@ -108,10 +107,9 @@ public class ServiceIdAgentThreadTests
     // Sealed test subclass to expose protected members for testing
     private sealed class TestServiceIdAgentThread : ServiceIdAgentThread
     {
-        public TestServiceIdAgentThread() : base() { }
+        public TestServiceIdAgentThread() { }
         public TestServiceIdAgentThread(string serviceThreadId) : base(serviceThreadId) { }
         public TestServiceIdAgentThread(JsonElement serializedThreadState) : base(serializedThreadState) { }
         public string? GetServiceThreadId() => this.ServiceThreadId;
-        public override Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => base.SerializeAsync(jsonSerializerOptions, cancellationToken);
     }
 }

@@ -21,7 +21,7 @@ public abstract class AIAgent
     /// <value>
     /// The identifier of the agent. The default is a random GUID value, but for service agents, it will match the id of the agent in the service.
     /// </value>
-    public virtual string Id { get; } = Guid.NewGuid().ToString();
+    public virtual string Id { get; } = Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// Gets the name of the agent (optional).

@@ -93,7 +93,7 @@ namespace SampleApp
 
         public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
-            this._threadId ??= Guid.NewGuid().ToString();
+            this._threadId ??= Guid.NewGuid().ToString("N");
 
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);

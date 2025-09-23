@@ -104,8 +104,10 @@ public class AgentActorTests
         var threadJson = JsonSerializer.SerializeToElement(new { conversationId = "expected-thread-id" });
         var mockThread = new Mock<AgentThread>();
 
-        var testAgent = new TestAgent();
-        testAgent.ThreadForCreate = mockThread.Object;
+        TestAgent testAgent = new()
+        {
+            ThreadForCreate = mockThread.Object
+        };
 
         var mockContext = new Mock<IActorRuntimeContext>();
         var actorId = new ActorId("TestAgent", "test-instance");

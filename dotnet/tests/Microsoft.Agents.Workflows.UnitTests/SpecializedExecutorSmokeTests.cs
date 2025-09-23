@@ -43,7 +43,7 @@ public class SpecializedExecutorSmokeTests
                 {
                     MessageId = Guid.NewGuid().ToString("N"),
                     RawRepresentation = text,
-                    CreatedAt = DateTime.Now,
+                    CreatedAt = DateTime.UtcNow,
                 };
             }
 

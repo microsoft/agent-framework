@@ -177,7 +177,7 @@ internal static class MessageConverter
 
         var message = new Message
         {
-            MessageId = chatMessage.MessageId ?? Guid.NewGuid().ToString(),
+            MessageId = chatMessage.MessageId ?? Guid.NewGuid().ToString("N"),
             Role = ConvertChatRoleToMessageRole(chatMessage.Role),
             Parts = []
         };

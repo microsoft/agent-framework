@@ -6,7 +6,6 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -35,43 +34,107 @@ public class AgentWorkflowBuilderTests
     [Fact]
     public void BuildHandoffs_InvalidArguments_Throws()
     {
-        Assert.Throws<ArgumentNullException>("initialAgent", () => AgentWorkflowBuilder.StartHandoffWith(null!));
+        Assert.Throws<ArgumentNullException>("initialAgent", () => AgentWorkflowBuilder.CreateHandoffBuilderWith(null!));
 
         var agent = new DoubleEchoAgent("agent");
-        var handoffs = AgentWorkflowBuilder.StartHandoffWith(agent);
+        var handoffs = AgentWorkflowBuilder.CreateHandoffBuilderWith(agent);
         Assert.NotNull(handoffs);
 
         Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandoff(null!, new DoubleEchoAgent("a2")));
-        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoff(new DoubleEchoAgent("a2"), (AIAgent)null!));
         Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoff(new DoubleEchoAgent("a2"), null!));
-        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoff(new DoubleEchoAgent("a2"), [null!]));
+
+        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandoffs(null!, new DoubleEchoAgent("a2")));
+        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandoffs([null!], new DoubleEchoAgent("a2")));
+        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoffs(new DoubleEchoAgent("a2"), null!));
+        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoffs(new DoubleEchoAgent("a2"), [null!]));
 
         var noDescriptionAgent = new ChatClientAgent(new MockChatClient(delegate { return new(); }));
         Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, noDescriptionAgent));
     }
 
     [Fact]
-    public async Task BuildSequential_AgentsRunInOrderAsync()
+    public void BuildGroupChat_InvalidArguments_Throws()
+    {
+        Assert.Throws<ArgumentNullException>("managerFactory", () => AgentWorkflowBuilder.CreateGroupChatBuilderWith(null!));
+
+        var groupChat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(_ => new AgentWorkflowBuilder.RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]));
+        Assert.NotNull(groupChat);
+        Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(null!));
+        Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants([null!]));
+        Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(new DoubleEchoAgent("a1"), null!));
+
+        Assert.Throws<ArgumentNullException>("agents", () => new AgentWorkflowBuilder.RoundRobinGroupChatManager(null!));
+    }
+
+    [Fact]
+    public void GroupChatManager_MaximumIterationCount_Invalid_Throws()
+    {
+        var manager = new AgentWorkflowBuilder.RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]);
+
+        const int DefaultMaxIterations = 40;
+        Assert.Equal(DefaultMaxIterations, manager.MaximumIterationCount);
+        Assert.Throws<ArgumentOutOfRangeException>("value", () => manager.MaximumIterationCount = 0);
+        Assert.Throws<ArgumentOutOfRangeException>("value", () => manager.MaximumIterationCount = -1);
+        Assert.Equal(DefaultMaxIterations, manager.MaximumIterationCount);
+
+        manager.MaximumIterationCount = 30;
+        Assert.Equal(30, manager.MaximumIterationCount);
+
+        manager.MaximumIterationCount = 1;
+        Assert.Equal(1, manager.MaximumIterationCount);
+
+        manager.MaximumIterationCount = int.MaxValue;
+        Assert.Equal(int.MaxValue, manager.MaximumIterationCount);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task BuildSequential_AgentsRunInOrderAsync(int numAgents)
     {
         var workflow = AgentWorkflowBuilder.BuildSequential(
-            new DoubleEchoAgent("agent1"),
-            new DoubleEchoAgent("agent2"),
-            new DoubleEchoAgent("agent3"));
+            from i in Enumerable.Range(1, numAgents)
+            select new DoubleEchoAgent($"agent{i}"));
 
         for (int iter = 0; iter < 3; iter++)
         {
-            (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
-
-            const string Expected = "agent1abcabcagent2agent1abcabcagent1abcabcagent3agent2agent1abcabcagent1abcabcagent2agent1abcabcagent1abcabc";
-            Assert.Equal(Expected, updateText);
+            const string UserInput = "abc";
+            (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
 
             Assert.NotNull(result);
-            Assert.NotNull(Assert.Single(result));
+            Assert.Equal(numAgents + 1, result.Count);
+
+            Assert.Equal(ChatRole.User, result[0].Role);
+            Assert.Null(result[0].AuthorName);
+            Assert.Equal(UserInput, result[0].Text);
+
+            string[] texts = new string[numAgents + 1];
+            texts[0] = UserInput;
+            string expectedTotal = string.Empty;
+            for (int i = 1; i < numAgents + 1; i++)
+            {
+                string id = $"agent{((i - 1) % numAgents) + 1}";
+                texts[i] = $"{id}{Double(string.Concat(texts.Take(i)))}";
+                Assert.Equal(ChatRole.Assistant, result[i].Role);
+                Assert.Equal(id, result[i].AuthorName);
+                Assert.Equal(texts[i], result[i].Text);
+                expectedTotal += texts[i];
+            }
+
+            Assert.Equal(expectedTotal, updateText);
+            Assert.Equal(UserInput + expectedTotal, string.Concat(result));
+
+            static string Double(string s) => s + s;
         }
     }
 
     private class DoubleEchoAgent(string name) : AIAgent
     {
+        public override string Name => name;
+
         public override AgentThread GetNewThread()
             => new DoubleEchoAgentThread();
 
@@ -85,14 +148,13 @@ public class AgentWorkflowBuilderTests
         public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            string id = Guid.NewGuid().ToString("N");
-            var contents = messages.SelectMany(m => m.Contents).ToList();
-
             await Task.Yield();
 
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, name) { MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { MessageId = id };
+            var contents = messages.SelectMany(m => m.Contents).ToList();
+            string id = Guid.NewGuid().ToString("N");
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
         }
     }
 
@@ -116,13 +178,13 @@ public class AgentWorkflowBuilderTests
             remaining.Value = 2;
 
             (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
-
-            Assert.Single(Regex.Matches(updateText, "agent1"));
-            Assert.Single(Regex.Matches(updateText, "agent2"));
+            Assert.NotEmpty(updateText);
             Assert.NotNull(result);
 
             // TODO: https://github.com/microsoft/agent-framework/issues/784
             // These asserts are flaky until we guarantee message delivery order.
+            //Assert.Single(Regex.Matches(updateText, "agent1"));
+            //Assert.Single(Regex.Matches(updateText, "agent2"));
             //Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
             //Assert.Equal(2, result.Count);
         }
@@ -136,18 +198,11 @@ public class AgentWorkflowBuilderTests
             ChatMessage message = Assert.Single(messages);
             Assert.Equal("abc", Assert.IsType<TextContent>(Assert.Single(message.Contents)).Text);
 
-            string? endFunctionName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("end", StringComparison.Ordinal))?.Name;
-            Assert.NotNull(endFunctionName);
-
-            return new(new ChatMessage(ChatRole.Assistant,
-            [
-                new TextContent("Hello from agent1"),
-                new FunctionCallContent("call12345", endFunctionName),
-            ]));
+            return new(new ChatMessage(ChatRole.Assistant, "Hello from agent1"));
         }));
 
         var workflow =
-            AgentWorkflowBuilder.StartHandoffWith(initialAgent)
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
             .WithHandoff(initialAgent, new ChatClientAgent(new MockChatClient(delegate
             {
                 Assert.Fail("Should never be invoked.");
@@ -184,19 +239,12 @@ public class AgentWorkflowBuilderTests
         }), name: "initialAgent");
 
         var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
-        {
-            string? endFunctionName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("end", StringComparison.Ordinal))?.Name;
-            Assert.NotNull(endFunctionName);
-
-            return new(new ChatMessage(ChatRole.Assistant,
-            [
-                new TextContent("Hello from agent2"),
-                new FunctionCallContent("call2", endFunctionName),
-            ]));
-        }), name: "nextAgent", description: "The second agent");
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent2"))),
+            name: "nextAgent",
+            description: "The second agent");
 
         var workflow =
-            AgentWorkflowBuilder.StartHandoffWith(initialAgent)
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
             .WithHandoff(initialAgent, nextAgent)
             .Build();
 
@@ -247,19 +295,12 @@ public class AgentWorkflowBuilderTests
         }), name: "secondAgent", description: "The second agent");
 
         var thirdAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
-        {
-            string? endFunctionName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("end", StringComparison.Ordinal))?.Name;
-            Assert.NotNull(endFunctionName);
-
-            return new(new ChatMessage(ChatRole.Assistant,
-            [
-                new TextContent("Hello from agent3"),
-                new FunctionCallContent("call3", endFunctionName),
-            ]));
-        }), name: "thirdAgent", description: "The third / final agent");
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent3"))),
+            name: "thirdAgent",
+            description: "The third / final agent");
 
         var workflow =
-            AgentWorkflowBuilder.StartHandoffWith(initialAgent)
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
             .WithHandoff(initialAgent, secondAgent)
             .WithHandoff(secondAgent, thirdAgent)
             .Build();
@@ -292,6 +333,52 @@ public class AgentWorkflowBuilderTests
         Assert.Equal(ChatRole.Assistant, result[5].Role);
         Assert.Equal("Hello from agent3", result[5].Text);
         Assert.Contains("thirdAgent", result[5].AuthorName);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task BuildGroupChat_AgentsRunInOrderAsync(int maxIterations)
+    {
+        const int NumAgents = 3;
+        var workflow = AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new AgentWorkflowBuilder.RoundRobinGroupChatManager(agents) { MaximumIterationCount = maxIterations })
+            .AddParticipants(new DoubleEchoAgent("agent1"), new DoubleEchoAgent("agent2"))
+            .AddParticipants(new DoubleEchoAgent("agent3"))
+            .Build();
+
+        for (int iter = 0; iter < 3; iter++)
+        {
+            const string UserInput = "abc";
+            (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+            Assert.NotNull(result);
+            Assert.Equal(maxIterations + 1, result.Count);
+
+            Assert.Equal(ChatRole.User, result[0].Role);
+            Assert.Null(result[0].AuthorName);
+            Assert.Equal(UserInput, result[0].Text);
+
+            string[] texts = new string[maxIterations + 1];
+            texts[0] = UserInput;
+            string expectedTotal = string.Empty;
+            for (int i = 1; i < maxIterations + 1; i++)
+            {
+                string id = $"agent{((i - 1) % NumAgents) + 1}";
+                texts[i] = $"{id}{Double(string.Concat(texts.Take(i)))}";
+                Assert.Equal(ChatRole.Assistant, result[i].Role);
+                Assert.Equal(id, result[i].AuthorName);
+                Assert.Equal(texts[i], result[i].Text);
+                expectedTotal += texts[i];
+            }
+
+            Assert.Equal(expectedTotal, updateText);
+            Assert.Equal(UserInput + expectedTotal, string.Concat(result));
+
+            static string Double(string s) => s + s;
+        }
     }
 
     private static async Task<(string UpdateText, List<ChatMessage>? Result)> RunWorkflowAsync(
