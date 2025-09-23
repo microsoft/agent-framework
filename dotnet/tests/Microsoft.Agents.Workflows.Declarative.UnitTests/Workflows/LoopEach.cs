@@ -8,6 +8,7 @@
 #pragma warning disable IDE0005 // Extra using directive is ok.
 
 using System;
+using System.Collections;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
@@ -48,25 +49,12 @@ public static class WorkflowProvider
     }
     
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.Count" variable.
-    /// </summary>
-    internal sealed class SetvariableCountExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_count", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateExpressionAsync("0").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
-        }
-    }
-    
-    /// <summary>
     /// Loops over a list assignign the loop variable to "Topic.LoopValue" variable.
     /// </summary>
     internal sealed class ForeachLoopExecutor(FormulaSession session) : ActionExecutor(id: "foreach_loop", session)
     {
         private int _index;
-        private object[] _values;
+        private object[] _values = [];
     
         public bool HasValue { get; private set; }
     
@@ -78,7 +66,7 @@ public static class WorkflowProvider
     
             if (evaluatedValue == null)
             {
-                this._values = Array.Empty<object>();
+                this._values = [];
                 this.HasValue = false;
             }
             else
@@ -117,7 +105,7 @@ public static class WorkflowProvider
     /// <summary>
     /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.Count" variable.
     /// </summary>
-    internal sealed class SetvariableLoopExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_loop", session)
+    internal sealed class SetVariableInnerExecutor(FormulaSession session) : ActionExecutor(id: "set_variable_inner", session)
     {
         // <inheritdoc />
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -130,7 +118,7 @@ public static class WorkflowProvider
     /// <summary>
     /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class SendactivityLoopExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_loop", session)
+    internal sealed class SendActivityInnerExecutor(FormulaSession session) : ActionExecutor(id: "send_activity_inner", session)
     {
         // <inheritdoc />
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -155,13 +143,12 @@ public static class WorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
-        SetvariableCountExecutor setVariableCount = new(myWorkflowRoot.Session);
         ForeachLoopExecutor foreachLoop = new(myWorkflowRoot.Session);
         DelegateExecutor foreachLoopNext = new(id: "foreach_loop_Next", myWorkflowRoot.Session);
         DelegateExecutor foreachLoopPost = new(id: "foreach_loop_Post", myWorkflowRoot.Session);
         DelegateExecutor foreachLoopStart = new(id: "foreach_loop_Start", myWorkflowRoot.Session);
-        SetvariableLoopExecutor setVariableLoop = new(myWorkflowRoot.Session);
-        SendactivityLoopExecutor sendActivityLoop = new(myWorkflowRoot.Session);
+        SetVariableInnerExecutor setVariableInner = new(myWorkflowRoot.Session);
+        SendActivityInnerExecutor sendActivityInner = new(myWorkflowRoot.Session);
         DelegateExecutor endAll = new(id: "end_all", myWorkflowRoot.Session);
         DelegateExecutor foreachLoopEnd = new(id: "foreach_loop_End", myWorkflowRoot.Session);
 
@@ -170,15 +157,14 @@ public static class WorkflowProvider
 
         // Connect executors
         builder.AddEdge(myWorkflowRoot, myWorkflow);
-        builder.AddEdge(myWorkflow, setVariableCount);
-        builder.AddEdge(setVariableCount, foreachLoop);
+        builder.AddEdge(myWorkflow, foreachLoop);
         builder.AddEdge(foreachLoop, foreachLoopNext);
-        builder.AddEdge(foreachLoopNext, foreachLoopPost, condition => !foreachLoop.HasValue);
-        builder.AddEdge(foreachLoopNext, foreachLoopStart, condition => foreachLoop.HasValue);
-        builder.AddEdge(foreachLoopStart, setVariableLoop);
-        builder.AddEdge(setVariableLoop, sendActivityLoop);
+        builder.AddEdge(foreachLoopNext, foreachLoopPost, (object? condition) => !foreachLoop.HasValue);
+        builder.AddEdge(foreachLoopNext, foreachLoopStart, (object? condition) => foreachLoop.HasValue);
+        builder.AddEdge(foreachLoopStart, setVariableInner);
+        builder.AddEdge(setVariableInner, sendActivityInner);
         builder.AddEdge(foreachLoopPost, endAll);
-        builder.AddEdge(sendActivityLoop, foreachLoopEnd);
+        builder.AddEdge(sendActivityInner, foreachLoopEnd);
         builder.AddEdge(foreachLoopEnd, foreachLoopNext);
 
         // Build the workflow

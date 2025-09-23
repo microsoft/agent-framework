@@ -48,7 +48,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write(", condition => ");
+            this.Write(", (object? condition) => ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EdgeTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Condition));

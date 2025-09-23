@@ -39,6 +39,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 #pragma warning disable IDE0005 // Extra using directive is ok.
 
 using System;
+using System.Collections;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;

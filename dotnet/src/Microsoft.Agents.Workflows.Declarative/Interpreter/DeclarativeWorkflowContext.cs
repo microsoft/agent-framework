@@ -10,7 +10,6 @@ using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -39,7 +38,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     {
         if (scopeName is not null)
         {
-            if (ManagedScopes.Contains(Throw.IfNull(scopeName)))
+            if (ManagedScopes.Contains(scopeName))
             {
                 // Copy keys to array to avoid modifying collection during enumeration.
                 foreach (string key in this.State.Keys(scopeName).ToArray())
@@ -51,9 +50,9 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             {
                 await this.Source.QueueClearScopeAsync(scopeName).ConfigureAwait(false);
             }
-        }
 
-        this.State.Bind();
+            this.State.Bind();
+        }
     }
 
     /// <inheritdoc/>

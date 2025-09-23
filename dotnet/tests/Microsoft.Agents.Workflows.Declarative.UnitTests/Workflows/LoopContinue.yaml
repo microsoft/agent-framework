@@ -2,12 +2,7 @@ kind: AdaptiveDialog
 beginDialog:
   kind: OnActivity
   id: my_workflow
-  type: Message
   actions:
-    - kind: SetVariable
-      id: setVariable_count
-      variable: Topic.Count
-      value: =0
 
     - kind: Foreach
       id: foreach_loop
@@ -15,14 +10,17 @@ beginDialog:
       index: Topic.LoopIndex
       value: Topic.LoopValue
       actions:
+
         - kind: ContinueLoop
-          id: continueLoop_now
+          id: continue_loop_now
+
         - kind: SetVariable
-          id: setVariable_loop
+          id: set_variable_inner
           variable: Topic.Count
           value: =Topic.Count + 1
+
         - kind: SendActivity
-          id: sendActivity_loop
+          id: send_activity_inner
           activity: x{Topic.Count} - {Topic.LoopIndex}:{Topic.LoopValue}
 
     - kind: EndConversation

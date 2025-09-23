@@ -193,7 +193,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             DefaultTemplate template = new(item, this._rootId);
             this.ContinueWith(template);
             // Transition to post action
-            this._workflowModel.AddLink(template.Id, WorkflowActionVisitor.Steps.Post(template.Id));
+            this._workflowModel.AddLink(template.Id, WorkflowActionVisitor.Steps.Post(loopExecutor.Id));
             // Define a clean-start to ensure "break" is not a source for any edge
             this.RestartAfter(template.Id, template.ParentId);
         }
@@ -212,7 +212,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             DefaultTemplate template = new(item, this._rootId);
             this.ContinueWith(template);
             // Transition to select the next item
-            this._workflowModel.AddLink(template.Id, ForeachExecutor.Steps.Start(template.Id));
+            this._workflowModel.AddLink(template.Id, ForeachExecutor.Steps.Start(loopExecutor.Id));
             // Define a clean-start to ensure "continue" is not a source for any edge
             this.RestartAfter(template.Id, template.ParentId);
         }

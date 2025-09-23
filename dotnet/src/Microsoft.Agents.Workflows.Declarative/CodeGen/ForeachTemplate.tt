@@ -8,7 +8,7 @@
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     private int _index;
-    private object[] _values;
+    private object[] _values = [];
 
     public bool HasValue { get; private set; }
 
@@ -21,7 +21,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
 
         if (evaluatedValue == null)
         {
-            this._values = Array.Empty<object>();
+            this._values = [];
             this.HasValue = false;
         }
         else

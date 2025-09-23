@@ -2,7 +2,7 @@
 <#@ assembly name="System.Core" #>
 <# if (this.Condition is not null)
 {#>
-    builder.AddEdge(<#= this.SourceId #>, <#= this.TargetId #>, condition => <#= this.Condition #>);<#
+    builder.AddEdge(<#= this.SourceId #>, <#= this.TargetId #>, (object? condition) => <#= this.Condition #>);<#
 }
 else
 {#>
