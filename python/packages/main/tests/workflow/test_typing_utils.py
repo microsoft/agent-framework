@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, Union
 
 from agent_framework._workflow import RequestInfoMessage, RequestResponse
 from agent_framework._workflow._typing_utils import is_instance_of
@@ -18,6 +18,7 @@ def test_union_types() -> None:
     """Test union types (|) and optional types."""
     assert is_instance_of(5, int | str)
     assert is_instance_of("hello", int | str)
+    assert is_instance_of(5, Union[int, str])
     assert not is_instance_of(5.0, int | str)
 
 
@@ -26,6 +27,7 @@ def test_list_types() -> None:
     assert is_instance_of([1, 2, 3], list[int])
     assert is_instance_of([1, 2, 3], list[int | str])
     assert is_instance_of([1, "a", 3], list[int | str])
+    assert is_instance_of([1, "a", 3], list[Union[int, str]])
     assert not is_instance_of([1, 2.0, 3], list[int | str])
 
 

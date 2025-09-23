@@ -3,7 +3,7 @@
 import logging
 from dataclasses import fields, is_dataclass
 from types import UnionType
-from typing import Any, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,10 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     # Case 2: target_type is Optional[T] or Union[T1, T2, ...]
     # Optional[T] is really just as Union[T, None]
     if origin is UnionType:
+        return any(is_instance_of(data, arg) for arg in args)
+
+    # Case 2b: Handle typing.Union (legacy Union syntax)
+    if origin is Union:
         return any(is_instance_of(data, arg) for arg in args)
 
     # Case 3: target_type is a generic type
