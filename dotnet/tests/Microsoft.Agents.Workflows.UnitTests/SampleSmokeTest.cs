@@ -43,7 +43,7 @@ public class SampleSmokeTest
 
         Assert.Collection(lines,
             line => Assert.Contains($"UppercaseExecutor: {INPUT.ToUpperInvariant()}", line),
-            line => Assert.Contains($"ReverseTextExecutor: {new string(INPUT.ToUpperInvariant().Reverse().ToArray())}", line)
+            line => Assert.Contains($"ReverseTextExecutor: {string.Concat(INPUT.ToUpperInvariant().Reverse())}", line)
         );
     }
 

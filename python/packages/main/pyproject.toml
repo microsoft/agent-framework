@@ -56,12 +56,16 @@ runtime = [
 mem0 = [
     "agent-framework-mem0"
 ]
+devui = [
+    "agent-framework-devui"
+]
 all = [
     "agent-framework-azure",
     "agent-framework-foundry",
     "agent-framework-runtime",
     "agent-framework-mem0",
     "agent-framework-redis"
+    "agent-framework-devui"
 ]
 
 [tool.uv]

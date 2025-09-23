@@ -10,6 +10,8 @@ dependencies = [
     "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-redis"
+    "agent-framework-devui",
+    "agent-framework-lab-gaia",
 ]
 
 [dependency-groups]
@@ -60,6 +62,7 @@ agent-framework-lab-gaia = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-runtime = { workspace = true }
+agent-framework-devui = { workspace = true }
 
 [tool.ruff]
 line-length = 120
