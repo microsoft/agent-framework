@@ -10,7 +10,7 @@ from typing import Any, Generic, Union, cast, get_args, get_origin
 
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
-from typing_extensions import TypeVar
+from typing_extensions import Never, TypeVar
 
 from ..observability import OtelAttr, create_workflow_span
 from ._events import (
@@ -27,8 +27,8 @@ from ._events import (
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
 
-T_Out = TypeVar("T_Out", default=None)
-T_W_Out = TypeVar("T_W_Out", default=None)
+T_Out = TypeVar("T_Out", default=Never)
+T_W_Out = TypeVar("T_W_Out", default=Never)
 
 
 logger = logging.getLogger(__name__)
@@ -78,10 +78,12 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
             return [cast(type[Any], Any)], []
 
         if t_origin in (Union, UnionType):
-            message_types = [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
+            message_types = [
+                arg for arg in get_args(t) if arg is not Any and arg is not type(None) and arg is not Never
+            ]
             return message_types, []
 
-        if t is type(None):
+        if t is type(None) or t is Never:
             return [], []
         return [t], []
 
@@ -93,9 +95,11 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     t_out_origin = get_origin(t_out)
     if t_out is Any:
         message_types = [cast(type[Any], Any)]
-    elif t_out is not type(None):
+    elif t_out is not type(None) and t_out is not Never:
         if t_out_origin in (Union, UnionType):
-            message_types = [arg for arg in get_args(t_out) if arg is not Any and arg is not type(None)]
+            message_types = [
+                arg for arg in get_args(t_out) if arg is not Any and arg is not type(None) and arg is not Never
+            ]
         else:
             message_types = [t_out]
 
@@ -104,9 +108,11 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     t_w_out_origin = get_origin(t_w_out)
     if t_w_out is Any:
         workflow_output_types = [cast(type[Any], Any)]
-    elif t_w_out is not type(None):
+    elif t_w_out is not type(None) and t_w_out is not Never:
         if t_w_out_origin in (Union, UnionType):
-            workflow_output_types = [arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None)]
+            workflow_output_types = [
+                arg for arg in get_args(t_w_out) if arg is not Any and arg is not type(None) and arg is not Never
+            ]
         else:
             workflow_output_types = [t_w_out]
 
@@ -160,7 +166,7 @@ def validate_workflow_context_annotation(
         # Helper function to check if a value is a valid type annotation
         def _is_type_like(x: Any) -> bool:
             """Check if a value is a type-like entity (class, type, or typing construct)."""
-            return isinstance(x, type) or get_origin(x) is not None
+            return isinstance(x, type) or get_origin(x) is not None or x is Never
 
         for i, type_arg in enumerate(type_args):
             param_description = "T_Out" if i == 0 else "T_W_Out"
