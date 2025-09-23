@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;

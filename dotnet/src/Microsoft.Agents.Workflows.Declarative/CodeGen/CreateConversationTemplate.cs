@@ -70,9 +70,15 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line default
             #line hidden
             this.Write("\", session)\n{\n    protected override async ValueTask ExecuteAsync(IWorkflowContex" +
-                    "t context, CancellationToken cancellationToken)\n    {\n        string conversatio" +
-                    "nId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAw" +
-                    "ait(false);");
+                    "t context, CancellationToken cancellationToken)\n    {");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\CreateConversationTemplate.tt"
+ // %%% METADATA 
+            
+            #line default
+            #line hidden
+            this.Write("\n        string conversationId = await agentProvider.CreateConversationAsync(canc" +
+                    "ellationToken).ConfigureAwait(false);");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\CreateConversationTemplate.tt"
 

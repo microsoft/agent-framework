@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#define CREATE_BASELINE // %%% DISABLE
-
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -31,26 +29,23 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     public Task ExecuteActionAsync(string workflowFile) =>
         this.EjectWorkflowAsync(workflowFile);
 
-    private async Task EjectWorkflowAsync(string workflowPath)
+    private async Task EjectWorkflowAsync(string workflowFile)
     {
-        using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
+        using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowFile));
         string workflowCode = DeclarativeWorkflowBuilder.Eject(yamlReader, DeclarativeWorkflowLanguage.CSharp, "Test.Workflow");
 
-        string baselinePath = Path.Combine("Workflows", Path.ChangeExtension(workflowPath, ".cs"));
-#if CREATE_BASELINE
-        this.Output.WriteLine($"WRITING BASELINE TO: {Path.GetFullPath(baselinePath)}\n");
-#else
+        string baselinePath = Path.Combine("Workflows", Path.ChangeExtension(workflowFile, ".cs"));
+        string generatedPath = Path.Combine("Workflows", Path.ChangeExtension($"{workflowFile}_g", ".cs"));
         string expectedCode = File.ReadAllText(baselinePath);
-#endif
 
+        this.Output.WriteLine($"WRITING BASELINE TO: {Path.GetFullPath(generatedPath)}\n");
         Console.WriteLine(workflowCode);
 
-#if CREATE_BASELINE
-        File.WriteAllText(Path.GetFullPath(baselinePath), workflowCode);
-        this.BuildWorkflow(baselinePath);
-#else
-        string[] expectedLines = expectedCode.Trim().Split('\n');
-        string[] workflowLines = workflowCode.Trim().Split('\n');
+        File.WriteAllText(Path.GetFullPath(generatedPath), workflowCode);
+        this.BuildWorkflow(generatedPath);
+
+        string[] expectedLines = expectedCode.Split('\n');
+        string[] workflowLines = workflowCode.Split('\n');
 
         Assert.Equal(expectedLines.Length, workflowLines.Length);
 
@@ -59,7 +54,6 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
             this.Output.WriteLine($"Comparing line #{index + 1}/{workflowLines.Length}.");
             Assert.Equal(expectedLines[index].Trim(), workflowLines[index].Trim());
         }
-#endif
     }
 
     private void BuildWorkflow(string workflowPath)

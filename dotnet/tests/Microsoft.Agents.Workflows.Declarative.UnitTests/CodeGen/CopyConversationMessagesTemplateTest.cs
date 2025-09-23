@@ -19,12 +19,11 @@ public class CopyConversationMessagesTemplateTest(ITestOutputHelper output) : Wo
             ValueExpression.Variable(PropertyPath.TopicVariable("MyMessages")));
     }
 
-    // %%% TODO: WITH METADATA
-
     private void ExecuteTest(
         string displayName,
         StringExpression conversation,
-        ValueExpression messages)
+        ValueExpression messages,
+        ValueExpression? metadata = null)
     {
         // Arrange
         CopyConversationMessages model =
@@ -45,7 +44,8 @@ public class CopyConversationMessagesTemplateTest(ITestOutputHelper output) : Wo
     private CopyConversationMessages CreateModel(
         string displayName,
         StringExpression conversation,
-        ValueExpression messages)
+        ValueExpression messages,
+        ValueExpression? metadata = null)
     {
         CopyConversationMessages.Builder actionBuilder =
             new()

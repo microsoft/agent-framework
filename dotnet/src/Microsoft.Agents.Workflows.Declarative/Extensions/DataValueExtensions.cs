@@ -1,7 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 
@@ -9,6 +12,27 @@ namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
 internal static class DataValueExtensions
 {
+    public static DataValue ToDataValue(this object? value) =>
+        value switch
+        {
+            null => DataValue.Blank(),
+            UnassignedValue => DataValue.Blank(),
+            FormulaValue formulaValue => formulaValue.ToDataValue(),
+            bool booleanValue => BooleanDataValue.Create(booleanValue),
+            int decimalValue => NumberDataValue.Create(decimalValue),
+            long decimalValue => NumberDataValue.Create(decimalValue),
+            float decimalValue => FloatDataValue.Create(decimalValue),
+            decimal decimalValue => NumberDataValue.Create(decimalValue),
+            double numberValue => FloatDataValue.Create(numberValue),
+            string stringValue => StringDataValue.Create(stringValue),
+            DateTime dateonlyValue when dateonlyValue.TimeOfDay == TimeSpan.Zero => DateDataValue.Create(dateonlyValue),
+            DateTime datetimeValue => DateTimeDataValue.Create(datetimeValue),
+            TimeSpan timeValue => TimeDataValue.Create(timeValue),
+            object when value is IDictionary dictionaryValue => dictionaryValue.ToRecordValue(),
+            //object when value is IEnumerable tableValue => tableValue.ToTable(), // %%% TODO
+            _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
+        };
+
     public static FormulaValue ToFormula(this DataValue? value) =>
         value switch
         {
@@ -86,6 +110,19 @@ internal static class DataValueExtensions
             recordType = recordType.Add(property.Key, property.Value.Type.ToFormulaType());
         }
         return recordType;
+    }
+
+    public static RecordDataValue ToRecordValue(this IDictionary value)
+    {
+        return DataValue.RecordFromFields(GetFields());
+
+        IEnumerable<KeyValuePair<string, DataValue>> GetFields()
+        {
+            foreach (string key in value.Keys)
+            {
+                yield return new KeyValuePair<string, DataValue>(key, value[key].ToDataValue());
+            }
+        }
     }
 
     private static RecordType ParseRecordType(this RecordDataValue record)

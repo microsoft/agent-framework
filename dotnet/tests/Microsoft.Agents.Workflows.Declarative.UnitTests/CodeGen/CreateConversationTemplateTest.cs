@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
@@ -10,21 +12,42 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 public class CreateConversationTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public void CreateConversation()
+    public void Basic()
     {
         // Act, Assert
-        this.ExecuteTest(nameof(CreateConversation), "TestVariable");
+        this.ExecuteTest(
+            nameof(Basic),
+            "TestVariable");
     }
 
-    // %%% TODO: WITH METADATA
+    [Fact]
+    public void WithMetadata()
+    {
+        Dictionary<string, string> metadata =
+            new()
+            {
+                ["key1"] = "value1",
+                ["key2"] = "value2",
+            };
 
-    private void ExecuteTest(string displayName, string variableName)
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(WithMetadata),
+            "TestVariable",
+            ObjectExpression<RecordDataValue>.Literal(metadata.ToRecordValue()));
+    }
+
+    private void ExecuteTest(
+        string displayName,
+        string variableName,
+        ObjectExpression<RecordDataValue>? metadata = null)
     {
         // Arrange
         CreateConversation model =
             this.CreateModel(
                 displayName,
-                FormatVariablePath(variableName));
+                FormatVariablePath(variableName),
+                metadata);
 
         // Act
         CreateConversationTemplate template = new(model);
@@ -34,9 +57,13 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
         // Assert
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
         this.AssertGeneratedAssignment(model.ConversationId?.Path, workflowCode);
+        // %%% VALIDATE METADATA
     }
 
-    private CreateConversation CreateModel(string displayName, string variablePath)
+    private CreateConversation CreateModel(
+        string displayName,
+        string variablePath,
+        ObjectExpression<RecordDataValue>? metadata = null)
     {
         CreateConversation.Builder actionBuilder =
             new()
@@ -45,6 +72,11 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
                 DisplayName = this.FormatDisplayName(displayName),
                 ConversationId = InitializablePropertyPath.Create(variablePath),
             };
+
+        if (metadata is not null)
+        {
+            actionBuilder.Metadata = metadata;
+        }
 
         return actionBuilder.Build();
     }
