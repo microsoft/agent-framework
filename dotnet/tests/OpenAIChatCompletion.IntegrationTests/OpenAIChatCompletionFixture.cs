@@ -28,8 +28,12 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread) =>
-        thread.MessageStore is null ? [] : (await thread.MessageStore.GetMessagesAsync()).ToList();
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    {
+        var typedThread = (ChatClientAgentThread)thread;
+
+        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+    }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
         string name = "HelpfulAssistant",

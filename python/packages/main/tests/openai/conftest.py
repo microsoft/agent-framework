@@ -3,8 +3,6 @@ from typing import Any
 
 from pytest import fixture
 
-from agent_framework.telemetry import OtelSettings, setup_telemetry
-
 
 # region Connector Settings fixtures
 @fixture
@@ -51,26 +49,3 @@ def openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
         monkeypatch.setenv(key, value)  # type: ignore
 
     return env_vars
-
-
-@fixture
-def enable_otel(request: Any) -> bool:
-    """Fixture that returns a boolean indicating if Otel is enabled."""
-    return request.param if hasattr(request, "param") else True
-
-
-@fixture
-def enable_sensitive_data(request: Any) -> bool:
-    """Fixture that returns a boolean indicating if sensitive data is enabled."""
-    return request.param if hasattr(request, "param") else False
-
-
-@fixture
-def otel_settings(enable_otel: bool, enable_sensitive_data: bool) -> OtelSettings:
-    """Fixture to set environment variables for OtelSettings."""
-
-    from agent_framework.telemetry import OTEL_SETTINGS
-
-    setup_telemetry(enable_otel=enable_otel, enable_sensitive_data=enable_sensitive_data)
-
-    return OTEL_SETTINGS

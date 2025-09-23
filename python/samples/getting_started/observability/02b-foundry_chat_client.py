@@ -6,11 +6,10 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import HostedCodeInterpreterTool
-from agent_framework.telemetry import setup_telemetry
-from agent_framework_foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.observability import get_tracer, setup_observability
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
-from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -19,7 +18,7 @@ from pydantic import Field
 This sample, shows you can leverage the built-in telemetry in Foundry.
 It uses the Foundry client to setup the telemetry, this calls
 out to Foundry for a telemetry connection strings,
-and then call the setup_telemetry function in the agent framework.
+and then call the setup_observability function in the agent framework.
 If you want to compare with the trace sent to a generic OTLP endpoint,
 switch the `use_foundry_telemetry` variable to False.
 """
@@ -51,7 +50,7 @@ async def main() -> None:
     In foundry you will also see specific operations happening that are called by the Foundry implementation,
     such as `create_agent`.
     """
-    use_foundry_telemetry = True
+    use_foundry_obs = True
     questions = [
         "What's the weather in Amsterdam and in Paris?",
         "Why is the sky blue?",
@@ -63,13 +62,14 @@ async def main() -> None:
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
         FoundryChatClient(client=project, setup_tracing=False) as client,
     ):
-        if use_foundry_telemetry:
-            await client.setup_foundry_telemetry(enable_live_metrics=True)
+        if use_foundry_obs:
+            await client.setup_foundry_observability(enable_live_metrics=True)
         else:
-            setup_telemetry()
+            setup_observability()
 
-        tracer = trace.get_tracer("agent_framework")
-        with tracer.start_as_current_span(name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT) as span:
+        with get_tracer().start_as_current_span(
+            name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT
+        ) as span:
             for question in questions:
                 print(f"{BLUE}User: {question}{RESET}")
                 print(f"{BLUE}Assistant: {RESET}", end="")

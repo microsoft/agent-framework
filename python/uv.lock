@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
@@ -293,6 +293,7 @@ dependencies = [
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-lab-gaia", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -328,6 +329,7 @@ requires-dist = [
     { name = "agent-framework-copilotstudio", editable = "packages/copilotstudio" },
     { name = "agent-framework-devui", editable = "packages/devui" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
+    { name = "agent-framework-lab-gaia", editable = "packages/lab/gaia" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-redis", editable = "packages/redis" },
 ]
@@ -3062,6 +3064,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/df/68aa2dea7e04401f9ce669e6a7a46cc25eb4bb7a14004bf7d535bb27c122/opentelemetry_instrumentation_flask-0.58b0.tar.gz", hash = "sha256:ea2e06f448cef263c21f86401984906f68a5c766c7359000afb5621ae528d9c5", size = 19420, upload-time = "2025-09-11T11:42:36.212Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/7f/88079bc3e4aa188d78692328453f906dca35fa9f286623af13df0b0a1ead/opentelemetry_instrumentation_flask-0.58b0-py3-none-any.whl", hash = "sha256:b0d57ad4db7bd0177ddf8c7ae3adf8bd90e2ebfa2dd30884c6a97c97197e4ac5", size = 14685, upload-time = "2025-09-11T11:41:30.02Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-openai"
+version = "0.47.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-instrumentation", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-semantic-conventions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-semantic-conventions-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/46/3e59891b433869c731131b5ececdaa3ee1d4a45d19169299b52d1397c8e5/opentelemetry_instrumentation_openai-0.47.1.tar.gz", hash = "sha256:a9ad8d898f8f03581fff1764b605d2c277381ced3083a66e7bddb951b95afb2a", size = 25411, upload-time = "2025-09-14T12:09:19.202Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/4e/ee98a8e9b9d58425ff84aff63d06fdf004727cdac2cfe3a2916a1869a2e2/opentelemetry_instrumentation_openai-0.47.1-py3-none-any.whl", hash = "sha256:2bc426c1324f7e9babee8d2a02d7966562ec993da5d280c597bd29a92997e2ed", size = 35274, upload-time = "2025-09-14T12:08:48.987Z" },
 ]
 
 [[package]]

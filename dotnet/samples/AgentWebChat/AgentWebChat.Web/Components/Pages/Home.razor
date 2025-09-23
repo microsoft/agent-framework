@@ -1076,8 +1076,7 @@
 		{
 			var actorClient = (selectedProtocol is Protocol.A2A) ? A2AActorClient : ActorClient;
             var agent = new AgentProxy(currentConversation.AgentName, actorClient);
-            var thread = agent.GetNewThread();
-            thread.ConversationId = currentConversation.SessionId;
+            var thread = agent.GetNewThread(currentConversation.SessionId);
 
             await foreach (var update in agent.RunStreamingAsync(
             [new ChatMessage(ChatRole.User, userMessage)],
