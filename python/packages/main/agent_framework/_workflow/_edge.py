@@ -8,8 +8,7 @@ from typing import Any, ClassVar
 
 from pydantic import Field
 
-from agent_framework._pydantic import AFBaseModel
-
+from .._pydantic import AFBaseModel
 from ._executor import Executor
 
 logger = logging.getLogger(__name__)

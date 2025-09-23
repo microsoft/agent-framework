@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore
 import asyncio
-import os
 from random import randint
 from typing import TYPE_CHECKING, Annotated
 
@@ -14,16 +13,13 @@ if TYPE_CHECKING:
 
 """
 This is the simplest sample of using the Agent Framework with telemetry.
-Since it does not create a tracer or span in the script's code, we can let the Agent Framework SDK handle everything.
-If the environment variables are set correctly,
-the SDK will automatically initialize telemetry and collect traces and logs.
+
+This relies on the environment setting up the telemetry, you can test this with
+by navigating to this folder and running:
+uv run --env-file=zero_code.env opentelemetry-instrument python 01-zero_code.py
+
+Check the zero_code.env file for the settings used in this example and to adapt it to your environment.
 """
-
-
-if "AGENT_FRAMEWORK_ENABLE_OTEL" not in os.environ:
-    print("Set AGENT_FRAMEWORK_ENABLE_OTEL to enable telemetry with a OTLP endpoint.")
-if "AGENT_FRAMEWORK_OTLP_ENDPOINT" not in os.environ and "AGENT_FRAMEWORK_MONITOR_CONNECTION_STRING" not in os.environ:
-    print("Set AGENT_FRAMEWORK_OTLP_ENDPOINT or AGENT_FRAMEWORK_MONITOR_CONNECTION_STRING to enable telemetry.")
 
 
 async def get_weather(

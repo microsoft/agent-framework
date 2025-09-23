@@ -72,17 +72,17 @@ class AgentFrameworkExecutor:
     def _setup_agent_framework_tracing(self) -> None:
         """Set up Agent Framework's built-in tracing."""
         # Configure Agent Framework tracing only if OTLP endpoint is configured
-        otlp_endpoint = os.environ.get("AGENT_FRAMEWORK_OTLP_ENDPOINT")
+        otlp_endpoint = os.environ.get("OTLP_ENDPOINT")
         if otlp_endpoint:
             try:
-                from agent_framework.telemetry import setup_telemetry
+                from agent_framework.observability import setup_observability
 
-                setup_telemetry(enable_otel=True, enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
-                logger.info(f"Enabled Agent Framework telemetry with endpoint: {otlp_endpoint}")
+                setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
+                logger.info(f"Enabled Agent Framework observability with endpoint: {otlp_endpoint}")
             except Exception as e:
-                logger.warning(f"Failed to enable Agent Framework tracing: {e}")
+                logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
-            logger.debug("No OTLP endpoint configured, skipping telemetry setup")
+            logger.debug("No OTLP endpoint configured, skipping observability setup")
 
     # Thread Management Methods
     def create_thread(self, agent_id: str) -> str:

@@ -783,7 +783,7 @@ def test_create_streaming_response_content_with_mcp_approval_request() -> None:
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
-def test_end_to_end_mcp_approval_flow(otel_settings) -> None:
+def test_end_to_end_mcp_approval_flow() -> None:
     """End-to-end mocked test:
     model issues an mcp_approval_request, user approves, client sends mcp_approval_response.
     """

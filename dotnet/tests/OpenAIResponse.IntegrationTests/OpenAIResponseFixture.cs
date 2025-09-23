@@ -27,10 +27,12 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
+        var typedThread = (ChatClientAgentThread)thread;
+
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(thread.ConversationId).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(thread.ConversationId);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedThread.ConversationId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(typedThread.ConversationId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response
@@ -48,7 +50,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return thread.MessageStore is null ? [] : (await thread.MessageStore.GetMessagesAsync()).ToList();
+        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -75,7 +77,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
                     ChatOptions = new ChatOptions
                     {
                         Tools = aiTools,
-                        RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
+                        RawRepresentationFactory = new Func<IChatClient, object>(_ => new ResponseCreationOptions() { StoredOutputEnabled = store })
                     },
                 });
 

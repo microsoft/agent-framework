@@ -11,9 +11,9 @@ from typing import Any
 
 from pydantic import Field
 
-from agent_framework import AgentProtocol
-from agent_framework._pydantic import AFBaseModel
-
+from .._agents import AgentProtocol
+from .._pydantic import AFBaseModel
+from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
@@ -242,17 +242,19 @@ class Workflow(AFBaseModel):
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        # Import here to avoid circular imports
-        from ._telemetry import workflow_tracer
-
         # Create workflow span that encompasses the entire execution
-        with workflow_tracer.create_workflow_run_span(self):
+        with create_workflow_span(
+            OtelAttr.WORKFLOW_RUN_SPAN,
+            {
+                OtelAttr.WORKFLOW_ID: self.id,
+            },
+        ) as span:
             saw_completed = False
             saw_request = False
             emitted_in_progress_pending = False
             try:
                 # Add workflow started event (telemetry + surface state to consumers)
-                workflow_tracer.add_workflow_event("workflow.started")
+                span.add_event(OtelAttr.WORKFLOW_STARTED)
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowStartedEvent()
@@ -298,17 +300,24 @@ class Workflow(AFBaseModel):
                         terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE)
                     yield terminal_status
 
-                workflow_tracer.add_workflow_event("workflow.completed")
-            except Exception as e:
+                span.add_event(OtelAttr.WORKFLOW_COMPLETED)
+            except Exception as exc:
                 # Surface structured failure details before propagating exception
-                details = WorkflowErrorDetails.from_exception(e)
+                details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowFailedEvent(details)
                 yield failed_event
                 with _framework_event_origin():
                     failed_status = WorkflowStatusEvent(WorkflowRunState.FAILED)
                 yield failed_status
-                workflow_tracer.add_workflow_error_event(e)
+                span.add_event(
+                    name=OtelAttr.WORKFLOW_ERROR,
+                    attributes={
+                        "error.message": str(exc),
+                        "error.type": type(exc).__name__,
+                    },
+                )
+                capture_exception(span, exception=exc)
                 raise
 
     async def run_stream(self, message: Any) -> AsyncIterable[WorkflowEvent]:
@@ -1074,14 +1083,11 @@ class WorkflowBuilder:
             WorkflowValidationError: If workflow validation fails (includes EdgeDuplicationError,
                 TypeCompatibilityError, and GraphConnectivityError subclasses).
         """
-        # Import here to avoid circular imports
-        from ._telemetry import workflow_tracer
-
         # Create workflow build span that includes validation and workflow creation
-        with workflow_tracer.create_workflow_build_span():
+        with create_workflow_span(OtelAttr.WORKFLOW_BUILD_SPAN) as span:
             try:
                 # Add workflow build started event
-                workflow_tracer.add_build_event("build.started")
+                span.add_event(OtelAttr.BUILD_STARTED)
 
                 if not self._start_executor:
                     raise ValueError(
@@ -1097,7 +1103,7 @@ class WorkflowBuilder:
                 )
 
                 # Add validation completed event
-                workflow_tracer.add_build_event("build.validation_completed")
+                span.add_event(OtelAttr.BUILD_VALIDATION_COMPLETED)
 
                 context = InProcRunnerContext(self._checkpoint_storage)
 
@@ -1105,16 +1111,21 @@ class WorkflowBuilder:
                 workflow = Workflow(
                     self._edge_groups, self._executors, self._start_executor, context, self._max_iterations
                 )
-
-                # Set workflow attributes on the span
-                workflow_tracer.set_workflow_build_span_attributes(workflow)
+                span.set_attributes({
+                    OtelAttr.WORKFLOW_ID: workflow.id,
+                    OtelAttr.WORKFLOW_DEFINITION: workflow.model_dump_json(by_alias=True),
+                })
 
                 # Add workflow build completed event
-                workflow_tracer.add_build_event("build.completed")
+                span.add_event(OtelAttr.BUILD_COMPLETED)
 
                 return workflow
 
-            except Exception as e:
-                # The method already includes sufficient error info (error.message, error.type)
-                workflow_tracer.add_build_error_event(e)
+            except Exception as exc:
+                attributes = {
+                    OtelAttr.BUILD_ERROR_MESSAGE: str(exc),
+                    OtelAttr.BUILD_ERROR_TYPE: type(exc).__name__,
+                }
+                span.add_event(OtelAttr.BUILD_ERROR, attributes)  # type: ignore[reportArgumentType, arg-type]
+                capture_exception(span, exc)
                 raise
