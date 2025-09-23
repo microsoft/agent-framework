@@ -20,7 +20,7 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
         StringExpression conversationExpression = Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
         string conversationId = this.State.Evaluator.GetValue(conversationExpression).Value;
 
-        ChatMessage newMessage = new(this.GetRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
+        ChatMessage newMessage = new(this.Model.Role.Value.ToChatRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
 
         await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
 
@@ -39,18 +39,6 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
                 yield return messageContent;
             }
         }
-    }
-
-    private ChatRole GetRole()
-    {
-        if (this.Model.Role is null)
-        {
-            return ChatRole.User;
-        }
-
-        AgentMessageRoleWrapper roleWrapper = this.State.Evaluator.GetValue(this.Model.Role).Value;
-
-        return roleWrapper.Value.ToChatRole();
     }
 
     private AdditionalPropertiesDictionary? GetMetadata()
