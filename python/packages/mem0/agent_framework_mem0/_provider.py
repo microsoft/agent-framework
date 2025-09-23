@@ -131,7 +131,7 @@ class Mem0Provider(ContextProvider):
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
-        memories = await self.mem0_client.search(  # type: ignore[misc]
+        search_response = await self.mem0_client.search(  # type: ignore[misc]
             query=input_text,
             user_id=self.user_id,
             agent_id=self.agent_id,
@@ -139,8 +139,10 @@ class Mem0Provider(ContextProvider):
         )
 
         # Depending on the API version, the response schema varies slightly
-        if isinstance(memories, dict) and "results" in memories:
-            memories: list[dict[str, Any]] = memories["results"]  # type: ignore[misc]
+        if isinstance(search_response, dict) and "results" in search_response:
+            memories: list[dict[str, Any]] = search_response["results"]  # type: ignore[misc]
+        else:
+            memories: list[dict[str, Any]] = search_response  # type: ignore[misc]
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
         content = TextContent(f"{self.context_prompt}\n{line_separated_memories}") if line_separated_memories else None
