@@ -102,24 +102,28 @@ def is_instance_of(data: Any, target_type: type) -> bool:
         )
 
     # Case 6: target_type is RequestResponse[T, U] - validate generic parameters
-    if origin and hasattr(origin, "__name__") and origin.__name__ == "RequestResponse":
+    if origin and getattr(origin, "__name__", None) == "RequestResponse":
         if not isinstance(data, origin):
             return False
-        # Validate generic parameters for RequestResponse[TRequest, TResponse]
+
         if len(args) >= 2:
             request_type, response_type = args[0], args[1]
-            # Check if the original_request matches TRequest and data matches TResponse
-            if (
-                hasattr(data, "original_request")
-                and data.original_request is not None
-                and not is_instance_of(data.original_request, request_type)
-            ):
-                coerced = _coerce_to_type(data.original_request, request_type)
+
+            # original_request: validate, then normalize if needed and possible
+            if not hasattr(data, "original_request"):
+                return False
+            req = data.original_request
+            if not is_instance_of(req, request_type):
+                coerced = _coerce_to_type(req, request_type)
                 if coerced is None:
                     return False
+                # Intentional normalization for checkpoint-decoded dicts
                 data.original_request = coerced
-            if hasattr(data, "data") and data.data is not None and not is_instance_of(data.data, response_type):
+
+            # data: pure validation only
+            if not hasattr(data, "data") or not is_instance_of(data.data, response_type):
                 return False
+
         return True
 
     # Case 7: Other custom generic classes - check origin type only

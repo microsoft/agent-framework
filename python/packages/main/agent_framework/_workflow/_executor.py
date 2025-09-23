@@ -923,6 +923,7 @@ class RequestInfoExecutor(Executor):
             request_data=message.data,  # The wrapped request data
         )
         self._request_events[message.request_id] = event
+        await self._record_pending_request_snapshot(message.data, source_executor_id, ctx)
         await ctx.add_event(event)
 
     async def handle_response(
@@ -982,8 +983,6 @@ class RequestInfoExecutor(Executor):
             with contextlib.suppress(Exception):
                 self.restore_state(state)
         self._state_loaded = True
-
-        await self._clear_pending_request_snapshot(request_id, ctx)
 
     async def _record_pending_request_snapshot(
         self,
@@ -1107,6 +1106,7 @@ class RequestInfoExecutor(Executor):
         return repr(value)
 
     async def has_pending_request(self, request_id: str, ctx: WorkflowContext[Any]) -> bool:
+        await self._ensure_state_loaded(request_id, ctx)
         if request_id in self._request_events or request_id in self._sub_workflow_contexts:
             return True
         snapshot = await self._get_pending_request_snapshot(request_id, ctx)
@@ -1150,6 +1150,8 @@ class RequestInfoExecutor(Executor):
 
         try:
             shared_pending = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except KeyError:
+            shared_pending = None
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to read shared pending state during rehydrate: {exc}")
             shared_pending = None
@@ -1655,6 +1657,86 @@ class WorkflowExecutor(Executor):
         # Response accumulation for multiple concurrent responses
         self._collected_responses: dict[str, Any] = {}  # Accumulate responses
         self._expected_response_count: int = 0  # Track how many responses we're waiting for
+        self._state_loaded = False
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Capture minimal state needed to resume pending sub-workflow requests."""
+        helper_states: dict[str, dict[str, Any]] = {}
+
+        for exec_id, executor in self.workflow.executors.items():
+            if isinstance(executor, RequestInfoExecutor):
+                with contextlib.suppress(Exception):
+                    snapshot = executor.snapshot_state()
+                    if isinstance(snapshot, dict):
+                        helper_states[exec_id] = snapshot
+
+        state: dict[str, Any] = {
+            "pending_request_ids": list(self._pending_requests.keys()),
+            "expected_response_count": self._expected_response_count,
+            "active_executions": self._active_executions,
+        }
+
+        if helper_states:
+            state["request_info_executor_states"] = helper_states
+
+        return state
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore pending request bookkeeping from a checkpoint snapshot."""
+        pending_ids = state.get("pending_request_ids", [])
+        if isinstance(pending_ids, list):
+            self._pending_requests = {rid: None for rid in pending_ids if isinstance(rid, str)}
+        else:
+            self._pending_requests = {}
+
+        try:
+            self._expected_response_count = int(state.get("expected_response_count", 0))
+        except (TypeError, ValueError):
+            self._expected_response_count = 0
+
+        try:
+            self._active_executions = int(state.get("active_executions", 0))
+        except (TypeError, ValueError):
+            self._active_executions = 0
+
+        helper_states = state.get("request_info_executor_states", {})
+        restored_request_data: dict[str, RequestInfoMessage] = {}
+        if isinstance(helper_states, dict):
+            for exec_id, helper_state in helper_states.items():
+                helper_executor = self.workflow.executors.get(exec_id)
+                if not isinstance(helper_executor, RequestInfoExecutor) or not isinstance(helper_state, dict):
+                    continue
+                with contextlib.suppress(Exception):
+                    helper_executor.restore_state(helper_state)
+                    for req_id, event in getattr(helper_executor, "_request_events", {}).items():  # type: ignore[attr-defined]
+                        if isinstance(req_id, str) and isinstance(event, RequestInfoEvent):
+                            restored_request_data[req_id] = event.data  # type: ignore[assignment]
+
+        if restored_request_data:
+            for req_id, data in restored_request_data.items():
+                if req_id in self._pending_requests:
+                    self._pending_requests[req_id] = data
+
+        # Responses are accumulated per batch; start clean whenever we restore.
+        self._collected_responses = {}
+        self._state_loaded = True
+
+    async def _ensure_state_loaded(self, ctx: WorkflowContext[Any]) -> None:
+        if self._state_loaded:
+            return
+
+        state: dict[str, Any] | None = None
+        try:
+            state = await ctx.get_state()
+        except Exception:
+            state = None
+
+        if isinstance(state, dict) and state:
+            with contextlib.suppress(Exception):
+                self.restore_state(state)
+                self._state_loaded = True
+        else:
+            self._state_loaded = True
 
     @handler  # No output_types - can send any completion data type
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
@@ -1670,6 +1752,8 @@ class WorkflowExecutor(Executor):
         # Skip SubWorkflowResponse and SubWorkflowRequestInfo - they have specific handlers
         if isinstance(input_data, (SubWorkflowResponse, SubWorkflowRequestInfo)):
             return
+
+        await self._ensure_state_loaded(ctx)
 
         from ._events import RequestInfoEvent, WorkflowCompletedEvent
 
@@ -1700,6 +1784,7 @@ class WorkflowExecutor(Executor):
             for event in events:
                 if isinstance(event, WorkflowCompletedEvent):
                     # Sub-workflow completed normally - send result to parent
+                    await ctx.add_event(event)
                     await ctx.send_message(event.data)
                     self._active_executions -= 1
                     return  # Exit after completion
@@ -1745,6 +1830,8 @@ class WorkflowExecutor(Executor):
             response: The response to a previous request.
             ctx: The workflow context.
         """
+        await self._ensure_state_loaded(ctx)
+
         # Check if we have this pending request
         pending_requests = getattr(self, "_pending_requests", {})
         if response.request_id not in pending_requests:
@@ -1771,6 +1858,7 @@ class WorkflowExecutor(Executor):
             for event in result_events:
                 if isinstance(event, WorkflowCompletedEvent):
                     # Sub-workflow completed - send result to parent
+                    await ctx.add_event(event)
                     await ctx.send_message(event.data)
                     self._active_executions -= 1
                     return
