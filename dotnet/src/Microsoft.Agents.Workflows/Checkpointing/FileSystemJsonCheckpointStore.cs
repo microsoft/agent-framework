@@ -59,7 +59,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             using StreamReader reader = new(this._indexFile, encoding: Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: -1, leaveOpen: true);
             while (reader.ReadLine() is string line)
             {
-                if (JsonSerializer.Deserialize(line, this.KeyTypeInfo) is { } info)
+                if (JsonSerializer.Deserialize(line, KeyTypeInfo) is { } info)
                 {
                     this.CheckpointIndex.Add(info);
                 }
@@ -117,7 +117,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             using Utf8JsonWriter jsonWriter = new(checkpointStream, new JsonWriterOptions() { Indented = false });
             value.WriteTo(jsonWriter);
 
-            JsonSerializer.Serialize(this._indexFile!, key, this.KeyTypeInfo);
+            JsonSerializer.Serialize(this._indexFile!, key, KeyTypeInfo);
             byte[] bytes = Encoding.UTF8.GetBytes(Environment.NewLine);
             await this._indexFile!.WriteAsync(bytes, 0, bytes.Length, CancellationToken.None).ConfigureAwait(false);
 
