@@ -27,7 +27,7 @@ This sample demonstrates how to wrap a workflow as an agent using WorkflowAgent.
 It uses a reflection pattern where a Worker executor generates responses and a
 Reviewer executor evaluates them. If the response is not approved, the Worker
 regenerates the output based on feedback until the Reviewer approves it. Only
-approved responses are emitted to the external consumer.
+approved responses are emitted to the external consumer. The workflow completes when idle.
 
 Key Concepts Demonstrated:
 - WorkflowAgent: Wraps a workflow to behave like a regular agent.

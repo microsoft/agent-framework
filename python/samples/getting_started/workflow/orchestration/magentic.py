@@ -13,7 +13,7 @@ from agent_framework import (
     MagenticCallbackMode,
     MagenticFinalResultEvent,
     MagenticOrchestratorMessageEvent,
-    WorkflowCompletedEvent,
+    WorkflowOutputEvent,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
@@ -38,7 +38,7 @@ The workflow is configured with:
 
 When run, the script builds the workflow, submits a task about estimating the
 energy efficiency and CO2 emissions of several ML models, streams intermediate
-events, and prints the final answer.
+events, and prints the final answer. The workflow completes when idle.
 
 Prerequisites:
 - OpenAI credentials configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
@@ -132,17 +132,14 @@ async def main() -> None:
     print("\nStarting workflow execution...")
 
     try:
-        completion_event = None
+        output: str | None = None
         async for event in workflow.run_stream(task):
-            print(f"Event: {event}")
+            print(event)
+            if isinstance(event, WorkflowOutputEvent):
+                output = str(event.data)
 
-            if isinstance(event, WorkflowCompletedEvent):
-                completion_event = event
-
-        if completion_event is not None:
-            data = getattr(completion_event, "data", None)
-            preview = getattr(data, "text", None) or (str(data) if data is not None else "")
-            print(f"Workflow completed with result:\n\n{preview}")
+        if output is not None:
+            print(f"Workflow completed with result:\n\n{output}")
 
     except Exception as e:
         print(f"Workflow execution failed: {e}")

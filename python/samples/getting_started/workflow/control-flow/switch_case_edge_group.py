@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
+from typing_extensions import Never
+
 from agent_framework import (  # Core chat primitives used to form LLM requests
     AgentExecutor,  # Wraps an agent so it can run inside a workflow
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
@@ -15,7 +17,6 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     Default,  # Default branch when no cases match
     Role,
     WorkflowBuilder,  # Fluent builder for assembling the graph
-    WorkflowCompletedEvent,  # Terminal event for successful completion
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
 )
@@ -36,6 +37,7 @@ Demonstrate deterministic one of N routing with switch-case edges. Show how to:
 - Validate agent JSON with Pydantic models for robust parsing.
 - Keep executor responsibilities narrow. Transform model output to a typed DetectionResult, then route based
 on that type.
+- Use ctx.yield_output() to provide workflow results - the workflow completes when idle with no pending work.
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, and events.
@@ -124,30 +126,28 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
-    # Terminal step for the drafting branch. Emit a completion event with the reply.
+async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
+    # Terminal step for the drafting branch. Yield the email response as output.
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
-    await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {parsed.response}"))
+    await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
 @executor(id="handle_spam")
-async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None]) -> None:
+async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
     # Spam path terminal. Include the detector's rationale.
     if detection.spam_decision == "Spam":
-        await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {detection.reason}"))
+        await ctx.yield_output(f"Email marked as spam: {detection.reason}")
     else:
         raise RuntimeError("This executor should only handle Spam messages.")
 
 
 @executor(id="handle_uncertain")
-async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[None]) -> None:
+async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
     # Uncertain path terminal. Surface the original content to aid human review.
     if detection.spam_decision == "Uncertain":
         email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
-        await ctx.add_event(
-            WorkflowCompletedEvent(
-                f"Email marked as uncertain: {detection.reason}. Email content: {getattr(email, 'email_content', '')}"
-            )
+        await ctx.yield_output(
+            f"Email marked as uncertain: {detection.reason}. Email content: {getattr(email, 'email_content', '')}"
         )
     else:
         raise RuntimeError("This executor should only handle Uncertain messages.")
@@ -215,10 +215,12 @@ async def main():
             "Let me know if you'd like more details."
         )
 
-    # Run and print the terminal event for whichever branch completes.
-    async for event in workflow.run_stream(email):
-        if isinstance(event, WorkflowCompletedEvent):
-            print(f"{event}")
+    # Run and print the outputs from whichever branch completes.
+    events = await workflow.run(email)
+    outputs = events.get_outputs()
+    if outputs:
+        for output in outputs:
+            print(f"Workflow output: {output}")
 
 
 if __name__ == "__main__":

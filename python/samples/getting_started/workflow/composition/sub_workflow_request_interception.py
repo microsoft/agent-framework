@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from agent_framework import (
     Executor,
@@ -10,7 +9,6 @@ from agent_framework import (
     RequestInfoMessage,
     RequestResponse,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowExecutor,
     handler,
@@ -43,6 +41,7 @@ Key concepts demonstrated:
 - Concurrent processing: Multiple emails processed simultaneously without interference
 - External request routing: RequestInfoExecutor handles forwarded external requests
 - Sub-workflow isolation: Sub-workflows work normally without knowing they're nested
+- Sub-workflows complete by yielding outputs when validation is finished
 
 Prerequisites:
 - No external services required (external calls are simulated via `RequestInfoExecutor`).
@@ -101,7 +100,9 @@ class EmailValidator(Executor):
 
     @handler
     async def validate_request(
-        self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest | ValidationResult]
+        self,
+        request: EmailValidationRequest,
+        ctx: WorkflowContext[DomainCheckRequest | ValidationResult, ValidationResult],
     ) -> None:
         """Validate an email address."""
         print(f"🔍 Sub-workflow validating email: {request.email}")
@@ -112,7 +113,7 @@ class EmailValidator(Executor):
         if not domain:
             print(f"❌ Invalid email format: {request.email}")
             result = ValidationResult(email=request.email, is_valid=False, reason="Invalid email format")
-            await ctx.add_event(WorkflowCompletedEvent(data=result))
+            await ctx.yield_output(result)
             return
 
         print(f"🌐 Sub-workflow requesting domain check for: {domain}")
@@ -126,7 +127,7 @@ class EmailValidator(Executor):
     async def handle_domain_response(
         self,
         response: RequestResponse[DomainCheckRequest, bool],
-        ctx: WorkflowContext[ValidationResult],
+        ctx: WorkflowContext[ValidationResult, ValidationResult],
     ) -> None:
         """Handle domain check response from RequestInfo with correlation."""
         approved = bool(response.data)
@@ -151,7 +152,7 @@ class EmailValidator(Executor):
                 reason="Domain approved" if approved else "Domain not approved",
             )
             print(f"✅ Sub-workflow completing validation for: {email}")
-            await ctx.add_event(WorkflowCompletedEvent(data=result))
+            await ctx.yield_output(result)
 
 
 # 3. Implement the parent workflow with request interception
@@ -181,7 +182,7 @@ class SmartEmailOrchestrator(Executor):
 
     @intercepts_request
     async def check_domain(
-        self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
+        self, request: DomainCheckRequest, ctx: WorkflowContext
     ) -> RequestResponse[DomainCheckRequest, bool]:
         """Intercept domain check requests from sub-workflows."""
         print(f"🔍 Parent intercepting domain check for: {request.domain}")
@@ -192,8 +193,8 @@ class SmartEmailOrchestrator(Executor):
         return RequestResponse[DomainCheckRequest, bool].forward()
 
     @handler
-    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
-        """Collect validation results. It comes from the sub-workflow emitted WorkflowCompletionEvent's data field."""
+    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+        """Collect validation results. It comes from the sub-workflow yielded output."""
         status_icon = "✅" if result.is_valid else "❌"
         print(f"📥 {status_icon} Validation result: {result.email} -> {result.reason}")
         self._results.append(result)

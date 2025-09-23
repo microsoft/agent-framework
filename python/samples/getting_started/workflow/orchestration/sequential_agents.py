@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Any
+from typing import cast
 
-from agent_framework import ChatMessage, Role, SequentialBuilder, WorkflowCompletedEvent
+from agent_framework import ChatMessage, Role, SequentialBuilder, WorkflowOutputEvent
 from agent_framework.azure import AzureChatClient
 from azure.identity import AzureCliCredential
 
@@ -12,8 +12,8 @@ Sample: Sequential workflow (agent-focused API) with shared conversation context
 
 Build a high-level sequential workflow using SequentialBuilder and two domain agents.
 The shared conversation (list[ChatMessage]) flows through each participant. Each agent
-appends its assistant message to the context. The final WorkflowCompletedEvent includes
-the final conversation list.
+appends its assistant message to the context. The workflow outputs the final conversation
+list when complete.
 
 Note on internal adapters:
 - Sequential orchestration includes small adapter nodes for input normalization
@@ -44,16 +44,15 @@ async def main() -> None:
     # 2) Build sequential workflow: writer -> reviewer
     workflow = SequentialBuilder().participants([writer, reviewer]).build()
 
-    # 3) Run and print final conversation
-    completion: WorkflowCompletedEvent | None = None
+    # 3) Run and collect outputs
+    outputs: list[list[ChatMessage]] = []
     async for event in workflow.run_stream("Write a tagline for a budget-friendly eBike."):
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
+        if isinstance(event, WorkflowOutputEvent):
+            outputs.append(cast(list[ChatMessage], event.data))
 
-    if completion:
+    if outputs:
         print("===== Final Conversation =====")
-        messages: list[ChatMessage] | Any = completion.data
-        for i, msg in enumerate(messages, start=1):
+        for i, msg in enumerate(outputs[-1], start=1):
             name = msg.author_name or ("assistant" if msg.role == Role.ASSISTANT else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 

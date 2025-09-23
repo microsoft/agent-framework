@@ -7,6 +7,7 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowCompletedEvent,
+    WorkflowOutputEvent,
     WorkflowContext,
     handler,
 )
@@ -42,14 +43,15 @@ class ReverseTextExecutor(Executor):
     """An executor that reverses text."""
 
     @handler
-    async def reverse_text(self, text: str, ctx: WorkflowContext[Any]) -> None:
+    async def reverse_text(self, text: str, ctx: WorkflowContext[Any, str]) -> None:
         """Execute the task by reversing the input string."""
         print(f"ReverseTextExecutor: Processing '{text}'")
         result = text[::-1]
         print(f"ReverseTextExecutor: Result '{result}'")
 
-        # Send the result with a workflow completion event.
-        await ctx.add_event(WorkflowCompletedEvent(result))
+        # Yield the output and signal workflow completion.
+        await ctx.yield_output(result)
+        await ctx.add_event(WorkflowCompletedEvent())
 
 
 async def run_sequential_workflow() -> None:
@@ -84,17 +86,17 @@ async def run_sequential_workflow() -> None:
             input_text = "hello world"
             print(f"Starting workflow with input: '{input_text}'")
 
-            completion_event = None
+            output_event = None
             async for event in workflow.run_stream(input_text):
                 print(f"Event: {event}")
-                if isinstance(event, WorkflowCompletedEvent):
-                    # The WorkflowCompletedEvent contains the final result.
-                    completion_event = event
+                if isinstance(event, WorkflowOutputEvent):
+                    # The WorkflowOutputEvent contains the final result.
+                    output_event = event
 
-            if completion_event:
-                print(f"Workflow completed with result: '{completion_event.data}'")
+            if output_event:
+                print(f"Workflow completed with result: '{output_event.data}'")
             else:
-                print("Workflow completed without a completion event")
+                print("Workflow completed without an output event")
 
         except Exception as e:
             current_span.record_exception(e)

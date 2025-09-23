@@ -81,8 +81,8 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
                 RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
                 conversation.UpdateField("Id", FormulaValue.New(conversationId));
-                await context.QueueStateUpdateAsync(SystemScope.Names.Conversation, conversation, VariableScopeNames.System).ConfigureAwait(false);
-                await context.QueueStateUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System).ConfigureAwait(false);
+                await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation).ConfigureAwait(false);
+                await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
 
                 await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
             }

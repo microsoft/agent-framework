@@ -11,7 +11,6 @@ from ._edge import Edge, EdgeGroup, FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeG
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
-from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +63,15 @@ class EdgeRunner(ABC):
 
         target_executor = self._executors[target_id]
 
-        # Create WorkflowContext with trace contexts from message
-        workflow_context: WorkflowContext[Any] = WorkflowContext(
-            target_id,
-            source_ids,
-            shared_state,
-            ctx,
-            trace_contexts=message.trace_contexts,  # Pass trace contexts to WorkflowContext
+        # Execute with trace context parameters
+        await target_executor.execute(
+            message.data,
+            source_ids,  # source_executor_ids
+            shared_state,  # shared_state
+            ctx,  # runner_context
+            trace_contexts=message.trace_contexts,  # Pass trace contexts
             source_span_ids=message.source_span_ids,  # Pass source span IDs for linking
         )
-
-        # Execute with trace context in WorkflowContext
-        await target_executor.execute(message.data, workflow_context)
 
 
 class SingleEdgeRunner(EdgeRunner):
