@@ -50,10 +50,9 @@ public static class DeclarativeWorkflowBuilder
     {
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new DeclarativeModelException("Workflow undefined.");
 
-        // ISSUE #486 - Use "Workflow" element for Foundry.
         if (rootElement is not AdaptiveDialog workflowElement)
         {
-            throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(AdaptiveDialog)}.");
+            throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(Workflow)}.");
         }
 
         string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
