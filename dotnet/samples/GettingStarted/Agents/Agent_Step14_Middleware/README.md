@@ -15,6 +15,12 @@ This sample demonstrates how to add middleware to intercept:
 6. Per‑request function pipeline with approval
 7. Combining agent‑level and per‑request middleware
 
+## Function Invocation Middleware
+
+Not all agents support function invocation middleware.
+
+Attempting to use function middleware on agents that do not wrap a ChatClientAgent or derives from it will throw an InvalidOperationException.
+
 ## Prerequisites
 
 1. Environment variables:

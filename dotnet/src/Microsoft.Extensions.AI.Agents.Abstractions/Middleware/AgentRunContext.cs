@@ -5,12 +5,10 @@ using System.Linq;
 using System.Threading;
 using Microsoft.Shared.Diagnostics;
 
-#pragma warning disable CS0419 // Ambiguous reference in cref attribute
-
 namespace Microsoft.Extensions.AI.Agents;
 
 /// <summary>
-/// Provides context information for agent invocation callback middleware.
+/// Provides context information for agent run middleware.
 /// </summary>
 public sealed class AgentRunContext : AgentMiddlewareContext
 {

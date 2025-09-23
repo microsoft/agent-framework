@@ -20,7 +20,7 @@ using Microsoft.Extensions.AI.Agents;
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 // Get Azure AI Foundry configuration from environment variables
-var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZUREOPENAI_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // Get a client to create/retrieve server side agents with
@@ -50,7 +50,7 @@ var originalAgent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(
 // Adding middleware to the agent level
 var middlewareEnabledAgent = originalAgent
     .AsBuilder()
-        .Use(FunctionCallMiddleware1)
+        .Use(FunctionCallMiddleware)
         .Use(FunctionCallOverrideWeather)
         .Use(PIIMiddleware)
         .Use(GuardrailMiddleware)
@@ -67,6 +67,8 @@ var piiResponse = await middlewareEnabledAgent.RunAsync("My name is John Doe, ca
 Console.WriteLine($"Pii filtered response: {piiResponse}");
 
 Console.WriteLine("\n\n=== Example 3: Agent function middleware ===");
+
+// Agent function middleware support is limited to agents that wraps a upstream ChatClientAgent or derived from it.
 
 // Add Per-request tools
 var options = new ChatClientAgentRunOptions(new()
@@ -92,8 +94,8 @@ var optionsWithApproval = new ChatClientAgentRunOptions(new()
         .Build()
 };
 
-// var response = middlewareAgent  // Using per-request middleware in addition to agent-level middleware
-var response = await originalAgent // Using per-request middleware without agent-level middleware
+// var response = middlewareAgent  // Using per-request middleware pipeline in addition to existing agent-level middleware
+var response = await originalAgent // Using per-request middleware pipeline without existing agent-level middleware
     .AsBuilder()
         .Use(PerRequestFunctionCallingMiddleware)
         .Use(ConsolePromptingApprovalMiddleware)
@@ -102,13 +104,15 @@ var response = await originalAgent // Using per-request middleware without agent
 
 Console.WriteLine($"Per-request middleware response: {response}");
 
-async Task FunctionCallMiddleware1(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
+// Function invocation middleware that logs before and after function calls.
+async Task FunctionCallMiddleware(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Pre-Invoke");
     await next(context);
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Post-Invoke");
 }
 
+// Function invocation middleware that overrides the result of the GetWeather function.
 async Task FunctionCallOverrideWeather(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Pre-Invoke");
@@ -122,6 +126,8 @@ async Task FunctionCallOverrideWeather(AgentFunctionInvocationContext context, F
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Post-Invoke");
 }
 
+// There's no difference per-request middleware, except it's added to the agent and used for a single agent run.
+// This middleware logs function names before and after they are invoked.
 async Task PerRequestFunctionCallingMiddleware(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Pre-Invoke");
@@ -129,15 +135,16 @@ async Task PerRequestFunctionCallingMiddleware(AgentFunctionInvocationContext co
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Post-Invoke");
 }
 
+// This middleware redacts PII information from input and output messages.
 async Task PIIMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
 {
-    // Guardrail: Filter input messages for PII
+    // Redact PII information from input messages
     context.Messages = FilterMessages(context.Messages);
     Console.WriteLine("Pii Middleware - Filtered Messages Pre-Run");
 
     await next(context).ConfigureAwait(false);
 
-    // Guardrail: Filter output messages for PII
+    // Redact PII information from output messages
     context.RunResponse!.Messages = FilterMessages(context.RunResponse!.Messages);
 
     Console.WriteLine("Pii Middleware - Filtered Messages Post-Run");
@@ -165,10 +172,10 @@ async Task PIIMiddleware(AgentRunContext context, Func<AgentRunContext, Task> ne
     }
 }
 
+// This middleware enforces guardrails by redacting certain keywords from input and output messages.
 async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
 {
-    // Guardrail: Simple keyword-based filtering
-
+    // Redact keywords from input messages
     context.Messages = FilterMessages(context.Messages);
 
     Console.WriteLine("Guardrail Middleware - Filtered messages Pre-Run");
@@ -176,6 +183,7 @@ async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Ta
     // Proceed with the agent run
     await next(context);
 
+    // Redact keywords from output messages
     context.RunResponse!.Messages = FilterMessages(context.RunResponse!.Messages);
 
     Console.WriteLine("Guardrail Middleware - Filtered messages Post-Run");
@@ -199,6 +207,7 @@ async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Ta
     }
 }
 
+// This middleware handles Human in the loop console interaction for any user approval required during function calling.
 async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
 {
     await next(context);
@@ -226,6 +235,8 @@ async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<Agen
     }
 }
 
+// This middleware handles chat client lower level invocations.
+// This is useful for handling agent messages before they are sent to the LLM and also handle any response messages from the LLM before they are sent back to the agent.
 async Task ChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task> next, CancellationToken cancellationToken)
 {
     Console.WriteLine("Chat Client Middleware - Pre-Chat");
@@ -233,6 +244,9 @@ async Task ChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? o
     Console.WriteLine("Chat Client Middleware - Post-Chat");
 }
 
+// There's no difference per-request middleware, except it's added to the chat client and used for a single agent run.
+// This middleware handles chat client lower level invocations.
+// This is useful for handling agent messages before they are sent to the LLM and also handle any response messages from the LLM before they are sent back to the agent.
 async Task PerRequestChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task> next, CancellationToken cancellationToken)
 {
     Console.WriteLine("Per-Request Chat Client Middleware - Pre-Chat");

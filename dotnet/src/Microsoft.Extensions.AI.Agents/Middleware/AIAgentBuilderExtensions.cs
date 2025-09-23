@@ -60,7 +60,7 @@ public static class AIAgentBuilderExtensions
             // Function calling requires a ChatClientAgent inner agent.
             if (innerAgent.GetService<ChatClientAgent>() is null)
             {
-                throw new InvalidOperationException($"The {nameof(FunctionCallMiddlewareAgent)} can only be used with agents that are decorations of a {nameof(ChatClientAgent)}.");
+                throw new InvalidOperationException($"The {nameof(FunctionCallMiddlewareAgent)} can only be used with agents that derives or decorates a {nameof(ChatClientAgent)}.");
             }
 
             return new FunctionCallMiddlewareAgent(innerAgent, callback);
