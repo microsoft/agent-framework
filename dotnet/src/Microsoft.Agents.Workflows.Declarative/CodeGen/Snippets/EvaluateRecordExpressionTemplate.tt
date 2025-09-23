@@ -16,7 +16,7 @@ void EvaluateRecordExpression<TValue>(ObjectExpression<RecordDataValue> expressi
         <#= resultTypeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultTypeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    {#>
+    { // %%% FORMAT: ESCAPE QUOTES #>
         <#= resultTypeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else

@@ -17,8 +17,8 @@ void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVa
         <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.ReadStateAsync<<#= GetTypeAlias<TValue>() #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    {#>
-        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
+    { // %%% FORMAT: ESCAPE QUOTES #>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync("""<#= expression.ExpressionText #>""").ConfigureAwait(false);<#+ 
     }
     else
     {

@@ -6,7 +6,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
 internal partial class EmptyTemplate
 {
-    public EmptyTemplate(string actionId, string rootId, string? action = null) // %%% NEEDED - action?
+    public EmptyTemplate(string actionId, string rootId, string? action = null) // %%% NEEDED - ACTION? (CONDITION)
     {
         this.Id = actionId;
         this.Name = this.Id.FormatType();

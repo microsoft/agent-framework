@@ -348,7 +348,7 @@ this.Write("\").ConfigureAwait(false);");
 
     }
     else if (expression.IsExpression)
-    {
+    { // %%% FORMAT: ESCAPE QUOTES 
         
         #line default
         #line hidden
@@ -692,7 +692,7 @@ this.Write("\").ConfigureAwait(false);");
 
     }
     else if (expression.IsExpression)
-    {
+    { // %%% FORMAT: ESCAPE QUOTES 
         
         #line default
         #line hidden
@@ -981,7 +981,7 @@ this.Write("\").ConfigureAwait(false);");
 
     }
     else if (expression.IsExpression)
-    {
+    { // %%% FORMAT: ESCAPE QUOTES 
         
         #line default
         #line hidden
@@ -1242,7 +1242,7 @@ this.Write("\").ConfigureAwait(false);");
 
     }
     else if (expression.IsExpression)
-    {
+    { // %%% FORMAT: ESCAPE QUOTES 
         
         #line default
         #line hidden
@@ -1433,7 +1433,7 @@ this.Write("\n            \"\"\";");
  
         }
         else
-        {
+        { // %%% FORMAT: ESCAPE QUOTES 
         
         #line default
         #line hidden
@@ -1578,7 +1578,7 @@ this.Write("\").ConfigureAwait(false);");
 
     }
     else if (expression.IsExpression)
-    {
+    { // %%% FORMAT: ESCAPE QUOTES 
         
         #line default
         #line hidden
@@ -1801,7 +1801,7 @@ this.Write("\").ConfigureAwait(false);");
 
     }
     else if (expression.IsExpression)
-    {
+    { // %%% FORMAT: ESCAPE QUOTES 
         
         #line default
         #line hidden
@@ -1835,7 +1835,7 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync(\"");
+this.Write(" = await context.EvaluateExpressionAsync(\"\"\"");
 
         
         #line default
@@ -1849,7 +1849,7 @@ this.Write(this.ToStringHelper.ToStringWithCulture(expression.ExpressionText));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write("\").ConfigureAwait(false);");
+this.Write("\"\"\").ConfigureAwait(false);");
 
         
         #line default

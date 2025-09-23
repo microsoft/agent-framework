@@ -30,7 +30,7 @@ void EvaluateEnumExpression<TWrapper, TValue>(
         <#= resultType #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultType #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    {#>
+    { // %%% FORMAT: ESCAPE QUOTES #>
         <#= resultType #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= resultType #>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else

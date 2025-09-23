@@ -3,6 +3,7 @@
 #define CREATE_BASELINE // %%% DISABLE
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Xunit.Abstractions;
@@ -46,6 +47,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
 
 #if CREATE_BASELINE
         File.WriteAllText(Path.GetFullPath(baselinePath), workflowCode);
+        this.BuildWorkflow(baselinePath);
 #else
         string[] expectedLines = expectedCode.Trim().Split('\n');
         string[] workflowLines = workflowCode.Trim().Split('\n');
@@ -58,5 +60,32 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
             Assert.Equal(expectedLines[index].Trim(), workflowLines[index].Trim());
         }
 #endif
+    }
+
+    private void BuildWorkflow(string workflowPath)
+    {
+        string projectPath = Path.Combine("Projects", Path.GetFileNameWithoutExtension(workflowPath) + $"{DateTime.UtcNow:YYMMdd-HHmmss-fff}");
+
+        DirectoryInfo projectDirectory = Directory.CreateDirectory(Path.GetFullPath(projectPath));
+        File.Copy(Path.GetFullPath(workflowPath), Path.Combine(projectDirectory.FullName, "Workflow.cs"));
+        File.Copy(Path.GetFullPath("Workflows/TestProject.csproj"), Path.Combine(projectDirectory.FullName, "TestProject.csproj"));
+        ProcessStartInfo startInfo =
+            new()
+            {
+                FileName = "dotnet",
+                Arguments = "build",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                WorkingDirectory = projectDirectory.FullName,
+            };
+
+        this.Output.WriteLine($"\nBUILDING PROJECT AT: {projectDirectory.FullName}\n");
+        using Process? buildProcess = Process.Start(startInfo);
+        Assert.NotNull(buildProcess);
+        buildProcess.WaitForExit();
+        this.Output.WriteLine(buildProcess.StandardOutput.ReadToEnd());
+        Assert.Equal(0, buildProcess.ExitCode);
     }
 }

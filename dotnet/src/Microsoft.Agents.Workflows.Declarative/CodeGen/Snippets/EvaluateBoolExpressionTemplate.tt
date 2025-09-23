@@ -14,7 +14,7 @@ void EvaluateBoolExpression(BoolExpression expression, string targetVariable)
         bool <#= targetVariable #> = await context.ReadStateAsync<bool>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsExpression)
-    {#>
+    { // %%% FORMAT: ESCAPE QUOTES #>
         bool <#= targetVariable #> = await context.EvaluateExpressionAsync<bool>("<#= expression.ExpressionText #>").ConfigureAwait(false);<#+ 
     }
     else

@@ -41,109 +41,19 @@ public static class WorkflowProvider
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            // Initialize variables
-            await context.QueueStateUpdateAsync("Count", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("LoopIndex", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("LoopValue", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.Count" variable.
+    /// Reset all the state for the targeted variable scope.
     /// </summary>
-    internal sealed class SetvariableCountExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_count", session)
+    internal sealed class ClearAllExecutor(FormulaSession session) : ActionExecutor(id: "clear_all", session)
     {
         // <inheritdoc />
         protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync("0").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Loops over a list assignign the loop variable to "Topic.LoopValue" variable.
-    /// </summary>
-    internal sealed class ForeachLoopExecutor(FormulaSession session) : ActionExecutor(id: "foreach_loop", session)
-    {
-        private int _index;
-        private object[] _values = [];
-
-        public bool HasValue { get; private set; }
-
-        // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            this._index = 0;
-            object? evaluatedValue = await context.EvaluateExpressionAsync(@"[""a"", ""b"", ""c"", ""d"", ""e"", ""f""]").ConfigureAwait(false);
-
-            if (evaluatedValue == null)
-            {
-                this._values = [];
-                this.HasValue = false;
-            }
-            else
-            if (evaluatedValue is IEnumerable evaluatedList)
-            {
-                this._values = [.. evaluatedList];
-            }
-            else
-            {
-                this._values = [evaluatedValue];
-            }
-
-            await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
-        }
-
-        public async ValueTask TakeNextAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
-        {
-            if (this.HasValue = this._index < this._values.Length)
-            {
-                object value = this._values[this._index];
-
-                await context.QueueStateUpdateAsync(key: "LoopValue", value: value, scopeName: "Topic").ConfigureAwait(false);
-                await context.QueueStateUpdateAsync(key: "LoopIndex", value: this._index, scopeName: "Topic").ConfigureAwait(false);
-
-                this._index++;
-            }
-        }
-
-        public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
-        {
-            await context.QueueStateUpdateAsync(key: "LoopValue", value: UnassignedValue.Instance, scopeName: "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "LoopIndex", value: UnassignedValue.Instance, scopeName: "Topic").ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.Count" variable.
-    /// </summary>
-    internal sealed class SetvariableLoopExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_loop", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateExpressionAsync("Topic.Count + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityLoopExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_loop", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                        x{Topic.Count} - {Topic.LoopIndex}:{Topic.LoopValue}
-                        """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            string? targetScopeName = "Topic";
+            await context.QueueClearScopeAsync(topicToClear).ConfigureAwait(false);
         }
     }
 
@@ -156,31 +66,14 @@ public static class WorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
-        SetvariableCountExecutor setVariableCount = new(myWorkflowRoot.Session);
-        ForeachLoopExecutor foreachLoop = new(myWorkflowRoot.Session);
-        DelegateExecutor foreachLoopNext = new(id: "foreach_loop_Next", myWorkflowRoot.Session);
-        DelegateExecutor foreachLoopPost = new(id: "foreach_loop_Post", myWorkflowRoot.Session);
-        DelegateExecutor foreachLoopStart = new(id: "foreach_loop_Start", myWorkflowRoot.Session);
-        SetvariableLoopExecutor setVariableLoop = new(myWorkflowRoot.Session);
-        SendactivityLoopExecutor sendActivityLoop = new(myWorkflowRoot.Session);
-        DelegateExecutor endAll = new(id: "end_all", myWorkflowRoot.Session);
-        DelegateExecutor foreachLoopEnd = new(id: "foreach_loop_End", myWorkflowRoot.Session);
+        ClearAllExecutor clearAll = new(myWorkflowRoot.Session);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(myWorkflowRoot);
 
         // Connect executors
         builder.AddEdge(myWorkflowRoot, myWorkflow);
-        builder.AddEdge(myWorkflow, setVariableCount);
-        builder.AddEdge(setVariableCount, foreachLoop);
-        builder.AddEdge(foreachLoop, foreachLoopNext);
-        builder.AddEdge(foreachLoopNext, foreachLoopPost, (object? condition) => !foreachLoop.HasValue);
-        builder.AddEdge(foreachLoopNext, foreachLoopStart, (object? condition) => foreachLoop.HasValue);
-        builder.AddEdge(foreachLoopStart, setVariableLoop);
-        builder.AddEdge(setVariableLoop, sendActivityLoop);
-        builder.AddEdge(foreachLoopPost, endAll);
-        builder.AddEdge(sendActivityLoop, foreachLoopEnd);
-        builder.AddEdge(foreachLoopEnd, foreachLoopNext);
+        builder.AddEdge(myWorkflow, clearAll);
 
         // Build the workflow
         return builder.Build<TInput>();
