@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, TypeVar
 
 from opentelemetry import metrics, trace
 from opentelemetry.semconv_ai import GenAISystem, Meters, SpanAttributes
-from pydantic import PrivateAttr
+from pydantic import BaseModel, PrivateAttr
 
 from . import __version__ as version_info
 from ._logging import get_logger
@@ -408,18 +408,13 @@ class OtelSettings(AFBaseSettings):
     ) -> None:
         """Setup telemetry based on the settings.
 
-        If both connection_string and otlp_endpoint both will be used.
-
         Args:
             credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
             additional_exporters: A list of additional exporters to add to the configuration. Default is None.
             force_setup: Force the setup to be executed even if it has already been executed. Default is False.
         """
-        if (not self.ENABLED and not self.ENABLED) or (self._executed_setup and not force_setup):
+        if (not self.ENABLED) or (self._executed_setup and not force_setup):
             return
-
-        if not self.applicationinsights_connection_string and not self.otlp_endpoint and not additional_exporters:
-            logger.warning("Telemetry is enabled but no connection string or OTLP endpoint is provided.")
 
         global_logger = logging.getLogger()
         global_logger.setLevel(logging.NOTSET)
@@ -639,11 +634,6 @@ def setup_observability(
             these will be added directly, and allows you to customize the spans completely
 
     """
-    if isinstance(otlp_endpoint, str):
-        otlp_endpoint = [otlp_endpoint]
-    if isinstance(applicationinsights_connection_string, str):
-        applicationinsights_connection_string = [applicationinsights_connection_string]
-
     global OTEL_SETTINGS
     # Update the otel settings with the provided values
     OTEL_SETTINGS.enable_otel = True
@@ -654,30 +644,36 @@ def setup_observability(
     # Run the initial setup, which will create the providers, and add env setting exporters
     new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
     if OTEL_SETTINGS.ENABLED and (otlp_endpoint or applicationinsights_connection_string or exporters):
-        # check if endpoints or connection strings are already configured
+        # create the exporters, after checking if they are already configured through the env.
+        new_exporters = exporters or []
         if otlp_endpoint:
-            otlp_endpoint = [
-                endpoint for endpoint in otlp_endpoint if OTEL_SETTINGS.check_endpoint_already_configured(endpoint)
-            ]
-        if applicationinsights_connection_string:
-            applicationinsights_connection_string = [
-                conn_str
-                for conn_str in applicationinsights_connection_string
-                if OTEL_SETTINGS.check_connection_string_already_configured(conn_str)
-            ]
-        if otlp_endpoint or applicationinsights_connection_string or exporters:
-            new_exporters = exporters or []
+            if isinstance(otlp_endpoint, str):
+                otlp_endpoint = [otlp_endpoint]
             new_exporters.extend(
-                get_exporters(
-                    otlp_endpoints=otlp_endpoint,
-                    connection_strings=applicationinsights_connection_string,
+                _get_otlp_exporters(
+                    endpoints=[
+                        endpoint
+                        for endpoint in otlp_endpoint
+                        if not OTEL_SETTINGS.check_endpoint_already_configured(endpoint)
+                    ]
+                )
+            )
+        if applicationinsights_connection_string:
+            if isinstance(applicationinsights_connection_string, str):
+                applicationinsights_connection_string = [applicationinsights_connection_string]
+            new_exporters.extend(
+                _get_azure_monitor_exporters(
+                    connection_strings=[
+                        conn_str
+                        for conn_str in applicationinsights_connection_string
+                        if not OTEL_SETTINGS.check_connection_string_already_configured(conn_str)
+                    ],
                     credential=credential,
                 )
             )
     OTEL_SETTINGS.setup_observability(
         credential=credential, additional_exporters=new_exporters, force_setup=bool(new_exporters)
     )
-    # Add any additional exporters
 
 
 # region Chat Client Telemetry
@@ -1243,7 +1239,23 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
         case "function_call":
             return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
         case "function_result":
-            return {"type": "tool_call_response", "id": content.call_id, "response": content.result}
+            response: Any | None = None
+            if content.result:
+                if isinstance(content.result, list):
+                    res: list[Any] = []
+                    for item in content.result:  # type: ignore
+                        from ._types import BaseContent
+
+                        if isinstance(item, BaseContent):
+                            res.append(_to_otel_part(item))  # type: ignore
+                        elif isinstance(item, BaseModel):
+                            res.append(item.model_dump(exclude_none=True))
+                        else:
+                            res.append(json.dumps(item))
+                    response = json.dumps(res)
+                else:
+                    response = json.dumps(content.result)
+            return {"type": "tool_call_response", "id": content.call_id, "response": response}
         case _:
             # GenericPart in otel output messages json spec.
             # just required type, and arbitrary other fields.

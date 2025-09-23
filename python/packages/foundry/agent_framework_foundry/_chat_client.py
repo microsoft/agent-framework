@@ -853,12 +853,19 @@ class FoundryChatClient(BaseChatClient):
                 if isinstance(content, FunctionResultContent):
                     if tool_outputs is None:
                         tool_outputs = []
-                    if isinstance(content.result, BaseModel):
-                        tool_outputs.append(
-                            FunctionToolOutput(tool_call_id=call_id, output=content.result.model_dump_json())
-                        )
+                    result_contents: list[Any] = (  # type: ignore
+                        content.result if isinstance(content.result, list) else [content.result]  # type: ignore
+                    )
+                    results: list[Any] = []
+                    for item in result_contents:
+                        if isinstance(item, BaseModel):
+                            results.append(item.model_dump_json())
+                        else:
+                            results.append(json.dumps(item))
+                    if len(results) == 1:
+                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=results[0]))
                     else:
-                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=json.dumps(content.result)))
+                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=json.dumps(results)))
                 elif isinstance(content, FunctionApprovalResponseContent):
                     if tool_approvals is None:
                         tool_approvals = []
