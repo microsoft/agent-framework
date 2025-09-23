@@ -86,11 +86,8 @@ public abstract class InMemoryAgentThread : AgentThread
     }
 
     /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        return base.GetService(serviceType, serviceKey)
-            ?? this.MessageStore?.GetService(serviceType, serviceKey);
-    }
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        base.GetService(serviceType, serviceKey) ?? this.MessageStore?.GetService(serviceType, serviceKey);
 
     /// <inheritdoc />
     protected internal override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)

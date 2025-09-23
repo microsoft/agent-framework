@@ -179,14 +179,12 @@ public class ChatClientAgentThread : AgentThread
     }
 
     /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        return serviceType == typeof(AgentThreadMetadata)
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceType == typeof(AgentThreadMetadata)
             ? new AgentThreadMetadata(this.ConversationId)
             : base.GetService(serviceType, serviceKey)
             ?? this.AIContextProvider?.GetService(serviceType, serviceKey)
             ?? this.MessageStore?.GetService(serviceType, serviceKey);
-    }
 
     /// <inheritdoc />
     protected override async Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
