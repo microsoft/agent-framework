@@ -34,21 +34,28 @@ dependencies = [
     "azure-monitor-opentelemetry-exporter>=1.0.0b41",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
-    "aiofiles>=24.1.0"
+    "aiofiles>=24.1.0",
+    "azure-identity >= 1.13"
 ]
 
 [project.optional-dependencies]
-azure = [
-    "agent-framework-azure"
+azure-ai = [
+    "agent-framework-azure-ai"
 ]
-foundry = [
-    "agent-framework-foundry"
+azure = [
+    "agent-framework-azure-ai"
+]
+microsoft-copilotstudio = [
+    "agent-framework-copilotstudio"
+]
+microsoft = [
+    "agent-framework-copilotstudio"
 ]
 redis = [
     "agent-framework-redis"
 ]
 viz = [
-    "graphviz>=0.20.0",
+    "graphviz>=0.20.0"
 ]
 runtime = [
     "agent-framework-runtime"
@@ -60,12 +67,13 @@ devui = [
     "agent-framework-devui"
 ]
 all = [
-    "agent-framework-azure",
-    "agent-framework-foundry",
+    "agent_framework_copilotstudio",
+    "agent-framework-azure-ai",
     "agent-framework-runtime",
     "agent-framework-mem0",
     "agent-framework-redis",
-    "agent-framework-devui"
+    "agent-framework-devui",
+    "graphviz>=0.20.0"
 ]
 
 [tool.uv]
@@ -81,10 +89,9 @@ fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = [
-    'tests', 
+    'tests',
     'packages/main/tests',
-    'packages/azure/tests', 
-    'packages/foundry/tests',
+    'packages/azure-ai/tests',
     'packages/copilotstudio/tests',
     'packages/mem0/tests',
     'packages/runtime/tests'

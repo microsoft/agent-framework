@@ -7,7 +7,7 @@ from typing import Annotated
 
 from agent_framework import ChatAgent
 from agent_framework.observability import get_tracer
-from agent_framework_foundry import FoundryChatClient
+from agent_framework_foundry import AzureAIAgentClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
@@ -36,7 +36,7 @@ async def main():
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
         # this calls `setup_foundry_observability` through the context manager
-        FoundryChatClient(client=project) as client,
+        AzureAIAgentClient(client=project) as client,
     ):
         await client.setup_foundry_observability(enable_live_metrics=True)
         with get_tracer().start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):

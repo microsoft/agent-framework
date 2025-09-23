@@ -3,7 +3,7 @@
 
 def test_self_through_main() -> None:
     try:
-        from agent_framework.copilotstudio import __version__
+        from agent_framework.microsoft import __version__
     except ImportError:
         __version__ = None
 

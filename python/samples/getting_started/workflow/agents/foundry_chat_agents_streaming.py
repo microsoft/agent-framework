@@ -6,7 +6,7 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -38,7 +38,7 @@ async def create_foundry_agent() -> tuple[Callable[..., Awaitable[Any]], Callabl
     stack = AsyncExitStack()
     cred = await stack.enter_async_context(AzureCliCredential())
 
-    client = await stack.enter_async_context(FoundryChatClient(async_credential=cred))
+    client = await stack.enter_async_context(AzureAIAgentClient(async_credential=cred))
 
     async def agent(**kwargs: Any) -> Any:
         return await stack.enter_async_context(client.create_agent(**kwargs))

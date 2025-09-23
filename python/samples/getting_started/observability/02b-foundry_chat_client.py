@@ -6,7 +6,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import HostedCodeInterpreterTool
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
 from agent_framework.observability import get_tracer, setup_observability
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -60,7 +60,7 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
-        FoundryChatClient(client=project, setup_tracing=False) as client,
+        AzureAIAgentClient(client=project, setup_tracing=False) as client,
     ):
         if use_foundry_obs:
             await client.setup_foundry_observability(enable_live_metrics=True)

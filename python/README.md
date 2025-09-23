@@ -36,9 +36,9 @@ FOUNDRY_MODEL_DEPLOYMENT_NAME=...
 You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:
 
 ```python
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 
-chat_client = AzureChatClient(
+chat_client = AzureOpenAIChatClient(
     api_key='',
     endpoint='',
     deployment_name='',
