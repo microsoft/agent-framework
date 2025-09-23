@@ -9,10 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from textwrap import shorten
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast, overload
-
-if TYPE_CHECKING:
-    pass
+from typing import Any, ClassVar, Generic, TypeVar, cast, overload
 
 from pydantic import Field
 
@@ -67,7 +64,141 @@ class WorkflowCheckpointSummary:
 
 
 class Executor(AFBaseModel):
-    """Base class for all executors in a workflow."""
+    """Base class for all workflow executors that process messages and perform computations.
+
+    ## Overview
+    Executors are the fundamental building blocks of workflows, representing individual processing
+    units that receive messages, perform operations, and produce outputs. Each executor is uniquely
+    identified and can handle specific message types through decorated handler methods.
+
+    ## Type System
+    Executors have a rich type system that defines their capabilities:
+
+    ### Input Types
+    The types of messages an executor can process, discovered from handler method signatures:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def handle_string(self, message: str, ctx: WorkflowContext[int]) -> None:
+            # This executor can handle 'str' input types
+    ```
+    Access via the `input_types` property.
+
+    ### Output Types
+    The types of messages an executor can send to other executors via `ctx.send_message()`:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def handle_data(self, message: str, ctx: WorkflowContext[int | bool]) -> None:
+            # This executor can send 'int' or 'bool' messages
+    ```
+    Access via the `output_types` property.
+
+    ### Workflow Output Types
+    The types of data an executor can emit as workflow-level outputs via `ctx.yield_output()`:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def process(self, message: str, ctx: WorkflowContext[int, str]) -> None:
+            # Can send 'int' messages AND yield 'str' workflow outputs
+    ```
+    Access via the `workflow_output_types` property.
+
+    ### Request Types
+    The types of sub-workflow requests an executor can intercept via `@intercepts_request`:
+    ```python
+    class ParentExecutor(Executor):
+        @intercepts_request
+        async def handle_request(
+            self,
+            request: MyRequest,
+            ctx: WorkflowContext[Any],
+        ) -> RequestResponse[MyRequest, str]:
+            # Can intercept 'MyRequest' from sub-workflows
+    ```
+    Access via the `request_types` property.
+
+    ## Handler Discovery
+    Executors discover their capabilities through decorated methods:
+
+    ### @handler Decorator
+    Marks methods that process incoming messages:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def handle_text(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message.upper())
+    ```
+
+    ### @intercepts_request Decorator
+    Marks methods that intercept sub-workflow requests:
+    ```python
+    class ParentExecutor(Executor):
+        @intercepts_request
+        async def check_domain(
+            self, request: DomainRequest, ctx: WorkflowContext[Any]
+        ) -> RequestResponse[DomainRequest, bool]:
+            if self.is_allowed(request.domain):
+                return RequestResponse.handled(True)
+            return RequestResponse.forward()
+    ```
+
+    ## Context Types
+    Handler methods receive different WorkflowContext variants based on their type annotations:
+
+    ### WorkflowContext (no type parameters)
+    For handlers that only perform side effects without sending messages or yielding outputs:
+    ```python
+    class LoggingExecutor(Executor):
+        @handler
+        async def log_message(self, msg: str, ctx: WorkflowContext) -> None:
+            print(f"Received: {msg}")  # Only logging, no outputs
+    ```
+
+    ### WorkflowContext[T_Out]
+    Enables sending messages of type T_Out via `ctx.send_message()`:
+    ```python
+    class ProcessorExecutor(Executor):
+        @handler
+        async def handler(self, msg: str, ctx: WorkflowContext[int]) -> None:
+            await ctx.send_message(42)  # Can send int messages
+    ```
+
+    ### WorkflowContext[T_Out, T_W_Out]
+    Enables both sending messages (T_Out) and yielding workflow outputs (T_W_Out):
+    ```python
+    class DualOutputExecutor(Executor):
+        @handler
+        async def handler(self, msg: str, ctx: WorkflowContext[int, str]) -> None:
+            await ctx.send_message(42)  # Send int message
+            await ctx.yield_output("done")  # Yield str workflow output
+    ```
+
+    ## Function Executors
+    Simple functions can be converted to executors using the `@executor` decorator:
+    ```python
+    @executor
+    async def process_text(text: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(text.upper())
+
+
+    # Or with custom ID:
+    @executor(id="text_processor")
+    def sync_process(text: str, ctx: WorkflowContext[str]) -> None:
+        ctx.send_message(text.lower())  # Sync functions run in thread pool
+    ```
+
+    ## Sub-workflow Composition
+    Executors can contain sub-workflows using WorkflowExecutor. Sub-workflows can make requests
+    that parent workflows can intercept. See WorkflowExecutor documentation for details on
+    workflow composition patterns and request/response handling.
+
+    ## Implementation Notes
+    - Do not call `execute()` directly - it's invoked by the workflow engine
+    - Do not override `execute()` - define handlers using decorators instead
+    - Each executor must have at least one `@handler` or `@intercepts_request` method
+    - Handler method signatures are validated at initialization time
+    """
 
     # Provide a default so static analyzers (e.g., pyright) don't require passing `id`.
     # Runtime still sets a concrete value in __init__.

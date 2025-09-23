@@ -56,12 +56,23 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
-    """A list of events generated during the workflow execution in non-streaming mode.
+    """Container for events generated during non-streaming workflow execution.
 
-    A workflow runs until it becomes idle and produces outputs along the way through
-    ctx.yield_output() calls. Preserves the historical contract that the list contains
-    data-plane events only (executor invoke/complete, outputs, requests), while exposing
-    the control-plane status timeline via accessors.
+    ## Overview
+    Represents the complete execution results of a workflow run, containing all events
+    generated from start to idle state. Workflows produce outputs incrementally through
+    ctx.yield_output() calls during execution.
+
+    ## Event Structure
+    Maintains separation between data-plane and control-plane events:
+    - Data-plane events: Executor invocations, completions, outputs, and requests (in main list)
+    - Control-plane events: Status timeline accessible via status_timeline() method
+
+    ## Key Methods
+    - get_outputs(): Extract all workflow outputs from the execution
+    - get_request_info_events(): Retrieve external input requests made during execution
+    - get_final_state(): Get the final workflow state (IDLE, IDLE_WITH_PENDING_REQUESTS, etc.)
+    - status_timeline(): Access the complete status event history
     """
 
     def __init__(self, events: list[WorkflowEvent], status_events: list[WorkflowStatusEvent] | None = None) -> None:
@@ -106,68 +117,54 @@ class WorkflowRunResult(list[WorkflowEvent]):
 
 
 class Workflow(AFBaseModel):
-    """A class representing a workflow that can be executed.
+    """A graph-based execution engine that orchestrates connected executors.
 
-    To create a workflow, use the WorkflowBuilder class. Do not instantiate this class directly.
+    ## Overview
+    A workflow executes a directed graph of executors connected via edge groups using a Pregel-like model,
+    running in supersteps until the graph becomes idle. Workflows are created using the
+    WorkflowBuilder class - do not instantiate this class directly.
 
-    A workflow executes a graph of connected executors, running until it becomes idle.
-    There is no formally defined completion state - instead, workflows produce outputs
-    along the way through executors' ctx.yield_output() calls in their handlers and
-    run until no more work can be done.
+    ## Execution Model
+    Executors run in synchronized supersteps where each executor:
+    - Is invoked when it receives messages from connected edge groups
+    - Can send messages to downstream executors via ctx.send_message()
+    - Can yield workflow-level outputs via ctx.yield_output()
+    - Can emit custom events via ctx.add_event()
 
-    A workflow has defined input and output types, they can are discovered at runtime
-    by inspecting the start executor's input types and the union of all executors'
-    workflow output types. The input and output types are accessible via the
-    input_types and output_types properties.
+    Messages between executors are delivered at the end of each superstep and are not
+    visible in the event stream. Only workflow-level events (outputs, custom events)
+    and status events are observable to callers.
 
-    To execute a workflow for the first time, use the run() or run_stream() methods.
-    The former runs to completion and returns a WorkflowRunResult containing all events,
-    while the latter returns an async generator that yields events as they occur.
+    ## Input/Output Types
+    Workflow types are discovered at runtime by inspecting:
+    - Input types: From the start executor's input types
+    - Output types: Union of all executors' workflow output types
+    Access these via the input_types and output_types properties.
 
-    Workflow execution uses a Pregel-like model where executors run in supersteps until
-    the workflow becomes idle.
+    ## Execution Methods
+    - run(): Execute to completion, returns WorkflowRunResult with all events
+    - run_stream(): Returns async generator yielding events as they occur
+    - run_from_checkpoint(): Resume from a saved checkpoint
+    - run_stream_from_checkpoint(): Resume from checkpoint with streaming
 
-    An executor is invoked when it received message from
-    an edge group connected to it. It can emit messages to downstream executors
-    via ctx.send_message() calls in its handler; it can yield workflow-level
-    outputs via ctx.yield_output() calls; it can also emit custom events via
-    ctx.add_event() calls. Messages are delivered to downstream executors
-    at the end of each superstep via the outgoing edge groups.
+    ## External Input Requests
+    Workflows can request external input using a RequestInfoExecutor:
+    1. Executor connects to RequestInfoExecutor via edge group and back to itself
+    2. Executor sends RequestInfoMessage to RequestInfoExecutor
+    3. RequestInfoExecutor emits RequestInfoEvent and workflow enters IDLE_WITH_PENDING_REQUESTS
+    4. Caller handles requests and uses send_responses()/send_responses_streaming() to continue
 
-    From workflow's caller's perspective, the messages sent between executors are
-    not observable in the event stream. On the other hand, workflow-level events,
-    including outputs, and custom events are observable. Workflow status events
-    are derived from past workflow-level events.
+    ## Checkpointing
+    When enabled, checkpoints are created at the end of each superstep, capturing:
+    - Executor states
+    - Messages in transit
+    - Shared state
+    Workflows can be paused and resumed across process restarts using checkpoint storage.
 
-    How does workflow request for external input? It requires a RequestInfoExecutor,
-    a built-in executor that can be added to the workflow graph. To request external
-    input from an executor, it should connect to the RequestInfoExecutor via an edge group
-    and back to itself. When the executor sends a RequestInfoMessage to the RequestInfoExecutor,
-    the RequestInfoExecutor emits a RequestInfoEvent to the workflow event stream
-    and the workflow enters IDLE_WITH_PENDING_REQUESTS state.
-    The workflow continues execution until the current superstep completes, and
-    then enters IDLE_WITH_PENDING_REQUESTS state and the control is returned to the caller.
-    At this point, the caller should be responsible for fulfilling the requests.
-
-    To resume a workflow that is IDLE_WITH_PENDING_REQUESTS, the caller should
-    call send_responses() or send_responses_streaming() with the responses to the requests.
-    The responses are routed to the RequestInfoExecutor, which then forwards them to the
-    original requesting executor. The requesting executor will receive the responses
-    as a message and start processing.
-    The workflow continues execution until it becomes idle again for any reason.
-
-    How does workflow checkpointing work? Checkpointing is performed at the end of
-    each superstep if enabled. The checkpoint captures the entire workflow state,
-    including the state of each executor, the messages in transit, and the shared state.
-    Once a workflow is checkpointed, it can be restored from that checkpoint
-    using the run_from_checkpoint() or run_stream_from_checkpoint() methods.
-    By storing checkpoints externally, workflows can be paused and resumed
-    across process restarts.
-
-    How does workflow composition work? A workflow can be nested within another workflow
-    via the WorkflowExecutor, a special executor that wraps a workflow.
-    The input and output types of the nested workflow become part of the
-    WorkflowExecutor's input and output types.
+    ## Composition
+    Workflows can be nested using WorkflowExecutor, which wraps a child workflow as an executor.
+    The nested workflow's input/output types become part of the WorkflowExecutor's types.
+    When invoked, the WorkflowExecutor runs the nested workflow to completion and processes its outputs.
     """
 
     edge_groups: list[EdgeGroup] = Field(
