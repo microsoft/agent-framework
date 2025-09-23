@@ -4,7 +4,9 @@ import logging
 from typing import Any, Generic, TypeVar, cast, get_args
 
 from opentelemetry.propagate import inject
+from opentelemetry.trace import SpanKind
 
+from ..observability import OtelAttr, create_workflow_span
 from ._events import (
     WorkflowEvent,
     WorkflowEventSource,
@@ -16,7 +18,6 @@ from ._events import (
 )
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
-from ._telemetry import workflow_tracer
 
 T_Out = TypeVar("T_Out")
 
@@ -83,13 +84,19 @@ class WorkflowContext(Generic[T_Out]):
             target_id: The ID of the target executor to send the message to.
                        If None, the message will be sent to all target executors.
         """
+        global OTEL_SETTINGS
+        from ..observability import OTEL_SETTINGS
+
         # Create publishing span (inherits current trace context automatically)
-        with workflow_tracer.create_sending_span(type(message).__name__, target_id) as span:
+        attributes: dict[str, str] = {OtelAttr.MESSAGE_TYPE: type(message).__name__}
+        if target_id:
+            attributes[OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID] = target_id
+        with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN, attributes, kind=SpanKind.PRODUCER) as span:
             # Create Message wrapper
             msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
 
             # Inject current trace context if tracing enabled
-            if workflow_tracer.enabled and span and span.is_recording():
+            if OTEL_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
                 trace_context: dict[str, str] = {}
                 inject(trace_context)  # Inject current trace context for message propagation
 

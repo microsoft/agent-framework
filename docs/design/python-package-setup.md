@@ -53,45 +53,46 @@ Overall the following structure is proposed:
     * core components, will be exposed directly from `agent_framework`:
         * (single) agents (includes threads)
         * tools (includes MCP and OpenAPI)
-        * models/types (name tbd, will include the equivalent of MEAI for dotnet; content types and client abstractions)
+        * types
+        * context_providers
         * logging
-    * advanced components, will be exposed from `agent_framework.<component>`:
-        * context_providers (tbd)
-        * guardrails / filters
-        * vector_data (vector stores and other MEVD pieces)
-        * text_search
-        * exceptions
-        * evaluations
-        * utils (optional)
-        * telemetry (could also be observability or monitoring)
         * workflows (includes multi-agent orchestration)
-    * connectors; subpackages
-        * Subpackages are any additional functionality that is useful for a user, to reduce friction they will imported in a similar way as advanced components, however the code for them will be in a separate package, so that they can be installed separately, they must expose all public items, in their main `__init__.py` file, so that they can be imported from the main package without additional import levels.
-        In the main package a corresponding folder will be created, with a `__init__.py` file that lazy imports the public items from the subpackage, so that they can be exposed from the main package.
-        * Some examples are:
-            * azure (non LLM integrations)
-            * will be exposed through i.e. `agent_framework.azure`
-            * anything other then a connector that we want to expose as a separate package, for instance:
-                * mem0 (memory management)
-                * would be exposed through i.e. `agent_framework.mem0`
-        * A package name cannot overlap with each other or with components in the main package, so `guardrails` cannot be used as a package name, since it is already used in the main package.
-            * A package can implement additional guardrails functionality, but that would become something like `from agent_framework.azure import ContentSafetyGuardrail`, which would contain a guardrail implementation using Azure Content Safety, but it is not the same as the `agent_framework.guardrails` component.
+        * middleware
+        * telemetry (user_agent)
+    * advanced components, will be exposed from `agent_framework.<component>`:
+        * vector_data (tbd, vector stores and other MEVD-like pieces)
+        * text_search (tbd)
+        * exceptions
+        * evaluations (tbd)
+        * utils (optional)
+        * observability
+    * vendor folders with connectors and integrations, will be exposed from `agent_framework.<vendor>`:
+        * Code can be both in folder or in subpackage with lazy import.
+        * See subpackage scope below for more detail
 * tests
 * samples
 * extensions
     * azure
     * ...
 
-All the init's will use lazy loading so avoid importing the entire package when importing a single component.
+All the init's in the subpackages will use lazy loading so avoid importing the entire package when importing a single component.
 Internal imports will be done using relative imports, so that the package can be used as a namespace package.
 
 ### File structure
-The resulting file structure will be as follows:
+The resulting file structure will be as follows (not all things currently implemented, just an example):
 
 ```plaintext
 packages/
     main/
         agent_framework/
+            azure/
+                __init__.py
+                _chat_client.py
+                ...
+            microsoft/
+                __init__.py
+                _copilot_studio.py
+                ...
             openai/
                 __init__.py
                 _chat_client.py
@@ -103,17 +104,16 @@ packages/
             _tools.py
             _models.py
             _logging.py
-            context_providers.py
-            guardrails.py
+            _middleware.py
+            _telemetry.py
+            observability.py
             exceptions.py
-            evaluations.py
             utils.py
-            telemetry.py
-            templates.py
-            text_search.py
-            vector_data.py
-            workflows.py
             py.typed
+        _workflow/
+            __init__.py
+            _workflow.py
+            ...etc...
         tests/
             unit/
                 test_types.py
@@ -122,28 +122,27 @@ packages/
         pyproject.toml
         README.md
         ...
-    mem0/
-        agent_framework/
-            mem0/
-                __init__.py
-                _mem0.py
-                ...
+    azure-ai-agents/
+        agent_framework-azure-ai-agents/
+            __init__.py
+            _chat_client.py
+            ...
+        tests/
+            test_azure_ai_agents.py
+        samples/ (optional)
+            ...
+        pyproject.toml
+        README.md
+        ...
     redis/
         ...
-    google/
-        agent_framework/
-            google/
-                __init__.py
-                _chat.py
-                _bigquery.py
-                ...
+    mem0/
+        agent_framework-mem0/
+            __init__.py
+            _provider.py
+            ...
         tests/
-            unit/
-                test_google_client.py
-                test_google_tools.py
-                ...
-            integration/
-                test_google_integration.py
+            test_mem0_provider.py
         samples/ (optional)
             ...
         pyproject.toml
@@ -163,78 +162,30 @@ We might add a template subpackage as well, to make it easy to setup, this could
 
 In the [`DEV_SETUP.md`](../../python/DEV_SETUP.md) we will add instructions for how to deal with the path depth issues, especially on Windows, where the maximum path length can be a problem.
 
+### Subpackage scope
+Sub-packages are comprised of two parts, the code itself and the dependencies, the choice of when to use a subpackage and when to use a extra in the main package is based on the status of dependencies and/or possibilities of a external support mechanism. What this means is that:
+
+- Integrations that need non-GA dependencies will be sub-packages and installed only when using a extra, so that we can avoid having non-GA dependencies in the main package.
+- Integrations where the AF-code is still experimental, preview or release candidate will be sub-packages, so that we can avoid having non-GA code in the main package and we can version those packages properly.
+- Integrations that are outside Microsoft and where we might not always be able to fast-follow breaking changes, will stay as sub-packages, to provide some isolation and to be able to version them properly.
+- Integrations that are mature and that have released (GA) dependencies and features on the service side will be moved into the main package, the dependencies of those packages will stay installable under the same `extra` name, so that users do not have to change anything, and we then remove the subpackage itself.
+- All subpackage imports in the code should be from a stable place, mostly vendor-based, so that when something moves from a subpackage to the main package, the import path does not change, so `from agent_framework.microsoft import CopilotAgent` will always work, even if it moves from the `agent-framework-microsoft-copilot` package to the main `agent-framework` package.
+- The imports in those vendor namespaces (these won't be actual python namespaces, just the folders with a __init__.py file and any code) will do lazy loading and raise a meaningful error if the subpackage or dependencies are not installed, so that users know which extra to install with ease.
+- On a case by case basis we can decide to create additional a `extra`, that combines multiple sub-packages and dependencies into one extra, so that users who work primarily with one platform can install everything they need with a single extra, for example (not implemented) you can install with the `agent-framework[azure-purview]` extra that only implement a `PurviewMiddleware`, or you can install with the `agent-framework[azure]` extra that includes all Azure related connectors, like `purview`, `content-safety` and others (all examples, not actual packages), regardless of where the code sits, these should always be importable from `agent_framework.azure`.
+- Subpackage naming should also follow this, so in principle a package name is `<vendor/folder>-<feature/brand>`, so `google-gemini`, `azure-purview`, `microsoft-copilotstudio`, etc. For smaller vendors, where it's less likely to have a multitude of connectors, we can skip the feature/brand part, so `mem0`, `redis`, etc.
+- For Microsoft services we will have two vendor folders, `azure` and `microsoft`, where `azure` contains all Azure services, while `microsoft` contains other Microsoft services, such as Copilot Studio Agents.
+
+This setup was discussed at length and the decision is captured in [ADR-0007](../decisions/0007-python-subpackages.md).
+
 #### Evolving the package structure
 For each of the advanced components, we have two reason why we may split them into a folder, with an `__init__.py` and optionally a `_files.py`:
 1. If the file becomes too large, we can split it into multiple `_files`, while still keeping the public interface in the `__init__.py` file, this is a non-breaking change
 2. If we want to partially or fully move that code into a separate package.
 In this case we do need to lazy load anything that was moved from the main package to the subpackage, so that existing code still works, and if the subpackage is not installed we can raise a meaningful error.
 
-> **Important**: This setup means that in a users machine, the code from the main package and the code from any installed subpackages will be put in the same folder in their python installation, this means there cannot be name clashes between the contents of a subpackage with each other, or with the main package. So the first level inside of those subpackages should be unique, preferably the same as the subpackage name. A subpackage can contain anything that is useful and related to Agent Framework, in that case for i.e. Azure, that would mean the following structure:
-
-```plaintext
-<!-- inside the Azure subpackage: -->
-agent_framework/
-    azure/
-        __init__.py
-        _chat.py
-        _embeddings.py
-        _context_safety.py
-        ...
-```
-
 ## Coding standards
 
 Coding standards will be maintained in the [`DEV_SETUP.md`](../../python/DEV_SETUP.md) file.
-
-[tool.ruff.lint]
-fixable = ["ALL"]
-unfixable = []
-select = [
-    "ASYNC", # async checks
-    "B", # bugbear checks
-    "CPY", #copyright
-    "D", #pydocstyle checks
-    "E", #error checks
-    "ERA", #remove connected out code
-    "F", #pyflakes checks
-    "FIX", #fixme checks
-    "I", #isort
-    "INP", #implicit namespace package
-    "ISC", #implicit string concat
-    "Q", # flake8-quotes checks
-    "RET", #flake8-return check
-    "RSE", #raise exception parantheses check
-    "RUF", # RUF specific rules
-    "SIM", #flake8-simplify check
-    "T100", # Debugger,
-    "TD", #todos
-    "W", # pycodestyle warning checks
-]
-ignore = [
-    "D100", #allow missing docstring in public module
-    "D104", #allow missing docstring in public package
-    "TD003", #allow missing link to todo issue
-    "FIX002" #allow todo
-]
-
-[tool.ruff.format]
-docstring-code-format = true
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.ruff.lint.per-file-ignores]
-# Ignore all directories named `tests` and `samples`.
-"tests/**" = ["D", "INP", "TD", "ERA001", "RUF"]
-"samples/**" = ["D", "INP", "ERA001", "RUF"]
-# Ignore all files that end in `_test.py`.
-"*_test.py" = ["D"]
-"*.ipynb" = ["CPY", "E501"]
-
-[tool.ruff.lint.flake8-copyright]
-notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
-min-file-size = 1
-```
 
 ### Tooling
 uv and ruff are the main tools, for package management and code formatting/linting respectively.

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -71,6 +72,12 @@ public class AgentWorkflowBuilderTests
 
     private class DoubleEchoAgent(string name) : AIAgent
     {
+        public override AgentThread GetNewThread()
+            => new DoubleEchoAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => new DoubleEchoAgentThread();
+
         public override Task<AgentRunResponse> RunAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
@@ -88,6 +95,8 @@ public class AgentWorkflowBuilderTests
             yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { MessageId = id };
         }
     }
+
+    private sealed class DoubleEchoAgentThread() : InMemoryAgentThread();
 
     [Fact]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()

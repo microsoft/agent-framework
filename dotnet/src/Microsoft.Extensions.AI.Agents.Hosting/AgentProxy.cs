@@ -37,15 +37,15 @@ public sealed class AgentProxy : AIAgent
     public override AgentThread GetNewThread() => new AgentProxyThread();
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new AgentProxyThread(serializedThread, jsonSerializerOptions);
 
     /// <summary>
-    /// Gets a thread by its <see cref="AgentThread.ConversationId"/>.
+    /// Gets a thread by its <see cref="AgentProxyThread.ConversationId"/>.
     /// </summary>
     /// <param name="conversationId">The thread identifier.</param>
     /// <returns>The thread.</returns>
-    public AgentThread GetThread(string conversationId) => new AgentProxyThread(conversationId);
+    public AgentThread GetNewThread(string conversationId) => new AgentProxyThread(conversationId);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(

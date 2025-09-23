@@ -63,6 +63,14 @@ public abstract partial class OrchestratingAgent : AIAgent
     /// </summary>
     public Func<AgentRunResponseUpdate, ValueTask>? StreamingResponseCallback { get; set; }
 
+    /// <inheritdoc/>
+    public override AgentThread GetNewThread()
+        => new OrchestratingAgentThread();
+
+    /// <inheritdoc/>
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        => new OrchestratingAgentThread(serializedThread, jsonSerializerOptions);
+
     /// <inheritdoc />
     public sealed override async Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -71,12 +79,17 @@ public abstract partial class OrchestratingAgent : AIAgent
 
         if (thread is not null)
         {
-            if (thread.MessageStore is null)
+            if (thread is not OrchestratingAgentThread typedThread)
+            {
+                throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+            }
+
+            if (typedThread.MessageStore is null)
             {
                 throw new InvalidOperationException("An agent service managed thread is not supported by this agent.");
             }
 
-            List<ChatMessage> messagesList = (await thread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false)).ToList();
+            List<ChatMessage> messagesList = (await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false)).ToList();
             messagesList.AddRange(messages);
             messages = messagesList;
         }
