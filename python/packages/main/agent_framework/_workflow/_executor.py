@@ -442,9 +442,9 @@ class Executor(AFBaseModel):
         """
         # Try to find a matching interceptor for the request and execute it
         for request_type, interceptor_list in self._request_interceptors.items():
-            if self._request_matches_type(request.data, request_type):
+            if self._does_request_matches_type(request.data, request_type):
                 for interceptor_info in interceptor_list:
-                    if self._interceptor_applies_to_request(request, interceptor_info):
+                    if self._does_interceptor_applies_to_request(request, interceptor_info):
                         logger.debug(
                             f"Executor {self.id} intercepting request {request.request_id} "
                             f"of type {type(request.data).__name__} from sub-workflow {request.sub_workflow_id}"
@@ -459,7 +459,7 @@ class Executor(AFBaseModel):
         # No interceptor found - forward inner request to RequestInfoExecutor
         await ctx.send_message(request.data)
 
-    def _request_matches_type(self, request_data: Any, request_type: type | str) -> bool:
+    def _does_request_matches_type(self, request_data: Any, request_type: type | str) -> bool:
         """Check if request data matches the expected type.
 
         Args:
@@ -478,7 +478,7 @@ class Executor(AFBaseModel):
             and request_data.__class__.__name__ == request_type
         )
 
-    def _interceptor_applies_to_request(
+    def _does_interceptor_applies_to_request(
         self, request: "SubWorkflowRequestInfo", interceptor_info: dict[str, Any]
     ) -> bool:
         """Check if an interceptor applies to the given request.
