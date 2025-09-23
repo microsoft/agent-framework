@@ -64,7 +64,7 @@ all = [
     "agent-framework-foundry",
     "agent-framework-runtime",
     "agent-framework-mem0",
-    "agent-framework-redis"
+    "agent-framework-redis",
     "agent-framework-devui"
 ]
 
