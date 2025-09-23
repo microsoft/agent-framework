@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-from typing import Any
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
@@ -63,8 +62,8 @@ class StartExecutor(Executor):
 
 class EndExecutor(Executor):
     @handler  # type: ignore[misc]
-    async def handle_final(self, message: str, ctx: WorkflowContext[Any]) -> None:
-        # Sink executor. The framework emits WorkflowCompletedEvent automatically after this handler returns.
+    async def handle_final(self, message: str, ctx: WorkflowContext) -> None:
+        # Sink executor. The workflow completes when idle with no pending work.
         print(f"Final result: {message}")
 
 

@@ -5,7 +5,6 @@ import asyncio
 from agent_framework import (
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     executor,
     handler,
@@ -17,23 +16,28 @@ Step 1: Foundational patterns: Executors and edges
 What this example shows
 - Two ways to define a unit of work (an Executor node):
     1) Custom class that subclasses Executor with an async method marked by @handler.
-         Signatures: 
+         Possible handler signatures:
+            - (text: str, ctx: WorkflowContext) -> None,
             - (text: str, ctx: WorkflowContext[str]) -> None, or
             - (text: str, ctx: WorkflowContext[None, str]) -> None.
-         The first parameter is the typed input to this node.
-         The second parameter is a WorkflowContext or WorkflowContext.
-         WorkflowContext is used for nodes that send messages to downstream nodes.
-         WorkflowContext is used for nodes that also yield workflow output.
+         The first parameter is the typed input to this node, the input type is str here.
+         The second parameter is a WorkflowContext[T_Out, T_W_Out].
+         WorkflowContext[T_Out] is used for nodes that send messages to downstream nodes with ctx.send_message(T_Out).
+         WorkflowContext[T_Out, T_W_Out] is used for nodes that also yield workflow
+            output with ctx.yield_output(T_W_Out).
+         WorkflowContext without type parameters is equivalent to WorkflowContext[None, None], meaning this node
+            neither sends messages to downstream nodes nor yields workflow output.
+
     2) Standalone async function decorated with @executor using the same signature.
-         Simple steps can use this form; a terminal step can emit a
-         WorkflowCompletedEvent to end the workflow.
+         Simple steps can use this form; a terminal step can yield output
+         using ctx.yield_output() to provide workflow results.
 
 - Fluent WorkflowBuilder API:
     add_edge(A, B) to connect nodes, set_start_executor(A), then build() -> Workflow.
 
 - Running and results:
-    workflow.run(initial_input) executes the graph. The last node yields the
-    final result and adds a WorkflowCompletedEvent to signal completion.
+    workflow.run(initial_input) executes the graph. Terminal nodes yield
+    outputs using ctx.yield_output(). The workflow runs until idle.
 
 Prerequisites
 - No external services required.
@@ -48,8 +52,8 @@ Prerequisites
 #
 # Handler signature contract:
 # - First parameter is the typed input to this node (here: text: str)
-# - Second parameter is a WorkflowContext[T], where T is the type of data this
-#   node will emit via ctx.send_message (here: T is str)
+# - Second parameter is a WorkflowContext[T_Out], where T_Out is the type of data this
+#   node will emit via ctx.send_message (here: T_Out is str)
 #
 # Within a handler you typically:
 # - Compute a result
@@ -75,23 +79,25 @@ class UpperCase(Executor):
 # -----------------------------------------------
 #
 # For simple steps you can skip subclassing and define an async function with the
-# same signature pattern (typed input + WorkflowContext[T]) and decorate it with
+# same signature pattern (typed input + WorkflowContext[T_Out, T_W_Out]) and decorate it with
 # @executor. This creates a fully functional node that can be wired into a flow.
 
 
 @executor(id="reverse_text_executor")
 async def reverse_text(text: str, ctx: WorkflowContext[None, str]) -> None:
-    """Reverse the input string, yield the output, and signal workflow completion.
+    """Reverse the input string and yield the workflow output.
 
-    This node yields the final output using ctx.yield_output(result),
-    and emits a terminal event using ctx.add_event(WorkflowCompletedEvent).
-    The final output can be retrieved from the workflow run results.
+    This node yields the final output using ctx.yield_output(result).
+    The workflow will complete when it becomes idle (no more work to do).
+
+    The WorkflowContext is parameterized with two types:
+    - T_Out = None: this node does not send messages to downstream nodes.
+    - T_W_Out = str: this node yields workflow output of type str.
     """
     result = text[::-1]
 
-    # Yield the output and signal workflow completion.
+    # Yield the output - the workflow will complete when idle
     await ctx.yield_output(result)
-    await ctx.add_event(WorkflowCompletedEvent())
 
 
 async def main():

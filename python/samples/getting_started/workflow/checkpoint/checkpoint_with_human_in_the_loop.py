@@ -19,8 +19,8 @@ from agent_framework import (
     RequestResponse,
     Role,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
@@ -87,7 +87,7 @@ class BriefPreparer(Executor):
         self._agent_id = agent_id
 
     @handler
-    async def prepare(self, brief: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+    async def prepare(self, brief: str, ctx: WorkflowContext[AgentExecutorRequest, str]) -> None:
         # Collapse errant whitespace so the prompt is stable between runs.
         normalized = " ".join(brief.split()).strip()
         if not normalized.endswith("."):
@@ -133,7 +133,7 @@ class ReviewGateway(Executor):
     async def on_agent_response(
         self,
         response: AgentExecutorResponse,
-        ctx: WorkflowContext[HumanApprovalRequest],
+        ctx: WorkflowContext[HumanApprovalRequest, str],
     ) -> None:
         # Capture the agent output so we can surface it to the reviewer and
         # persist iterations. The `RequestInfoExecutor` relies on this state to
@@ -157,7 +157,7 @@ class ReviewGateway(Executor):
     async def on_human_feedback(
         self,
         feedback: RequestResponse[HumanApprovalRequest, str],
-        ctx: WorkflowContext[AgentExecutorRequest | str],
+        ctx: WorkflowContext[AgentExecutorRequest | str, str],
     ) -> None:
         # The RequestResponse wrapper gives us both the human data and the
         # original request message, even when resuming from checkpoints.
@@ -190,11 +190,11 @@ class FinaliseExecutor(Executor):
     """Publishes the approved text."""
 
     @handler
-    async def publish(self, text: str, ctx: WorkflowContext[Any]) -> None:
+    async def publish(self, text: str, ctx: WorkflowContext[Any, str]) -> None:
         # Store the output so diagnostics or a UI could fetch the final copy.
         await ctx.set_state({"published_text": text})
-        # Emit a workflow completion event so the runner stops cleanly.
-        await ctx.add_event(WorkflowCompletedEvent(text))
+        # Yield the final output so the workflow completes cleanly.
+        await ctx.yield_output(text)
 
 
 def create_workflow(*, checkpoint_storage: FileCheckpointStorage | None = None) -> "Workflow":
@@ -264,17 +264,17 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
         print(line)
 
 
-def _print_events(events: list[Any]) -> tuple[WorkflowCompletedEvent | None, list[tuple[str, HumanApprovalRequest]]]:
+def _print_events(events: list[Any]) -> tuple[str | None, list[tuple[str, HumanApprovalRequest]]]:
     """Echo workflow events to the console and collect outstanding requests."""
 
-    completed: WorkflowCompletedEvent | None = None
+    completed_output: str | None = None
     requests: list[tuple[str, HumanApprovalRequest]] = []
 
     for event in events:
         print(f"Event: {event}")
-        if isinstance(event, WorkflowCompletedEvent):
-            completed = event
-        elif isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanApprovalRequest):
+        if isinstance(event, WorkflowOutputEvent):
+            completed_output = event.data
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanApprovalRequest):
             # Capture pending human approvals so the caller can ask the user for
             # input after the current batch of events is processed.
             requests.append((event.request_id, event.data))
@@ -284,7 +284,7 @@ def _print_events(events: list[Any]) -> tuple[WorkflowCompletedEvent | None, lis
         }:
             print(f"Workflow state: {event.state.name}")
 
-    return completed, requests
+    return completed_output, requests
 
 
 def _prompt_for_responses(requests: list[tuple[str, HumanApprovalRequest]]) -> dict[str, str] | None:
@@ -350,14 +350,14 @@ async def _consume(stream: AsyncIterable[Any]) -> list[Any]:
     return [event async for event in stream]
 
 
-async def run_interactive_session(workflow: "Workflow", initial_message: str) -> WorkflowCompletedEvent | None:
+async def run_interactive_session(workflow: "Workflow", initial_message: str) -> str | None:
     """Run the workflow until it either finishes or pauses for human input."""
 
     pending_responses: dict[str, str] | None = None
-    completed: WorkflowCompletedEvent | None = None
+    completed_output: str | None = None
     first = True
 
-    while completed is None:
+    while completed_output is None:
         if first:
             # Kick off the workflow with the initial brief. The returned events
             # include RequestInfo events when the agent produces a draft.
@@ -369,10 +369,11 @@ async def run_interactive_session(workflow: "Workflow", initial_message: str) ->
         else:
             break
 
-        completed, requests = _print_events(events)
-        pending_responses = _prompt_for_responses(requests)
+        completed_output, requests = _print_events(events)
+        if completed_output is None:
+            pending_responses = _prompt_for_responses(requests)
 
-    return completed
+    return completed_output
 
 
 async def resume_from_checkpoint(
@@ -391,21 +392,24 @@ async def resume_from_checkpoint(
             responses=pre_supplied,
         )
     )
-    completed, requests = _print_events(events)
-    if pre_supplied and not requests and completed is None:
+    completed_output, requests = _print_events(events)
+    if pre_supplied and not requests and completed_output is None:
         # When the checkpoint only needed the provided answers we let the user
         # know the workflow is waiting for the next superstep (usually another
         # agent response).
         print("Pre-supplied responses applied automatically; workflow is now waiting for the next step.")
 
     pending = _prompt_for_responses(requests)
-    while completed is None and pending:
+    while completed_output is None and pending:
         events = await _consume(workflow.send_responses_streaming(pending))
-        completed, requests = _print_events(events)
-        pending = _prompt_for_responses(requests)
+        completed_output, requests = _print_events(events)
+        if completed_output is None:
+            pending = _prompt_for_responses(requests)
+        else:
+            break
 
-    if completed:
-        print(f"Workflow completed with: {completed.data}")
+    if completed_output:
+        print(f"Workflow completed with: {completed_output}")
 
 
 async def main() -> None:
@@ -427,7 +431,7 @@ async def main() -> None:
     print("Running workflow (human approval required)...")
     completed = await run_interactive_session(workflow, initial_message=brief)
     if completed:
-        print(f"Initial run completed with final copy: {completed.data}")
+        print(f"Initial run completed with final copy: {completed}")
     else:
         print("Initial run paused for human input.")
 
