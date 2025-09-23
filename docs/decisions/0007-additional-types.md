@@ -40,8 +40,17 @@ Multiple API's currently support Image Generation tools, such as OpenAI Response
 
 ### Decision Outcome
 
-TBD
+1. HostedImageGenerationTool - include a HostedImageGenerationTool that can be used like this:
 
+```python
+tools = [
+    get_weather,
+    HostedCodeInterpreterTool(),
+    HostedImageGenerationTool()
+]
+```
+Without additional parameters for now, Mistral AI does not take any additional parameters, while OpenAI has a bunch, which can be put into additional_properties for now.
+We can add uniform parameters later, if needed.
 
 ## Computer Use Tools
 
@@ -83,7 +92,7 @@ Support for this would entail providing a out of the box local setup for the com
 
 ### Decision Outcome
 
-TBD
+2. Nothing, allow the dict to be passed and for the moment we will not add samples as the receiving side of a computer use setup is quite complex, and depends on the local system, software and other factors. We will monitor usage and if this becomes more popular we can add a ComputerUseTool later.
 
 
 ## Bash or Shell Tools
@@ -123,7 +132,7 @@ The bash and computer use tools are often used in conjunction to allow more cont
 
 ### Decision Outcome
 
-TBD
+2. Nothing, allow the dict to be passed and for the moment we will not add samples as the receiving side of a bash tool setup is quite complex, and depends on the local system, software and other factors. We will monitor usage and if this becomes more popular we can add a BashTool later.
 
 # Tools meta alternative
 
@@ -150,6 +159,21 @@ tools = [
 ]
 ```
 
+## Options
+
+1. HostedTool class
+    - Pro: looks cleaner then a dict, would only supply `type` as a parameter, and even that might break for some API's.
+    - Con: only marginally easier to use then a dict, and does not provide any additional type safety or discoverability. Not a full abstraction of the tools, so not a lot of added value.
+    - Alternative names: GenericHostedTool, GenericTool
+2. HostedTool typeddict with total=False
+    - Pro: looks cleaner then a dict, would only supply `type` as a parameter, and even that might break for some API's. Would make usage optional compared to a class.
+    - Con: only marginally easier to use then a dict, and does not provide any additional type safety or discoverability. Not a full abstraction of the tools, so not a lot of added value.
+    - Alternative names: GenericHostedTool, GenericTool
+3. Nothing, allow the dict to be passed and show samples of how this works.
+
+## Decision
+
+3. Nothing, allow the dict to be passed and for the moment we will not add samples as the receiving side of a bash tool setup is quite complex, and depends on the local system, software and other factors. We will monitor usage and if this becomes more popular we can add a HostedTool later.
 
 # Types
 
@@ -166,8 +190,8 @@ The interesting thing about the code interpreter is that it can play the role bo
 1. As new content type
     - Pro: fits well with the current model of chat responses being comprised of content.
     - Con: might be confusing as it is not a single content type, but a combination of multiple.
-    - names: CodeInterpreterContent or CodeContent
-        - Fields: code, logs, files (potentially list of DataContent)
+    - names: CodeInterpreterContent, CodeExecutionResultContent, CodeExecutionContent or CodeContent
+        - Fields: inputs, outputs, or code, logs, files (potentially list of DataContent)
 1. As existing content types (TextContent, DataContent)
     - Pro: no new types needed.
     - Con: less discoverable, no type checking, TextContent is handled different from others by `text` property on responses (to mitigate we could use TextReasoningContent instead of TextContent). More difficult to show the inputs and outputs together as they might be split into Text and Data contents.
@@ -179,4 +203,14 @@ The interesting thing about the code interpreter is that it can play the role bo
 
 ### Decision Outcome
 
-TBD
+1. As new content type - `CodeExecutionContent` with fields:
+    - This name is chosen because it is more generic than CodeInterpreterContent, as it could be used for other code execution tools in the future.
+    - Further, it is shorter than CodeExecutionResultContent, which is a bit long and since there might be no result of a code execution, it is better to not include Result in the name.
+    - This also means this can be used to supply code (set `inputs` only) to a service in the future, not just code that is generated and executed automatically.
+    - Fields:
+        - inputs and outputs, both of type `list[Contents]`.
+            - DataContent is used for files, with appropriate mime-types.
+            - DataContent is used for code being run, with mime-type `text/x-python` or similar for other programming languages.
+            - TextContent is used for logs and stdout.
+            - ErrorContent is used for stderr or similar error output.
+        - `text` property that is a concatenation of all `TextContent` in the `outputs` field.
