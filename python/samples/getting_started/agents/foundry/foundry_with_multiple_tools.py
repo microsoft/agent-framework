@@ -49,8 +49,8 @@ async def main() -> None:
         AzureCliCredential() as credential,
         FoundryChatClient(async_credential=credential) as chat_client,
     ):
-        # enable foundry telemetry
-        await chat_client.setup_foundry_telemetry()
+        # enable foundry observability
+        await chat_client.setup_foundry_observability()
         agent = chat_client.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
