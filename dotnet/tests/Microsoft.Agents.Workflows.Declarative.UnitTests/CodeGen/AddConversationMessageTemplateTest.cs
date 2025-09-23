@@ -37,7 +37,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
             nameof(AddConversationMessage),
             "TestVariable",
             conversation: StringExpression.Literal("#rev_9"),
-            role: EnumExpression<AgentMessageRoleWrapper>.Literal(AgentMessageRole.Agent),
+            role: AgentMessageRoleWrapper.Get(AgentMessageRole.Agent),
             content:
             [
                 new AddConversationMessageContent.Builder()
@@ -56,7 +56,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
             nameof(AddConversationMessage),
             "TestVariable",
             conversation: StringExpression.Literal("#rev_9"),
-            role: EnumExpression<AgentMessageRoleWrapper>.Literal(AgentMessageRole.Agent),
+            role: AgentMessageRoleWrapper.Get(AgentMessageRole.Agent),
             metadata: ObjectExpression<RecordDataValue>.Literal(
                 new RecordDataValue(
                     new Dictionary<string, DataValue>
@@ -82,7 +82,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
             nameof(AddConversationMessage),
             "TestVariable",
             conversation: StringExpression.Literal("#rev_9"),
-            role: EnumExpression<AgentMessageRoleWrapper>.Literal(AgentMessageRole.Agent),
+            role: AgentMessageRoleWrapper.Get(AgentMessageRole.Agent),
             metadata: ObjectExpression<RecordDataValue>.Variable(PropertyPath.TopicVariable("MyMetadata")),
             content:
             [
@@ -99,7 +99,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
         string variableName,
         StringExpression conversation,
         IEnumerable<AddConversationMessageContent.Builder> content,
-        EnumExpression<AgentMessageRoleWrapper>.Builder? role = null,
+        AgentMessageRoleWrapper? role = null,
         ObjectExpression<RecordDataValue>.Builder? metadata = null)
     {
         // Arrange
@@ -127,7 +127,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
         string variablePath,
         StringExpression conversation,
         IEnumerable<AddConversationMessageContent.Builder> contents,
-        EnumExpression<AgentMessageRoleWrapper>.Builder? role,
+        AgentMessageRoleWrapper? role,
         ObjectExpression<RecordDataValue>.Builder? metadata)
     {
         AddConversationMessage.Builder actionBuilder =

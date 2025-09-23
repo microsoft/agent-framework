@@ -185,15 +185,15 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Locate the nearest "Foreach" loop that contains this action
-        ForeachTemplate? loopExecutor = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
+        ForeachTemplate? loopTemplate = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
         // Skip action if its not contained a loop
-        if (loopExecutor is not null)
+        if (loopTemplate is not null)
         {
             // Represent action with default executor
             DefaultTemplate template = new(item, this._rootId);
             this.ContinueWith(template);
             // Transition to post action
-            this._workflowModel.AddLink(template.Id, WorkflowActionVisitor.Steps.Post(loopExecutor.Id));
+            this._workflowModel.AddLink(template.Id, WorkflowActionVisitor.Steps.Post(loopTemplate.Id));
             // Define a clean-start to ensure "break" is not a source for any edge
             this.RestartAfter(template.Id, template.ParentId);
         }
@@ -204,15 +204,15 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Locate the nearest "Foreach" loop that contains this action
-        ForeachTemplate? loopExecutor = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
+        ForeachTemplate? loopTemplate = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
         // Skip action if its not contained a loop
-        if (loopExecutor is not null)
+        if (loopTemplate is not null)
         {
             // Represent action with default executor
             DefaultTemplate template = new(item, this._rootId);
             this.ContinueWith(template);
             // Transition to select the next item
-            this._workflowModel.AddLink(template.Id, ForeachExecutor.Steps.Start(loopExecutor.Id));
+            this._workflowModel.AddLink(template.Id, ForeachExecutor.Steps.Start(loopTemplate.Id));
             // Define a clean-start to ensure "continue" is not a source for any edge
             this.RestartAfter(template.Id, template.ParentId);
         }

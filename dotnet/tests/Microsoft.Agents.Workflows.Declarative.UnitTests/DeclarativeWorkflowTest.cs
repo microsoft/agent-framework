@@ -37,8 +37,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopEachActionAsync()
     {
         await this.RunWorkflowAsync("LoopEach.yaml");
-        this.AssertExecutionCount(expectedCount: 35);
+        this.AssertExecutionCount(expectedCount: 34);
         this.AssertExecuted("foreach_loop");
+        this.AssertExecuted("set_variable_inner");
+        this.AssertExecuted("send_activity_inner");
         this.AssertExecuted("end_all");
     }
 
@@ -46,24 +48,24 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopBreakActionAsync()
     {
         await this.RunWorkflowAsync("LoopBreak.yaml");
-        this.AssertExecutionCount(expectedCount: 7);
+        this.AssertExecutionCount(expectedCount: 6);
         this.AssertExecuted("foreach_loop");
-        this.AssertExecuted("breakLoop_now");
+        this.AssertExecuted("break_loop_now");
         this.AssertExecuted("end_all");
-        this.AssertNotExecuted("setVariable_loop");
-        this.AssertNotExecuted("sendActivity_loop");
+        this.AssertNotExecuted("set_variable_inner");
+        this.AssertNotExecuted("send_activity_inner");
     }
 
     [Fact]
     public async Task LoopContinueActionAsync()
     {
         await this.RunWorkflowAsync("LoopContinue.yaml");
-        this.AssertExecutionCount(expectedCount: 23);
+        this.AssertExecutionCount(expectedCount: 22);
         this.AssertExecuted("foreach_loop");
-        this.AssertExecuted("continueLoop_now");
+        this.AssertExecuted("continue_loop_now");
         this.AssertExecuted("end_all");
-        this.AssertNotExecuted("setVariable_loop");
-        this.AssertNotExecuted("sendActivity_loop");
+        this.AssertNotExecuted("set_variable_inner");
+        this.AssertNotExecuted("send_activity_inner");
     }
 
     [Fact]

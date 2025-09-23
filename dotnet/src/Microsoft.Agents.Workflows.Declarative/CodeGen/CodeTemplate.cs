@@ -72,6 +72,8 @@ internal abstract class CodeTemplate
             _ => $"throw new InvalidOperationException(); // Unable to format '{value.GetType().Name}'",
         };
 
+    public static TTarget FormatEnum<TSource, TTarget>(TSource value, IDictionary<TSource, TTarget> map) => map[value]; // %%% TRYGET ???
+
     public static string GetTypeAlias<TValue>() => GetTypeAlias(typeof(TValue));
 
     public static string GetTypeAlias(Type type)
