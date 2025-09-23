@@ -351,7 +351,7 @@ class BaseAnnotation(AFBaseModel):
 
     annotated_regions: list[AnnotatedRegions] | None = None
     additional_properties: dict[str, Any] | None = None
-    raw_representation: Any | None = Field(default=None, repr=False)
+    raw_representation: Any | None = Field(default=None, repr=False, exclude=True)
 
 
 class CitationAnnotation(BaseAnnotation):

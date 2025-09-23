@@ -84,7 +84,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import HttpResponseError
-from pydantic import Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -853,7 +853,12 @@ class FoundryChatClient(BaseChatClient):
                 if isinstance(content, FunctionResultContent):
                     if tool_outputs is None:
                         tool_outputs = []
-                    tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=json.dumps(content.result)))
+                    if isinstance(content.result, BaseModel):
+                        tool_outputs.append(
+                            FunctionToolOutput(tool_call_id=call_id, output=content.result.model_dump_json())
+                        )
+                    else:
+                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=json.dumps(content.result)))
                 elif isinstance(content, FunctionApprovalResponseContent):
                     if tool_approvals is None:
                         tool_approvals = []
