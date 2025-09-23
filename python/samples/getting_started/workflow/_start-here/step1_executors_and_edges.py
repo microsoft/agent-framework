@@ -2,6 +2,8 @@
 
 import asyncio
 
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -19,13 +21,13 @@ What this example shows
          Possible handler signatures:
             - (text: str, ctx: WorkflowContext) -> None,
             - (text: str, ctx: WorkflowContext[str]) -> None, or
-            - (text: str, ctx: WorkflowContext[None, str]) -> None.
+            - (text: str, ctx: WorkflowContext[Never, str]) -> None.
          The first parameter is the typed input to this node, the input type is str here.
          The second parameter is a WorkflowContext[T_Out, T_W_Out].
          WorkflowContext[T_Out] is used for nodes that send messages to downstream nodes with ctx.send_message(T_Out).
          WorkflowContext[T_Out, T_W_Out] is used for nodes that also yield workflow
             output with ctx.yield_output(T_W_Out).
-         WorkflowContext without type parameters is equivalent to WorkflowContext[None, None], meaning this node
+         WorkflowContext without type parameters is equivalent to WorkflowContext[Never, Never], meaning this node
             neither sends messages to downstream nodes nor yields workflow output.
 
     2) Standalone async function decorated with @executor using the same signature.
@@ -84,14 +86,14 @@ class UpperCase(Executor):
 
 
 @executor(id="reverse_text_executor")
-async def reverse_text(text: str, ctx: WorkflowContext[None, str]) -> None:
+async def reverse_text(text: str, ctx: WorkflowContext[Never, str]) -> None:
     """Reverse the input string and yield the workflow output.
 
     This node yields the final output using ctx.yield_output(result).
     The workflow will complete when it becomes idle (no more work to do).
 
     The WorkflowContext is parameterized with two types:
-    - T_Out = None: this node does not send messages to downstream nodes.
+    - T_Out = Never: this node does not send messages to downstream nodes.
     - T_W_Out = str: this node yields workflow output of type str.
     """
     result = text[::-1]

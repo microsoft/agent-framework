@@ -600,7 +600,7 @@ def test_handler_ctx_invalid_t_out_entries_raises() -> None:
 def test_handler_ctx_none_is_allowed() -> None:
     class NoneExecutor(Executor):
         @handler
-        async def handle(self, message: str, ctx: WorkflowContext[None]) -> None:
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:
             # does not emit
             return None
 

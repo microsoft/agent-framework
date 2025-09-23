@@ -3,6 +3,8 @@
 import asyncio
 from typing import cast
 
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -52,7 +54,7 @@ class ReverseTextExecutor(Executor):
     """
 
     @handler
-    async def reverse_text(self, text: str, ctx: WorkflowContext[None, str]) -> None:
+    async def reverse_text(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
         """Reverse the input string and yield the workflow output."""
         result = text[::-1]
         await ctx.yield_output(result)

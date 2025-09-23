@@ -4,6 +4,7 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from pydantic import PrivateAttr
+from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
@@ -56,7 +57,7 @@ class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
     @handler
-    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[None, dict]) -> None:
+    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict]) -> None:
         full = response.full_conversation
         # The AgentExecutor contract guarantees full_conversation is populated.
         assert full is not None

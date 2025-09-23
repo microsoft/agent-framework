@@ -3,6 +3,8 @@
 import asyncio
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import (
     ChatMessage,
     Executor,
@@ -41,7 +43,7 @@ class Summarizer(Executor):
     """Simple summarizer: consumes full conversation and appends an assistant summary."""
 
     @handler
-    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[None, list[ChatMessage]]) -> None:
+    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[Never, list[ChatMessage]]) -> None:
         users = sum(1 for m in conversation if m.role == Role.USER)
         assistants = sum(1 for m in conversation if m.role == Role.ASSISTANT)
         summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary -> users:{users} assistants:{assistants}")

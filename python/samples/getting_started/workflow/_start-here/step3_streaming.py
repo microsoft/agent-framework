@@ -2,6 +2,8 @@
 
 import asyncio
 
+from typing_extensions import Never
+
 from agent_framework import (
     ChatAgent,
     ChatMessage,
@@ -96,7 +98,7 @@ class Reviewer(Executor):
         super().__init__(agent=agent, id=id)
 
     @handler
-    async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[None, str]) -> None:
+    async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[Never, str]) -> None:
         """Review the full conversation transcript and yield the final output.
 
         This node consumes all messages so far. It uses its agent to produce the final text,

@@ -7,6 +7,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import aiofiles
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent builder for executors and edges
@@ -248,7 +250,7 @@ class CompletionExecutor(Executor):
     """Joins all reducer outputs and yields the final output."""
 
     @handler
-    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext[None, list[str]]) -> None:
+    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext[Never, list[str]]) -> None:
         """Collect reducer output file paths and yield final output."""
         await ctx.yield_output([result.file_path for result in data])
 

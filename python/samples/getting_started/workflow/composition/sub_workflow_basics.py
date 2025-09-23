@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -61,7 +63,7 @@ class TextProcessor(Executor):
 
     @handler
     async def process_text(
-        self, request: TextProcessingRequest, ctx: WorkflowContext[None, TextProcessingResult]
+        self, request: TextProcessingRequest, ctx: WorkflowContext[Never, TextProcessingResult]
     ) -> None:
         """Process a text string and return statistics."""
         text_preview = f"'{request.text[:50]}{'...' if len(request.text) > 50 else ''}'"

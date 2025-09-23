@@ -3,6 +3,7 @@
 from typing import Any
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import (
     FunctionExecutor,
@@ -95,7 +96,7 @@ class TestFunctionExecutor:
 
         # Test union types for workflow outputs too
         @executor
-        async def multi_workflow_output(data: str, ctx: WorkflowContext[None, str | int | bool]) -> None:
+        async def multi_workflow_output(data: str, ctx: WorkflowContext[Never, str | int | bool]) -> None:
             if data.isdigit():
                 await ctx.yield_output(int(data))
             elif data.lower() in ("true", "false"):
@@ -108,10 +109,10 @@ class TestFunctionExecutor:
         assert set(workflow_spec["workflow_output_types"]) == {str, int, bool}
 
     def test_none_output_type(self):
-        """Test WorkflowContext[None] produces empty output types."""
+        """Test WorkflowContext produces empty output types."""
 
         @executor
-        async def no_output(data: Any, ctx: WorkflowContext[None]) -> None:
+        async def no_output(data: Any, ctx: WorkflowContext) -> None:
             # This executor doesn't send any messages
             pass
 

@@ -4,6 +4,8 @@ import asyncio
 import os
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import (  # Core chat primitives used to build requests
     AgentExecutor,  # Wraps an LLM agent that can be invoked inside a workflow
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
@@ -96,14 +98,14 @@ def get_condition(expected_result: bool):
 
 
 @executor(id="send_email")
-async def handle_email_response(response: AgentExecutorResponse, ctx: WorkflowContext[None, str]) -> None:
+async def handle_email_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Downstream of the email assistant. Parse a validated EmailResponse and yield the workflow output.
     email_response = EmailResponse.model_validate_json(response.agent_run_response.text)
     await ctx.yield_output(f"Email sent:\n{email_response.response}")
 
 
 @executor(id="handle_spam")
-async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: WorkflowContext[None, str]) -> None:
+async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Spam path. Confirm the DetectionResult and yield the workflow output. Guard against accidental non spam input.
     detection = DetectionResult.model_validate_json(response.agent_run_response.text)
     if detection.is_spam:

@@ -978,7 +978,7 @@ class RequestInfoExecutor(Executor):
         self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
 
     @handler
-    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:
+    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
         """Run the RequestInfoExecutor with the given message."""
         source_executor_id = ctx.get_source_executor_id()
 
@@ -996,7 +996,7 @@ class RequestInfoExecutor(Executor):
     async def handle_sub_workflow_request(
         self,
         message: SubWorkflowRequestInfo,
-        ctx: WorkflowContext[None],
+        ctx: WorkflowContext,
     ) -> None:
         """Handle forwarded sub-workflow request.
 

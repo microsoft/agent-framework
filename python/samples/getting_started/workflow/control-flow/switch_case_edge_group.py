@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
+from typing_extensions import Never
+
 from agent_framework import (  # Core chat primitives used to form LLM requests
     AgentExecutor,  # Wraps an agent so it can run inside a workflow
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
@@ -124,14 +126,14 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None, str]) -> None:
+async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Terminal step for the drafting branch. Yield the email response as output.
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
 @executor(id="handle_spam")
-async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None, str]) -> None:
+async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
     # Spam path terminal. Include the detector's rationale.
     if detection.spam_decision == "Spam":
         await ctx.yield_output(f"Email marked as spam: {detection.reason}")
@@ -140,7 +142,7 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None, str
 
 
 @executor(id="handle_uncertain")
-async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[None, str]) -> None:
+async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
     # Uncertain path terminal. Surface the original content to aid human review.
     if detection.spam_decision == "Uncertain":
         email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from typing_extensions import Never
+
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
@@ -138,14 +140,14 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None, str]) -> None:
+async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     """Validate the drafted reply and yield the final output."""
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
 @executor(id="handle_spam")
-async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None, str]) -> None:
+async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
     """Yield output describing why the email was marked as spam."""
     if detection.is_spam:
         await ctx.yield_output(f"Email marked as spam: {detection.reason}")

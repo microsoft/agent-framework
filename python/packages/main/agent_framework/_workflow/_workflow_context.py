@@ -45,9 +45,9 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     - WorkflowContext[Union[str, int], Union[bool, int]] -> ([str, int], [bool, int])
     - WorkflowContext[Any] -> ([Any], [])
     - WorkflowContext[Any, Any] -> ([Any], [Any])
-    - WorkflowContext[None] -> ([], [])
-    - WorkflowContext[None, None] -> ([], [])
-    - WorkflowContext[None, int] -> ([], [int])
+    - WorkflowContext -> ([], [])
+    - WorkflowContext[Never, Never] -> ([], [])
+    - WorkflowContext[Never, int] -> ([], [int])
 
     Returns:
         Tuple of (message_types, workflow_output_types)

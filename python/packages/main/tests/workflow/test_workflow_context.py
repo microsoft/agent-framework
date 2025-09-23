@@ -5,6 +5,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -108,7 +110,7 @@ async def test_workflow_context_type_annotations_message_type_parameter() -> Non
         await ctx.send_message("world")
 
     @executor(id="func2")
-    async def func2(text: str, ctx: WorkflowContext[None]) -> None:
+    async def func2(text: str, ctx: WorkflowContext) -> None:
         await ctx.add_event(_TestEvent(data=text))
 
     wf = WorkflowBuilder().add_edge(func1, func2).set_start_executor(func1).build()
@@ -125,7 +127,7 @@ async def test_workflow_context_type_annotations_message_type_parameter() -> Non
 
     class _exec2(Executor):
         @handler
-        async def func2(self, text: str, ctx: WorkflowContext[None]) -> None:
+        async def func2(self, text: str, ctx: WorkflowContext) -> None:
             await ctx.add_event(_TestEvent(data=text))
 
     executor1 = _exec1(id="exec1")
@@ -152,7 +154,7 @@ async def test_workflow_context_type_annotations_message_and_output_type_paramet
         await ctx.send_message("world")
 
     @executor(id="func2")
-    async def func2(text: str, ctx: WorkflowContext[None, str]) -> None:
+    async def func2(text: str, ctx: WorkflowContext[Never, str]) -> None:
         await ctx.add_event(_TestEvent(data=text))
         await ctx.yield_output(text)
 
@@ -170,7 +172,7 @@ async def test_workflow_context_type_annotations_message_and_output_type_paramet
 
     class _exec2(Executor):
         @handler
-        async def func2(self, text: str, ctx: WorkflowContext[None, str]) -> None:
+        async def func2(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
             await ctx.add_event(_TestEvent(data=text))
             await ctx.yield_output(text)
 

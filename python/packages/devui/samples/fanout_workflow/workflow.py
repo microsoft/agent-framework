@@ -27,6 +27,7 @@ from agent_framework import (
     handler,
 )
 from pydantic import BaseModel, Field
+from typing_extensions import Never
 
 
 class DataType(Enum):
@@ -584,7 +585,7 @@ class FinalProcessor(Executor):
 
     @handler
     async def process_final_results(
-        self, assessments: list[QualityAssessment], ctx: WorkflowContext[None, str]
+        self, assessments: list[QualityAssessment], ctx: WorkflowContext[Never, str]
     ) -> None:
         """Generate final processing summary and complete workflow."""
         if not assessments:

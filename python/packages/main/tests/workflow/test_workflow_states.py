@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import (
     Executor,
@@ -31,7 +32,7 @@ class FailingExecutor(Executor):
     """Executor that raises at runtime to test failure signaling."""
 
     @handler
-    async def fail(self, msg: int, ctx: WorkflowContext[None]) -> None:  # pragma: no cover - invoked via workflow
+    async def fail(self, msg: int, ctx: WorkflowContext) -> None:  # pragma: no cover - invoked via workflow
         raise RuntimeError("boom")
 
 
@@ -97,7 +98,7 @@ class Completer(Executor):
     """Executor that completes immediately with provided data for testing."""
 
     @handler
-    async def run(self, msg: str, ctx: WorkflowContext[None, str]) -> None:  # pragma: no cover
+    async def run(self, msg: str, ctx: WorkflowContext[Never, str]) -> None:  # pragma: no cover
         await ctx.yield_output(msg)
 
 

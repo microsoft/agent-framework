@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import Field
+from typing_extensions import Never
 
 from agent_framework import (
     Executor,
@@ -70,7 +71,7 @@ class EmailValidator(Executor):
 
     @handler
     async def handle_domain_response(
-        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext[None, ValidationResult]
+        self, response: RequestResponse[DomainCheckRequest, bool], ctx: WorkflowContext[Never, ValidationResult]
     ) -> None:
         """Handle domain check response with correlation."""
         # Use the original email from the correlated response
@@ -113,7 +114,7 @@ class ParentOrchestrator(Executor):
         return RequestResponse[DomainCheckRequest, bool].forward()
 
     @handler
-    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
+    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
         """Collect validation results."""
         self.results.append(result)
 
@@ -145,7 +146,7 @@ async def test_basic_sub_workflow() -> None:
             await ctx.send_message(request, target_id="email_workflow")
 
         @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
             self.result = result
 
     parent = SimpleParent()
@@ -274,7 +275,7 @@ async def test_conditional_forwarding() -> None:
             return RequestResponse[DomainCheckRequest, bool].forward()
 
         @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
             self.result = result
 
     # Setup workflows
@@ -357,7 +358,7 @@ async def test_workflow_scoped_interception() -> None:
             return RequestResponse[DomainCheckRequest, bool].forward()
 
         @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
             self.results[result.email] = result
 
     # Create two identical sub-workflows
@@ -426,7 +427,7 @@ async def test_concurrent_sub_workflow_execution() -> None:
                 await ctx.send_message(request, target_id="email_workflow")
 
         @handler
-        async def collect_result(self, result: ValidationResult, ctx: WorkflowContext[None]) -> None:
+        async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
             """Collect results from concurrent executions."""
             self.results.append(result)
 

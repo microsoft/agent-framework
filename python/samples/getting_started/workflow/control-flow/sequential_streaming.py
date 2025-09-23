@@ -2,6 +2,8 @@
 
 import asyncio
 
+from typing_extensions import Never
+
 from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, executor
 
 """
@@ -36,7 +38,7 @@ async def to_upper_case(text: str, ctx: WorkflowContext[str]) -> None:
 
 
 @executor(id="reverse_text_executor")
-async def reverse_text(text: str, ctx: WorkflowContext[None, str]) -> None:
+async def reverse_text(text: str, ctx: WorkflowContext[Never, str]) -> None:
     """Reverse the input and yield the workflow output.
 
     Concepts:

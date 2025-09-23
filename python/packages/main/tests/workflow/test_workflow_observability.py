@@ -48,7 +48,7 @@ class SecondExecutor(Executor):
         self._processed_messages: list[str] = []
 
     @handler
-    async def handle_message(self, message: str, ctx: WorkflowContext[None]) -> None:
+    async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
         """Handle string messages."""
         self._processed_messages.append(message)
 
@@ -87,7 +87,7 @@ class FanInAggregator(Executor):
         self._processed_messages: list[Any] = []
 
     @handler
-    async def handle_aggregated_data(self, messages: list[str], ctx: WorkflowContext[None]) -> None:
+    async def handle_aggregated_data(self, messages: list[str], ctx: WorkflowContext) -> None:
         # Process aggregated messages from fan-in
         aggregated = f"aggregated: {', '.join(messages)}"
         self._processed_messages.append(aggregated)
@@ -379,7 +379,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
             super().__init__(id="failing_executor")
 
         @handler
-        async def handle_message(self, message: str, ctx: WorkflowContext[None]) -> None:
+        async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
             raise ValueError("Test error")
 
     failing_executor = FailingExecutor()

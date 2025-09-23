@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     RequestInfoExecutor,
@@ -164,7 +166,7 @@ class ResourceRequester(Executor):
     async def handle_resource_response(
         self,
         response: RequestResponse[ResourceRequest, ResourceResponse],
-        ctx: WorkflowContext[None, RequestFinished],
+        ctx: WorkflowContext[Never, RequestFinished],
     ) -> None:
         """Handle resource allocation response."""
         if response.data:
@@ -179,7 +181,7 @@ class ResourceRequester(Executor):
 
     @handler
     async def handle_policy_response(
-        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[None, RequestFinished]
+        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[Never, RequestFinished]
     ) -> None:
         """Handle policy check response."""
         if response.data:

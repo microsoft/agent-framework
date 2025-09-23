@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowRunState, WorkflowStatusEvent, handler
 from agent_framework._workflow._checkpoint import InMemoryCheckpointStorage
@@ -15,7 +16,7 @@ class StartExecutor(Executor):
 
 class FinishExecutor(Executor):
     @handler
-    async def finish(self, message: str, ctx: WorkflowContext[None, str]) -> None:
+    async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
         await ctx.yield_output(message)
 
 

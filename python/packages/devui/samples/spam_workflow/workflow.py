@@ -28,6 +28,7 @@ from agent_framework import (
     handler,
 )
 from pydantic import BaseModel, Field
+from typing_extensions import Never
 
 
 @dataclass
@@ -258,7 +259,7 @@ class FinalProcessor(Executor):
     async def handle_processing_result(
         self,
         result: ProcessingResult,
-        ctx: WorkflowContext[None, str],
+        ctx: WorkflowContext[Never, str],
     ) -> None:
         """Complete the workflow with final processing and logging."""
         await asyncio.sleep(1.5)  # Simulate final processing time

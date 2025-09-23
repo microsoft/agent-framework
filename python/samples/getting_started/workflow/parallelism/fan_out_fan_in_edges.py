@@ -3,6 +3,8 @@
 import asyncio
 from dataclasses import dataclass
 
+from typing_extensions import Never
+
 from agent_framework import (  # Core chat primitives to build LLM requests
     AgentExecutor,  # Wraps an LLM agent for use inside a workflow
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
@@ -74,7 +76,7 @@ class AggregateInsights(Executor):
         self._expert_ids = expert_ids
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[None, str]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:
