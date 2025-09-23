@@ -30,7 +30,7 @@ Prerequisites:
 """
 
 
-async def create_foundry_agent() -> tuple[Callable[..., Awaitable[Any]], Callable[[], Awaitable[None]]]:
+async def create_azure_ai_agent() -> tuple[Callable[..., Awaitable[Any]], Callable[[], Awaitable[None]]]:
     """Helper method to create a Foundry agent factory and a close function.
 
     This makes sure the async context managers are properly handled.
@@ -50,7 +50,7 @@ async def create_foundry_agent() -> tuple[Callable[..., Awaitable[Any]], Callabl
 
 
 async def main() -> None:
-    agent, close = await create_foundry_agent()
+    agent, close = await create_azure_ai_agent()
     try:
         writer = await agent(
             name="Writer",
