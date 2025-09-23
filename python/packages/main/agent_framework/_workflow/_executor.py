@@ -824,16 +824,15 @@ class SubWorkflowResponse:
 # TypeVar for request type that must be a RequestInfoMessage subclass
 RequestInfoMessageT = TypeVar("RequestInfoMessageT", bound="RequestInfoMessage")
 
-# Type alias for interceptor functions
-InterceptorFunc = Callable[
-    [Any, RequestInfoMessageT, WorkflowContext[Any]], Awaitable[RequestResponse[RequestInfoMessageT, Any]]
-]
-
 
 @overload
 def intercepts_request(
-    func: Callable[..., Any],
-) -> Callable[..., Any]: ...
+    func: Callable[
+        [Any, RequestInfoMessageT, WorkflowContext[Any, Any]], Awaitable[RequestResponse[RequestInfoMessageT, Any]]
+    ],
+) -> Callable[
+    [Any, RequestInfoMessageT, WorkflowContext[Any, Any]], Awaitable[RequestResponse[RequestInfoMessageT, Any]]
+]: ...
 
 
 @overload
@@ -841,7 +840,16 @@ def intercepts_request(
     *,
     from_workflow: str | None = None,
     condition: Callable[[Any], bool] | None = None,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]: ...
+) -> Callable[
+    [
+        Callable[
+            [Any, RequestInfoMessageT, WorkflowContext[Any, Any]], Awaitable[RequestResponse[RequestInfoMessageT, Any]]
+        ]
+    ],
+    Callable[
+        [Any, RequestInfoMessageT, WorkflowContext[Any, Any]], Awaitable[RequestResponse[RequestInfoMessageT, Any]]
+    ],
+]: ...
 
 
 def intercepts_request(
@@ -869,7 +877,7 @@ def intercepts_request(
     Example:
         @intercepts_request
         async def check_domain(
-            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
+            self, request: DomainCheckRequest, ctx: WorkflowContext
         ) -> RequestResponse[DomainCheckRequest, bool]:
             # Type automatically inferred as DomainCheckRequest from parameter annotation
             if request.domain in self.approved_domains:
@@ -878,7 +886,7 @@ def intercepts_request(
 
         @intercepts_request(from_workflow="email_validator")
         async def handle_specific(
-            self, request: EmailRequest, ctx: WorkflowContext[Any]
+            self, request: EmailRequest, ctx: WorkflowContext
         ) -> RequestResponse[EmailRequest, str]:
             # Only intercepts EmailRequest from the "email_validator" workflow
             return RequestResponse.handled("handled by parent")
@@ -926,7 +934,7 @@ def intercepts_request(
                 pass
 
         @functools.wraps(func)
-        async def wrapper(self: Any, request: Any, ctx: WorkflowContext[Any]) -> Any:
+        async def wrapper(self: Any, request: RequestInfoMessage, ctx: WorkflowContext[Any, Any]) -> Any:
             return await func(self, request, ctx)
 
         # Add metadata for discovery - store the inferred type
@@ -1018,7 +1026,7 @@ class RequestInfoExecutor(Executor):
         self,
         response_data: Any,
         request_id: str,
-        ctx: WorkflowContext[Any],
+        ctx: WorkflowContext[SubWorkflowResponse | RequestResponse[RequestInfoMessage, Any]],
     ) -> None:
         """Handle a response to a request.
 
