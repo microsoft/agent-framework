@@ -23,10 +23,11 @@ from agent_framework import (
     RequestInfoEvent,
     Role,
     TextContent,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,  # type: ignore  # noqa: E402
     WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
 )
 from agent_framework._agents import BaseAgent
@@ -170,18 +171,18 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
             req_event = ev
     assert req_event is not None
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     output: ChatMessage | None = None
     async for ev in wf.send_responses_streaming({
         req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     }):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
         elif isinstance(ev, WorkflowOutputEvent):
             output = ev.data  # type: ignore[assignment]
-        if completed is not None and output is not None:
+        if completed and output is not None:
             break
-    assert completed is not None
+    assert completed
     assert output is not None
     assert isinstance(output, ChatMessage)
 
@@ -216,7 +217,7 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
 
     # Reply APPROVE with comments (no edited text). Expect one replan and no second review round.
     saw_second_review = False
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     async for ev in wf.send_responses_streaming({
         req_event.request_id: MagenticPlanReviewReply(
             decision=MagenticPlanReviewDecision.APPROVE,
@@ -225,11 +226,11 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
     }):
         if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
             saw_second_review = True
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
             break
 
-    assert completed is not None
+    assert completed
     assert manager.replan_count >= 1
     assert saw_second_review is False
     # Replan from FakeManager updates facts/plan to include A2 / Do Z
@@ -251,8 +252,10 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
         if len(events) > 50:
             break
 
-    completed = next((e for e in events if isinstance(e, WorkflowCompletedEvent)), None)
-    assert completed is not None
+    idle_status = next(
+        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE), None
+    )
+    assert idle_status is not None
     # Check that we got workflow output via WorkflowOutputEvent
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
     assert output_event is not None

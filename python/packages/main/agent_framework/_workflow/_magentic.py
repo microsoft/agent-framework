@@ -28,7 +28,7 @@ from agent_framework import (
 from agent_framework._agents import BaseAgent
 from agent_framework._pydantic import AFBaseModel
 
-from ._events import WorkflowCompletedEvent, WorkflowEvent
+from ._events import WorkflowEvent
 from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
@@ -1191,7 +1191,6 @@ class MagenticOrchestratorExecutor(Executor):
 
         # Emit a completed event for the workflow
         await context.yield_output(final_answer)
-        await context.add_event(WorkflowCompletedEvent())
 
         if self._result_callback:
             await self._result_callback(final_answer)
@@ -1226,7 +1225,6 @@ class MagenticOrchestratorExecutor(Executor):
 
                 # Yield the partial result and signal completion
                 await context.yield_output(partial_result)
-                await context.add_event(WorkflowCompletedEvent())
 
                 if self._result_callback:
                     await self._result_callback(partial_result)

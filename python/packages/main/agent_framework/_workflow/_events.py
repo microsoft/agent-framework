@@ -66,16 +66,6 @@ class WorkflowStartedEvent(WorkflowEvent):
     ...
 
 
-class WorkflowCompletedEvent(WorkflowEvent):
-    """Built-in lifecycle event emitted when a workflow run completes successfully.
-
-    Unlike the framework-only `WorkflowLifecycleEvent` union, this event can be
-    emitted by developer-provided executors to return final workflow output.
-    """
-
-    ...
-
-
 class WorkflowWarningEvent(WorkflowEvent):
     """Executor-origin event signaling a warning surfaced by user code."""
 
@@ -120,15 +110,13 @@ class WorkflowRunState(str, Enum):
         request-for-information operations are outstanding. New work may still
         be scheduled while requests are in flight.
 
-      - IDLE: The workflow is quiescent with no outstanding requests, but has
-        not yet emitted a terminal result. Rare in practice but provided for
-        orchestration integrations that distinguish a quiescent state.
+      - IDLE: The workflow is quiescent with no outstanding requests and no more
+        work to do. This is the normal terminal state for workflows that have
+        finished executing, potentially having produced outputs along the way.
 
       - IDLE_WITH_PENDING_REQUESTS: The workflow is paused awaiting external
         input (e.g., emitted a `RequestInfoEvent`). This is a non-terminal
         state; the workflow can resume when responses are supplied.
-
-      - COMPLETED: Normal terminal state indicating successful completion.
 
       - FAILED: Terminal state indicating an error surfaced. Accompanied by a
         `WorkflowFailedEvent` with structured error details.
@@ -143,7 +131,6 @@ class WorkflowRunState(str, Enum):
     IN_PROGRESS_PENDING_REQUESTS = "IN_PROGRESS_PENDING_REQUESTS"  # Active execution with outstanding requests
     IDLE = "IDLE"  # No active work and no outstanding requests
     IDLE_WITH_PENDING_REQUESTS = "IDLE_WITH_PENDING_REQUESTS"  # Paused awaiting external responses
-    COMPLETED = "COMPLETED"  # Finished successfully
     FAILED = "FAILED"  # Finished with an error
     CANCELLED = "CANCELLED"  # Finished due to cancellation
 

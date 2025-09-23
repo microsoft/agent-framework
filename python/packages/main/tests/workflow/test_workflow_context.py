@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from agent_framework import (
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,
     WorkflowRunState,
@@ -61,11 +60,12 @@ async def test_executor_cannot_emit_framework_lifecycle_event(caplog: "LogCaptur
 
 async def test_executor_emits_normal_event() -> None:
     async with make_context() as (ctx, runner_ctx):
-        await ctx.add_event(WorkflowCompletedEvent("done"))
+        # Create a normal event to test event emission
+        await ctx.add_event(_TestEvent())
 
         events: list[WorkflowEvent] = await runner_ctx.drain_events()
         assert len(events) == 1
-        assert isinstance(events[0], WorkflowCompletedEvent)
+        assert isinstance(events[0], _TestEvent)
 
 
 class _TestEvent(WorkflowEvent):

@@ -12,9 +12,10 @@ from agent_framework import (
     ConcurrentBuilder,
     Executor,
     Role,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
 )
 
@@ -58,17 +59,17 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
 
     wf = ConcurrentBuilder().participants([e1, e2, e3]).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     output: list[ChatMessage] | None = None
     async for ev in wf.run_stream("prompt: hello world"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
         elif isinstance(ev, WorkflowOutputEvent):
             output = cast(list[ChatMessage], ev.data)
-        if completed is not None and output is not None:
+        if completed and output is not None:
             break
 
-    assert completed is not None
+    assert completed
     assert output is not None
     messages: list[ChatMessage] = output
 
@@ -96,17 +97,17 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
 
     wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     output: str | None = None
     async for ev in wf.run_stream("prompt: custom"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
         elif isinstance(ev, WorkflowOutputEvent):
             output = cast(str, ev.data)
-        if completed is not None and output is not None:
+        if completed and output is not None:
             break
 
-    assert completed is not None
+    assert completed
     assert output is not None
     # Custom aggregator returns a string payload
     assert isinstance(output, str)
@@ -127,17 +128,17 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
 
     wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize_sync).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     output: str | None = None
     async for ev in wf.run_stream("prompt: custom sync"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
         elif isinstance(ev, WorkflowOutputEvent):
             output = cast(str, ev.data)
-        if completed is not None and output is not None:
+        if completed and output is not None:
             break
 
-    assert completed is not None
+    assert completed
     assert output is not None
     assert isinstance(output, str)
     assert output == "One | Two"

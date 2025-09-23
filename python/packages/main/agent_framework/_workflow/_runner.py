@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowCompletedEvent, WorkflowEvent, _framework_event_origin
+from ._events import WorkflowEvent, WorkflowOutputEvent, _framework_event_origin
 from ._executor import Executor
 from ._runner_context import (
     _DATACLASS_MARKER,
@@ -300,8 +300,8 @@ class Runner:
                             final_text = final_messages[-1].text if final_messages else "(no content)"
                             with _framework_event_origin():
                                 # TODO(moonbox3): does user expect this event to contain the final text?
-                                completion_event = WorkflowCompletedEvent(final_text)
-                            await self._ctx.add_event(completion_event)
+                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
+                            await self._ctx.add_event(output_event)
                             continue  # Terminal handled
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.debug("Suppressed exception during terminal message type check: %s", exc)
@@ -324,8 +324,8 @@ class Runner:
                             final_text = final_messages[-1].text if final_messages else "(no content)"
                             with _framework_event_origin():
                                 # TODO(moonbox3): does user expect this event to contain the final text?
-                                completion_event = WorkflowCompletedEvent(final_text)
-                            await self._ctx.add_event(completion_event)
+                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
+                            await self._ctx.add_event(output_event)
                             continue
                     except Exception as exc:  # pragma: no cover
                         logger.debug("Terminal completion emission failed: %s", exc)

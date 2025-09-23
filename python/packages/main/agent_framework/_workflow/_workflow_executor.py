@@ -161,9 +161,7 @@ class WorkflowExecutor(Executor):
         self._expected_response_count = len(request_info_events)
 
         # Handle final state
-        if final_state == WorkflowRunState.COMPLETED:
-            self._active_executions -= 1
-        elif final_state == WorkflowRunState.FAILED:
+        if final_state == WorkflowRunState.FAILED:
             # Find the WorkflowFailedEvent.
             failed_events = [e for e in result if isinstance(e, WorkflowFailedEvent)]
             if failed_events:

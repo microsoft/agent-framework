@@ -7,9 +7,7 @@ import pytest
 from agent_framework import (
     FunctionExecutor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
-    WorkflowOutputEvent,
     executor,
 )
 
@@ -204,7 +202,6 @@ class TestFunctionExecutor:
         async def reverse_text(text: str, ctx: WorkflowContext[Any, str]) -> None:
             result = text[::-1]
             await ctx.yield_output(result)
-            await ctx.add_event(WorkflowCompletedEvent())
 
         # Verify type inference for both executors
         upper_spec = to_upper._handler_specs[0]
@@ -219,16 +216,11 @@ class TestFunctionExecutor:
 
         # Run workflow
         events = await workflow.run("hello world")
-        completed = events.get_completed_event()
-        output_event = None
-        for event in events:
-            if isinstance(event, WorkflowOutputEvent):
-                output_event = event
-                break
+        outputs = events.get_outputs()
 
-        assert completed is not None
-        assert output_event is not None
-        assert output_event.data == "DLROW OLLEH"
+        # Assert that we got the expected output
+        assert len(outputs) == 1
+        assert outputs[0] == "DLROW OLLEH"
 
     def test_can_handle_method(self):
         """Test that can_handle method works with instance handlers."""
@@ -439,7 +431,6 @@ class TestFunctionExecutor:
         async def reverse_async(text: str, ctx: WorkflowContext[Any, str]):
             result = text[::-1]
             await ctx.yield_output(result)
-            await ctx.add_event(WorkflowCompletedEvent())
 
         # Verify type inference for sync and async functions
         sync_spec = to_upper_sync._handler_specs[0]

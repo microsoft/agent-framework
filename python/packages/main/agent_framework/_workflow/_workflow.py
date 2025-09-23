@@ -30,7 +30,6 @@ from ._edge import (
 )
 from ._events import (
     RequestInfoEvent,
-    WorkflowCompletedEvent,
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowFailedEvent,
@@ -59,9 +58,10 @@ logger = logging.getLogger(__name__)
 class WorkflowRunResult(list[WorkflowEvent]):
     """A list of events generated during the workflow execution in non-streaming mode.
 
-    Preserves the historical contract that the list contains data-plane events
-    only (executor invoke/complete, completed, requests), while exposing the
-    control-plane status timeline via accessors.
+    A workflow runs until it becomes idle and produces outputs along the way through
+    ctx.yield_output() calls. Preserves the historical contract that the list contains
+    data-plane events only (executor invoke/complete, outputs, requests), while exposing
+    the control-plane status timeline via accessors.
     """
 
     def __init__(self, events: list[WorkflowEvent], status_events: list[WorkflowStatusEvent] | None = None) -> None:
@@ -75,22 +75,6 @@ class WorkflowRunResult(list[WorkflowEvent]):
             A list of outputs produced by the workflow during its execution.
         """
         return [event.data for event in self if isinstance(event, WorkflowOutputEvent)]
-
-    def get_completed_event(self) -> WorkflowCompletedEvent | None:
-        """Get the completed event from the workflow run result.
-
-        Returns:
-            A completed WorkflowEvent instance if the workflow has a completed event, otherwise None.
-
-        Raises:
-            ValueError: If there are multiple completed events in the workflow run result.
-        """
-        completed_events = [event for event in self if isinstance(event, WorkflowCompletedEvent)]
-        if not completed_events:
-            return None
-        if len(completed_events) > 1:
-            raise ValueError("Multiple completed events found.")
-        return completed_events[0]
 
     def get_request_info_events(self) -> list[RequestInfoEvent]:
         """Get all request info events from the workflow run result.
@@ -124,8 +108,66 @@ class WorkflowRunResult(list[WorkflowEvent]):
 class Workflow(AFBaseModel):
     """A class representing a workflow that can be executed.
 
-    This class is a placeholder for the workflow logic and does not implement any specific functionality.
-    It serves as a base class for more complex workflows that can be defined in subclasses.
+    To create a workflow, use the WorkflowBuilder class. Do not instantiate this class directly.
+
+    A workflow executes a graph of connected executors, running until it becomes idle.
+    There is no formally defined completion state - instead, workflows produce outputs
+    along the way through executors' ctx.yield_output() calls in their handlers and
+    run until no more work can be done.
+
+    A workflow has defined input and output types, they can are discovered at runtime
+    by inspecting the start executor's input types and the union of all executors'
+    workflow output types. The input and output types are accessible via the
+    input_types and output_types properties.
+
+    To execute a workflow for the first time, use the run() or run_stream() methods.
+    The former runs to completion and returns a WorkflowRunResult containing all events,
+    while the latter returns an async generator that yields events as they occur.
+
+    Workflow execution uses a Pregel-like model where executors run in supersteps until
+    the workflow becomes idle.
+
+    An executor is invoked when it received message from
+    an edge group connected to it. It can emit messages to downstream executors
+    via ctx.send_message() calls in its handler; it can yield workflow-level
+    outputs via ctx.yield_output() calls; it can also emit custom events via
+    ctx.add_event() calls. Messages are delivered to downstream executors
+    at the end of each superstep via the outgoing edge groups.
+
+    From workflow's caller's perspective, the messages sent between executors are
+    not observable in the event stream. On the other hand, workflow-level events,
+    including outputs, and custom events are observable. Workflow status events
+    are derived from past workflow-level events.
+
+    How does workflow request for external input? It requires a RequestInfoExecutor,
+    a built-in executor that can be added to the workflow graph. To request external
+    input from an executor, it should connect to the RequestInfoExecutor via an edge group
+    and back to itself. When the executor sends a RequestInfoMessage to the RequestInfoExecutor,
+    the RequestInfoExecutor emits a RequestInfoEvent to the workflow event stream
+    and the workflow enters IDLE_WITH_PENDING_REQUESTS state.
+    The workflow continues execution until the current superstep completes, and
+    then enters IDLE_WITH_PENDING_REQUESTS state and the control is returned to the caller.
+    At this point, the caller should be responsible for fulfilling the requests.
+
+    To resume a workflow that is IDLE_WITH_PENDING_REQUESTS, the caller should
+    call send_responses() or send_responses_streaming() with the responses to the requests.
+    The responses are routed to the RequestInfoExecutor, which then forwards them to the
+    original requesting executor. The requesting executor will receive the responses
+    as a message and start processing.
+    The workflow continues execution until it becomes idle again for any reason.
+
+    How does workflow checkpointing work? Checkpointing is performed at the end of
+    each superstep if enabled. The checkpoint captures the entire workflow state,
+    including the state of each executor, the messages in transit, and the shared state.
+    Once a workflow is checkpointed, it can be restored from that checkpoint
+    using the run_from_checkpoint() or run_stream_from_checkpoint() methods.
+    By storing checkpoints externally, workflows can be paused and resumed
+    across process restarts.
+
+    How does workflow composition work? A workflow can be nested within another workflow
+    via the WorkflowExecutor, a special executor that wraps a workflow.
+    The input and output types of the nested workflow become part of the
+    WorkflowExecutor's input and output types.
     """
 
     edge_groups: list[EdgeGroup] = Field(
@@ -256,7 +298,6 @@ class Workflow(AFBaseModel):
 
         # Create workflow span that encompasses the entire execution
         with workflow_tracer.create_workflow_run_span(self):
-            saw_completed = False
             saw_request = False
             emitted_in_progress_pending = False
             try:
@@ -280,25 +321,19 @@ class Workflow(AFBaseModel):
 
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
-                    # Track terminal indicators while forwarding events
-                    if isinstance(event, WorkflowCompletedEvent):
-                        saw_completed = True
-                    elif isinstance(event, RequestInfoEvent):
+                    # Track request events for final status determination
+                    if isinstance(event, RequestInfoEvent):
                         saw_request = True
                     yield event
 
-                    if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending and not saw_completed:
+                    if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
                             pending_status = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
                         yield pending_status
 
-                # Success path: emit a final status based on observed terminal signals
-                if saw_completed:
-                    with _framework_event_origin():
-                        terminal_status = WorkflowStatusEvent(WorkflowRunState.COMPLETED)
-                    yield terminal_status
-                elif saw_request:
+                # Workflow runs until idle - emit final status based on whether requests are pending
+                if saw_request:
                     with _framework_event_origin():
                         terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                     yield terminal_status

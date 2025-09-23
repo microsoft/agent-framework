@@ -15,9 +15,10 @@ from agent_framework import (
     Role,
     SequentialBuilder,
     TextContent,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
 )
 
@@ -67,17 +68,17 @@ async def test_sequential_agents_append_to_context() -> None:
 
     wf = SequentialBuilder().participants([a1, a2]).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     output: list[ChatMessage] | None = None
     async for ev in wf.run_stream("hello sequential"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
         elif isinstance(ev, WorkflowOutputEvent):
             output = ev.data  # type: ignore[assignment]
-        if completed is not None and output is not None:
+        if completed and output is not None:
             break
 
-    assert completed is not None
+    assert completed
     assert output is not None
     assert isinstance(output, list)
     msgs: list[ChatMessage] = output
@@ -95,17 +96,17 @@ async def test_sequential_with_custom_executor_summary() -> None:
 
     wf = SequentialBuilder().participants([a1, summarizer]).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     output: list[ChatMessage] | None = None
     async for ev in wf.run_stream("topic X"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
         elif isinstance(ev, WorkflowOutputEvent):
             output = ev.data  # type: ignore[assignment]
-        if completed is not None and output is not None:
+        if completed and output is not None:
             break
 
-    assert completed is not None
+    assert completed
     assert output is not None
     msgs: list[ChatMessage] = output
     # Expect: [user, A1 reply, summary]
