@@ -3067,6 +3067,21 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-openai"
+version = "0.47.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-instrumentation", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-semantic-conventions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-semantic-conventions-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/46/3e59891b433869c731131b5ececdaa3ee1d4a45d19169299b52d1397c8e5/opentelemetry_instrumentation_openai-0.47.1.tar.gz", hash = "sha256:a9ad8d898f8f03581fff1764b605d2c277381ced3083a66e7bddb951b95afb2a", size = 25411, upload-time = "2025-09-14T12:09:19.202Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/4e/ee98a8e9b9d58425ff84aff63d06fdf004727cdac2cfe3a2916a1869a2e2/opentelemetry_instrumentation_openai-0.47.1-py3-none-any.whl", hash = "sha256:2bc426c1324f7e9babee8d2a02d7966562ec993da5d280c597bd29a92997e2ed", size = 35274, upload-time = "2025-09-14T12:08:48.987Z" },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-psycopg2"
 version = "0.58b0"
 source = { registry = "https://pypi.org/simple" }
