@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
@@ -43,6 +44,11 @@ from ..exceptions import (
 from ..telemetry import use_telemetry
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 __all__ = ["OpenAIChatClient"]
 
@@ -430,6 +436,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             case _:
                 return content.model_dump(exclude_none=True)
 
+    @override
     def service_url(self) -> str:
         """Get the URL of the service.
 
