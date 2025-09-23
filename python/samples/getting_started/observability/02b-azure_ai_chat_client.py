@@ -59,7 +59,7 @@ async def main() -> None:
     ]
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
+        AIProjectClient(endpoint=os.environ["AZURE_FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
         AzureAIAgentClient(client=project, setup_tracing=False) as client,
     ):
         if use_foundry_obs:

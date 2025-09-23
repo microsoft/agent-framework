@@ -105,11 +105,11 @@ class AzureFoundrySettings(AFBaseSettings):
 
     Args:
         project_endpoint: The Azure AI Foundry project endpoint URL.
-            (Env var AZURE_FOUNDRY_PROJECT_ENDPOINT)
+            (Env var AZURE_AZURE_FOUNDRY_PROJECT_ENDPOINT)
         model_deployment_name: The name of the model deployment to use.
-            (Env var AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME)
+            (Env var AZURE_AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME)
         agent_name: Default name for automatically created agents.
-            (Env var AZURE_FOUNDRY_AGENT_NAME)
+            (Env var AZURE_AZURE_FOUNDRY_AGENT_NAME)
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """
@@ -188,13 +188,13 @@ class AzureAIAgentClient(BaseChatClient):
             if not foundry_settings.project_endpoint:
                 raise ServiceInitializationError(
                     "Foundry project endpoint is required. Set via 'project_endpoint' parameter "
-                    "or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
+                    "or 'AZURE_FOUNDRY_PROJECT_ENDPOINT' environment variable."
                 )
 
             if agent_id is None and not foundry_settings.model_deployment_name:
                 raise ServiceInitializationError(
                     "Foundry model deployment name is required. Set via 'model_deployment_name' parameter "
-                    "or 'FOUNDRY_MODEL_DEPLOYMENT_NAME' environment variable."
+                    "or 'AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME' environment variable."
                 )
 
             # Use provided credential

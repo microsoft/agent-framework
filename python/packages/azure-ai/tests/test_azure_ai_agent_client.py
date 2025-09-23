@@ -36,8 +36,8 @@ from pydantic import Field, ValidationError
 
 skip_if_foundry_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
-    reason="No real FOUNDRY_PROJECT_ENDPOINT provided; skipping integration tests."
+    or os.getenv("AZURE_FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
+    reason="No real AZURE_FOUNDRY_PROJECT_ENDPOINT provided; skipping integration tests."
     if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
     else "Integration tests are disabled.",
 )
@@ -68,9 +68,9 @@ def test_foundry_settings_init(foundry_unit_test_env: dict[str, str]) -> None:
     """Test AzureFoundrySettings initialization."""
     settings = AzureFoundrySettings()
 
-    assert settings.project_endpoint == foundry_unit_test_env["FOUNDRY_PROJECT_ENDPOINT"]
-    assert settings.model_deployment_name == foundry_unit_test_env["FOUNDRY_MODEL_DEPLOYMENT_NAME"]
-    assert settings.agent_name == foundry_unit_test_env["FOUNDRY_AGENT_NAME"]
+    assert settings.project_endpoint == foundry_unit_test_env["AZURE_FOUNDRY_PROJECT_ENDPOINT"]
+    assert settings.model_deployment_name == foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"]
+    assert settings.agent_name == foundry_unit_test_env["AZURE_FOUNDRY_AGENT_NAME"]
 
 
 def test_foundry_settings_init_with_explicit_values() -> None:
@@ -194,8 +194,8 @@ def test_foundry_chat_client_init_missing_credential(foundry_unit_test_env: dict
         AzureAIAgentClient(
             client=None,
             agent_id="existing-agent",
-            project_endpoint=foundry_unit_test_env["FOUNDRY_PROJECT_ENDPOINT"],
-            model_deployment_name=foundry_unit_test_env["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+            project_endpoint=foundry_unit_test_env["AZURE_FOUNDRY_PROJECT_ENDPOINT"],
+            model_deployment_name=foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"],
             async_credential=None,  # Missing credential
         )
 
@@ -232,7 +232,7 @@ async def test_foundry_chat_client_get_agent_id_or_create_create_new(
 ) -> None:
     """Test _get_agent_id_or_create when creating a new agent."""
     foundry_settings = AzureFoundrySettings(
-        model_deployment_name=foundry_unit_test_env["FOUNDRY_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
+        model_deployment_name=foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
     )
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, foundry_settings=foundry_settings)
 
@@ -293,7 +293,7 @@ async def test_foundry_chat_client_thread_management_through_public_api(mock_ai_
     mock_ai_project_client.agents.threads.create.assert_called_once()
 
 
-@pytest.mark.parametrize("exclude_list", [["FOUNDRY_MODEL_DEPLOYMENT_NAME"]], indirect=True)
+@pytest.mark.parametrize("exclude_list", [["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"]], indirect=True)
 async def test_foundry_chat_client_get_agent_id_or_create_missing_model(
     mock_ai_project_client: MagicMock, foundry_unit_test_env: dict[str, str]
 ) -> None:
@@ -522,7 +522,7 @@ async def test_foundry_chat_client_get_agent_id_or_create_with_run_options(
 ) -> None:
     """Test _get_agent_id_or_create with run_options containing tools and instructions."""
     foundry_settings = AzureFoundrySettings(
-        model_deployment_name=foundry_unit_test_env["FOUNDRY_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
+        model_deployment_name=foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
     )
     chat_client = create_test_foundry_chat_client(mock_ai_project_client, foundry_settings=foundry_settings)
 

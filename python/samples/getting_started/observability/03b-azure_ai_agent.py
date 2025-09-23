@@ -34,7 +34,7 @@ async def main():
     questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
+        AIProjectClient(endpoint=os.environ["AZURE_FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
         # this calls `setup_foundry_observability` through the context manager
         AzureAIAgentClient(client=project) as client,
     ):

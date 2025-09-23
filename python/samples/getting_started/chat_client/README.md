@@ -25,8 +25,8 @@ Depending on which client you're using, set the appropriate environment variable
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses deployment
 
 **For Foundry client:**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
-- `FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
+- `AZURE_FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
 
 **For OpenAI clients:**
 - `OPENAI_API_KEY`: Your OpenAI API key

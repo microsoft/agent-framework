@@ -30,8 +30,8 @@ async def main() -> None:
         AzureCliCredential() as credential,
         ChatAgent(
             chat_client=AzureAIAgentClient(
-                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model_deployment_name=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+                project_endpoint=os.environ["AZURE_FOUNDRY_PROJECT_ENDPOINT"],
+                model_deployment_name=os.environ["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"],
                 async_credential=credential,
                 agent_name="WeatherAgent",
             ),

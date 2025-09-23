@@ -8,6 +8,9 @@ from typing import Any
 import pytest
 from pytest import MonkeyPatch, mark, param
 
+from samples.getting_started.chat_client.azure_ai_chat_client import (
+    main as azure_ai_chat_client,
+)
 from samples.getting_started.chat_client.azure_assistants_client import (
     main as azure_assistants_client,
 )
@@ -19,9 +22,6 @@ from samples.getting_started.chat_client.azure_responses_client import (
 )
 from samples.getting_started.chat_client.chat_response_cancellation import (
     main as chat_response_cancellation,
-)
-from samples.getting_started.chat_client.foundry_chat_client import (
-    main as foundry_chat_client,
 )
 from samples.getting_started.chat_client.openai_assistants_client import (
     main as openai_assistants_client,
@@ -67,13 +67,13 @@ chat_client_samples = [
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
-    # Foundry Chat Client samples
+    # Azure AI Chat Client samples
     param(
-        foundry_chat_client,
+        azure_ai_chat_client,
         [],  # Non-interactive sample
-        id="foundry_chat_client",
+        id="azure_ai_chat_client",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),

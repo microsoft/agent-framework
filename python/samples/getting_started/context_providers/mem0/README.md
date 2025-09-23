@@ -29,8 +29,8 @@ Set the following environment variables:
 - `MEM0_API_KEY`: Your Mem0 API key (alternatively, pass it as `api_key` parameter to `Mem0Provider`)
 
 **For Azure AI Foundry:**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
-- `FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
+- `AZURE_FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
 
 ## Key Concepts
 
