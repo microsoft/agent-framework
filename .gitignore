@@ -198,7 +198,11 @@ temp*/
 .tmp/
 .temp/
 
-# AI
+# TAU2 data directories
+python/packages/lab/tau2/**/data/
+python/packages/lab/tau2/**/results/
 
+agents.md
+# AI
 .claude/
 WARP.md

@@ -17,7 +17,7 @@
     <PackageVersion Include="Aspire.Hosting.Azure.CosmosDB" Version="9.4.2" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="9.4.2" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="9.4.2" />
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.4" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.5" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.2" />
     <PackageVersion Include="Azure.Identity" Version="1.16.0" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.7.2" />
@@ -82,14 +82,16 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.3.0-preview.4" />
     <!-- Inference SDKs -->
+    <PackageVersion Include="Anthropic.SDK" Version="5.5.1" />
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.3.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
     <PackageVersion Include="OllamaSharp" Version="5.4.4" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.0" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.915-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.915-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.915-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.922-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.922-1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.922-1" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250821-1001" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.6.0" />

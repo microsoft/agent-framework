@@ -9,6 +9,8 @@ dependencies = [
     "agent-framework-copilotstudio",
     "agent-framework-foundry",
     "agent-framework-mem0",
+    "agent-framework-redis",
+    "agent-framework-devui",
     "agent-framework-lab-gaia",
 ]
 
@@ -20,6 +22,7 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.2.1",
+    "pytest-env>=1.1.5",
     "pytest-xdist[psutil]>=3.8.0",
     "pytest-timeout>=2.3.1",
     "mypy>=1.16.1",
@@ -57,7 +60,9 @@ agent-framework-copilotstudio = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-lab-gaia = { workspace = true }
 agent-framework-mem0 = { workspace = true }
+agent-framework-redis = { workspace = true }
 agent-framework-runtime = { workspace = true }
+agent-framework-devui = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -164,7 +169,7 @@ exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_cod
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab"""
+markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab --exclude tau2"""
 samples-code-check = """pyright ./samples"""
 docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
 docs-clean = "rm -rf docs/build"
@@ -182,7 +187,8 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
-all-tests = "pytest --import-mode=importlib --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_copilotstudio --cov=agent_framework_foundry --cov=agent_framework_mem0 --cov-report=term-missing:skip-covered packages/azure/tests packages/copilotstudio/tests packages/foundry/tests packages/main/tests packages/mem0/tests"
+all-tests = "pytest --import-mode=importlib --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_copilotstudio --cov=agent_framework_foundry --cov=agent_framework_mem0 --cov-report=term-missing:skip-covered packages/azure/tests packages/copilotstudio/tests packages/foundry/tests packages/main/tests packages/mem0/tests packages/redis/tests"
+
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"

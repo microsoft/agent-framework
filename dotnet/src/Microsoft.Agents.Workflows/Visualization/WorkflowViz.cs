@@ -257,12 +257,10 @@ public class WorkflowViz
 
     private string ComputeShortHash(string input)
     {
-#if !NET
-        using (var sha256 = SHA256.Create())
-        {
-            var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
-            return BitConverter.ToString(hash).Replace("-", "").Substring(0, 8).ToUpperInvariant();
-        }
+#if NET472
+        using var sha256 = SHA256.Create();
+        var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
+        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 8).ToUpperInvariant();
 #else
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(hash).Substring(0, 8).ToUpperInvariant();
@@ -271,14 +269,8 @@ public class WorkflowViz
 
     private bool TryGetNestedWorkflow(ExecutorRegistration registration, out Workflow workflow)
     {
+        // TODO: Implement proper nested workflow detection once nested workflow support is in. (https://github.com/microsoft/agent-framework/issues/880)
         workflow = null!;
-
-        // This is a simplified check - in a real implementation, you would need to:
-        // 1. Check if the registration contains a WorkflowExecutor
-        // 2. Extract the nested workflow from it
-        // For now, we'll return false as this requires more knowledge of the ExecutorRegistration structure
-
-        // TODO: Implement proper WorkflowExecutor detection and workflow extraction
         return false;
     }
 

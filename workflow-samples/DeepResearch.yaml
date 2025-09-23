@@ -29,13 +29,13 @@
 #    Enable "Open API" in the agent settings using the wttr.json schema.
 #    See: ./setup/WeatherAgent.yaml
 # 
-kind: AdaptiveDialog
-beginDialog:
+kind: Workflow
+trigger:
 
-  kind: OnActivity
-  id: activity_xyz123
-  type: Message
+  kind: OnConversationStart
+  id: workflow_demo
   actions:
+    
     - kind: SetVariable
       id: setVariable_aASlmF
       displayName: List all available agents for this orchestrator

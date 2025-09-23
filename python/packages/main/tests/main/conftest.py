@@ -27,7 +27,6 @@ from agent_framework import (
     ai_function,
     use_function_invocation,
 )
-from agent_framework.telemetry import OtelSettings, setup_telemetry
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
@@ -36,29 +35,6 @@ else:
 # region Chat History
 
 logger = logging.getLogger(__name__)
-
-
-@fixture
-def enable_otel(request: Any) -> bool:
-    """Fixture that returns a boolean indicating if Otel is enabled."""
-    return request.param if hasattr(request, "param") else True
-
-
-@fixture
-def enable_sensitive_data(request: Any) -> bool:
-    """Fixture that returns a boolean indicating if sensitive data is enabled."""
-    return request.param if hasattr(request, "param") else False
-
-
-@fixture
-def otel_settings(enable_otel: bool, enable_sensitive_data: bool) -> OtelSettings:
-    """Fixture to set environment variables for OtelSettings."""
-
-    from agent_framework.telemetry import OTEL_SETTINGS
-
-    setup_telemetry(enable_otel=enable_otel, enable_sensitive_data=enable_sensitive_data)
-
-    return OTEL_SETTINGS
 
 
 @fixture(scope="function")

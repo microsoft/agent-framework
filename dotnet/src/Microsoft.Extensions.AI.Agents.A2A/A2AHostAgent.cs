@@ -93,7 +93,6 @@ public sealed class A2AHostAgent
     /// </summary>
     /// <param name="agentUrl">Current URL for the agent</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to cancel the operation</param>
-#pragma warning disable CA1054 // URI-like parameters should not be strings
     public Task<AgentCard> GetAgentCardAsync(string agentUrl, CancellationToken cancellationToken)
     {
         // Ensure the URL is in the correct format
@@ -103,7 +102,6 @@ public sealed class A2AHostAgent
         this._agentCard.Url = agentUrl;
         return Task.FromResult(this._agentCard);
     }
-#pragma warning restore CA1054 // URI-like parameters should not be strings
 
     #region private
     private readonly AgentCard _agentCard;

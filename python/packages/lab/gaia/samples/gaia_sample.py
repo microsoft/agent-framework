@@ -29,7 +29,7 @@ async def main() -> None:
         enable_tracing=True,  # Enable OpenTelemetry tracing
         # Optional: Configure external endpoints
         # otlp_endpoint="http://localhost:4317",  # For Aspire Dashboard or other OTLP endpoints
-        # application_insights_connection_string="your_connection_string",  # For Azure Monitor
+        # applicationinsights_connection_string="your_connection_string",  # For Azure Monitor
         # enable_live_metrics=True,  # Enable Azure Monitor live metrics
         # Configure local file tracing
         trace_to_file=True,  # Export traces to local file
