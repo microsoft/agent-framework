@@ -57,7 +57,8 @@ public static partial class AgentAbstractionsJsonUtilities
     [JsonSerializable(typeof(AgentRunResponse[]))]
     [JsonSerializable(typeof(AgentRunResponseUpdate))]
     [JsonSerializable(typeof(AgentRunResponseUpdate[]))]
-    [JsonSerializable(typeof(AgentThread.ThreadState))]
+    [JsonSerializable(typeof(ServiceIdAgentThread.ServiceIdAgentThreadState))]
+    [JsonSerializable(typeof(InMemoryAgentThread.InMemoryAgentThreadState))]
     [JsonSerializable(typeof(InMemoryChatMessageStore.StoreState))]
 
     [ExcludeFromCodeCoverage]

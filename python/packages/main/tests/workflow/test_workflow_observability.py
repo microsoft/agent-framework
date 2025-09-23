@@ -1,66 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import os
-from collections.abc import Generator
 from typing import Any, cast
 
 import pytest
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import WorkflowBuilder
 from agent_framework._workflow._executor import Executor, handler
 from agent_framework._workflow._runner_context import InProcRunnerContext, Message
 from agent_framework._workflow._shared_state import SharedState
-from agent_framework._workflow._telemetry import WorkflowTracer, workflow_tracer
 from agent_framework._workflow._workflow import Workflow
 from agent_framework._workflow._workflow_context import WorkflowContext
-
-
-@pytest.fixture
-def tracing_enabled() -> Generator[None, None, None]:
-    """Enable tracing for tests."""
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = "true"
-
-    # Force reload the settings to pick up the environment variable
-    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
-
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-    yield
-
-    # Restore original value
-    if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL", None)
-    else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = original_value
-
-    # Reload settings again
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-
-@pytest.fixture
-def span_exporter(tracing_enabled: Any) -> Generator[InMemorySpanExporter, None, None]:
-    """Set up OpenTelemetry test infrastructure."""
-    # Use the built-in InMemorySpanExporter for better compatibility
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-
-    # Store original tracer
-    original_tracer = workflow_tracer.tracer
-
-    # Set up our test tracer
-    workflow_tracer.tracer = tracer_provider.get_tracer("agent_framework")
-
-    yield exporter
-
-    # Clean up
-    exporter.clear()
-    workflow_tracer.tracer = original_tracer
+from agent_framework.observability import (
+    OtelAttr,
+    create_processing_span,
+    create_workflow_span,
+)
 
 
 class MockExecutor(Executor):
@@ -142,34 +98,7 @@ class FanInAggregator(Executor):
         return self._processed_messages
 
 
-async def test_workflow_tracer_configuration() -> None:
-    """Test that workflow tracer can be enabled and disabled."""
-    # Test disabled by default
-    tracer = WorkflowTracer()
-    assert not tracer.enabled
-
-    # Test enabled with environment variable
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = "true"
-
-    # Force reload the settings to pick up the environment variable
-    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
-
-    tracer.settings = WorkflowDiagnosticSettings()
-
-    assert tracer.enabled
-
-    # Restore original value
-    if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL", None)
-    else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL"] = original_value
-
-    # Reload settings again
-    tracer.settings = WorkflowDiagnosticSettings()
-
-
-async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter) -> None:
     """Test creation and attributes of all span types (workflow, processing, sending)."""
     # Create a mock workflow object
     mock_workflow = cast(
@@ -186,12 +115,22 @@ async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter:
     )
 
     # Test all span types in nested context
-    with workflow_tracer.create_workflow_run_span(mock_workflow) as workflow_span:
-        workflow_tracer.add_workflow_event("workflow.started")
-
+    with create_workflow_span(
+        OtelAttr.WORKFLOW_RUN_SPAN,
+        {
+            OtelAttr.WORKFLOW_ID: mock_workflow.id,
+        },
+    ) as workflow_span:
+        workflow_span.add_event(OtelAttr.WORKFLOW_STARTED)
+        sending_attributes = {
+            OtelAttr.MESSAGE_TYPE: "ResponseMessage",
+            OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID: "target-789",
+        }
         with (
-            workflow_tracer.create_processing_span("executor-456", "TestExecutor", "TestMessage") as processing_span,
-            workflow_tracer.create_sending_span("ResponseMessage", "target-789") as sending_span,
+            create_processing_span("executor-456", "TestExecutor", "TestMessage") as processing_span,
+            create_workflow_span(
+                OtelAttr.MESSAGE_SEND_SPAN, sending_attributes, kind=trace.SpanKind.PRODUCER
+            ) as sending_span,
         ):
             # Verify all spans are recording
             assert workflow_span is not None and workflow_span.is_recording()
@@ -205,7 +144,7 @@ async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter:
     workflow_span = next(s for s in spans if s.name == "workflow.run")
     assert workflow_span.kind == trace.SpanKind.INTERNAL
     assert workflow_span.attributes is not None
-    assert workflow_span.attributes.get("workflow.id") == "test-workflow-123"
+    assert workflow_span.attributes.get(OtelAttr.WORKFLOW_ID) == "test-workflow-123"
     assert workflow_span.events is not None
     event_names = [event.name for event in workflow_span.events]
     assert "workflow.started" in event_names
@@ -226,11 +165,13 @@ async def test_span_creation_and_attributes(tracing_enabled: Any, span_exporter:
     assert sending_span.attributes.get("message.destination_executor_id") == "target-789"
 
 
-async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> None:
     """Test trace context propagation and handling in messages and executors."""
     shared_state = SharedState()
     ctx = InProcRunnerContext()
     executor = MockExecutor("test-executor")
+
+    span_exporter.clear()
 
     # Test trace context propagation in messages
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
@@ -273,7 +214,8 @@ async def test_trace_context_handling(tracing_enabled: Any, span_exporter: InMem
     assert processing_span.attributes.get("message.type") == "str"
 
 
-async def test_trace_context_disabled_when_tracing_disabled() -> None:
+@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
     shared_state = SharedState()
@@ -298,7 +240,7 @@ async def test_trace_context_disabled_when_tracing_disabled() -> None:
     assert message.source_span_id is None
 
 
-async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test end-to-end tracing including workflow build, execution, and span linking with fan-in edges."""
     # Create executors for fan-in scenario
     executor1 = MockExecutor("executor1")
@@ -321,7 +263,7 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
 
     build_span = build_spans[0]
     assert build_span.attributes is not None
-    assert build_span.attributes.get("workflow.id") == workflow.id
+    assert build_span.attributes.get(OtelAttr.WORKFLOW_ID) == workflow.id
     assert build_span.attributes.get("workflow.definition") is not None
     definition = build_span.attributes.get("workflow.definition")
     assert definition == workflow.model_dump_json(by_alias=True)
@@ -422,7 +364,7 @@ async def test_end_to_end_workflow_tracing(tracing_enabled: Any, span_exporter: 
     assert len(aggregator_span.links) >= 2, f"Expected at least 2 links, got {len(aggregator_span.links)}"
 
 
-async def test_workflow_error_handling_in_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that workflow errors are properly recorded in traces."""
 
     class FailingExecutor(Executor):
@@ -457,7 +399,8 @@ async def test_workflow_error_handling_in_tracing(tracing_enabled: Any, span_exp
     assert workflow_span.status.status_code.name == "ERROR"
 
 
-async def test_message_trace_context_serialization() -> None:
+@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+async def test_message_trace_context_serialization(span_exporter: InMemorySpanExporter) -> None:
     """Test that message trace context is properly serialized/deserialized."""
     ctx = InProcRunnerContext()
 
@@ -491,7 +434,7 @@ async def test_message_trace_context_serialization() -> None:
     assert restored_msg.source_span_ids == ["span123"]  # Test new format
 
 
-async def test_workflow_build_error_tracing(tracing_enabled: Any, span_exporter: InMemorySpanExporter) -> None:
+async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that build errors are properly recorded in build spans."""
 
     # Test validation error by not setting start executor
