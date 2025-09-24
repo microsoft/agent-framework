@@ -300,45 +300,13 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
     return func
 
 
-class AgentMiddlewareWrapper(AgentMiddleware):
-    """Wrapper to convert pure functions into AgentMiddleware protocol objects."""
+class MiddlewareWrapper:
+    """Generic wrapper to convert pure functions into middleware protocol objects."""
 
-    def __init__(self, func: AgentMiddlewareCallable):
+    def __init__(self, func: Callable[..., Any]) -> None:
         self.func = func
 
-    async def process(
-        self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
-    ) -> None:
-        await self.func(context, next)
-
-
-class FunctionMiddlewareWrapper(FunctionMiddleware):
-    """Wrapper to convert pure functions into FunctionMiddleware protocol objects."""
-
-    def __init__(self, func: FunctionMiddlewareCallable):
-        self.func = func
-
-    async def process(
-        self,
-        context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
-    ) -> None:
-        await self.func(context, next)
-
-
-class ChatMiddlewareWrapper(ChatMiddleware):
-    """Wrapper to convert pure functions into ChatMiddleware protocol objects."""
-
-    def __init__(self, func: ChatMiddlewareCallable):
-        self.func = func
-
-    async def process(
-        self,
-        context: ChatContext,
-        next: Callable[[ChatContext], Awaitable[None]],
-    ) -> None:
+    async def process(self, context: Any, next: Callable[[Any], Awaitable[None]]) -> None:
         await self.func(context, next)
 
 
@@ -363,19 +331,17 @@ class BaseMiddlewarePipeline(ABC):
         self,
         middleware: Any,
         expected_type: type,
-        wrapper_class: type,
     ) -> None:
         """Generic middleware registration with automatic wrapping.
 
         Args:
             middleware: The middleware instance or callable to register.
             expected_type: The expected middleware base class type.
-            wrapper_class: The wrapper class for callable middleware.
         """
         if isinstance(middleware, expected_type):
             self._middlewares.append(middleware)
         elif callable(middleware):
-            self._middlewares.append(wrapper_class(middleware))
+            self._middlewares.append(MiddlewareWrapper(middleware))
 
     def _create_handler_chain(
         self,
@@ -415,6 +381,56 @@ class BaseMiddlewarePipeline(ABC):
 
         return create_next_handler(0)
 
+    def _create_streaming_handler_chain(
+        self,
+        final_handler: Callable[[Any], Any],
+        result_container: dict[str, Any],
+        result_key: str = "result_stream",
+    ) -> Callable[[Any], Awaitable[None]]:
+        """Create a chain of middleware handlers for streaming operations.
+
+        Args:
+            final_handler: The final handler to execute
+            result_container: Container to store the result
+            result_key: Key to use in the result container
+
+        Returns:
+            The first handler in the chain
+        """
+
+        def create_next_handler(index: int) -> Callable[[Any], Awaitable[None]]:
+            if index >= len(self._middlewares):
+
+                async def final_wrapper(c: Any) -> None:
+                    # If terminate was set, skip execution
+                    if c.terminate:
+                        return
+
+                    # Execute actual handler and populate context for observability
+                    # Note: final_handler might not be awaitable for streaming cases
+                    try:
+                        result = await final_handler(c)
+                    except TypeError:
+                        # Handle non-awaitable case (e.g., generator functions)
+                        result = final_handler(c)
+                    result_container[result_key] = result
+                    c.result = result
+
+                return final_wrapper
+
+            middleware = self._middlewares[index]
+            next_handler = create_next_handler(index + 1)
+
+            async def current_handler(c: Any) -> None:
+                await middleware.process(c, next_handler)
+                # If terminate is set, don't continue the pipeline
+                if c.terminate:
+                    return
+
+            return current_handler
+
+        return create_next_handler(0)
+
 
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes agent middleware in a chain."""
@@ -434,7 +450,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
 
     def _register_middleware(self, middleware: AgentMiddleware | AgentMiddlewareCallable) -> None:
         """Register an agent middleware item."""
-        self._register_middleware_with_wrapper(middleware, AgentMiddleware, AgentMiddlewareWrapper)
+        self._register_middleware_with_wrapper(middleware, AgentMiddleware)
 
     async def execute(
         self,
@@ -519,33 +535,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
         # Store the final result
         result_container: dict[str, AsyncIterable[AgentRunResponseUpdate] | None] = {"result_stream": None}
 
-        def create_next_handler(index: int) -> Callable[[AgentRunContext], Awaitable[None]]:
-            if index >= len(self._middlewares):
-
-                async def final_wrapper(c: AgentRunContext) -> None:  # noqa: RUF029
-                    # If terminate was set, skip execution
-                    if c.terminate:
-                        return
-
-                    # Execute actual handler and populate context for observability
-                    result = final_handler(c)
-                    result_container["result_stream"] = result
-                    c.result = result
-
-                return final_wrapper
-
-            middleware = self._middlewares[index]
-            next_handler = create_next_handler(index + 1)
-
-            async def current_handler(c: AgentRunContext) -> None:
-                await middleware.process(c, next_handler)
-                # If terminate is set, don't continue the pipeline
-                if c.terminate:
-                    return
-
-            return current_handler
-
-        first_handler = create_next_handler(0)
+        first_handler = self._create_streaming_handler_chain(final_handler, result_container, "result_stream")
         await first_handler(context)
 
         # Yield from the result stream in result container or overridden result
@@ -581,7 +571,7 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
 
     def _register_middleware(self, middleware: FunctionMiddleware | FunctionMiddlewareCallable) -> None:
         """Register a function middleware item."""
-        self._register_middleware_with_wrapper(middleware, FunctionMiddleware, FunctionMiddlewareWrapper)
+        self._register_middleware_with_wrapper(middleware, FunctionMiddleware)
 
     async def execute(
         self,
@@ -646,7 +636,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
 
     def _register_middleware(self, middleware: ChatMiddleware | ChatMiddlewareCallable) -> None:
         """Register a chat middleware item."""
-        self._register_middleware_with_wrapper(middleware, ChatMiddleware, ChatMiddlewareWrapper)
+        self._register_middleware_with_wrapper(middleware, ChatMiddleware)
 
     async def execute(
         self,
@@ -733,33 +723,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         # Store the final result stream
         result_container: dict[str, Any] = {"result_stream": None}
 
-        def create_next_handler(index: int) -> Callable[[ChatContext], Awaitable[None]]:
-            if index >= len(self._middlewares):
-                # Final handler
-                async def final_wrapper(c: ChatContext) -> None:  # noqa: RUF029
-                    # If terminate was set, skip execution
-                    if c.terminate:
-                        return
-
-                    # Execute actual handler and populate context for observability
-                    result_stream = final_handler(c)
-                    result_container["result_stream"] = result_stream
-
-                return final_wrapper
-
-            middleware = self._middlewares[index]
-            next_handler = create_next_handler(index + 1)
-
-            async def current_handler(c: ChatContext) -> None:
-                # If terminate is set, don't continue the pipeline
-                if c.terminate:
-                    return
-
-                await middleware.process(c, next_handler)
-
-            return current_handler
-
-        first_handler = create_next_handler(0)
+        first_handler = self._create_streaming_handler_chain(final_handler, result_container, "result_stream")
         await first_handler(context)
 
         # Yield from the result stream in result container or overridden result
@@ -1167,52 +1131,50 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
     return chat_client_class
 
 
-def _is_function_middleware(middleware: Any) -> bool:
-    """Check if a middleware is a function middleware."""
-    return isinstance(middleware, FunctionMiddleware) or (
+def _is_middleware_of_type(middleware: Any, middleware_type: MiddlewareType) -> bool:
+    """Check if a middleware is of a specific type."""
+    type_to_class = {
+        MiddlewareType.FUNCTION: FunctionMiddleware,
+        MiddlewareType.CHAT: ChatMiddleware,
+        MiddlewareType.AGENT: AgentMiddleware,
+    }
+
+    expected_class = type_to_class[middleware_type]
+    return isinstance(middleware, expected_class) or (
         callable(middleware)
         and hasattr(middleware, "_middleware_type")
-        and middleware._middleware_type == MiddlewareType.FUNCTION  # type: ignore
+        and middleware._middleware_type == middleware_type  # type: ignore
     )
 
 
-def _is_chat_middleware(middleware: Any) -> bool:
-    """Check if a middleware is a chat middleware."""
-    return isinstance(middleware, ChatMiddleware) or (
-        callable(middleware)
-        and hasattr(middleware, "_middleware_type")
-        and middleware._middleware_type == MiddlewareType.CHAT  # type: ignore
-    )
+def extract_middlewares_by_type(
+    middleware_list: list[Middleware] | None,
+    middleware_type: MiddlewareType,
+) -> list[Middleware]:
+    """Extract middlewares of a specific type from a list."""
+    if not middleware_list:
+        return []
+
+    extracted_middlewares: list[Middleware] = []
+    for middleware in middleware_list:
+        if _is_middleware_of_type(middleware, middleware_type):
+            extracted_middlewares.append(middleware)
+
+    return extracted_middlewares
 
 
 def extract_function_middlewares(
     middleware_list: list[Middleware] | None,
 ) -> list[FunctionMiddleware | FunctionMiddlewareCallable]:
     """Extract function middlewares from a list."""
-    if not middleware_list:
-        return []
-
-    function_middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] = []
-    for middleware in middleware_list:
-        if _is_function_middleware(middleware):
-            function_middlewares.append(middleware)  # type: ignore
-
-    return function_middlewares
+    return extract_middlewares_by_type(middleware_list, MiddlewareType.FUNCTION)  # type: ignore
 
 
 def extract_chat_middlewares(
     middleware_list: list[Middleware] | None,
 ) -> list[ChatMiddleware | ChatMiddlewareCallable]:
     """Extract chat middlewares from a list."""
-    if not middleware_list:
-        return []
-
-    chat_middlewares: list[ChatMiddleware | ChatMiddlewareCallable] = []
-    for middleware in middleware_list:
-        if _is_chat_middleware(middleware):
-            chat_middlewares.append(middleware)  # type: ignore
-
-    return chat_middlewares
+    return extract_middlewares_by_type(middleware_list, MiddlewareType.CHAT)  # type: ignore
 
 
 def create_function_middleware_pipeline(
