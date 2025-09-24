@@ -56,6 +56,7 @@ public class ClearAllVariablesTemplateTest(ITestOutputHelper output) : WorkflowA
 
         // Assert
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
     }
 
     private ClearAllVariables CreateModel(

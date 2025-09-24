@@ -27,6 +27,7 @@ public class BreakLoopTemplateTest(ITestOutputHelper output) : WorkflowActionTem
 
         // Assert
         this.AssertDelegate(template.Id, "workflow_id", workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
     }
 
     private BreakLoop CreateModel(string displayName)

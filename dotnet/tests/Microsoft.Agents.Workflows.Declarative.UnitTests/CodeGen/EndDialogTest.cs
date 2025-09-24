@@ -27,6 +27,7 @@ public class EndDialogTest(ITestOutputHelper output) : WorkflowActionTemplateTes
 
         // Assert
         this.AssertDelegate(template.Id, "workflow_id", workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
     }
 
     private EndDialog CreateModel(string displayName)

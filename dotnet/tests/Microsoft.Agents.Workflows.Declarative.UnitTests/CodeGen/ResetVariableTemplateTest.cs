@@ -31,6 +31,7 @@ public class ResetVariableTemplateTest(ITestOutputHelper output) : WorkflowActio
 
         // Assert
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
     }
 
     private ResetVariable CreateModel(string displayName, string variablePath)

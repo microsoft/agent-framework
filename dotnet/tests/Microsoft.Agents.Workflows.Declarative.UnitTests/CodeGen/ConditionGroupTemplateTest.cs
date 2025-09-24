@@ -39,6 +39,7 @@ public class ConditionGroupTemplateTest(ITestOutputHelper output) : WorkflowActi
 
         // Assert
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
         foreach (ConditionItem condition in model.Conditions)
         {
             Assert.Contains(@$"""{condition.Id}""", workflowCode);

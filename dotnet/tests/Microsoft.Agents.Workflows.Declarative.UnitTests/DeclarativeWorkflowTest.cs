@@ -142,6 +142,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     [Theory]
+    [InlineData("EndConversation.yaml", 1, "end_all")]
+    [InlineData("EndDialog.yaml", 1, "end_all")]
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 1, "parse_var")]

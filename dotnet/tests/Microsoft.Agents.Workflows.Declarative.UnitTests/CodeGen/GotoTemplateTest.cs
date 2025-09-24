@@ -27,6 +27,7 @@ public class GotoTemplateTest(ITestOutputHelper output) : WorkflowActionTemplate
 
         // Assert
         this.AssertDelegate(template.Id, "workflow_id", workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
     }
 
     private GotoAction CreateModel(string displayName, string targetId)

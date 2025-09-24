@@ -54,7 +54,8 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
+            this.Write("Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExe" +
+                    "cutor(id: \"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InvokeAzureAgentTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
@@ -63,7 +64,44 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line hidden
             this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask<object" +
                     "?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)\n " +
-                    "   {\n        return default;\n    }\n}");
+                    "   {");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InvokeAzureAgentTemplate.tt"
+ 
+        EvaluateStringExpression(this.Model.Agent.Name, "agentName");
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId");
+        EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend" /* %%% TODO: defaultValue: true */); 
+            
+            #line default
+            #line hidden
+            this.Write("\n        string additionalInstructions =\n            await context.FormatTemplate" +
+                    "Async(\n                \"\"\"");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InvokeAzureAgentTemplate.tt"
+
+                FormatMessageTemplate(this.Model.Input?.AdditionalInstructions); 
+            
+            #line default
+            #line hidden
+            this.Write(@"
+                """""");
+
+        AgentRunResponse agentResponse = InvokeAgentAsync().ToEnumerable().ToAgentRunResponse();
+
+        if (autoSend)
+        {
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+        }");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InvokeAzureAgentTemplate.tt"
+
+        AssignVariable(this.Messages, "agentRunResponse.Messages"); 
+        
+            
+            #line default
+            #line hidden
+            this.Write("\n        return default;\n\n        async IAsyncEnumerable<AgentRunResponseUpdate> " +
+                    "InvokeAgentAsync()\n        {\n           yield return break;\n        }\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
         

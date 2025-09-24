@@ -30,6 +30,27 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
     protected void AssertGeneratedMethod(string methodName, string workflowCode) =>
         Assert.Contains($"ValueTask {methodName}(", workflowCode);
 
+    protected void AssertAgentProvider(bool expected, string workflowCode)
+    {
+        if (expected)
+        {
+            Assert.Contains(", WorkflowAgentProvider agentProvider", workflowCode);
+        }
+        else
+        {
+            Assert.DoesNotContain(", WorkflowAgentProvider agentProvider", workflowCode);
+        }
+    }
+
+    protected void AssertOptionalAssignment(PropertyPath? variablePath, string workflowCode)
+    {
+        if (variablePath is not null)
+        {
+            Assert.Contains(@$"key: ""{variablePath.VariableName}""", workflowCode);
+            Assert.Contains(@$"scopeName: ""{variablePath.VariableScopeName}""", workflowCode);
+        }
+    }
+
     protected void AssertGeneratedAssignment(PropertyPath? variablePath, string workflowCode)
     {
         Assert.NotNull(variablePath);

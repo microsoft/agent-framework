@@ -19,6 +19,8 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     [InlineData("ConditionElse.yaml")]
     [InlineData("EditTable.yaml")]
     [InlineData("EditTableV2.yaml")]
+    [InlineData("EndConversation.yaml")]
+    [InlineData("EndDialog.yaml")]
     [InlineData("Goto.yaml")]
     [InlineData("LoopBreak.yaml")]
     [InlineData("LoopContinue.yaml")]

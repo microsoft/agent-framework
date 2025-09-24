@@ -41,6 +41,7 @@ public class RetrieveConversationMessageTemplateTest(ITestOutputHelper output) :
 
         // Assert
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
         this.AssertGeneratedAssignment(model.Message?.Path, workflowCode);
     }
 

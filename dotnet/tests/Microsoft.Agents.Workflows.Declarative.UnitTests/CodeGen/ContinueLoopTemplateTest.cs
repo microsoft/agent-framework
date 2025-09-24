@@ -27,6 +27,7 @@ public class ContinueLoopTemplateTest(ITestOutputHelper output) : WorkflowAction
 
         // Assert
         this.AssertDelegate(template.Id, "workflow_id", workflowCode);
+        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
     }
 
     private ContinueLoop CreateModel(string displayName)
