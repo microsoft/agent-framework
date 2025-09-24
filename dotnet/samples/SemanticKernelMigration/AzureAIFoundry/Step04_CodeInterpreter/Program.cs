@@ -4,6 +4,7 @@ using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.AzureAI;
@@ -56,9 +57,9 @@ async Task SKAgentAsync()
             {
                 Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
             }
+#pragma warning restore SKEXP0110
         }
     }
-#pragma warning restore SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
     // Clean up
     await thread.DeleteAsync();
@@ -116,6 +117,9 @@ async Task AFAgentAsync()
     }
 
     // Clean up
-    await azureAgentClient.Threads.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await azureAgentClient.Threads.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await azureAgentClient.Administration.DeleteAgentAsync(agent.Id);
 }

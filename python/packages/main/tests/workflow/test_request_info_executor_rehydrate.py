@@ -301,7 +301,7 @@ async def test_run_persists_pending_requests_in_runner_state() -> None:
     approval = SimpleApproval(prompt="Review", draft="Draft", iteration=1)
     approval.request_id = "req-123"
 
-    await executor.execute(approval, ctx)
+    await executor.execute(approval, ctx.source_executor_ids, shared_state, runner_ctx)
 
     # Runner state should include both pending snapshot and serialized request events
     assert "pending_requests" in runner_ctx._state  # pyright: ignore[reportPrivateUsage]
@@ -310,7 +310,7 @@ async def test_run_persists_pending_requests_in_runner_state() -> None:
     assert approval.request_id in runner_ctx._state["request_events"]  # pyright: ignore[reportPrivateUsage]
 
     response_ctx: WorkflowContext[None] = WorkflowContext("request_info", ["source"], shared_state, runner_ctx)
-    await executor.handle_response("approved", approval.request_id, response_ctx)
+    await executor.handle_response("approved", approval.request_id, response_ctx)  # type: ignore
 
     assert runner_ctx._state["pending_requests"] == {}  # pyright: ignore[reportPrivateUsage]
     assert runner_ctx._state.get("request_events", {}).get(approval.request_id) is None  # pyright: ignore[reportPrivateUsage]

@@ -5,9 +5,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import (
     Executor,
@@ -27,54 +24,7 @@ from agent_framework._workflow._edge import (
     SwitchCaseEdgeGroupDefault,
 )
 from agent_framework._workflow._edge_runner import create_edge_runner
-from agent_framework._workflow._telemetry import EdgeGroupDeliveryStatus, workflow_tracer
-
-
-@pytest.fixture
-def tracing_enabled():
-    """Enable tracing for tests."""
-    import os
-
-    original_value = os.environ.get("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS")
-    os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = "true"
-
-    # Force reload the settings to pick up the environment variable
-    from agent_framework._workflow._telemetry import WorkflowDiagnosticSettings
-
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-    yield
-
-    # Restore original value
-    if original_value is None:
-        os.environ.pop("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS", None)
-    else:
-        os.environ["AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS"] = original_value
-
-    # Reload settings again
-    workflow_tracer.settings = WorkflowDiagnosticSettings()
-
-
-@pytest.fixture
-def span_exporter(tracing_enabled):
-    """Set up OpenTelemetry test infrastructure."""
-
-    # Use the built-in InMemorySpanExporter for better compatibility
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-
-    # Store original tracer
-    original_tracer = workflow_tracer.tracer
-
-    # Set up our test tracer
-    workflow_tracer.tracer = tracer_provider.get_tracer("agent_framework")
-
-    yield exporter
-
-    # Clean up
-    exporter.clear()
-    workflow_tracer.tracer = original_tracer
+from agent_framework.observability import EdgeGroupDeliveryStatus
 
 
 @dataclass
@@ -125,6 +75,33 @@ class MockAggregator(Executor):
 
     @handler
     async def mock_aggregator_handler(self, message: list[MockMessage], ctx: WorkflowContext) -> None:
+        """A mock aggregator handler that does nothing."""
+        self.call_count += 1
+        self.last_message = message
+
+    @handler
+    async def mock_aggregator_handler_secondary(
+        self,
+        message: list[MockMessageSecondary],
+        ctx: WorkflowContext,
+    ) -> None:
+        """A mock aggregator handler that does nothing."""
+        self.call_count += 1
+        self.last_message = message
+
+
+class MockAggregatorSecondary(Executor):
+    """A mock aggregator that has a handler for a union type for testing purposes."""
+
+    call_count: int = 0
+    last_message: Any = None
+
+    @handler
+    async def mock_aggregator_handler_combine(
+        self,
+        message: list[MockMessage | MockMessageSecondary],
+        ctx: WorkflowContext,
+    ) -> None:
         """A mock aggregator handler that does nothing."""
         self.call_count += 1
         self.last_message = message
@@ -1110,6 +1087,73 @@ async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter) -> None:
     assert span.attributes.get("edge_group.type") == "FanInEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is False
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value
+
+
+async def test_fan_in_edge_group_with_multiple_message_types() -> None:
+    source1 = MockExecutor(id="source_executor_1")
+    source2 = MockExecutor(id="source_executor_2")
+    target = MockAggregatorSecondary(id="target_executor")
+
+    edge_group = FanInEdgeGroup(source_ids=[source1.id, source2.id], target_id=target.id)
+
+    executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+
+    success = await edge_runner.send_message(
+        Message(data=data, source_id=source1.id),
+        shared_state,
+        ctx,
+    )
+    assert success
+
+    data2 = MockMessageSecondary(data="test")
+    success = await edge_runner.send_message(
+        Message(data=data2, source_id=source2.id),
+        shared_state,
+        ctx,
+    )
+    assert success
+
+
+async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
+    source1 = MockExecutor(id="source_executor_1")
+    source2 = MockExecutor(id="source_executor_2")
+    target = MockAggregator(id="target_executor")
+
+    edge_group = FanInEdgeGroup(source_ids=[source1.id, source2.id], target_id=target.id)
+
+    executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    shared_state = SharedState()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+
+    success = await edge_runner.send_message(
+        Message(data=data, source_id=source1.id),
+        shared_state,
+        ctx,
+    )
+    assert success
+
+    with pytest.raises(RuntimeError):
+        # Although `MockAggregator` can handle `list[MockMessage]` and `list[MockMessageSecondary]`
+        # separately (i.e., it has handlers for each type individually), it cannot handle
+        # `list[MockMessage | MockMessageSecondary]` (a list containing a mix of both types).
+        # With the fan-in edge group, the target executor must handle all message types from the
+        # source executors as a union.
+        data2 = MockMessageSecondary(data="test")
+        _ = await edge_runner.send_message(
+            Message(data=data2, source_id=source2.id),
+            shared_state,
+            ctx,
+        )
 
 
 # endregion FanInEdgeGroup

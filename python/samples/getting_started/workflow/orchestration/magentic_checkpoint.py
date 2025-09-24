@@ -12,7 +12,9 @@ from agent_framework import (
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
     RequestInfoEvent,
-    WorkflowCompletedEvent,
+    WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -102,6 +104,8 @@ async def main() -> None:
         if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
             plan_review_request_id = event.request_id
             print(f"Captured plan review request: {plan_review_request_id}")
+
+        if isinstance(event, WorkflowStatusEvent) and event.state is WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
             break
 
     if plan_review_request_id is None:
@@ -113,8 +117,10 @@ async def main() -> None:
         print("No checkpoints persisted.")
         return
 
-    checkpoints.sort(key=lambda cp: cp.timestamp)
-    resume_checkpoint = checkpoints[-1]
+    resume_checkpoint = max(
+        checkpoints,
+        key=lambda cp: (cp.iteration_count, cp.timestamp),
+    )
     print(f"Using checkpoint {resume_checkpoint.checkpoint_id} at iteration {resume_checkpoint.iteration_count}")
 
     # Show that the checkpoint JSON indeed contains the pending plan-review request record.
@@ -133,12 +139,12 @@ async def main() -> None:
     # `run_stream_from_checkpoint` rebuilds executor state, applies the provided responses,
     # and then continues the workflow. Because we only captured the initial plan review
     # checkpoint, the resumed run should complete almost immediately.
-    final_event: WorkflowCompletedEvent | None = None
+    final_event: WorkflowOutputEvent | None = None
     async for event in resumed_workflow.workflow.run_stream_from_checkpoint(
         resume_checkpoint.checkpoint_id,
         responses={plan_review_request_id: approval},
     ):
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             final_event = event
 
     if final_event is None:
@@ -154,6 +160,63 @@ async def main() -> None:
     text = getattr(result, "text", None) or str(result)
     print("\n=== Final Answer ===")
     print(text)
+
+    """
+    Sample Output:
+
+    === Stage 1: run until plan review request (checkpointing active) ===
+    Captured plan review request: 3a1a4a09-4ed1-4c90-9cf6-9ac488d452c0
+    Using checkpoint 4c76d77a-6ff8-4d2b-84f6-824771ffac7e at iteration 1
+    Pending plan-review requests persisted in checkpoint: ['3a1a4a09-4ed1-4c90-9cf6-9ac488d452c0']
+
+    === Stage 2: resume from checkpoint and approve plan ===
+
+    === Final Answer ===
+    Certainly! Here's your concise internal brief on how the research and implementation teams should collaborate for 
+    the beta launch of the data-driven email summarization feature:
+
+    ---
+
+    **Internal Brief: Collaboration Plan for Data-driven Email Summarization Beta Launch**
+
+    **Collaboration Approach**
+    - **Joint Kickoff:** Research and Implementation teams hold a project kickoff to align on objectives, requirements,
+        and success metrics.
+    - **Ongoing Coordination:** Teams collaborate closely; researchers share model developments and insights, while
+        implementation ensures smooth integration and user experience.
+    - **Real-time Feedback Loop:** Implementation provides early feedback on technical integration and UX, while
+        Research evaluates initial performance and user engagement signals post-integration.
+
+    **Key Milestones**
+    1. **Requirement Finalization & Scoping** - Define MVP feature set and success criteria.
+    2. **Model Prototyping & Evaluation** - Researchers develop and validate summarization models with agreed metrics.
+    3. **Integration & Internal Testing** - Implementation team integrates the model; internal alpha testing and
+        compliance checks.
+    4. **Beta User Onboarding** - Recruit a select cohort of beta users and guide them through onboarding.
+    5. **Beta Launch & Monitoring** - Soft-launch for beta group, with active monitoring of usage, feedback,
+      and performance.
+    6. **Iterative Improvements** - Address issues, refine features, and prepare for possible broader rollout.
+
+    **Top Risks**
+    - **Data Privacy & Compliance:** Strict protocols and compliance reviews to prevent data leakage.
+    - **Model Quality (Bias, Hallucination):** Careful monitoring of summary accuracy; rapid iterations if critical
+        errors occur.
+    - **User Adoption:** Ensuring the beta solves genuine user needs, collecting actionable feedback early.
+    - **Feedback Quality & Quantity:** Proactively schedule user outreach to ensure substantive beta feedback.
+
+    **Communication Cadence**
+    - **Weekly Team Syncs:** Short all-hands progress and blockers meeting.
+    - **Bi-Weekly Stakeholder Check-ins:** Leadership and project leads address escalations and strategic decisions.
+    - **Dedicated Slack Channel:** For real-time queries and updates.
+    - **Documentation Hub:** Up-to-date project docs and FAQs on a shared internal wiki.
+    - **Post-Milestone Retrospectives:** After critical phases (e.g., alpha, beta), reviewing what worked and what needs
+        improvement.
+
+    **Summary**
+    Clear alignment, consistent communication, and iterative feedback are key to a successful beta. All team members are
+        expected to surface issues quickly and keep documentation current as we drive toward launch.
+    ---
+    """
 
 
 if __name__ == "__main__":

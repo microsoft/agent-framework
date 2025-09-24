@@ -17,7 +17,7 @@ from agent_framework._workflow._edge import (
     SwitchCaseEdgeGroupCase,
     SwitchCaseEdgeGroupDefault,
 )
-from agent_framework._workflow._executor import (
+from agent_framework._workflow._workflow_executor import (
     WorkflowExecutor,
 )
 

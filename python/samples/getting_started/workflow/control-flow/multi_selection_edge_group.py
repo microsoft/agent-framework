@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
+from typing_extensions import Never
+
 from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
@@ -15,9 +17,9 @@ from agent_framework import (
     ChatMessage,
     Role,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,
+    WorkflowOutputEvent,
     executor,
 )
 from agent_framework.azure import AzureChatClient
@@ -30,7 +32,7 @@ Sample: Multi-Selection Edge Group for email triage and response.
 The workflow stores an email,
 classifies it as NotSpam, Spam, or Uncertain, and then routes to one or more branches.
 Non-spam emails are drafted into replies, long ones are also summarized, spam is blocked, and uncertain cases are
-flagged. Each path ends with simulated database persistence.
+flagged. Each path ends with simulated database persistence. The workflow completes when it becomes idle.
 
 Purpose:
 Demonstrate how to use a multi-selection edge group to fan out from one executor to multiple possible targets.
@@ -123,9 +125,9 @@ async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowConte
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
-    await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {parsed.response}"))
+    await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
 @executor(id="summarize_email")
@@ -155,28 +157,26 @@ async def merge_summary(response: AgentExecutorResponse, ctx: WorkflowContext[An
 
 
 @executor(id="handle_spam")
-async def handle_spam(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+async def handle_spam(analysis: AnalysisResult, ctx: WorkflowContext[Never, str]) -> None:
     if analysis.spam_decision == "Spam":
-        await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {analysis.reason}"))
+        await ctx.yield_output(f"Email marked as spam: {analysis.reason}")
     else:
         raise RuntimeError("This executor should only handle Spam messages.")
 
 
 @executor(id="handle_uncertain")
-async def handle_uncertain(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+async def handle_uncertain(analysis: AnalysisResult, ctx: WorkflowContext[Never, str]) -> None:
     if analysis.spam_decision == "Uncertain":
         email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
-        await ctx.add_event(
-            WorkflowCompletedEvent(
-                f"Email marked as uncertain: {analysis.reason}. Email content: {getattr(email, 'email_content', '')}"
-            )
+        await ctx.yield_output(
+            f"Email marked as uncertain: {analysis.reason}. Email content: {getattr(email, 'email_content', '')}"
         )
     else:
         raise RuntimeError("This executor should only handle Uncertain messages.")
 
 
 @executor(id="database_access")
-async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[None]) -> None:
+async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, str]) -> None:
     # Simulate DB writes for email and analysis (and summary if present)
     await asyncio.sleep(0.05)
     await ctx.add_event(DatabaseEvent(f"Email {analysis.email_id} saved to database."))
@@ -263,14 +263,18 @@ async def main() -> None:
         print("Unable to find resource file, using default text.")
         email = "Hello team, here are the updates for this week..."
 
+    # Print outputs and database events from streaming
     async for event in workflow.run_stream(email):
-        if isinstance(event, (WorkflowCompletedEvent, DatabaseEvent)):
+        if isinstance(event, DatabaseEvent):
             print(f"{event}")
+        elif isinstance(event, WorkflowOutputEvent):
+            print(f"Workflow output: {event.data}")
 
     """
     Sample Output:
 
-    WorkflowCompletedEvent(data=Email sent: Hi Alex,
+    DatabaseEvent(data=Email 32021432-2d4e-4c54-b04c-f81b4120340c saved to database.)
+    Workflow output: Email sent: Hi Alex,
 
     Thank you for summarizing the action items from this morning's meeting.
     I have noted the three tasks and will begin working on them right away.
@@ -281,8 +285,7 @@ async def main() -> None:
     If anything else comes up, please let me know.
 
     Best regards,
-    Sarah)
-    DatabaseEvent(data=Email 32021432-2d4e-4c54-b04c-f81b4120340c saved to database.)
+    Sarah
     """  # noqa: E501
 
 

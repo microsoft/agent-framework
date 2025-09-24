@@ -91,6 +91,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Sample | File | Concepts |
 |---|---|---|
 | Concurrent (Fan-out/Fan-in) | [parallelism/fan_out_fan_in_edges.py](./parallelism/fan_out_fan_in_edges.py) | Dispatch to multiple executors and aggregate results |
+| Aggregate Results of Different Types | [parallelism/aggregate_results_of_different_types.py](./parallelism/aggregate_results_of_different_types.py) | Handle results of different types from multiple concurrent executors |
 | Map-Reduce with Visualization | [parallelism/map_reduce_and_visualization.py](./parallelism/map_reduce_and_visualization.py) | Fan-out/fan-in pattern with diagram export |
 
 ### state-management
@@ -116,7 +117,7 @@ Notes
 Sequential orchestration uses a few small adapter nodes for plumbing:
 - "input-conversation" normalizes input to `list[ChatMessage]`
 - "to-conversation:<participant>" converts agent responses into the shared conversation
-- "complete" publishes the final `WorkflowCompletedEvent`
+- "complete" publishes the final `WorkflowOutputEvent`
 These may appear in event streams (ExecutorInvoke/Completed). They’re analogous to
 concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 

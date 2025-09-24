@@ -16,9 +16,9 @@ from agent_framework import (
     RequestResponse,
     Workflow,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowExecutor,
+    WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
@@ -156,7 +156,7 @@ class DraftFinaliser(Executor):
     async def on_review_decision(
         self,
         decision: RequestResponse[ReviewRequest, str],
-        ctx: WorkflowContext[DraftTask | None],
+        ctx: WorkflowContext[DraftTask, FinalDraft],
     ) -> None:
         reply = (decision.data or "").strip().lower()
         original = decision.original_request
@@ -180,7 +180,7 @@ class DraftFinaliser(Executor):
             iterations=iteration,
             approved_at=_utc_now(),
         )
-        await ctx.add_event(WorkflowCompletedEvent(final))
+        await ctx.yield_output(final)
 
 
 # ---------------------------------------------------------------------------
@@ -319,12 +319,12 @@ async def main() -> None:
     coordinator2, workflow2 = build_parent_workflow(storage)
 
     approval_response = "approve"
-    final_event: WorkflowCompletedEvent | None = None
+    final_event: WorkflowOutputEvent | None = None
     async for event in workflow2.run_stream_from_checkpoint(
         resume_checkpoint.checkpoint_id,
         responses={request_id: approval_response},
     ):
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             final_event = event
 
     if final_event is None:

@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import os
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
     AIFunction,
     BaseChatClient,
     ChatMessage,
@@ -15,19 +17,28 @@ from agent_framework import (
     ChatToolMode,
     Contents,
     DataContent,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    HostedFileContent,
+    HostedFileSearchTool,
+    HostedMCPTool,
+    HostedVectorStoreContent,
+    HostedWebSearchTool,
     Role,
     TextContent,
+    ToolProtocol,
     UriContent,
     UsageContent,
     UsageDetails,
+    get_logger,
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.telemetry import AGENT_FRAMEWORK_USER_AGENT, use_telemetry
+from agent_framework.observability import use_observability
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -35,10 +46,16 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     AsyncAgentEventHandler,
     AsyncAgentRunStream,
+    AzureAISearchQueryType,
+    AzureAISearchTool,
+    BingCustomSearchTool,
+    BingGroundingTool,
     CodeInterpreterToolDefinition,
+    FileSearchTool,
     FunctionName,
     FunctionToolOutput,
     ListSortOrder,
+    McpTool,
     MessageDeltaChunk,
     MessageImageUrlParam,
     MessageInputContentBlock,
@@ -46,24 +63,36 @@ from azure.ai.agents.models import (
     MessageInputTextBlock,
     MessageRole,
     RequiredFunctionToolCall,
+    RequiredMcpToolCall,
     ResponseFormatJsonSchema,
     ResponseFormatJsonSchemaType,
-    RunError,
     RunStatus,
     RunStep,
+    RunStepDeltaChunk,
+    RunStepDeltaCodeInterpreterDetailItemObject,
+    RunStepDeltaCodeInterpreterImageOutput,
+    RunStepDeltaCodeInterpreterLogOutput,
+    SubmitToolApprovalAction,
     SubmitToolOutputsAction,
     ThreadMessageOptions,
     ThreadRun,
+    ToolApproval,
+    ToolDefinition,
     ToolOutput,
 )
 from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import Field, PrivateAttr, ValidationError
+from azure.core.exceptions import HttpResponseError
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+
+
+logger = get_logger("agent_framework.foundry")
 
 
 class FoundrySettings(AFBaseSettings):
@@ -97,7 +126,7 @@ TFoundryChatClient = TypeVar("TFoundryChatClient", bound="FoundryChatClient")
 
 
 @use_function_invocation
-@use_telemetry
+@use_observability
 class FoundryChatClient(BaseChatClient):
     """Azure AI Foundry Chat client."""
 
@@ -190,17 +219,17 @@ class FoundryChatClient(BaseChatClient):
         )
         self._should_close_client = should_close_client
 
-    async def setup_foundry_telemetry(self, enable_live_metrics: bool = False) -> None:
+    async def setup_foundry_observability(self, enable_live_metrics: bool = False) -> None:
         """Call this method to setup tracing with Foundry.
 
         This will take the connection string from the project client.
         It will override any connection string that is set in the environment variables.
         It will disable any OTLP endpoint that might have been set.
         """
-        from agent_framework.telemetry import setup_telemetry
+        from agent_framework.observability import setup_observability
 
-        setup_telemetry(
-            application_insights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
+        setup_observability(
+            applicationinsights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
             enable_live_metrics=enable_live_metrics,
         )
 
@@ -254,7 +283,7 @@ class FoundryChatClient(BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # Extract necessary state from messages and options
-        run_options, tool_results = self._create_run_options(messages, chat_options, **kwargs)
+        run_options, required_action_results = await self._create_run_options(messages, chat_options, **kwargs)
 
         # Get the thread ID
         thread_id: str | None = (
@@ -263,17 +292,16 @@ class FoundryChatClient(BaseChatClient):
             else run_options.get("conversation_id", self.thread_id)
         )
 
-        if thread_id is None and tool_results is not None:
+        if thread_id is None and required_action_results is not None:
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which agent to use and create if needed
         agent_id = await self._get_agent_id_or_create(run_options)
 
-        # Create the streaming response
-        stream, thread_id = await self._create_agent_stream(thread_id, agent_id, run_options, tool_results)
-
         # Process and yield each update from the stream
-        async for update in self._process_stream_events(stream, thread_id):
+        async for update in self._process_stream(
+            *(await self._create_agent_stream(thread_id, agent_id, run_options, required_action_results))
+        ):
             yield update
 
     async def _get_agent_id_or_create(self, run_options: dict[str, Any] | None = None) -> str:
@@ -307,7 +335,7 @@ class FoundryChatClient(BaseChatClient):
         thread_id: str | None,
         agent_id: str,
         run_options: dict[str, Any],
-        tool_results: list[FunctionResultContent] | None,
+        required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None,
     ) -> tuple[AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any], str]:
         """Create the agent stream for processing.
 
@@ -319,13 +347,27 @@ class FoundryChatClient(BaseChatClient):
 
         stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any]
         handler: AsyncAgentEventHandler[Any] = AsyncAgentEventHandler()
-        tool_run_id, tool_outputs = self._convert_function_results_to_tool_output(tool_results)
+        tool_run_id, tool_outputs, tool_approvals = self._convert_required_action_to_tool_output(
+            required_action_results
+        )
 
-        if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
+        if (
+            thread_run is not None
+            and tool_run_id is not None
+            and tool_run_id == thread_run.id
+            and (tool_outputs or tool_approvals)
+        ):  # type: ignore[reportUnknownMemberType]
             # There's an active run and we have tool results to submit, so submit the results.
-            await self.client.agents.runs.submit_tool_outputs_stream(  # type: ignore[reportUnknownMemberType]
-                thread_run.thread_id, tool_run_id, tool_outputs=tool_outputs, event_handler=handler
-            )
+            args: dict[str, Any] = {
+                "thread_id": thread_run.thread_id,
+                "run_id": tool_run_id,
+                "event_handler": handler,
+            }
+            if tool_outputs:
+                args["tool_outputs"] = tool_outputs
+            if tool_approvals:
+                args["tool_approvals"] = tool_approvals
+            await self.client.agents.runs.submit_tool_outputs_stream(**args)  # type: ignore[reportUnknownMemberType]
             # Pass the handler to the stream to continue processing
             stream = handler  # type: ignore
             final_thread_id = thread_run.thread_id
@@ -383,116 +425,186 @@ class FoundryChatClient(BaseChatClient):
         # and remove until here.
         return thread_id
 
-    async def _process_stream_events(
-        self,
-        stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any],
-        thread_id: str,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Process events from the agent stream and yield ChatResponseUpdate objects."""
-        # Use 'async with' only if the stream supports async context management (main agent stream).
-        # Tool output handlers only support async iteration, not context management.
-        if isinstance(stream, AsyncAgentRunStream):
-            async with stream as response_stream:  # type: ignore
-                async for update in self._process_stream_events_from_iterator(response_stream, thread_id):
-                    yield update
-        else:
-            async for update in self._process_stream_events_from_iterator(stream, thread_id):
-                yield update
-
-    async def _process_stream_events_from_iterator(
-        self, stream_iter: AsyncAgentEventHandler[Any], thread_id: str
+    async def _process_stream(
+        self, stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any], thread_id: str
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
         response_id: str | None = None
-        async for event_type, event_data, _ in stream_iter:  # type: ignore
-            if event_type == AgentStreamEvent.THREAD_RUN_CREATED and isinstance(event_data, ThreadRun):
-                yield ChatResponseUpdate(
-                    contents=[],
-                    conversation_id=event_data.thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,
-                    response_id=response_id,
-                    role=Role.ASSISTANT,
-                    ai_model_id=event_data.model,
-                )
-            elif event_type == AgentStreamEvent.THREAD_RUN_STEP_CREATED and isinstance(event_data, RunStep):
-                response_id = event_data.run_id
-            elif event_type == AgentStreamEvent.THREAD_MESSAGE_DELTA and isinstance(event_data, MessageDeltaChunk):
-                role = Role.USER if event_data.delta.role == MessageRole.USER else Role.ASSISTANT
-                yield ChatResponseUpdate(
-                    role=role,
-                    text=event_data.text,
-                    conversation_id=thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,
-                    response_id=response_id,
-                )
-            elif (
-                event_type == AgentStreamEvent.THREAD_RUN_REQUIRES_ACTION
-                and isinstance(event_data, ThreadRun)
-                and isinstance(event_data.required_action, SubmitToolOutputsAction)
-            ):
-                contents = self._create_function_call_contents(event_data, response_id)
-                if contents:
-                    yield ChatResponseUpdate(
-                        role=Role.ASSISTANT,
-                        contents=contents,
-                        conversation_id=thread_id,
-                        message_id=response_id,
-                        raw_representation=event_data,
-                        response_id=response_id,
-                    )
-            elif (
-                event_type in [AgentStreamEvent.THREAD_RUN_COMPLETED, AgentStreamEvent.THREAD_RUN_STEP_COMPLETED]
-                and isinstance(event_data, RunStep)
-                and event_data.usage is not None
-            ):
-                usage_content = UsageContent(
-                    UsageDetails(
-                        input_token_count=event_data.usage.prompt_tokens,
-                        output_token_count=event_data.usage.completion_tokens,
-                        total_token_count=event_data.usage.total_tokens,
-                    )
-                )
-                yield ChatResponseUpdate(
-                    role=Role.ASSISTANT,
-                    contents=[usage_content],
-                    conversation_id=thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,
-                    response_id=response_id,
-                )
-            elif (
-                event_type == AgentStreamEvent.THREAD_RUN_FAILED
-                and isinstance(event_data, ThreadRun)
-                and isinstance(event_data.last_error, RunError)
-            ):
-                raise ServiceResponseException(event_data.last_error.message)
-            else:
-                yield ChatResponseUpdate(
-                    contents=[],
-                    conversation_id=thread_id,
-                    message_id=response_id,
-                    raw_representation=event_data,  # type: ignore
-                    response_id=response_id,
-                    role=Role.ASSISTANT,
-                )
+        response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream  # type: ignore[no-untyped-call]
+        try:
+            async for event_type, event_data, _ in response_stream:  # type: ignore
+                match event_data:
+                    case MessageDeltaChunk():
+                        # only one event_type: AgentStreamEvent.THREAD_MESSAGE_DELTA
+                        role = Role.USER if event_data.delta.role == MessageRole.USER else Role.ASSISTANT
+                        yield ChatResponseUpdate(
+                            role=role,
+                            text=event_data.text,
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=event_data,
+                            response_id=response_id,
+                        )
+                    case ThreadRun():
+                        # possible event_types:
+                        # AgentStreamEvent.THREAD_RUN_CREATED
+                        # AgentStreamEvent.THREAD_RUN_QUEUED
+                        # AgentStreamEvent.THREAD_RUN_INCOMPLETE
+                        # AgentStreamEvent.THREAD_RUN_IN_PROGRESS
+                        # AgentStreamEvent.THREAD_RUN_REQUIRES_ACTION
+                        # AgentStreamEvent.THREAD_RUN_COMPLETED
+                        # AgentStreamEvent.THREAD_RUN_FAILED
+                        # AgentStreamEvent.THREAD_RUN_CANCELLING
+                        # AgentStreamEvent.THREAD_RUN_CANCELLED
+                        # AgentStreamEvent.THREAD_RUN_EXPIRED
+                        match event_type:
+                            case AgentStreamEvent.THREAD_RUN_REQUIRES_ACTION:
+                                if event_data.required_action and event_data.required_action.type in [
+                                    "submit_tool_outputs",
+                                    "submit_tool_approval",
+                                ]:
+                                    contents = self._create_function_call_contents(event_data, response_id)
+                                    if contents:
+                                        yield ChatResponseUpdate(
+                                            role=Role.ASSISTANT,
+                                            contents=contents,
+                                            conversation_id=thread_id,
+                                            message_id=response_id,
+                                            raw_representation=event_data,
+                                            response_id=response_id,
+                                        )
+                            case AgentStreamEvent.THREAD_RUN_FAILED:
+                                raise ServiceResponseException(event_data.last_error.message)
+                            case _:
+                                yield ChatResponseUpdate(
+                                    contents=[],
+                                    conversation_id=event_data.thread_id,
+                                    message_id=response_id,
+                                    raw_representation=event_data,
+                                    response_id=response_id,
+                                    role=Role.ASSISTANT,
+                                    ai_model_id=event_data.model,
+                                )
+
+                    case RunStep():
+                        # possible event_types:
+                        # AgentStreamEvent.THREAD_RUN_STEP_CREATED,
+                        # AgentStreamEvent.THREAD_RUN_STEP_IN_PROGRESS,
+                        # AgentStreamEvent.THREAD_RUN_STEP_COMPLETED,
+                        # AgentStreamEvent.THREAD_RUN_STEP_FAILED,
+                        # AgentStreamEvent.THREAD_RUN_STEP_CANCELLED,
+                        # AgentStreamEvent.THREAD_RUN_STEP_EXPIRED,
+                        match event_type:
+                            case AgentStreamEvent.THREAD_RUN_STEP_CREATED:
+                                response_id = event_data.run_id
+                            case AgentStreamEvent.THREAD_RUN_COMPLETED | AgentStreamEvent.THREAD_RUN_STEP_COMPLETED:
+                                if event_data.usage:
+                                    usage_content = UsageContent(
+                                        UsageDetails(
+                                            input_token_count=event_data.usage.prompt_tokens,
+                                            output_token_count=event_data.usage.completion_tokens,
+                                            total_token_count=event_data.usage.total_tokens,
+                                        )
+                                    )
+                                    yield ChatResponseUpdate(
+                                        role=Role.ASSISTANT,
+                                        contents=[usage_content],
+                                        conversation_id=thread_id,
+                                        message_id=response_id,
+                                        raw_representation=event_data,
+                                        response_id=response_id,
+                                    )
+                            case _:
+                                yield ChatResponseUpdate(
+                                    contents=[],
+                                    conversation_id=thread_id,
+                                    message_id=response_id,
+                                    raw_representation=event_data,
+                                    response_id=response_id,
+                                    role=Role.ASSISTANT,
+                                )
+                    case RunStepDeltaChunk():  # type: ignore
+                        if (
+                            event_data.delta.step_details is not None
+                            and event_data.delta.step_details.type == "tool_calls"
+                            and event_data.delta.step_details.tool_calls is not None  # type: ignore[attr-defined]
+                        ):
+                            for tool_call in event_data.delta.step_details.tool_calls:  # type: ignore[attr-defined]
+                                if tool_call.type == "code_interpreter" and isinstance(
+                                    tool_call.code_interpreter,
+                                    RunStepDeltaCodeInterpreterDetailItemObject,
+                                ):
+                                    contents = []
+                                    if tool_call.code_interpreter.input is not None:
+                                        logger.debug(f"Code Interpreter Input: {tool_call.code_interpreter.input}")
+                                    if tool_call.code_interpreter.outputs is not None:
+                                        for output in tool_call.code_interpreter.outputs:
+                                            if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
+                                                contents.append(TextContent(text=output.logs))
+                                            if (
+                                                isinstance(output, RunStepDeltaCodeInterpreterImageOutput)
+                                                and output.image is not None
+                                                and output.image.file_id is not None
+                                            ):
+                                                contents.append(HostedFileContent(file_id=output.image.file_id))
+                                    yield ChatResponseUpdate(
+                                        role=Role.ASSISTANT,
+                                        contents=contents,
+                                        conversation_id=thread_id,
+                                        message_id=response_id,
+                                        raw_representation=tool_call.code_interpreter,
+                                        response_id=response_id,
+                                    )
+                    case _:  # ThreadMessage or string
+                        # possible event_types for ThreadMessage:
+                        # AgentStreamEvent.THREAD_MESSAGE_CREATED
+                        # AgentStreamEvent.THREAD_MESSAGE_IN_PROGRESS
+                        # AgentStreamEvent.THREAD_MESSAGE_COMPLETED
+                        # AgentStreamEvent.THREAD_MESSAGE_INCOMPLETE
+                        yield ChatResponseUpdate(
+                            contents=[],
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=event_data,  # type: ignore
+                            response_id=response_id,
+                            role=Role.ASSISTANT,
+                        )
+        except Exception as ex:
+            logger.error(f"Error processing stream: {ex}")
+            raise
+        finally:
+            if isinstance(stream, AsyncAgentRunStream):
+                await stream.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
 
     def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
         """Create function call contents from a tool action event."""
-        contents: list[Contents] = []
-
-        if isinstance(event_data, ThreadRun) and isinstance(event_data.required_action, SubmitToolOutputsAction):
-            for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
-                if isinstance(tool_call, RequiredFunctionToolCall):
-                    contents.append(
-                        FunctionCallContent(
-                            call_id=f'["{response_id}", "{tool_call.id}"]',
-                            name=tool_call.function.name,
-                            arguments=tool_call.function.arguments,
-                        )
+        if isinstance(event_data, ThreadRun) and event_data.required_action is not None:
+            if isinstance(event_data.required_action, SubmitToolOutputsAction):
+                return [
+                    FunctionCallContent(
+                        call_id=f'["{response_id}", "{tool.id}"]',
+                        name=tool.function.name,
+                        arguments=tool.function.arguments,
                     )
-        return contents
+                    for tool in event_data.required_action.submit_tool_outputs.tool_calls
+                    if isinstance(tool, RequiredFunctionToolCall)
+                ]
+            if isinstance(event_data.required_action, SubmitToolApprovalAction):
+                return [
+                    FunctionApprovalRequestContent(
+                        id=f'["{response_id}", "{tool.id}"]',
+                        function_call=FunctionCallContent(
+                            call_id=f'["{response_id}", "{tool.id}"]',
+                            name=tool.name,
+                            arguments=tool.arguments,
+                            raw_representation=tool,
+                        ),
+                        raw_representation=tool,
+                    )
+                    for tool in event_data.required_action.submit_tool_approval.tool_calls
+                    if isinstance(tool, RequiredMcpToolCall)
+                ]
+        return []
 
     async def _close_client_if_needed(self) -> None:
         """Close client session if we created it."""
@@ -506,12 +618,12 @@ class FoundryChatClient(BaseChatClient):
             self.agent_id = None
             self._should_delete_agent = False
 
-    def _create_run_options(
+    async def _create_run_options(
         self,
         messages: MutableSequence[ChatMessage],
         chat_options: ChatOptions | None,
         **kwargs: Any,
-    ) -> tuple[dict[str, Any], list[FunctionResultContent] | None]:
+    ) -> tuple[dict[str, Any], list[FunctionResultContent | FunctionApprovalResponseContent] | None]:
         run_options: dict[str, Any] = {**kwargs}
 
         if chat_options is not None:
@@ -522,18 +634,10 @@ class FoundryChatClient(BaseChatClient):
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
             if chat_options.tool_choice is not None:
-                tool_definitions: list[MutableMapping[str, Any]] = []
-                if chat_options.tool_choice != "none" and chat_options.tools is not None:
-                    for tool in chat_options.tools:
-                        if isinstance(tool, AIFunction):
-                            tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                        elif isinstance(tool, HostedCodeInterpreterTool):
-                            tool_definitions.append(CodeInterpreterToolDefinition())
-                        elif isinstance(tool, MutableMapping):
-                            tool_definitions.append(tool)
-
-                if len(tool_definitions) > 0:
-                    run_options["tools"] = tool_definitions
+                if chat_options.tool_choice != "none" and chat_options.tools:
+                    tool_definitions = await self._prep_tools(chat_options.tools)
+                    if tool_definitions:
+                        run_options["tools"] = tool_definitions
 
                 if chat_options.tool_choice == "none":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
@@ -558,7 +662,7 @@ class FoundryChatClient(BaseChatClient):
                 )
 
         instructions: list[str] = []
-        tool_results: list[FunctionResultContent] | None = None
+        required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
 
         additional_messages: list[ThreadMessageOptions] | None = None
 
@@ -579,10 +683,10 @@ class FoundryChatClient(BaseChatClient):
                     message_contents.append(MessageInputTextBlock(text=content.text))
                 elif isinstance(content, (DataContent, UriContent)) and content.has_top_level_media_type("image"):
                     message_contents.append(MessageInputImageUrlBlock(image_url=MessageImageUrlParam(url=content.uri)))
-                elif isinstance(content, FunctionResultContent):
-                    if tool_results is None:
-                        tool_results = []
-                    tool_results.append(content)
+                elif isinstance(content, (FunctionResultContent, FunctionApprovalResponseContent)):
+                    if required_action_results is None:
+                        required_action_results = []
+                    required_action_results.append(content)
                 elif isinstance(content.raw_representation, MessageInputContentBlock):
                     message_contents.append(content.raw_representation)
 
@@ -602,21 +706,137 @@ class FoundryChatClient(BaseChatClient):
         if len(instructions) > 0:
             run_options["instructions"] = "".join(instructions)
 
-        return run_options, tool_results
+        return run_options, required_action_results
 
-    def _convert_function_results_to_tool_output(
+    async def _prep_tools(
+        self, tools: list["ToolProtocol | MutableMapping[str, Any]"]
+    ) -> list[ToolDefinition | dict[str, Any]]:
+        """Prepare tool definitions for the run options."""
+        tool_definitions: list[ToolDefinition | dict[str, Any]] = []
+        for tool in tools:
+            match tool:
+                case AIFunction():
+                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+                case HostedWebSearchTool():
+                    additional_props = tool.additional_properties or {}
+                    config_args: dict[str, Any] = {}
+                    if count := additional_props.get("count"):
+                        config_args["count"] = count
+                    if freshness := additional_props.get("freshness"):
+                        config_args["freshness"] = freshness
+                    if market := additional_props.get("market"):
+                        config_args["market"] = market
+                    if set_lang := additional_props.get("set_lang"):
+                        config_args["set_lang"] = set_lang
+                    # Bing Grounding
+                    connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
+                    # Custom Bing Search
+                    custom_connection_name = additional_props.get("custom_connection_name") or os.getenv(
+                        "BING_CUSTOM_CONNECTION_NAME"
+                    )
+                    custom_configuration_name = additional_props.get("custom_instance_name") or os.getenv(
+                        "BING_CUSTOM_INSTANCE_NAME"
+                    )
+                    bing_search: BingGroundingTool | BingCustomSearchTool | None = None
+                    if connection_id and not custom_connection_name and not custom_configuration_name:
+                        bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
+                    if custom_connection_name and custom_configuration_name:
+                        try:
+                            bing_custom_connection = await self.client.connections.get(name=custom_connection_name)
+                        except HttpResponseError as err:
+                            raise ServiceInitializationError(
+                                f"Bing custom connection '{custom_connection_name}' not found in Foundry.", err
+                            ) from err
+                        else:
+                            bing_search = BingCustomSearchTool(
+                                connection_id=bing_custom_connection.id,
+                                instance_name=custom_configuration_name,
+                                **config_args,
+                            )
+                    if not bing_search:
+                        raise ServiceInitializationError(
+                            "Bing search tool requires either a 'connection_id' for Bing Grounding "
+                            "or both 'custom_connection_name' and 'custom_instance_name' for Custom Bing Search. "
+                            "These can be provided via the tool's additional_properties or environment variables: "
+                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_NAME', 'BING_CUSTOM_INSTANCE_NAME'"
+                        )
+                    tool_definitions.extend(bing_search.definitions)
+                case HostedCodeInterpreterTool():
+                    tool_definitions.append(CodeInterpreterToolDefinition())
+                case HostedMCPTool():
+                    tool_definitions.extend(
+                        McpTool(
+                            server_label=tool.name.replace(" ", "_"),
+                            server_url=str(tool.url),
+                            allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
+                        ).definitions
+                    )
+                case HostedFileSearchTool():
+                    vector_stores = [inp for inp in tool.inputs or [] if isinstance(inp, HostedVectorStoreContent)]
+                    if vector_stores:
+                        file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
+                        tool_definitions.extend(file_search.definitions)
+                    else:
+                        additional_props = tool.additional_properties or {}
+                        index_name = additional_props.get("index_name") or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
+                        if not index_name:
+                            raise ServiceInitializationError(
+                                "File search tool requires at least one vector store input, for file search in Foundry "
+                                "or an 'index_name' to use Azure AI Search, "
+                                "in additional_properties or environment variable 'AZURE_AI_SEARCH_INDEX_NAME'."
+                            )
+                        try:
+                            azs_conn_id = await self.client.connections.get_default(ConnectionType.AZURE_AI_SEARCH)
+                        except HttpResponseError as err:
+                            raise ServiceInitializationError(
+                                "No default Azure AI Search connection found in Foundry. "
+                                "Please create one or provide vector store inputs for the file search tool.",
+                                err,
+                            ) from err
+                        else:
+                            query_type_enum = AzureAISearchQueryType.SIMPLE
+                            if query_type := additional_props.get("query_type"):
+                                try:
+                                    query_type_enum = AzureAISearchQueryType(query_type)
+                                except ValueError as ex:
+                                    raise ServiceInitializationError(
+                                        f"Invalid query_type '{query_type}' for Azure AI Search. "
+                                        f"Valid values are: {[qt.value for qt in AzureAISearchQueryType]}",
+                                        ex,
+                                    ) from ex
+                            ai_search = AzureAISearchTool(
+                                index_connection_id=azs_conn_id.id,
+                                index_name=index_name,
+                                query_type=query_type_enum,
+                                top_k=additional_props.get("top_k", 3),
+                                filter=additional_props.get("filter", ""),
+                            )
+                            tool_definitions.extend(ai_search.definitions)
+                case dict():
+                    tool_definitions.append(tool)
+                case _:
+                    raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
+        return tool_definitions
+
+    def _convert_required_action_to_tool_output(
         self,
-        tool_results: list[FunctionResultContent] | None,
-    ) -> tuple[str | None, list[ToolOutput] | None]:
+        required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None,
+    ) -> tuple[str | None, list[ToolOutput] | None, list[ToolApproval] | None]:
         run_id: str | None = None
         tool_outputs: list[ToolOutput] | None = None
+        tool_approvals: list[ToolApproval] | None = None
 
-        if tool_results:
-            for function_result_content in tool_results:
-                # When creating the FunctionCallContent, we created it with a CallId == [runId, callId].
-                # We need to extract the run ID and ensure that the FunctionToolOutput we send back to Azure
+        if required_action_results:
+            for content in required_action_results:
+                # When creating the FunctionCallContent/ApprovalRequestContent,
+                # we created it with a CallId == [runId, callId].
+                # We need to extract the run ID and ensure that the Output/Approval we send back to Azure
                 # is only the call ID.
-                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)
+                run_and_call_ids: list[str] = (
+                    json.loads(content.call_id)
+                    if isinstance(content, FunctionResultContent)
+                    else json.loads(content.id)
+                )
 
                 if (
                     not run_and_call_ids
@@ -630,13 +850,28 @@ class FoundryChatClient(BaseChatClient):
                 run_id = run_and_call_ids[0]
                 call_id = run_and_call_ids[1]
 
-                if tool_outputs is None:
-                    tool_outputs = []
-                tool_outputs.append(
-                    FunctionToolOutput(tool_call_id=call_id, output=str(function_result_content.result))
-                )
+                if isinstance(content, FunctionResultContent):
+                    if tool_outputs is None:
+                        tool_outputs = []
+                    result_contents: list[Any] = (  # type: ignore
+                        content.result if isinstance(content.result, list) else [content.result]  # type: ignore
+                    )
+                    results: list[Any] = []
+                    for item in result_contents:
+                        if isinstance(item, BaseModel):
+                            results.append(item.model_dump_json())
+                        else:
+                            results.append(json.dumps(item))
+                    if len(results) == 1:
+                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=results[0]))
+                    else:
+                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=json.dumps(results)))
+                elif isinstance(content, FunctionApprovalResponseContent):
+                    if tool_approvals is None:
+                        tool_approvals = []
+                    tool_approvals.append(ToolApproval(tool_call_id=call_id, approve=content.approved))
 
-        return run_id, tool_outputs
+        return run_id, tool_outputs, tool_approvals
 
     def _update_agent_name(self, agent_name: str | None) -> None:
         """Update the agent name in the chat client.

@@ -2,9 +2,8 @@
 
 import asyncio
 import os
-from typing import Any
 
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, get_logger, handler
 
 """Basic tracing workflow sample.
 
@@ -14,7 +13,7 @@ A minimal two executor workflow demonstrates built in OpenTelemetry spans when d
 The sample raises an error if tracing is not configured.
 
 Purpose:
-- Require diagnostics by checking AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS and wiring a console exporter.
+- Require diagnostics by checking ENABLE_OTEL and wiring a console exporter.
 - Show the span categories produced by a simple graph:
   - workflow.build (events: build.started, build.validation_completed, build.completed, edge_group.process)
   - workflow.run (events: workflow.started, workflow.completed or workflow.error)
@@ -26,9 +25,11 @@ Prerequisites:
 - No external services required for the workflow itself.
 - To print spans to the console, install the OpenTelemetry SDK: pip install opentelemetry-sdk
 - Enable diagnostics:
-    configure your .env file with `AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS=true` or run:
-    export AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS=true
+    configure your .env file with `ENABLE_OTEL=true` or run:
+    export ENABLE_OTEL=true
 """
+
+logger = get_logger()
 
 
 def _ensure_tracing_configured() -> None:
@@ -36,22 +37,14 @@ def _ensure_tracing_configured() -> None:
 
     If the env var is set, attach a ConsoleSpanExporter so spans print to stdout.
     """
-    env = os.getenv("AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS", "").lower()
+    env = os.getenv("ENABLE_OTEL", "").lower()
     if env not in {"1", "true", "yes"}:
-        raise RuntimeError(
-            "Tracing diagnostics are disabled. Set AGENT_FRAMEWORK_WORKFLOW_ENABLE_OTEL_DIAGNOSTICS=true "
-            "and rerun the sample."
-        )
-    try:
-        from opentelemetry import trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError("OpenTelemetry SDK not found. Install it with: pip install opentelemetry-sdk") from exc
+        logger.info("Tracing diagnostics are disabled in the env. Setting this manually here.")
 
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
-    trace.set_tracer_provider(provider)
+    from agent_framework.observability import setup_observability
+    from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+    setup_observability(exporters=[ConsoleSpanExporter()])
 
 
 class StartExecutor(Executor):
@@ -63,8 +56,8 @@ class StartExecutor(Executor):
 
 class EndExecutor(Executor):
     @handler  # type: ignore[misc]
-    async def handle_final(self, message: str, ctx: WorkflowContext[Any]) -> None:
-        # Sink executor. The framework emits WorkflowCompletedEvent automatically after this handler returns.
+    async def handle_final(self, message: str, ctx: WorkflowContext) -> None:
+        # Sink executor. The workflow completes when idle with no pending work.
         print(f"Final result: {message}")
 
 

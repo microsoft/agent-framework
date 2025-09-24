@@ -246,9 +246,10 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 }
 
                 // Add conversation ID if thread is available (following gen_ai.conversation.id convention)
-                if (!string.IsNullOrWhiteSpace(thread?.ConversationId))
+                var metadata = thread?.GetService<AgentThreadMetadata>();
+                if (!string.IsNullOrWhiteSpace(metadata?.ConversationId))
                 {
-                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Conversation.Id, thread.ConversationId);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Conversation.Id, metadata.ConversationId);
                 }
 
                 // Add instructions if available (for ChatClientAgent)

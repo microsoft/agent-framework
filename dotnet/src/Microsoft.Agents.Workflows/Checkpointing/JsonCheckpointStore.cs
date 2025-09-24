@@ -15,7 +15,7 @@ public abstract class JsonCheckpointStore : ICheckpointStore<JsonElement>
     /// <summary>
     /// A default TypeInfo for serializing the <see cref="CheckpointInfo"/> type, if needed.
     /// </summary>
-    protected JsonTypeInfo<CheckpointInfo> KeyTypeInfo => WorkflowsJsonUtilities.JsonContext.Default.CheckpointInfo;
+    protected static JsonTypeInfo<CheckpointInfo> KeyTypeInfo => WorkflowsJsonUtilities.JsonContext.Default.CheckpointInfo;
 
     /// <inheritdoc/>
     public abstract ValueTask<CheckpointInfo> CreateCheckpointAsync(string runId, JsonElement value, CheckpointInfo? parent = null);

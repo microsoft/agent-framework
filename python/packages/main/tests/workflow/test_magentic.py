@@ -24,9 +24,11 @@ from agent_framework import (
     Role,
     TextContent,
     WorkflowCheckpoint,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,  # type: ignore  # noqa: E402
+    WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
 )
 from agent_framework._agents import BaseAgent
@@ -197,15 +199,20 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
             req_event = ev
     assert req_event is not None
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
+    output: ChatMessage | None = None
     async for ev in wf.send_responses_streaming({
         req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     }):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = ev.data  # type: ignore[assignment]
+        if completed and output is not None:
             break
-    assert completed is not None
-    assert isinstance(getattr(completed, "data", None), ChatMessage)
+    assert completed
+    assert output is not None
+    assert isinstance(output, ChatMessage)
 
 
 async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
@@ -238,7 +245,7 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
 
     # Reply APPROVE with comments (no edited text). Expect one replan and no second review round.
     saw_second_review = False
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
     async for ev in wf.send_responses_streaming({
         req_event.request_id: MagenticPlanReviewReply(
             decision=MagenticPlanReviewDecision.APPROVE,
@@ -247,11 +254,11 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
     }):
         if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
             saw_second_review = True
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
             break
 
-    assert completed is not None
+    assert completed
     assert manager.replan_count >= 1
     assert saw_second_review is False
     # Replan from FakeManager updates facts/plan to include A2 / Do Z
@@ -273,9 +280,14 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
         if len(events) > 50:
             break
 
-    completed = next((e for e in events if isinstance(e, WorkflowCompletedEvent)), None)
-    assert completed is not None
-    data = getattr(completed, "data", None)
+    idle_status = next(
+        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE), None
+    )
+    assert idle_status is not None
+    # Check that we got workflow output via WorkflowOutputEvent
+    output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
+    assert output_event is not None
+    data = output_event.data
     assert isinstance(data, ChatMessage)
     assert data.role == Role.ASSISTANT
 
@@ -321,12 +333,12 @@ async def test_magentic_checkpoint_resume_round_trip():
     )
 
     reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
-    completed: WorkflowCompletedEvent | None = None
+    completed: WorkflowOutputEvent | None = None
     async for event in wf_resume.workflow.run_stream_from_checkpoint(
         resume_checkpoint.checkpoint_id,
         responses={req_event.request_id: reply},
     ):
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             completed = event
     assert completed is not None
 
@@ -574,7 +586,7 @@ async def test_magentic_checkpoint_resume_inner_loop_superstep():
     )
 
     async for event in workflow.run_stream("inner-loop task"):
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             break
 
     checkpoints = await _collect_checkpoints(storage)
@@ -588,9 +600,9 @@ async def test_magentic_checkpoint_resume_inner_loop_superstep():
         .build()
     )
 
-    completed: WorkflowCompletedEvent | None = None
+    completed: WorkflowOutputEvent | None = None
     async for event in resumed.run_stream_from_checkpoint(inner_loop_checkpoint.checkpoint_id):  # type: ignore[reportUnknownMemberType]
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             completed = event
 
     assert completed is not None
@@ -611,7 +623,7 @@ async def test_magentic_checkpoint_resume_after_reset():
     )
 
     async for event in workflow.run_stream("reset task"):
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             break
 
     checkpoints = await _collect_checkpoints(storage)
@@ -630,9 +642,9 @@ async def test_magentic_checkpoint_resume_after_reset():
         .build()
     )
 
-    completed: WorkflowCompletedEvent | None = None
+    completed: WorkflowOutputEvent | None = None
     async for event in resumed_workflow.run_stream_from_checkpoint(resumed_state.checkpoint_id):
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             completed = event
 
     assert completed is not None

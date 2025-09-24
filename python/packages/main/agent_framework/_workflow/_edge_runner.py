@@ -6,12 +6,11 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any
 
+from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup, SwitchCaseEdgeGroup
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
-from ._telemetry import EdgeGroupDeliveryStatus, workflow_tracer
-from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +63,15 @@ class EdgeRunner(ABC):
 
         target_executor = self._executors[target_id]
 
-        # Create WorkflowContext with trace contexts from message
-        workflow_context: WorkflowContext[Any] = WorkflowContext(
-            target_id,
-            source_ids,
-            shared_state,
-            ctx,
-            trace_contexts=message.trace_contexts,  # Pass trace contexts to WorkflowContext
+        # Execute with trace context parameters
+        await target_executor.execute(
+            message.data,
+            source_ids,  # source_executor_ids
+            shared_state,  # shared_state
+            ctx,  # runner_context
+            trace_contexts=message.trace_contexts,  # Pass trace contexts
             source_span_ids=message.source_span_ids,  # Pass source span IDs for linking
         )
-
-        # Execute with trace context in WorkflowContext
-        await target_executor.execute(message.data, workflow_context)
 
 
 class SingleEdgeRunner(EdgeRunner):
@@ -90,39 +86,49 @@ class SingleEdgeRunner(EdgeRunner):
         should_execute = False
         target_id = None
         source_id = None
-
-        with workflow_tracer.create_edge_group_processing_span(
+        with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
             edge_group_id=self._edge_group.id,
             message_source_id=message.source_id,
             message_target_id=message.target_id,
             source_trace_contexts=message.trace_contexts,
             source_span_ids=message.source_span_ids,
-        ):
+        ) as span:
             try:
                 if message.target_id and message.target_id != self._edge.target_id:
-                    workflow_tracer.set_edge_group_span_attributes(
-                        False, EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH
-                    )
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
+                    })
                     return False
 
                 if self._can_handle(self._edge.target_id, message.data):
                     if self._edge.should_route(message.data):
-                        workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+                        span.set_attributes({
+                            OtelAttr.EDGE_GROUP_DELIVERED: True,
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
+                        })
                         should_execute = True
                         target_id = self._edge.target_id
                         source_id = self._edge.source_id
                     else:
-                        workflow_tracer.set_edge_group_span_attributes(
-                            False, EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE
-                        )
+                        span.set_attributes({
+                            OtelAttr.EDGE_GROUP_DELIVERED: False,
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,
+                        })
                         # Return True here because message was processed, just condition failed
                         return True
                 else:
-                    workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH)
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
+                    })
                     return False
             except Exception as e:
-                workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                span.set_attributes({
+                    OtelAttr.EDGE_GROUP_DELIVERED: False,
+                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
+                })
                 raise e
 
         # Execute outside the span
@@ -147,22 +153,24 @@ class FanOutEdgeRunner(EdgeRunner):
         """Send a message through all edges in the fan-out edge group."""
         deliverable_edges = []
         single_target_edge = None
-
         # Process routing logic within span
-        with workflow_tracer.create_edge_group_processing_span(
+        with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
             edge_group_id=self._edge_group.id,
             message_source_id=message.source_id,
             message_target_id=message.target_id,
             source_trace_contexts=message.trace_contexts,
             source_span_ids=message.source_span_ids,
-        ):
+        ) as span:
             try:
                 selection_results = (
                     self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
                 )
                 if not self._validate_selection_result(selection_results):
-                    workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
+                    })
                     raise RuntimeError(
                         f"Invalid selection result: {selection_results}. "
                         f"Expected selections to be a subset of valid target executor IDs: {self._target_ids}."
@@ -174,24 +182,30 @@ class FanOutEdgeRunner(EdgeRunner):
                         edge = self._target_map.get(message.target_id)
                         if edge and self._can_handle(edge.target_id, message.data):
                             if edge.should_route(message.data):
-                                workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+                                span.set_attributes({
+                                    OtelAttr.EDGE_GROUP_DELIVERED: True,
+                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
+                                })
                                 single_target_edge = edge
                             else:
-                                workflow_tracer.set_edge_group_span_attributes(
-                                    False, EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE
-                                )
+                                span.set_attributes({
+                                    OtelAttr.EDGE_GROUP_DELIVERED: False,
+                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,  # noqa: E501
+                                })
                                 # For targeted messages with condition failure, return True (message was processed)
                                 return True
                         else:
-                            workflow_tracer.set_edge_group_span_attributes(
-                                False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH
-                            )
+                            span.set_attributes({
+                                OtelAttr.EDGE_GROUP_DELIVERED: False,
+                                OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,  # noqa: E501
+                            })
                             # For targeted messages that can't be handled, return False
                             return False
                     else:
-                        workflow_tracer.set_edge_group_span_attributes(
-                            False, EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH
-                        )
+                        span.set_attributes({
+                            OtelAttr.EDGE_GROUP_DELIVERED: False,
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
+                        })
                         # For targeted messages not in selection, return False
                         return False
                 else:
@@ -202,14 +216,21 @@ class FanOutEdgeRunner(EdgeRunner):
                             deliverable_edges.append(edge)
 
                     if len(deliverable_edges) > 0:
-                        workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+                        span.set_attributes({
+                            OtelAttr.EDGE_GROUP_DELIVERED: True,
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
+                        })
                     else:
-                        workflow_tracer.set_edge_group_span_attributes(
-                            False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH
-                        )
+                        span.set_attributes({
+                            OtelAttr.EDGE_GROUP_DELIVERED: False,
+                            OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
+                        })
 
             except Exception as e:
-                workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                span.set_attributes({
+                    OtelAttr.EDGE_GROUP_DELIVERED: False,
+                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
+                })
                 raise e
 
         # Execute outside the span
@@ -250,30 +271,36 @@ class FanInEdgeRunner(EdgeRunner):
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-in edge group."""
         execution_data: dict[str, Any] | None = None
-
-        with workflow_tracer.create_edge_group_processing_span(
+        with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
             edge_group_id=self._edge_group.id,
             message_source_id=message.source_id,
             message_target_id=message.target_id,
             source_trace_contexts=message.trace_contexts,
             source_span_ids=message.source_span_ids,
-        ):
+        ) as span:
             try:
                 if message.target_id and message.target_id != self._edges[0].target_id:
-                    workflow_tracer.set_edge_group_span_attributes(
-                        False, EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH
-                    )
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
+                    })
                     return False
 
                 # Check if target can handle list of message data (fan-in aggregates multiple messages)
                 if self._can_handle(self._edges[0].target_id, [message.data]):
                     # If the edge can handle the data, buffer the message
                     self._buffer[message.source_id].append(message)
-                    workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.BUFFERED)
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: True,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.BUFFERED.value,
+                    })
                 else:
                     # If the edge cannot handle the data, return False
-                    workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH)
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
+                    })
                     return False
 
                 if self._is_ready_to_send():
@@ -294,7 +321,10 @@ class FanInEdgeRunner(EdgeRunner):
                         trace_contexts=trace_contexts,
                         source_span_ids=source_span_ids,
                     )
-                    workflow_tracer.set_edge_group_span_attributes(True, EdgeGroupDeliveryStatus.DELIVERED)
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: True,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
+                    })
 
                     # Store execution data for later
                     execution_data = {
@@ -304,7 +334,10 @@ class FanInEdgeRunner(EdgeRunner):
                     }
 
             except Exception as e:
-                workflow_tracer.set_edge_group_span_attributes(False, EdgeGroupDeliveryStatus.EXCEPTION)
+                span.set_attributes({
+                    OtelAttr.EDGE_GROUP_DELIVERED: False,
+                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.EXCEPTION.value,
+                })
                 raise e
 
         # Execute outside the span if needed
