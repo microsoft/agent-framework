@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import pytest
+from typing_extensions import Never
 
-from agent_framework import WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
+from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowRunState, WorkflowStatusEvent, handler
 from agent_framework._workflow._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflow._executor import Executor
 
@@ -15,8 +16,8 @@ class StartExecutor(Executor):
 
 class FinishExecutor(Executor):
     @handler
-    async def finish(self, message: str, ctx: WorkflowContext[None]) -> None:
-        await ctx.add_event(WorkflowCompletedEvent(message))
+    async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+        await ctx.yield_output(message)
 
 
 def build_workflow(storage: InMemoryCheckpointStorage, finish_id: str = "finish"):
@@ -70,4 +71,4 @@ async def test_resume_succeeds_when_graph_matches() -> None:
         )
     ]
 
-    assert any(isinstance(event, WorkflowCompletedEvent) for event in events)
+    assert any(isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE for event in events)

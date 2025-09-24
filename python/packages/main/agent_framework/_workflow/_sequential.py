@@ -8,10 +8,10 @@ workflow where:
 - A shared conversation context (list[ChatMessage]) is passed along the chain
 - Agents append their assistant messages to the context
 - Custom executors can transform or summarize and return a refined context
-- The workflow completes with the final context produced by the last participant
+- The workflow finishes with the final context produced by the last participant
 
 Typical wiring:
-    input -> _InputToConversation -> participant1 -> (agent? -> _ResponseToConversation) -> ... -> participantN -> _CompleteWithConversation
+    input -> _InputToConversation -> participant1 -> (agent? -> _ResponseToConversation) -> ... -> participantN -> _EndWithConversation
 
 Notes:
 - Participants can mix AgentProtocol and Executor objects
@@ -27,9 +27,8 @@ Why include the small internal adapter executors?
 - Agent response adaptation ("to-conversation:<participant>"): agents (via AgentExecutor)
   emit `AgentExecutorResponse`. The adapter converts that to a `list[ChatMessage]`
   using `full_conversation` so original prompts aren't lost when chaining.
-- Explicit completion ("complete"): emits a `WorkflowCompletedEvent` with the final
-  conversation list, giving a consistent terminal payload shape for both agents and
-  custom executors.
+- Result output ("end"): yields the final conversation list and the workflow becomes idle
+  giving a consistent terminal payload shape for both agents and custom executors.
 
 These adapters are first-class executors by design so they are type-checked at edges,
 observable (ExecutorInvoke/Completed events), and easily testable/reusable. Their IDs are
@@ -43,7 +42,6 @@ from typing import Any
 
 from agent_framework import AgentProtocol, ChatMessage, Role
 
-from ._events import WorkflowCompletedEvent
 from ._executor import (
     AgentExecutor,
     AgentExecutorResponse,
@@ -84,12 +82,12 @@ class _ResponseToConversation(Executor):
         await ctx.send_message(list(response.full_conversation))
 
 
-class _CompleteWithConversation(Executor):
+class _EndWithConversation(Executor):
     """Terminates the workflow by emitting the final conversation context."""
 
     @handler
-    async def complete(self, conversation: list[ChatMessage], ctx: WorkflowContext[Any]) -> None:
-        await ctx.add_event(WorkflowCompletedEvent(data=list(conversation)))
+    async def end(self, conversation: list[ChatMessage], ctx: WorkflowContext[Any, list[ChatMessage]]) -> None:
+        await ctx.yield_output(list(conversation))
 
 
 class SequentialBuilder:
@@ -148,14 +146,14 @@ class SequentialBuilder:
             - If Agent (or AgentExecutor): pass conversation to the agent, then convert response
               to conversation via _ResponseToConversation
             - Else (custom Executor): pass conversation directly to the executor
-        - _CompleteWithConversation emits WorkflowCompletedEvent with the final conversation
+        - _EndWithConversation yields the final conversation and the workflow becomes idle
         """
         if not self._participants:
             raise ValueError("No participants provided. Call .participants([...]) first.")
 
         # Internal nodes
         input_conv = _InputToConversation(id="input-conversation")
-        complete = _CompleteWithConversation(id="complete")
+        end = _EndWithConversation(id="end")
 
         builder = WorkflowBuilder()
         builder.set_start_executor(input_conv)
@@ -182,6 +180,6 @@ class SequentialBuilder:
                 raise TypeError(f"Unsupported participant type: {type(p).__name__}")
 
         # Terminate with the final conversation
-        builder.add_edge(prior, complete)
+        builder.add_edge(prior, end)
 
         return builder.build()

@@ -4,11 +4,12 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     RequestInfoExecutor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
@@ -138,6 +139,7 @@ class ResourceRequester(Executor):
         for req_data in requests:
             req_type = req_data.get("request_type", "resource")
 
+            request: ResourceRequest | PolicyCheckRequest
             if req_type == "resource":
                 print(f"  📦 Requesting resource: {req_data.get('type', 'cpu')} x{req_data.get('amount', 1)}")
                 request = ResourceRequest(
@@ -164,7 +166,7 @@ class ResourceRequester(Executor):
     async def handle_resource_response(
         self,
         response: RequestResponse[ResourceRequest, ResourceResponse],
-        ctx: WorkflowContext[None],
+        ctx: WorkflowContext[Never, RequestFinished],
     ) -> None:
         """Handle resource allocation response."""
         if response.data:
@@ -174,12 +176,12 @@ class ResourceRequester(Executor):
                 f"from {response.data.source}"
             )
             if self._collect_results():
-                # Emit completion event and send RequestFinished to the parent workflow.
-                await ctx.add_event(WorkflowCompletedEvent(RequestFinished()))
+                # Yield completion result to the parent workflow.
+                await ctx.yield_output(RequestFinished())
 
     @handler
     async def handle_policy_response(
-        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[None]
+        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[Never, RequestFinished]
     ) -> None:
         """Handle policy check response."""
         if response.data:
@@ -189,8 +191,8 @@ class ResourceRequester(Executor):
                 f"{response.data.approved} - {response.data.reason}"
             )
             if self._collect_results():
-                # Emit completion event and send RequestFinished to the parent workflow.
-                await ctx.add_event(WorkflowCompletedEvent(RequestFinished()))
+                # Yield completion result to the parent workflow.
+                await ctx.yield_output(RequestFinished())
 
     def _collect_results(self) -> bool:
         """Collect and summarize results."""
@@ -213,7 +215,7 @@ class ResourceCache(Executor):
 
     @intercepts_request
     async def check_cache(
-        self, request: ResourceRequest, ctx: WorkflowContext[None]
+        self, request: ResourceRequest, ctx: WorkflowContext
     ) -> RequestResponse[ResourceRequest, ResourceResponse]:
         """Intercept RESOURCE requests and check cache first."""
         print(f"🏪 CACHE interceptor checking: {request.amount} {request.resource_type}")
@@ -234,7 +236,7 @@ class ResourceCache(Executor):
 
     @handler
     async def collect_result(
-        self, response: RequestResponse[ResourceRequest, ResourceResponse], ctx: WorkflowContext[None]
+        self, response: RequestResponse[ResourceRequest, ResourceResponse], ctx: WorkflowContext
     ) -> None:
         """Collect results from external requests that were forwarded."""
         if response.data and response.data.source != "cache":  # Don't double-count our own results
@@ -263,7 +265,7 @@ class PolicyEngine(Executor):
 
     @intercepts_request
     async def check_policy(
-        self, request: PolicyCheckRequest, ctx: WorkflowContext[None]
+        self, request: PolicyCheckRequest, ctx: WorkflowContext
     ) -> RequestResponse[PolicyCheckRequest, PolicyResponse]:
         """Intercept POLICY requests and apply rules."""
         print(f"🛡️  POLICY interceptor checking: {request.amount} {request.resource_type}, policy={request.policy_type}")
@@ -286,7 +288,7 @@ class PolicyEngine(Executor):
 
     @handler
     async def collect_policy_result(
-        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[None]
+        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext
     ) -> None:
         """Collect policy results from external requests that were forwarded."""
         if response.data:
@@ -299,15 +301,15 @@ class Coordinator(Executor):
         super().__init__(id="coordinator")
 
     @handler
-    async def start(self, requests: list[dict[str, Any]], ctx: WorkflowContext[object]) -> None:
+    async def start(self, requests: list[dict[str, Any]], ctx: WorkflowContext[list[dict[str, Any]]]) -> None:
         """Start the resource allocation process."""
         await ctx.send_message(requests, target_id="resource_workflow")
 
     @handler
-    async def handle_completion(self, completion: RequestFinished, ctx: WorkflowContext[None]) -> None:
+    async def handle_completion(self, completion: RequestFinished, ctx: WorkflowContext) -> None:
         """Handle sub-workflow completion.
 
-        It comes from the sub-workflow emitted WorkflowCompletionEvent's data field.
+        It comes from the sub-workflow yielded output.
         """
         print("🎯 Main workflow received completion.")
 
@@ -377,10 +379,10 @@ async def main() -> None:
 
     # 8. Run the workflow
     print("🎬 Running workflow...")
-    result = await main_workflow.run(test_requests)
+    events = await main_workflow.run(test_requests)
 
     # 9. Handle any external requests that couldn't be intercepted
-    request_events = result.get_request_info_events()
+    request_events = events.get_request_info_events()
     if request_events:
         print(f"\n🌐 Handling {len(request_events)} external request(s)...")
 

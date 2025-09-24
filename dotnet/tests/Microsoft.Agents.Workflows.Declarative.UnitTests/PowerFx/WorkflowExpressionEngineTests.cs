@@ -42,6 +42,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.State.Set(Variables.ObjectValue, ObjectData, VariableScopeNames.Topic);
         this.State.Set(Variables.ArrayValue, TableData, VariableScopeNames.Topic);
         this.State.Set(Variables.BlankValue, FormulaValue.NewBlank(), VariableScopeNames.Topic);
+        this.State.Bind();
     }
 
     #region BoolExpression Tests
@@ -136,6 +137,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         // Arrange
         RecordValue state = FormulaValue.NewRecordFromFields([new NamedValue("test", FormulaValue.New("value"))]);
         this.State.Set("TestRecord", state, VariableScopeNames.Global);
+        this.State.Bind();
 
         // Arrange, Act & Assert
         this.EvaluateExpression(
