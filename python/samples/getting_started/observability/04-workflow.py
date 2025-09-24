@@ -6,9 +6,8 @@ from typing import Any
 from agent_framework import (
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
-    WorkflowOutputEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
     handler,
 )
 from agent_framework.observability import get_tracer, setup_observability
@@ -49,9 +48,8 @@ class ReverseTextExecutor(Executor):
         result = text[::-1]
         print(f"ReverseTextExecutor: Result '{result}'")
 
-        # Yield the output and signal workflow completion.
+        # Yield the output.
         await ctx.yield_output(result)
-        await ctx.add_event(WorkflowCompletedEvent())
 
 
 async def run_sequential_workflow() -> None:

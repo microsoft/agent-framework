@@ -22,7 +22,7 @@ Demonstrates:
 
 Prerequisites:
 - Azure OpenAI access configured for AzureChatClient (use az login + env vars)
-- Familiarity with Workflow events (AgentRunEvent, WorkflowCompletedEvent)
+- Familiarity with Workflow events (AgentRunEvent, WorkflowOutputEvent)
 """
 
 
