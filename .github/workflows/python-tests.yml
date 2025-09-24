@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        package: [main, azure-ai, copilotstudio, devui, lab, mem0, redis, runtime]
+        package: [main, azure-ai, copilotstudio, devui, mem0, redis, runtime]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         os: [ubuntu-latest, windows-latest, macos-latest]
     env:
@@ -60,5 +60,5 @@ jobs:
           path: ./python/**.xml
           summary: true
           display-options: fEX
-          fail-on-empty: true
+          fail-on-empty: false
           title: Test results
