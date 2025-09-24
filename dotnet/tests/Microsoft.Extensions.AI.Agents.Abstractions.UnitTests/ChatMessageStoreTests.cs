@@ -78,7 +78,7 @@ public class ChatMessageStoreTests
     private sealed class TestChatMessageStore : ChatMessageStore
     {
         public override Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
-            => Task.FromResult<IEnumerable<ChatMessage>>(Array.Empty<ChatMessage>());
+            => Task.FromResult<IEnumerable<ChatMessage>>([]);
 
         public override Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
             => Task.CompletedTask;

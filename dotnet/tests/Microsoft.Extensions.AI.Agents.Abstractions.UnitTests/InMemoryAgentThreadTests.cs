@@ -91,9 +91,7 @@ public class InMemoryAgentThreadTests
     public async Task SerializeAsync_ReturnsCorrectJson_WhenMessagesExistAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "TestContent"));
-        var thread = new TestInMemoryAgentThread(store);
+        var thread = new TestInMemoryAgentThread([new(ChatRole.User, "TestContent")]);
 
         // Act
         var json = await thread.SerializeAsync();
