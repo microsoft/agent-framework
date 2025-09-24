@@ -9,8 +9,12 @@ from agent_framework import (
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
+    FunctionCallContent,
+    FunctionInvocationContext,
     Role,
     chat_middleware,
+    function_middleware,
+    use_function_invocation,
 )
 
 from .conftest import MockBaseChatClient
@@ -313,3 +317,120 @@ class TestChatMiddleware:
         assert modified_kwargs["max_tokens"] == 500
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
+
+    async def test_function_middleware_registration_on_chat_client(self) -> None:
+        """Test function middleware registered on ChatClient is executed during function calls."""
+        execution_order: list[str] = []
+
+        @function_middleware
+        async def test_function_middleware(
+            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append(f"function_middleware_before_{context.function.name}")
+            await next(context)
+            execution_order.append(f"function_middleware_after_{context.function.name}")
+
+        # Define a simple tool function
+        def sample_tool(location: str) -> str:
+            """Get weather for a location."""
+            return f"Weather in {location}: sunny"
+
+        # Create function-invocation enabled chat client
+        chat_client = use_function_invocation(MockBaseChatClient)()
+
+        # Set function middleware directly on the chat client
+        chat_client.middleware = [test_function_middleware]
+
+        # Prepare responses that will trigger function invocation
+        function_call_response = ChatResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[
+                        FunctionCallContent(
+                            call_id="call_1",
+                            name="sample_tool",
+                            arguments={"location": "San Francisco"},
+                        )
+                    ],
+                )
+            ]
+        )
+        final_response = ChatResponse(
+            messages=[ChatMessage(role=Role.ASSISTANT, text="Based on the weather data, it's sunny!")]
+        )
+
+        chat_client.run_responses = [function_call_response, final_response]
+
+        # Execute the chat client directly with tools - this should trigger function invocation and middleware
+        messages = [ChatMessage(role=Role.USER, text="What's the weather in San Francisco?")]
+        response = await chat_client.get_response(messages, tools=[sample_tool])
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert chat_client.call_count == 2  # Two calls: function call + final response
+
+        # Verify function middleware was executed
+        assert execution_order == [
+            "function_middleware_before_sample_tool",
+            "function_middleware_after_sample_tool",
+        ]
+
+    async def test_run_level_function_middleware(self) -> None:
+        """Test that function middleware passed to get_response method is also invoked."""
+        execution_order: list[str] = []
+
+        @function_middleware
+        async def run_level_function_middleware(
+            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("run_level_function_middleware_before")
+            await next(context)
+            execution_order.append("run_level_function_middleware_after")
+
+        # Define a simple tool function
+        def sample_tool(location: str) -> str:
+            """Get weather for a location."""
+            return f"Weather in {location}: sunny"
+
+        # Create function-invocation enabled chat client
+        chat_client = use_function_invocation(MockBaseChatClient)()
+
+        # Prepare responses that will trigger function invocation
+        function_call_response = ChatResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[
+                        FunctionCallContent(
+                            call_id="call_2",
+                            name="sample_tool",
+                            arguments={"location": "New York"},
+                        )
+                    ],
+                )
+            ]
+        )
+        final_response = ChatResponse(
+            messages=[ChatMessage(role=Role.ASSISTANT, text="The weather information has been retrieved!")]
+        )
+
+        chat_client.run_responses = [function_call_response, final_response]
+
+        # Execute the chat client directly with run-level middleware and tools
+        messages = [ChatMessage(role=Role.USER, text="What's the weather in New York?")]
+        response = await chat_client.get_response(
+            messages, tools=[sample_tool], middleware=[run_level_function_middleware]
+        )
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert chat_client.call_count == 2  # Two calls: function call + final response
+
+        # Verify run-level function middleware was executed once (during function invocation)
+        assert execution_order == [
+            "run_level_function_middleware_before",
+            "run_level_function_middleware_after",
+        ]

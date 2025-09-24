@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -776,6 +777,75 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             yield update
 
 
+def _determine_middleware_type(middleware: Any) -> MiddlewareType:
+    """Determine middleware type using decorator and/or parameter type annotation.
+
+    Args:
+        middleware: The middleware function to analyze.
+
+    Returns:
+        MiddlewareType.AGENT, MiddlewareType.FUNCTION, or MiddlewareType.CHAT indicating the middleware type.
+
+    Raises:
+        ValueError: When middleware type cannot be determined or there's a mismatch.
+    """
+    # Check for decorator marker
+    decorator_type: MiddlewareType | None = getattr(middleware, "_middleware_type", None)
+
+    # Check for parameter type annotation
+    param_type: MiddlewareType | None = None
+    try:
+        sig = inspect.signature(middleware)
+        params = list(sig.parameters.values())
+
+        # Must have at least 2 parameters (context and next)
+        if len(params) >= 2:
+            first_param = params[0]
+            if hasattr(first_param.annotation, "__name__"):
+                annotation_name = first_param.annotation.__name__
+                if annotation_name == "AgentRunContext":
+                    param_type = MiddlewareType.AGENT
+                elif annotation_name == "FunctionInvocationContext":
+                    param_type = MiddlewareType.FUNCTION
+                elif annotation_name == "ChatContext":
+                    param_type = MiddlewareType.CHAT
+        else:
+            # Not enough parameters - can't be valid middleware
+            raise ValueError(
+                f"Middleware function must have at least 2 parameters (context, next), "
+                f"but {middleware.__name__} has {len(params)}"
+            )
+    except Exception as e:
+        if isinstance(e, ValueError):
+            raise
+        # Signature inspection failed - continue with other checks
+        pass
+
+    if decorator_type and param_type:
+        # Both decorator and parameter type specified - they must match
+        if decorator_type != param_type:
+            raise ValueError(
+                f"Middleware type mismatch: decorator indicates '{decorator_type.value}' "
+                f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
+            )
+        return decorator_type
+
+    if decorator_type:
+        # Just decorator specified - rely on decorator
+        return decorator_type
+
+    if param_type:
+        # Just parameter type specified - rely on types
+        return param_type
+
+    # Neither decorator nor parameter type specified - throw exception
+    raise ValueError(
+        f"Cannot determine middleware type for function {middleware.__name__}. "
+        f"Please either use @agent_middleware/@function_middleware/@chat_middleware decorators "
+        f"or specify parameter types (AgentRunContext, FunctionInvocationContext, or ChatContext)."
+    )
+
+
 # Decorator for adding middleware support to agent classes
 def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     """Class decorator that adds middleware support to an agent class.
@@ -793,79 +863,9 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     Returns:
         The modified agent class with middleware support.
     """
-    import inspect
-
     # Store original methods
     original_run = agent_class.run  # type: ignore[attr-defined]
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
-
-    def _determine_middleware_type(middleware: Any) -> MiddlewareType:
-        """Determine middleware type using decorator and/or parameter type annotation.
-
-        Args:
-            middleware: The middleware function to analyze.
-
-        Returns:
-            MiddlewareType.AGENT or MiddlewareType.FUNCTION indicating the middleware type.
-
-        Raises:
-            ValueError: When middleware type cannot be determined or there's a mismatch.
-        """
-        # Check for decorator marker
-        decorator_type: MiddlewareType | None = getattr(middleware, "_middleware_type", None)
-
-        # Check for parameter type annotation
-        param_type: MiddlewareType | None = None
-        try:
-            sig = inspect.signature(middleware)
-            params = list(sig.parameters.values())
-
-            # Must have at least 2 parameters (context and next)
-            if len(params) >= 2:
-                first_param = params[0]
-                if hasattr(first_param.annotation, "__name__"):
-                    annotation_name = first_param.annotation.__name__
-                    if annotation_name == "AgentRunContext":
-                        param_type = MiddlewareType.AGENT
-                    elif annotation_name == "FunctionInvocationContext":
-                        param_type = MiddlewareType.FUNCTION
-                    elif annotation_name == "ChatContext":
-                        param_type = MiddlewareType.CHAT
-            else:
-                # Not enough parameters - can't be valid middleware
-                raise ValueError(
-                    f"Middleware function must have at least 2 parameters (context, next), "
-                    f"but {middleware.__name__} has {len(params)}"
-                )
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise  # Re-raise our custom errors
-            # Signature inspection failed - continue with other checks
-            pass
-
-        if decorator_type and param_type:
-            # Both decorator and parameter type specified - they must match
-            if decorator_type != param_type:
-                raise ValueError(
-                    f"Middleware type mismatch: decorator indicates '{decorator_type.value}' "
-                    f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
-                )
-            return decorator_type
-
-        if decorator_type:
-            # Just decorator specified - rely on decorator
-            return decorator_type
-
-        if param_type:
-            # Just parameter type specified - rely on types
-            return param_type
-
-        # Neither decorator nor parameter type specified - throw exception
-        raise ValueError(
-            f"Cannot determine middleware type for function {middleware.__name__}. "
-            f"Please either use @agent_middleware/@function_middleware/@chat_middleware decorators "
-            f"or specify parameter types (AgentRunContext, FunctionInvocationContext, or ChatContext)."
-        )
 
     def _build_middleware_pipelines(
         agent_level_middlewares: Middleware | list[Middleware] | None,
@@ -944,6 +944,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         """Middleware-enabled run method."""
         # Build fresh middleware pipelines from current middleware collection and run-level middleware
         agent_middleware = getattr(self, "middleware", None)
+
         agent_pipeline, function_pipeline, chat_middlewares = _build_middleware_pipelines(agent_middleware, middleware)
 
         # Add function middleware pipeline to kwargs if available
@@ -1062,13 +1063,19 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         call_middleware = kwargs.pop("middleware", None)
         instance_middleware = getattr(self, "middleware", None)
 
-        # Merge middleware from both sources
-        all_middleware: list[ChatMiddleware | ChatMiddlewareCallable] = _merge_middleware_lists(
-            instance_middleware, call_middleware
-        )
+        # Merge all middleware and separate by type
+        all_middleware = _merge_middleware_lists(instance_middleware, call_middleware)
+        chat_middleware_list = _merge_and_filter_chat_middleware(instance_middleware, call_middleware)
 
-        # If no middleware, use original method
-        if not all_middleware:
+        # Extract function middleware for the function invocation pipeline
+        function_middleware_list = extract_function_middlewares(all_middleware)
+
+        # Pass function middleware to function invocation system if present
+        if function_middleware_list:
+            kwargs["_function_middleware_pipeline"] = FunctionMiddlewarePipeline(function_middleware_list)
+
+        # If no chat middleware, use original method
+        if not chat_middleware_list:
             return await original_get_response(self, messages, **kwargs)
 
         # Create pipeline and execute with middleware
@@ -1110,8 +1117,8 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
             call_middleware = kwargs.pop("middleware", None)
             instance_middleware = getattr(self, "middleware", None)
 
-            # Merge middleware from both sources
-            all_middleware: list[ChatMiddleware | ChatMiddlewareCallable] = _merge_middleware_lists(
+            # Merge middleware from both sources, filtering for chat middleware only
+            all_middleware: list[ChatMiddleware | ChatMiddlewareCallable] = _merge_and_filter_chat_middleware(
                 instance_middleware, call_middleware
             )
 
@@ -1160,6 +1167,102 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
     return chat_client_class
 
 
+def _is_function_middleware(middleware: Any) -> bool:
+    """Check if a middleware is a function middleware."""
+    return isinstance(middleware, FunctionMiddleware) or (
+        callable(middleware)
+        and hasattr(middleware, "_middleware_type")
+        and middleware._middleware_type == MiddlewareType.FUNCTION  # type: ignore
+    )
+
+
+def _is_chat_middleware(middleware: Any) -> bool:
+    """Check if a middleware is a chat middleware."""
+    return isinstance(middleware, ChatMiddleware) or (
+        callable(middleware)
+        and hasattr(middleware, "_middleware_type")
+        and middleware._middleware_type == MiddlewareType.CHAT  # type: ignore
+    )
+
+
+def extract_function_middlewares(
+    middleware_list: list[Middleware] | None,
+) -> list[FunctionMiddleware | FunctionMiddlewareCallable]:
+    """Extract function middlewares from a list."""
+    if not middleware_list:
+        return []
+
+    function_middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] = []
+    for middleware in middleware_list:
+        if _is_function_middleware(middleware):
+            function_middlewares.append(middleware)  # type: ignore
+
+    return function_middlewares
+
+
+def extract_chat_middlewares(
+    middleware_list: list[Middleware] | None,
+) -> list[ChatMiddleware | ChatMiddlewareCallable]:
+    """Extract chat middlewares from a list."""
+    if not middleware_list:
+        return []
+
+    chat_middlewares: list[ChatMiddleware | ChatMiddlewareCallable] = []
+    for middleware in middleware_list:
+        if _is_chat_middleware(middleware):
+            chat_middlewares.append(middleware)  # type: ignore
+
+    return chat_middlewares
+
+
+def create_function_middleware_pipeline(
+    *middleware_sources: list[Middleware] | None,
+) -> FunctionMiddlewarePipeline | None:
+    """Create a function middleware pipeline from multiple middleware sources."""
+    all_function_middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] = []
+
+    for source in middleware_sources:
+        if source:
+            function_middlewares = extract_function_middlewares(source)
+            all_function_middlewares.extend(function_middlewares)
+
+    return FunctionMiddlewarePipeline(all_function_middlewares) if all_function_middlewares else None
+
+
+def _merge_and_filter_chat_middleware(
+    instance_middleware: Any | list[Any] | None,
+    call_middleware: Any | list[Any] | None,
+) -> list[ChatMiddleware | ChatMiddlewareCallable]:
+    """Merge instance-level and call-level middleware, filtering for chat middleware only.
+
+    Args:
+        instance_middleware: Middleware defined at the instance level.
+        call_middleware: Middleware provided at the call level.
+
+    Returns:
+        A merged list of chat middleware only.
+    """
+    all_middleware = _merge_middleware_lists(instance_middleware, call_middleware)
+
+    # Filter for chat middleware only
+    chat_middleware_list: list[ChatMiddleware | ChatMiddlewareCallable] = []
+    for middleware in all_middleware:
+        # Check if it's a ChatMiddleware instance
+        if isinstance(middleware, ChatMiddleware):
+            chat_middleware_list.append(middleware)
+        elif callable(middleware):
+            # Use the same type detection logic as _build_middleware_pipelines
+            try:
+                middleware_type = _determine_middleware_type(middleware)
+                if middleware_type == MiddlewareType.CHAT:
+                    chat_middleware_list.append(middleware)  # type: ignore[arg-type]
+            except ValueError:
+                # If we can't determine the type, skip this middleware
+                continue
+
+    return chat_middleware_list
+
+
 def _merge_middleware_lists(
     instance_middleware: Any | list[Any] | None,
     call_middleware: Any | list[Any] | None,
@@ -1188,3 +1291,27 @@ def _merge_middleware_lists(
             all_middleware.append(call_middleware)
 
     return all_middleware
+
+
+def extract_and_merge_function_middleware(chat_client: Any, kwargs: dict[str, Any]) -> None:
+    """Extract function middleware from chat client and merge with existing pipeline in kwargs.
+
+    Args:
+        chat_client: The chat client instance to extract middleware from.
+        kwargs: Dictionary containing middleware and pipeline information.
+    """
+    # Get middleware sources
+    client_middleware = getattr(chat_client, "middleware", None) if hasattr(chat_client, "middleware") else None
+    run_level_middleware = kwargs.get("middleware")
+    existing_pipeline = kwargs.get("_function_middleware_pipeline")
+
+    # Extract existing pipeline middlewares if present
+    existing_middlewares = existing_pipeline._middlewares if existing_pipeline else None
+
+    # Create combined pipeline from all sources using existing helper
+    combined_pipeline = create_function_middleware_pipeline(
+        client_middleware, run_level_middleware, existing_middlewares
+    )
+
+    if combined_pipeline:
+        kwargs["_function_middleware_pipeline"] = combined_pipeline
