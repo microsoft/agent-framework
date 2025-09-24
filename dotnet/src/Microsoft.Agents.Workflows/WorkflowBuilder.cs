@@ -211,7 +211,7 @@ public class WorkflowBuilder
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params ExecutorIsh[] targets)
+    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params IEnumerable<ExecutorIsh> targets)
         => this.AddFanOutEdge<object>(source, null, targets);
 
     internal static Func<object?, int, IEnumerable<int>>? CreateEdgeAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? partitioner)
@@ -243,16 +243,24 @@ public class WorkflowBuilder
     /// If null, messages will route to all targets.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge<T>(ExecutorIsh source, Func<T?, int, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
+    public WorkflowBuilder AddFanOutEdge<T>(ExecutorIsh source, Func<T?, int, IEnumerable<int>>? partitioner = null, params IEnumerable<ExecutorIsh> targets)
     {
         Throw.IfNull(source);
-        Throw.IfNullOrEmpty(targets);
+        Throw.IfNull(targets);
+
+        List<string> sinkIds = targets.Select(target =>
+        {
+            Throw.IfNull(target, nameof(targets));
+            return this.Track(target).Id;
+        }).ToList();
+
+        Throw.IfNullOrEmpty(sinkIds, nameof(targets));
 
         FanOutEdgeData fanOutEdge = new(
-                this.Track(source).Id,
-                targets.Select(target => this.Track(target).Id).ToList(),
-                this.TakeEdgeId(),
-                CreateEdgeAssignerFunc(partitioner));
+            this.Track(source).Id,
+            sinkIds,
+            this.TakeEdgeId(),
+            CreateEdgeAssignerFunc(partitioner));
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
@@ -269,15 +277,23 @@ public class WorkflowBuilder
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params ExecutorIsh[] sources)
+    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params IEnumerable<ExecutorIsh> sources)
     {
         Throw.IfNull(target);
-        Throw.IfNullOrEmpty(sources);
+        Throw.IfNull(sources);
+
+        List<string> sourceIds = sources.Select(source =>
+        {
+            Throw.IfNull(source, nameof(sources));
+            return this.Track(source).Id;
+        }).ToList();
+
+        Throw.IfNullOrEmpty(sourceIds, nameof(sources));
 
         FanInEdgeData edgeData = new(
-            sources.Select(source => this.Track(source).Id).ToList(),
-                this.Track(target).Id,
-                this.TakeEdgeId());
+            sourceIds,
+            this.Track(target).Id,
+            this.TakeEdgeId());
 
         foreach (string sourceId in edgeData.SourceIds)
         {

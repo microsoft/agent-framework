@@ -10,8 +10,7 @@ namespace Microsoft.Agents.Orchestration;
 /// </summary>
 internal sealed class OrchestratingAgentThread : InMemoryAgentThread
 {
-    internal OrchestratingAgentThread()
-        : base() { }
+    internal OrchestratingAgentThread() { }
 
     internal OrchestratingAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
         : base(serializedThreadState, jsonSerializerOptions) { }

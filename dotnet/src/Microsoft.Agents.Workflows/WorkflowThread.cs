@@ -36,7 +36,7 @@ internal sealed class WorkflowThread : AgentThread
 
         AgentRunResponseUpdate update = new(ChatRole.Assistant, parts)
         {
-            CreatedAt = DateTimeOffset.Now,
+            CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
         };
 

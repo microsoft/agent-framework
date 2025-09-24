@@ -30,7 +30,7 @@ public class CosmosActorStateStorageConcurrencyTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key = "testKey";
         var value1 = JsonSerializer.SerializeToElement("value1");
@@ -69,7 +69,7 @@ public class CosmosActorStateStorageConcurrencyTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         // Setup initial state
         var initialOperations = new List<ActorStateWriteOperation>
@@ -184,7 +184,7 @@ public class CosmosActorStateStorageConcurrencyTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
@@ -200,7 +200,7 @@ public class CosmosActorStateStorageConcurrencyTests
         Assert.NotEmpty(resultWithNullETag.ETag);
 
         // Clean up for next test
-        var uniqueActorId1 = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var uniqueActorId1 = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         // Act & Assert - Test empty eTag (should create new document)
         var resultWithEmptyETag = await storage.WriteStateAsync(uniqueActorId1, operations, string.Empty, cancellationToken);
@@ -209,7 +209,7 @@ public class CosmosActorStateStorageConcurrencyTests
         Assert.NotEmpty(resultWithEmptyETag.ETag);
 
         // Clean up for next test
-        var uniqueActorId2 = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var uniqueActorId2 = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         // Act & Assert - Test "0" initial eTag (should create new document)
         var resultWithInitialETag = await storage.WriteStateAsync(uniqueActorId2, operations, "0", cancellationToken);
@@ -255,7 +255,7 @@ public class CosmosActorStateStorageConcurrencyTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString()); // Fresh actor
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N")); // Fresh actor
 
         const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
@@ -305,7 +305,7 @@ public class CosmosActorStateStorageConcurrencyTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString()); // Non-existent actor
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N")); // Non-existent actor
 
         const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");

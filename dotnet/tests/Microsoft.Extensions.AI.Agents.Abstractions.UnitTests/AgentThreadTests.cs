@@ -2,8 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 
 #pragma warning disable CA1861 // Avoid constant arrays as arguments
@@ -148,12 +146,5 @@ public class AgentThreadTests
 
     #endregion
 
-    private sealed class TestAgentThread : AgentThread
-    {
-        protected internal override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-            => base.MessagesReceivedAsync(newMessages, cancellationToken);
-
-        public override Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => base.SerializeAsync(jsonSerializerOptions, cancellationToken);
-    }
+    private sealed class TestAgentThread : AgentThread;
 }

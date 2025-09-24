@@ -2,25 +2,24 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
-#if NET
-using System.Security.Cryptography;
-#endif
 
 namespace Microsoft.Agents.Workflows;
 
 /// <summary>
-/// Provides utility methods for constructing common patterns of agent workflows.
+/// Provides utility methods for constructing common patterns of workflows composed of agents.
 /// </summary>
-public static class AgentWorkflowBuilder
+public static partial class AgentWorkflowBuilder
 {
     /// <summary>
     /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
@@ -37,7 +36,7 @@ public static class AgentWorkflowBuilder
         ExecutorIsh? previous = null;
         foreach (var agent in agents)
         {
-            AIAgentHostExecutor agentExecutor = new(agent);
+            AgentRunStreamingExecutor agentExecutor = new(agent, includeInputInOutput: true);
 
             if (builder is null)
             {
@@ -60,29 +59,9 @@ public static class AgentWorkflowBuilder
         // Add an ending executor that batches up all messages from the last agent
         // so that it's published as a single list result.
         Debug.Assert(builder is not null);
-        builder.AddEdge(previous, new SequentialEndExecutor());
+        builder.AddEdge(previous, new ConvertMessageListToCompletedEventExecutor());
 
         return builder.Build<List<ChatMessage>>();
-    }
-
-    /// <summary>
-    /// Provides an executor that batches received chat messages that it then publishes as the final result
-    /// when receiving a <see cref="TurnToken"/>.
-    /// </summary>
-    private sealed class SequentialEndExecutor : Executor
-    {
-        private readonly List<ChatMessage> _pendingMessages = [];
-
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder
-                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
-                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
-                .AddHandler<TurnToken>(async (token, context) =>
-                {
-                    var messages = new List<ChatMessage>(this._pendingMessages);
-                    this._pendingMessages.Clear();
-                    await context.AddEventAsync(new WorkflowCompletedEvent(messages)).ConfigureAwait(false);
-                });
     }
 
     /// <summary>
@@ -110,8 +89,8 @@ public static class AgentWorkflowBuilder
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
-        ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)agent).ToArray();
-        ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new ChatMessageBatchingExecutor()];
+        ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
+        ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new BatchChatMessagesToListExecutor()];
         builder.AddFanOutEdge(start, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
@@ -137,13 +116,96 @@ public static class AgentWorkflowBuilder
     /// The <see cref="AIAgent"/> must be capable of understanding those <see cref="AgentRunOptions"/> provided. If the agent
     /// ignores the tools or is otherwise unable to advertize them to the underlying provider, handoffs will not occur.
     /// </remarks>
-    public static HandoffsWorkflowBuilder StartHandoffWith(AIAgent initialAgent)
+    public static HandoffsWorkflowBuilder CreateHandoffBuilderWith(AIAgent initialAgent)
     {
         Throw.IfNull(initialAgent);
         return new(initialAgent);
     }
 
-    /// <summary>Executor that forwards all relevant messages.</summary>
+    /// <summary>Creates a new <see cref="GroupChatWorkflowBuilder"/> with <paramref name="managerFactory"/>.</summary>
+    /// <param name="managerFactory">
+    /// Function that will create the <see cref="GroupChatManager"/> for the workflow instance. The manager will be
+    /// provided with the set of agents that will participate in the group chat.
+    /// </param>
+    /// <returns>The builder for creating a workflow based on handoffs.</returns>
+    /// <remarks>
+    /// Handoffs between agents are achieved by the current agent invoking an <see cref="AITool"/> provided to an agent
+    /// via <see cref="ChatClientAgentOptions"/>'s <see cref="ChatClientAgentOptions.ChatOptions"/>.<see cref="ChatOptions.Tools"/>.
+    /// The <see cref="AIAgent"/> must be capable of understanding those <see cref="AgentRunOptions"/> provided. If the agent
+    /// ignores the tools or is otherwise unable to advertize them to the underlying provider, handoffs will not occur.
+    /// </remarks>
+    public static GroupChatWorkflowBuilder CreateGroupChatBuilderWith(Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory)
+    {
+        Throw.IfNull(managerFactory);
+        return new GroupChatWorkflowBuilder(managerFactory);
+    }
+
+    /// <summary>
+    /// Executor that runs the agent and forwards all messages, input and output, to the next executor.
+    /// </summary>
+    private sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInputInOutput) : Executor(GetDescriptiveIdFromAgent(agent))
+    {
+        private readonly List<ChatMessage> _pendingMessages = [];
+
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+            routeBuilder
+                .AddHandler<string>((message, context) => this._pendingMessages.Add(new(ChatRole.User, message)))
+                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
+                .AddHandler<IEnumerable<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
+                .AddHandler<ChatMessage[]>((messages, _) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<TurnToken>(async (token, context) =>
+                {
+                    List<ChatMessage> messages = [.. this._pendingMessages];
+                    this._pendingMessages.Clear();
+
+                    List<ChatMessage>? roleChanged = ChangeAssistantToUserForOtherParticipants(agent.DisplayName, messages);
+
+                    List<AgentRunResponseUpdate> updates = [];
+                    await foreach (var update in agent.RunStreamingAsync(messages).ConfigureAwait(false))
+                    {
+                        updates.Add(update);
+                        if (token.EmitEvents is true)
+                        {
+                            await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
+                        }
+                    }
+
+                    ResetUserToAssistantForChangedRoles(roleChanged);
+
+                    if (!includeInputInOutput)
+                    {
+                        messages.Clear();
+                    }
+
+                    messages.AddRange(updates.ToAgentRunResponse().Messages);
+
+                    await context.SendMessageAsync(messages).ConfigureAwait(false);
+                    await context.SendMessageAsync(token).ConfigureAwait(false);
+                });
+    }
+
+    /// <summary>
+    /// Provides an executor that batches received chat messages that it then publishes as the final result
+    /// when receiving a <see cref="TurnToken"/>.
+    /// </summary>
+    private sealed class ConvertMessageListToCompletedEventExecutor : Executor
+    {
+        private readonly List<ChatMessage> _pendingMessages = [];
+
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+            routeBuilder
+                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
+                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
+                .AddHandler<TurnToken>(async (token, context) =>
+                {
+                    var messages = new List<ChatMessage>(this._pendingMessages);
+                    this._pendingMessages.Clear();
+                    await context.AddEventAsync(new WorkflowCompletedEvent(messages)).ConfigureAwait(false);
+                });
+    }
+
+    /// <summary>Executor that forwards all messages.</summary>
     private sealed class ForwardingExecutor : Executor
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
@@ -154,7 +216,7 @@ public static class AgentWorkflowBuilder
     /// Provides an executor that batches received chat messages that it then releases when
     /// receiving a <see cref="TurnToken"/>.
     /// </summary>
-    private sealed class ChatMessageBatchingExecutor : Executor
+    private sealed class BatchChatMessagesToListExecutor : Executor
     {
         private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -195,26 +257,36 @@ public static class AgentWorkflowBuilder
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder.AddHandler<List<ChatMessage>>(async (messages, context) =>
             {
-                this._allResults.Add(messages);
-                if (--this._remaining == 0)
+                // TODO: https://github.com/microsoft/agent-framework/issues/784
+                // This locking should not be necessary.
+                bool done;
+                lock (this._allResults)
+                {
+                    this._allResults.Add(messages);
+                    done = --this._remaining == 0;
+                }
+
+                if (done)
                 {
                     this._remaining = this._expectedInputs;
+
                     var results = this._allResults;
                     this._allResults = new List<List<ChatMessage>>(this._expectedInputs);
+
                     await context.AddEventAsync(new WorkflowCompletedEvent(this._aggregator(results))).ConfigureAwait(false);
                 }
             });
     }
 
     /// <summary>
-    /// Defines the orchestration handoff relationships for all agents in the system.
+    /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
     /// </summary>
     public sealed class HandoffsWorkflowBuilder
     {
         private const string FunctionPrefix = "handoff_to_";
         private readonly AIAgent _initialAgent;
         private readonly Dictionary<AIAgent, HashSet<HandoffTarget>> _targets = [];
-        private readonly Dictionary<string, AIAgent> _allAgents = [];
+        private readonly HashSet<AIAgent> _allAgents = new(AIAgentIDEqualityComparer.Instance);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
@@ -223,11 +295,11 @@ public static class AgentWorkflowBuilder
         internal HandoffsWorkflowBuilder(AIAgent initialAgent)
         {
             this._initialAgent = initialAgent;
-            this._allAgents.Add(initialAgent.Id, initialAgent);
+            this._allAgents.Add(initialAgent);
         }
 
         /// <summary>
-        /// Gets or sets additional instructions to provide to an agent about how to perform handoffs.
+        /// Gets or sets additional instructions to provide to an agent that has handoffs about how and when to perform them.
         /// </summary>
         /// <remarks>
         /// By default, simple instructions are included. This may be set to <see langword="null"/> to avoid including
@@ -235,9 +307,10 @@ public static class AgentWorkflowBuilder
         /// </remarks>
         public string? HandoffInstructions { get; set; } =
              $"""
-              You are part of a multi-agent system. Each agent encompasses instructions and tools and can hand off a conversation to another agent
-              when appropriate. Handoffs are achieved by calling a handoff function, generally named `{FunctionPrefix}<agent_id>`. Handoffs
-              between agents are handled seamlessly in the background; do not mention or draw attention to these handoffs in your conversation with the user.
+              You are one agent in a multi-agent system. You can hand off the conversation to another agent if appropriate. Handoffs are achieved
+              by calling a handoff function, named in the form `{FunctionPrefix}<agent_id>`; the description of the function provides details on the
+              target agent of that handoff. Handoffs between agents are handled seamlessly in the background; never mention or narrate these handoffs
+              in your conversation with the user.
               """;
 
         /// <summary>
@@ -246,8 +319,8 @@ public static class AgentWorkflowBuilder
         /// <param name="from">The source agent.</param>
         /// <param name="to">The target agents to add as handoff targets for the source agent.</param>
         /// <returns>The updated <see cref="HandoffsWorkflowBuilder"/> instance.</returns>
-        /// <remarks>The handoff reason for each target is derived from its description or name.</remarks>
-        public HandoffsWorkflowBuilder WithHandoff(AIAgent from, IEnumerable<AIAgent> to)
+        /// <remarks>The handoff reason for each target in <paramref name="to"/> is derived from that agent's description or name.</remarks>
+        public HandoffsWorkflowBuilder WithHandoffs(AIAgent from, IEnumerable<AIAgent> to)
         {
             Throw.IfNull(from);
             Throw.IfNull(to);
@@ -266,31 +339,50 @@ public static class AgentWorkflowBuilder
         }
 
         /// <summary>
+        /// Adds handoff relationships from one or more sources agent to a target agent.
+        /// </summary>
+        /// <param name="from">The source agents.</param>
+        /// <param name="to">The target agent to add as a handoff target for each source agent.</param>
+        /// <param name="handoffReason">
+        /// The reason the <paramref name="from"/> should hand off to the <paramref name="to"/>.
+        /// If <see langword="null"/>, the reason is derived from <paramref name="to"/>'s description or name.
+        /// </param>
+        /// <returns>The updated <see cref="HandoffsWorkflowBuilder"/> instance.</returns>
+        public HandoffsWorkflowBuilder WithHandoffs(IEnumerable<AIAgent> from, AIAgent to, string? handoffReason = null)
+        {
+            Throw.IfNull(from);
+            Throw.IfNull(to);
+
+            foreach (var source in from)
+            {
+                if (source is null)
+                {
+                    Throw.ArgumentNullException(nameof(from), "One or more source agents are null.");
+                }
+
+                this.WithHandoff(source, to, handoffReason);
+            }
+
+            return this;
+        }
+
+        /// <summary>
         /// Adds a handoff relationship from a source agent to a target agent with a custom handoff reason.
         /// </summary>
         /// <param name="from">The source agent.</param>
         /// <param name="to">The target agent.</param>
-        /// <param name="handoffReason">The reason the <paramref name="from"/> should hand off to the <paramref name="to"/>.</param>
+        /// <param name="handoffReason">
+        /// The reason the <paramref name="from"/> should hand off to the <paramref name="to"/>.
+        /// If <see langword="null"/>, the reason is derived from <paramref name="to"/>'s description or name.
+        /// </param>
         /// <returns>The updated <see cref="HandoffsWorkflowBuilder"/> instance.</returns>
         public HandoffsWorkflowBuilder WithHandoff(AIAgent from, AIAgent to, string? handoffReason = null)
         {
             Throw.IfNull(from);
             Throw.IfNull(to);
 
-#if NET
-            this._allAgents.TryAdd(from.Id, from);
-            this._allAgents.TryAdd(to.Id, to);
-#else
-            if (!this._allAgents.ContainsKey(from.Id))
-            {
-                this._allAgents.Add(from.Id, from);
-            }
-
-            if (!this._allAgents.ContainsKey(to.Id))
-            {
-                this._allAgents.Add(to.Id, to);
-            }
-#endif
+            this._allAgents.Add(from);
+            this._allAgents.Add(to);
 
             if (!this._targets.TryGetValue(from, out var handoffs))
             {
@@ -324,12 +416,12 @@ public static class AgentWorkflowBuilder
         /// <returns>The workflow built based on the handoffs in the builder.</returns>
         public Workflow<List<ChatMessage>> Build()
         {
-            StartHandoffs start = new();
-            EndExecutor end = new();
+            StartHandoffsExecutor start = new();
+            EndHandoffsExecutor end = new();
             WorkflowBuilder builder = new(start);
 
             // Create an AgentExecutor for each again.
-            Dictionary<string, AgentExecutor> executors = this._allAgents.ToDictionary(a => a.Key, a => new AgentExecutor(a.Value, this.HandoffInstructions));
+            Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, this.HandoffInstructions));
 
             // Connect the start executor to the initial agent.
             builder.AddEdge(start, executors[this._initialAgent.Id]);
@@ -337,8 +429,8 @@ public static class AgentWorkflowBuilder
             // Initialize each executor with its handoff targets to the other executors.
             foreach (var agent in this._allAgents)
             {
-                executors[agent.Key].Initialize(builder, end, executors,
-                    this._targets.TryGetValue(agent.Value, out HashSet<HandoffTarget>? targets) ? targets : []);
+                executors[agent.Id].Initialize(builder, end, executors,
+                    this._targets.TryGetValue(agent, out HashSet<HandoffTarget>? targets) ? targets : []);
             }
 
             // Build the workflow.
@@ -353,7 +445,7 @@ public static class AgentWorkflowBuilder
         }
 
         /// <summary>Executor used at the start of a handoffs workflow to accumulate messages and emit them as HandoffState upon receiving a turn token.</summary>
-        private sealed class StartHandoffs : Executor
+        private sealed class StartHandoffsExecutor : Executor
         {
             private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -373,7 +465,7 @@ public static class AgentWorkflowBuilder
         }
 
         /// <summary>Executor used at the end of a handoff workflow to raise a final completed event.</summary>
-        private sealed class EndExecutor : Executor
+        private sealed class EndHandoffsExecutor : Executor
         {
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
                 routeBuilder.AddHandler<HandoffState>((handoff, context) =>
@@ -381,45 +473,47 @@ public static class AgentWorkflowBuilder
         }
 
         /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
-        private sealed class AgentExecutor(
+        private sealed class HandoffAgentExecutor(
             AIAgent agent,
-            string? instructions) : Executor($"{agent.DisplayName}/{CreateId()}")
+            string? handoffInstructions) : Executor(GetDescriptiveIdFromAgent(agent))
         {
             private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
                 ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
-            private static readonly AIFunctionDeclaration s_endFunction = AIFunctionFactory.CreateDeclaration(
-                name: $"end_{CreateId()}",
-                description: "Invoke this function when all work is completed and no further interactions are required.",
-                jsonSchema: AIFunctionFactory.Create(() => { }).JsonSchema);
 
             private readonly AIAgent _agent = agent;
             private readonly HashSet<string> _handoffFunctionNames = [];
-            private readonly ChatClientAgentRunOptions _agentOptions = new()
-            {
-                ChatOptions = new()
-                {
-                    Instructions = instructions,
-                    Tools = [s_endFunction],
-                }
-            };
+            private ChatClientAgentRunOptions? _agentOptions;
 
             public void Initialize(
                 WorkflowBuilder builder,
                 Executor end,
-                Dictionary<string, AgentExecutor> executors,
-                IEnumerable<HandoffTarget> handoffs) =>
+                Dictionary<string, HandoffAgentExecutor> executors,
+                HashSet<HandoffTarget> handoffs) =>
                 builder.AddSwitch(this, sb =>
                 {
-                    foreach (HandoffTarget handoff in handoffs)
+                    if (handoffs.Count != 0)
                     {
-                        var handoffFunc = AIFunctionFactory.CreateDeclaration($"{FunctionPrefix}{CreateId()}", handoff.Reason, s_handoffSchema);
+                        Debug.Assert(this._agentOptions is null);
+                        this._agentOptions = new()
+                        {
+                            ChatOptions = new()
+                            {
+                                AllowMultipleToolCalls = false,
+                                Instructions = handoffInstructions,
+                                Tools = [],
+                            },
+                        };
 
-                        this._handoffFunctionNames.Add(handoffFunc.Name);
+                        foreach (HandoffTarget handoff in handoffs)
+                        {
+                            var handoffFunc = AIFunctionFactory.CreateDeclaration($"{FunctionPrefix}{GetDescriptiveIdFromAgent(handoff.Target)}", handoff.Reason, s_handoffSchema);
 
-                        this._agentOptions.ChatOptions!.Tools!.Add(handoffFunc);
-                        this._agentOptions.ChatOptions.AllowMultipleToolCalls = false;
+                            this._handoffFunctionNames.Add(handoffFunc.Name);
 
-                        sb.AddCase<HandoffState>(state => state?.InvokedHandoff == handoffFunc.Name, executors[handoff.Target.Id]);
+                            this._agentOptions.ChatOptions.Tools.Add(handoffFunc);
+
+                            sb.AddCase<HandoffState>(state => state?.InvokedHandoff == handoffFunc.Name, executors[handoff.Target.Id]);
+                        }
                     }
 
                     sb.WithDefault(end);
@@ -432,42 +526,33 @@ public static class AgentWorkflowBuilder
                         List<AgentRunResponseUpdate> updates = [];
                         List<ChatMessage> allMessages = handoffState.Messages;
 
-                        while (requestedHandoff is null)
+                        List<ChatMessage>? roleChanges = ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName, allMessages);
+
+                        await foreach (var update in this._agent.RunStreamingAsync(allMessages, options: this._agentOptions).ConfigureAwait(false))
                         {
-                            updates.Clear();
-                            await foreach (var update in this._agent.RunStreamingAsync(allMessages, options: this._agentOptions).ConfigureAwait(false))
+                            await AddUpdateAsync(update).ConfigureAwait(false);
+
+                            foreach (var c in update.Contents)
                             {
-                                await AddUpdateAsync(update).ConfigureAwait(false);
-                                for (int i = 0; i < update.Contents.Count; i++)
+                                if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
                                 {
-                                    var c = update.Contents[i];
-                                    if (c is FunctionCallContent fcc)
+                                    requestedHandoff = fcc.Name;
+                                    await AddUpdateAsync(new AgentRunResponseUpdate
                                     {
-                                        if (this._handoffFunctionNames.Contains(fcc.Name))
-                                        {
-                                            requestedHandoff = fcc.Name;
-                                            await AddUpdateAsync(new AgentRunResponseUpdate
-                                            {
-                                                AgentId = this._agent.Id,
-                                                AuthorName = this._agent.DisplayName,
-                                                Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
-                                                CreatedAt = DateTimeOffset.UtcNow,
-                                                MessageId = Guid.NewGuid().ToString("N"),
-                                                Role = ChatRole.Tool,
-                                            }).ConfigureAwait(false);
-                                        }
-                                        else if (fcc.Name == s_endFunction.Name)
-                                        {
-                                            requestedHandoff = s_endFunction.Name;
-                                            update.Contents.RemoveAt(i);
-                                            i--;
-                                        }
-                                    }
+                                        AgentId = this._agent.Id,
+                                        AuthorName = this._agent.DisplayName,
+                                        Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
+                                        CreatedAt = DateTimeOffset.UtcNow,
+                                        MessageId = Guid.NewGuid().ToString("N"),
+                                        Role = ChatRole.Tool,
+                                    }).ConfigureAwait(false);
                                 }
                             }
-
-                            allMessages.AddRange(updates.ToAgentRunResponse().Messages);
                         }
+
+                        allMessages.AddRange(updates.ToAgentRunResponse().Messages);
+
+                        ResetUserToAssistantForChangedRoles(roleChanges);
 
                         await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages)).ConfigureAwait(false);
 
@@ -486,12 +571,297 @@ public static class AgentWorkflowBuilder
             TurnToken TurnToken,
             string? InvokedHandoff,
             List<ChatMessage> Messages);
+    }
 
-        private static string CreateId() =>
+    /// <summary>
+    /// A manager that manages the flow of a group chat.
+    /// </summary>
+    public abstract class GroupChatManager
+    {
+        private int _maximumIterationCount = 40;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="GroupChatManager"/> class.
+        /// </summary>
+        protected GroupChatManager() { }
+
+        /// <summary>
+        /// Gets the number of iterations in the group chat so far.
+        /// </summary>
+        public int IterationCount { get; internal set; }
+
+        /// <summary>
+        /// Gets or sets the maximum number of iterations allowed.
+        /// </summary>
+        /// <remarks>
+        /// Each iteration involves a single interaction with a participating agent.
+        /// The default is 40.
+        /// </remarks>
+        public int MaximumIterationCount
+        {
+            get => this._maximumIterationCount;
+            set => this._maximumIterationCount = Throw.IfLessThan(value, 1);
+        }
+
+        /// <summary>
+        /// Selects the next agent to participate in the group chat based on the provided chat history and team.
+        /// </summary>
+        /// <param name="history">The chat history to consider.</param>
+        /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+        /// <returns>The next <see cref="AIAgent"/> to speak. This agent must be part of the chat.</returns>
+        protected internal abstract ValueTask<AIAgent> SelectNextAgentAsync(
+            IReadOnlyList<ChatMessage> history,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Filters the chat history before it's passed to the next agent.
+        /// </summary>
+        /// <param name="history">The chat history to filter.</param>
+        /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+        /// <returns>The filtered chat history.</returns>
+        protected internal virtual ValueTask<IEnumerable<ChatMessage>> UpdateHistoryAsync(
+            IReadOnlyList<ChatMessage> history,
+            CancellationToken cancellationToken = default) =>
+            new(history);
+
+        /// <summary>
+        /// Determines whether the group chat should be terminated based on the provided chat history and iteration count.
+        /// </summary>
+        /// <param name="history">The chat history to consider.</param>
+        /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+        /// <returns>A <see cref="bool"/> indicating whether the chat should be terminated.</returns>
+        protected internal virtual ValueTask<bool> ShouldTerminateAsync(
+            IReadOnlyList<ChatMessage> history,
+            CancellationToken cancellationToken = default) =>
+            new(this.MaximumIterationCount is int max && this.IterationCount >= max);
+
+        /// <summary>
+        /// Resets the state of the manager for a new group chat session.
+        /// </summary>
+        protected internal virtual void Reset()
+        {
+            this.IterationCount = 0;
+        }
+    }
+
+    /// <summary>
+    /// Provides a <see cref="GroupChatManager"/> that selects agents in a round-robin fashion.
+    /// </summary>
+    public class RoundRobinGroupChatManager : GroupChatManager
+    {
+        private readonly IReadOnlyList<AIAgent> _agents;
+        private readonly Func<RoundRobinGroupChatManager, IEnumerable<ChatMessage>, CancellationToken, ValueTask<bool>>? _shouldTerminateFunc;
+        private int _nextIndex;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="RoundRobinGroupChatManager"/> class.
+        /// </summary>
+        /// <param name="agents">The agents to be managed as part of this workflow.</param>
+        /// <param name="shouldTerminateFunc">
+        /// An optional function that determines whether the group chat should terminate based on the chat history
+        /// before factoring in the default behavior, which is to terminate based only on the iteration count.
+        /// </param>
+        public RoundRobinGroupChatManager(
+            IReadOnlyList<AIAgent> agents,
+            Func<RoundRobinGroupChatManager, IEnumerable<ChatMessage>, CancellationToken, ValueTask<bool>>? shouldTerminateFunc = null)
+        {
+            Throw.IfNullOrEmpty(agents);
+            foreach (var agent in agents)
+            {
+                Throw.IfNull(agent, nameof(agents));
+            }
+
+            this._agents = agents;
+            this._shouldTerminateFunc = shouldTerminateFunc;
+        }
+
+        /// <inheritdoc />
+        protected internal override ValueTask<AIAgent> SelectNextAgentAsync(
+            IReadOnlyList<ChatMessage> history, CancellationToken cancellationToken = default)
+        {
+            AIAgent nextAgent = this._agents[this._nextIndex];
+
+            this._nextIndex = (this._nextIndex + 1) % this._agents.Count;
+
+            return new ValueTask<AIAgent>(nextAgent);
+        }
+
+        /// <inheritdoc />
+        protected internal override async ValueTask<bool> ShouldTerminateAsync(
+            IReadOnlyList<ChatMessage> history, CancellationToken cancellationToken = default)
+        {
+            if (this._shouldTerminateFunc is { } func && await func(this, history, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            return await base.ShouldTerminateAsync(history, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <inheritdoc />
+        protected internal override void Reset()
+        {
+            base.Reset();
+            this._nextIndex = 0;
+        }
+    }
+
+    /// <summary>
+    /// Provides a builder for specifying group chat relationships between agents and building the resulting workflow.
+    /// </summary>
+    public sealed class GroupChatWorkflowBuilder
+    {
+        private readonly Func<IReadOnlyList<AIAgent>, GroupChatManager> _managerFactory;
+        private readonly HashSet<AIAgent> _participants = new(AIAgentIDEqualityComparer.Instance);
+
+        internal GroupChatWorkflowBuilder(Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) =>
+            this._managerFactory = managerFactory;
+
+        /// <summary>
+        /// Adds the specified <paramref name="agents"/> as participants to the group chat workflow.
+        /// </summary>
+        /// <param name="agents">The agents to add as participants.</param>
+        /// <returns>This instance of the <see cref="GroupChatWorkflowBuilder"/>.</returns>
+        public GroupChatWorkflowBuilder AddParticipants(params IEnumerable<AIAgent> agents)
+        {
+            Throw.IfNull(agents);
+
+            foreach (var agent in agents)
+            {
+                if (agent is null)
+                {
+                    Throw.ArgumentNullException(nameof(agents), "One or more target agents are null.");
+                }
+
+                this._participants.Add(agent);
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Builds a <see cref="Workflow{T}"/> composed of agents that operate via group chat, with the next
+        /// agent to process messages selected by the group chat manager.
+        /// </summary>
+        /// <returns>The workflow built based on the group chat in the builder.</returns>
+        public Workflow<List<ChatMessage>> Build()
+        {
+            AIAgent[] agents = this._participants.ToArray();
+            Dictionary<AIAgent, ExecutorIsh> agentMap = agents.ToDictionary(a => a, a => (ExecutorIsh)new AgentRunStreamingExecutor(a, includeInputInOutput: true));
+
+            GroupChatHost host = new(agents, agentMap, this._managerFactory);
+
+            WorkflowBuilder builder = new(host);
+
+            foreach (var participant in agentMap.Values)
+            {
+                builder
+                    .AddEdge(host, participant)
+                    .AddEdge(participant, host);
+            }
+
+            return builder.Build<List<ChatMessage>>();
+        }
+
+        private sealed class GroupChatHost(AIAgent[] agents, Dictionary<AIAgent, ExecutorIsh> agentMap, Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) : Executor
+        {
+            private readonly AIAgent[] _agents = agents;
+            private readonly Dictionary<AIAgent, ExecutorIsh> _agentMap = agentMap;
+            private readonly Func<IReadOnlyList<AIAgent>, GroupChatManager> _managerFactory = managerFactory;
+            private readonly List<ChatMessage> _pendingMessages = [];
+
+            private GroupChatManager? _manager;
+
+            protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder
+                .AddHandler<string>((message, context) => this._pendingMessages.Add(new(ChatRole.User, message)))
+                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
+                .AddHandler<IEnumerable<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
+                .AddHandler<ChatMessage[]>((messages, _) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<TurnToken>(async (token, context) =>
+                {
+                    List<ChatMessage> messages = [.. this._pendingMessages];
+                    this._pendingMessages.Clear();
+
+                    this._manager ??= this._managerFactory(this._agents);
+
+                    if (!await this._manager.ShouldTerminateAsync(messages).ConfigureAwait(false))
+                    {
+                        var filtered = await this._manager.UpdateHistoryAsync(messages).ConfigureAwait(false);
+                        messages = filtered is null || ReferenceEquals(filtered, messages) ? messages : [.. filtered];
+
+                        if (await this._manager.SelectNextAgentAsync(messages).ConfigureAwait(false) is AIAgent nextAgent &&
+                            this._agentMap.TryGetValue(nextAgent, out var executor))
+                        {
+                            this._manager.IterationCount++;
+                            await context.SendMessageAsync(messages, executor.Id).ConfigureAwait(false);
+                            await context.SendMessageAsync(token, executor.Id).ConfigureAwait(false);
+                            return;
+                        }
+                    }
+
+                    this._manager = null;
+                    await context.AddEventAsync(new WorkflowCompletedEvent(messages)).ConfigureAwait(false);
+                });
+        }
+    }
+
+    /// <summary>
+    /// Iterates through <paramref name="messages"/> looking for <see cref="ChatRole.Assistant"/> messages and swapping
+    /// any that have a different <see cref="ChatMessage.AuthorName"/> from <paramref name="targetAgentName"/> to <see cref="ChatRole.User"/>.
+    /// </summary>
+    private static List<ChatMessage>? ChangeAssistantToUserForOtherParticipants(string targetAgentName, List<ChatMessage> messages)
+    {
+        List<ChatMessage>? roleChanged = null;
+        foreach (var m in messages)
+        {
+            if (m.Role == ChatRole.Assistant &&
+                m.AuthorName != targetAgentName &&
+                m.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
+            {
+                m.Role = ChatRole.User;
+                (roleChanged ??= []).Add(m);
+            }
+        }
+
+        return roleChanged;
+    }
+
+    /// <summary>
+    /// Undoes changes made by <see cref="ChangeAssistantToUserForOtherParticipants(string, List{ChatMessage})"/>
+    /// when passed the list of changes made by that method.
+    /// </summary>
+    private static void ResetUserToAssistantForChangedRoles(List<ChatMessage>? roleChanged)
+    {
+        if (roleChanged is not null)
+        {
+            foreach (var m in roleChanged)
+            {
+                m.Role = ChatRole.Assistant;
+            }
+        }
+    }
+
+    /// <summary>Derives from an agent a unique but also hopefully descriptive name that can be used as an executor's name or in a function name.</summary>
+    private static string GetDescriptiveIdFromAgent(AIAgent agent)
+    {
+        string id = string.IsNullOrEmpty(agent.Name) ? agent.Id : $"{agent.Name}_{agent.Id}";
+        return InvalidNameCharsRegex().Replace(id, "_");
+    }
+
+    /// <summary>Regex that flags any character other than ASCII digits or letters or the underscore.</summary>
 #if NET
-            RandomNumberGenerator.GetString("abcdefghijklmnopqrstuvwxyz0123456789", 24);
+    [GeneratedRegex("[^0-9A-Za-z_]+")]
+    private static partial Regex InvalidNameCharsRegex();
 #else
-            Guid.NewGuid().ToString("N");
+    private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
+    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z_]+", RegexOptions.Compiled);
 #endif
+
+    private sealed class AIAgentIDEqualityComparer : IEqualityComparer<AIAgent>
+    {
+        public static AIAgentIDEqualityComparer Instance { get; } = new();
+        public bool Equals(AIAgent? x, AIAgent? y) => x?.Id == y?.Id;
+        public int GetHashCode([DisallowNull] AIAgent obj) => obj?.GetHashCode() ?? 0;
     }
 }

@@ -76,10 +76,10 @@ public class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="IChatMessageStore"/>
+    /// Gets or sets a factory function to create an instance of <see cref="ChatMessageStore"/>
     /// which will be used to store chat messages for this agent.
     /// </summary>
-    public Func<ChatMessageStoreFactoryContext, IChatMessageStore>? ChatMessageStoreFactory { get; set; }
+    public Func<ChatMessageStoreFactoryContext, ChatMessageStore>? ChatMessageStoreFactory { get; set; }
 
     /// <summary>
     /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
@@ -135,14 +135,14 @@ public class ChatClientAgentOptions
     }
 
     /// <summary>
-    /// Context object passed to the <see cref="ChatMessageStoreFactory"/> to create a new instance of <see cref="IChatMessageStore"/>.
+    /// Context object passed to the <see cref="ChatMessageStoreFactory"/> to create a new instance of <see cref="ChatMessageStore"/>.
     /// </summary>
     public class ChatMessageStoreFactoryContext
     {
         /// <summary>
         /// Gets or sets the serialized state of the chat message store, if any.
         /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="IChatMessageStore"/> is first created.</value>
+        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatMessageStore"/> is first created.</value>
         public JsonElement SerializedState { get; set; }
 
         /// <summary>

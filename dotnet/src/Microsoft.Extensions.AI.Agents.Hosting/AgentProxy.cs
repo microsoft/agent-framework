@@ -135,7 +135,7 @@ public sealed class AgentProxy : AIAgent
             Messages = newMessages
         };
 
-        string messageId = newMessages.LastOrDefault()?.MessageId ?? Guid.NewGuid().ToString();
+        string messageId = newMessages.LastOrDefault()?.MessageId ?? Guid.NewGuid().ToString("N");
         ActorRequest actorRequest = new(
             actorId: new ActorId(this.Name, threadId),
             messageId,
