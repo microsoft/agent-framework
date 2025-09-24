@@ -79,7 +79,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InvokeAzureAgentTemplate.tt"
 
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true);
-        EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend" /* %%% TODO: defaultValue: true */); 
+        EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
         EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
         EvaluateValueExpression<ChatMessage[]>(this.Model.Input?.Messages, "inputMessages");
             
@@ -105,7 +105,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\InvokeAzureAgentTemplate.tt"
 
-        AssignVariable(this.Messages, "agentRunResponse.Messages"); 
+        AssignVariable(this.Messages, "agentResponse.Messages"); 
             
             #line default
             #line hidden
@@ -198,7 +198,7 @@ this.Write("\n        ");
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 
-void EvaluateBoolExpression(BoolExpression expression, string targetVariable)
+void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bool defaultValue = false)
 {
     if (expression is null)
     {
@@ -221,7 +221,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write(" = false;");
+this.Write(" = ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatBoolValue(defaultValue)));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(";");
 
         
         #line default
@@ -258,7 +272,7 @@ this.Write(" = ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatBoolValue(expression.LiteralValue)));
 
         
         #line default

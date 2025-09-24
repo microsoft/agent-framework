@@ -10,7 +10,8 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
-internal static class ChatMessageExtensions
+#pragma warning disable CS1591 // Missing XML comment for publicly visible type or member
+public static class ChatMessageExtensions // %%% REVERT SCOPE: internal
 {
     public static RecordValue ToRecord(this ChatMessage message) =>
         FormulaValue.NewRecordFromFields(message.GetMessageFields());

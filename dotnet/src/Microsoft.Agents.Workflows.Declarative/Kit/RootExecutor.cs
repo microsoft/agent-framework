@@ -45,12 +45,13 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
-        await this.ExecuteAsync(message, new DeclarativeWorkflowContext(context, this._state), cancellationToken: default).ConfigureAwait(false);
+        DeclarativeWorkflowContext declarativeContext = new(context, this._state);
+        await this.ExecuteAsync(message, declarativeContext, cancellationToken: default).ConfigureAwait(false);
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
-        await context.SetLastMessageAsync(input).ConfigureAwait(false);
+        await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
-        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
+        await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 
     /// <summary>

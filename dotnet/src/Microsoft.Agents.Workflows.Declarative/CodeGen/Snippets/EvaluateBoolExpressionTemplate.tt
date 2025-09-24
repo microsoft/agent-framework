@@ -1,13 +1,13 @@
 ﻿<#+
-void EvaluateBoolExpression(BoolExpression expression, string targetVariable)
+void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bool defaultValue = false)
 {
     if (expression is null)
     {#>
-        bool <#= targetVariable #> = false;<#+ 
+        bool <#= targetVariable #> = <#= FormatBoolValue(defaultValue) #>;<#+ 
     }
     else if (expression.IsLiteral)
     {#>
-        bool <#= targetVariable #> = <#= expression.LiteralValue #>;<#+ 
+        bool <#= targetVariable #> = <#= FormatBoolValue(expression.LiteralValue) #>;<#+ 
     }
     else if (expression.IsVariableReference)
     {#>

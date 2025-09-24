@@ -30,6 +30,9 @@ internal abstract class CodeTemplate
     public static string VariableName(PropertyPath path) => Throw.IfNull(path.VariableName);
     public static string VariableScope(PropertyPath path) => Throw.IfNull(path.VariableScopeName);
 
+    public static string FormatBoolValue(bool? value, bool defaultValue = false) =>
+        value ?? defaultValue ? "true" : "false";
+
     public static string FormatStringValue(string? value)
     {
         if (value is null)
@@ -74,7 +77,7 @@ internal abstract class CodeTemplate
         value switch
         {
             BlankDataValue => "null",
-            BooleanDataValue booleanValue => $"{booleanValue.Value}",
+            BooleanDataValue booleanValue => FormatBoolValue(booleanValue.Value),
             FloatDataValue decimalValue => $"{decimalValue.Value}",
             NumberDataValue numberValue => $"{numberValue.Value}",
             DateDataValue dateValue => $"new DateTime({dateValue.Value.Ticks}, DateTimeKind.{dateValue.Value.Kind})",

@@ -29,7 +29,7 @@ namespace Demo.DeclarativeCode;
 /// To learn more about Power FX, see:
 /// https://learn.microsoft.com/power-platform/power-fx/formula-reference-copilot-studio
 /// </remarks>
-public static class SampleWorkflowProvider
+public static class MarketingWorkflowProvider
 {
     /// <summary>
     /// The root executor for a declarative workflow.

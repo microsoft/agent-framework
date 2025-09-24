@@ -18,7 +18,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         }
         <#
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true);
-        EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend" /* %%% TODO: defaultValue: true */); 
+        EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
         EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
         EvaluateValueExpression<ChatMessage[]>(this.Model.Input?.Messages, "inputMessages");#>
         
@@ -37,7 +37,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
         <#
-        AssignVariable(this.Messages, "agentRunResponse.Messages"); #>
+        AssignVariable(this.Messages, "agentResponse.Messages"); #>
         return default;
     }
 }
