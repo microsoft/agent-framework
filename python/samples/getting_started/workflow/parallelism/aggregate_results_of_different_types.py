@@ -2,9 +2,9 @@
 
 import asyncio
 import random
-from typing import Never
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, handler
+from typing_extensions import Never
 
 """
 Sample: Concurrent fan out and fan in with two different tasks that output results of different types.
