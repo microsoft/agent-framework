@@ -8,7 +8,7 @@ namespace Azure.AI.Agents.Persistent;
 /// <summary>
 /// Provides extension methods for working with <see cref="Response{PersistentAgent}"/>.
 /// </summary>
-internal static class PersistentAgentResponseExtensions
+public static class PersistentAgentResponseExtensions
 {
     /// <summary>
     /// Converts a response containing persistent agent metadata into a runnable agent instance.
