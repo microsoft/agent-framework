@@ -347,6 +347,9 @@ class ObservabilitySettings(AFBaseSettings):
                     (Env var APPLICATIONINSIGHTS_LIVE_METRICS)
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
                     (Env var OTLP_ENDPOINT)
+        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are listening on.
+                    Default is None.
+                    (Env var VS_CODE_EXTENSION_PORT)
     """
 
     env_prefix: ClassVar[str] = ""
@@ -356,6 +359,7 @@ class ObservabilitySettings(AFBaseSettings):
     applicationinsights_connection_string: str | list[str] | None = None
     applicationinsights_live_metrics: bool = False
     otlp_endpoint: str | list[str] | None = None
+    vs_code_extension_port: int | None = None
     _resource: "Resource" = PrivateAttr(default_factory=_create_resource)
     _executed_setup: bool = PrivateAttr(default=False)
 
@@ -390,7 +394,7 @@ class ObservabilitySettings(AFBaseSettings):
         """Set the resource."""
         self._resource = value
 
-    def configure(
+    def _configure(
         self,
         credential: "TokenCredential | None" = None,
         additional_exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
@@ -599,33 +603,43 @@ def setup_observability(
     credential: "TokenCredential | None" = None,
     enable_live_metrics: bool | None = None,
     exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
+    vs_code_extension_port: int | None = None,
 ) -> None:
     """Convenient method to setup observability for the application.
 
     This method will create the exporters and the providers for the application,
-    based on the provided values and the environment variables. Call this method
-    once during application startup, before any telemetry is captured.
+    based on the provided values and the environment variables.
 
-    If you have configured the providers manually, calling this method may override
+    Call this method once during application startup, before any telemetry is captured.
+    DO NOT call this method multiple times, as it may lead to unexpected behavior.
+
+    If you have configured the providers manually, calling this method will override
     your configuration.
 
-    All of these values can be set through environment variables or you can pass them here,
-    in the case where both are present, the provided value takes precedence.
-
-    If you have both connection_string and otlp_endpoint, the connection_string will be used.
+    The OTel endpoint and the Application Insights connection string can be set through
+    environment variables or you can pass additional ones here. In the case where both
+    are present, non-duplicate values will be added.
 
     Args:
-        enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
+        enable_sensitive_data: Enable OpenTelemetry sensitive events.
+            If set, this will override the value set through the environment variable.
+            Default is None.
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
             Will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
         applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
             Will be used to create AzureMonitorExporters.
         credential: The credential to use for Azure Monitor Entra ID authentication.
             Default is None.
-        enable_live_metrics: Enable Azure Monitor live metrics. Default is False.
-        exporters: a list of exporters, for logs, metrics or spans, or any combination,
-            these will be added directly, and allows you to customize the spans completely
-
+        enable_live_metrics: Enable Azure Monitor live metrics.
+            If set, this will override the value set through the environment variable.
+            Default is None.
+        exporters: A list of exporters, for logs, metrics or spans, or any combination,
+            these will be added directly, and allows you to customize the spans completely.
+        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are
+            listening on. When this is set, additional OTEL exporters will be created with endpoint
+            `http://localhost:{vs_code_extension_port}` unless this endpoint is already configured.
+            This will override the value set through the environment variable.
+            Default is None.
     """
     global OBSERVABILITY_SETTINGS
     # Update the observability settings with the provided values
@@ -634,38 +648,42 @@ def setup_observability(
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
     if enable_live_metrics is not None:
         OBSERVABILITY_SETTINGS.applicationinsights_live_metrics = enable_live_metrics
-    # Run the initial setup, which will create the providers, and add env setting exporters
-    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
-    if OBSERVABILITY_SETTINGS.ENABLED and (otlp_endpoint or applicationinsights_connection_string or exporters):
-        # create the exporters, after checking if they are already configured through the env.
-        new_exporters = exporters or []
-        if otlp_endpoint:
-            if isinstance(otlp_endpoint, str):
-                otlp_endpoint = [otlp_endpoint]
-            new_exporters.extend(
-                _get_otlp_exporters(
-                    endpoints=[
-                        endpoint
-                        for endpoint in otlp_endpoint
-                        if not OBSERVABILITY_SETTINGS.check_endpoint_already_configured(endpoint)
-                    ]
-                )
-            )
-        if applicationinsights_connection_string:
-            if isinstance(applicationinsights_connection_string, str):
-                applicationinsights_connection_string = [applicationinsights_connection_string]
-            new_exporters.extend(
-                _get_azure_monitor_exporters(
-                    connection_strings=[
-                        conn_str
-                        for conn_str in applicationinsights_connection_string
-                        if not OBSERVABILITY_SETTINGS.check_connection_string_already_configured(conn_str)
-                    ],
-                    credential=credential,
-                )
-            )
+    if vs_code_extension_port is not None:
+        OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
 
-    OBSERVABILITY_SETTINGS.configure(credential=credential, additional_exporters=new_exporters)
+    # Create exporters, after checking if they are already configured through the env.
+    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = exporters or []
+    if otlp_endpoint:
+        if isinstance(otlp_endpoint, str):
+            otlp_endpoint = [otlp_endpoint]
+        new_exporters.extend(
+            _get_otlp_exporters(
+                endpoints=[
+                    endpoint
+                    for endpoint in otlp_endpoint
+                    if not OBSERVABILITY_SETTINGS.check_endpoint_already_configured(endpoint)
+                ]
+            )
+        )
+    if applicationinsights_connection_string:
+        if isinstance(applicationinsights_connection_string, str):
+            applicationinsights_connection_string = [applicationinsights_connection_string]
+        new_exporters.extend(
+            _get_azure_monitor_exporters(
+                connection_strings=[
+                    conn_str
+                    for conn_str in applicationinsights_connection_string
+                    if not OBSERVABILITY_SETTINGS.check_connection_string_already_configured(conn_str)
+                ],
+                credential=credential,
+            )
+        )
+    if OBSERVABILITY_SETTINGS.vs_code_extension_port:
+        endpoint = f"http://localhost:{OBSERVABILITY_SETTINGS.vs_code_extension_port}"
+        if OBSERVABILITY_SETTINGS.check_endpoint_already_configured(endpoint):
+            new_exporters.extend(_get_otlp_exporters(endpoints=[endpoint]))
+
+    OBSERVABILITY_SETTINGS._configure(credential=credential, additional_exporters=new_exporters)  # pyright: ignore[reportPrivateUsage]
 
 
 # region Chat Client Telemetry
