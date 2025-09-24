@@ -30,15 +30,15 @@ Prerequisites:
 
 Key architectural principles:
 1. Specialized interceptors: Each parent executor handles only specific request types
-2. Type-based routing: ResourceCache handles ResourceRequest, PolicyEngine handles PolicyCheckRequest
-3. Selective handling: Each interceptor checks the request type and ignores others
+2. Type-based routing: ResourceCache handles SubWorkflowRequestInfo[ResourceRequest], PolicyEngine handles SubWorkflowRequestInfo[PolicyCheckRequest]
+3. Automatic type filtering: Each interceptor only receives requests with matching typed data
 4. Fallback forwarding: Unhandled requests are forwarded to external services
 
 The example simulates a resource allocation system where:
 - Sub-workflow makes mixed requests for resources (CPU, memory) and policy checks
 - ResourceCache executor intercepts ResourceRequest messages, serves from cache or forwards
 - PolicyEngine executor intercepts PolicyCheckRequest messages, applies rules or forwards
-- Each interceptor uses @handler(SubWorkflowRequestInfo) and filters by inner request type
+- Each interceptor uses typed @handler(SubWorkflowRequestInfo[SpecificRequestType]) for automatic filtering
 
 Flow visualization:
 
@@ -49,13 +49,13 @@ Flow visualization:
     [ Sub-workflow: WorkflowExecutor(ResourceRequester) ]
       |
       |  Emits SubWorkflowRequestInfo wrapping different inner types:
-      |     - SubWorkflowRequestInfo(ResourceRequest)
-      |     - SubWorkflowRequestInfo(PolicyCheckRequest)
+      |     - SubWorkflowRequestInfo[ResourceRequest]
+      |     - SubWorkflowRequestInfo[PolicyCheckRequest]
       v
   Parent workflow routes to specialized handlers:
       |                                    |
       | ResourceCache.handle_sub_workflow_request | PolicyEngine.handle_sub_workflow_request
-      | (only handles ResourceRequest)           | (only handles PolicyCheckRequest)
+      | (@handler SubWorkflowRequestInfo[ResourceRequest])           | (@handler SubWorkflowRequestInfo[PolicyCheckRequest])
       v                                    v
   Cache hit/miss decision              Policy allow/deny decision
       |                                    |
@@ -192,9 +192,9 @@ class ResourceRequester(Executor):
         return self._request_count == 0
 
 
-# 3. Implement the Resource Cache - ONLY intercepts ResourceRequest
+# 3. Implement the Resource Cache - Uses typed handler for SubWorkflowRequestInfo[ResourceRequest]
 class ResourceCache(Executor):
-    """Interceptor that handles RESOURCE requests from cache."""
+    """Interceptor that handles RESOURCE requests from cache using typed routing."""
 
     # Use class attributes to avoid Pydantic assignment restrictions
     cache: dict[str, int] = {"cpu": 10, "memory": 50, "disk": 100}
@@ -206,13 +206,9 @@ class ResourceCache(Executor):
 
     @handler
     async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+        self, request: SubWorkflowRequestInfo[ResourceRequest], ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[ResourceRequest]]
     ) -> None:
         """Handle RESOURCE requests from sub-workflows and check cache first."""
-        # Only handle ResourceRequest types
-        if not isinstance(request.data, ResourceRequest):
-            return
-
         resource_request = request.data
         print(f"🏪 CACHE interceptor checking: {resource_request.amount} {resource_request.resource_type}")
 
@@ -248,9 +244,9 @@ class ResourceCache(Executor):
             )
 
 
-# 4. Implement the Policy Engine - ONLY intercepts PolicyCheckRequest (different type!)
+# 4. Implement the Policy Engine - Uses typed handler for SubWorkflowRequestInfo[PolicyCheckRequest]
 class PolicyEngine(Executor):
-    """Interceptor that handles POLICY requests."""
+    """Interceptor that handles POLICY requests using typed routing."""
 
     # Use class attributes for simple sample state
     quota: dict[str, int] = {
@@ -266,13 +262,9 @@ class PolicyEngine(Executor):
 
     @handler
     async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+        self, request: SubWorkflowRequestInfo[PolicyCheckRequest], ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[PolicyCheckRequest]]
     ) -> None:
         """Handle POLICY requests from sub-workflows and apply rules."""
-        # Only handle PolicyCheckRequest types
-        if not isinstance(request.data, PolicyCheckRequest):
-            return
-
         policy_request = request.data
         print(f"🛡️  POLICY interceptor checking: {policy_request.amount} {policy_request.resource_type}, policy={policy_request.policy_type}")
 
@@ -352,7 +344,7 @@ async def main() -> None:
     # Create a simple coordinator that starts the process
     coordinator = Coordinator()
 
-    # PROPER PATTERN: Each executor handles DIFFERENT request types via SubWorkflowRequestInfo
+    # TYPED ROUTING: Each executor handles specific typed SubWorkflowRequestInfo messages
     main_workflow = (
         WorkflowBuilder()
         .set_start_executor(coordinator)

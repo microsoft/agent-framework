@@ -104,23 +104,20 @@ class ParentOrchestrator(Executor):
 
     @handler
     async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+        self,
+        request: SubWorkflowRequestInfo[DomainCheckRequest],
+        ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo],
     ) -> None:
         """Handle requests from sub-workflows."""
-        # Check if this is a domain check request we can handle
-        if isinstance(request.data, DomainCheckRequest):
-            domain_request = request.data
+        domain_request = request.data
 
-            # Check if we know this domain
-            if domain_request.domain in self.approved_domains:
-                # Send response back to sub-workflow
-                response = SubWorkflowResponse(request_id=request.request_id, data=True)
-                await ctx.send_message(response, target_id=request.workflow_executor_id)
-            else:
-                # We don't know this domain, forward to external (preserve SubWorkflowRequestInfo wrapper)
-                await ctx.send_message(request)
+        # Check if we know this domain
+        if domain_request.domain in self.approved_domains:
+            # Send response back to sub-workflow
+            response = SubWorkflowResponse(request_id=request.request_id, data=True)
+            await ctx.send_message(response, target_id=request.workflow_executor_id)
         else:
-            # Forward other request types to external handler (preserve SubWorkflowRequestInfo wrapper)
+            # We don't know this domain, forward to external (preserve SubWorkflowRequestInfo wrapper)
             await ctx.send_message(request)
 
     @handler
@@ -274,24 +271,19 @@ async def test_conditional_forwarding() -> None:
 
         @handler
         async def handle_sub_workflow_request(
-            self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+            self,
+            request: SubWorkflowRequestInfo[DomainCheckRequest],
+            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]],
         ) -> None:
             """Handle requests from sub-workflows."""
-            # Check if this is a domain check request we can handle
-            if isinstance(request.data, DomainCheckRequest):
-                domain_request = request.data
+            domain_request = request.data
 
-                if domain_request.domain in self.cache:
-                    # Return cached result
-                    response = SubWorkflowResponse(
-                        request_id=request.request_id, data=self.cache[domain_request.domain]
-                    )
-                    await ctx.send_message(response, target_id=request.workflow_executor_id)
-                else:
-                    # Not in cache, forward to external
-                    await ctx.send_message(request)
+            if domain_request.domain in self.cache:
+                # Return cached result
+                response = SubWorkflowResponse(request_id=request.request_id, data=self.cache[domain_request.domain])
+                await ctx.send_message(response, target_id=request.workflow_executor_id)
             else:
-                # Forward other request types to external handler
+                # Not in cache, forward to external
                 await ctx.send_message(request)
 
         @handler
@@ -361,33 +353,30 @@ async def test_workflow_scoped_interception() -> None:
 
         @handler
         async def handle_sub_workflow_request(
-            self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+            self,
+            request: SubWorkflowRequestInfo[DomainCheckRequest],
+            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]],
         ) -> None:
-            """Handle requests from sub-workflows with different rules based on source."""
-            if isinstance(request.data, DomainCheckRequest):
-                domain_request = request.data
+            domain_request = request.data
 
-                if request.workflow_executor_id == "workflow_a":
-                    # Strict rules for workflow A
-                    if domain_request.domain == "strict.com":
-                        response = SubWorkflowResponse(request_id=request.request_id, data=True)
-                        await ctx.send_message(response, target_id=request.workflow_executor_id)
-                    else:
-                        # Forward to external
-                        await ctx.send_message(request)
-                elif request.workflow_executor_id == "workflow_b":
-                    # Lenient rules for workflow B
-                    if domain_request.domain.endswith(".com"):
-                        response = SubWorkflowResponse(request_id=request.request_id, data=True)
-                        await ctx.send_message(response, target_id=request.workflow_executor_id)
-                    else:
-                        # Forward to external
-                        await ctx.send_message(request)
+            if request.workflow_executor_id == "workflow_a":
+                # Strict rules for workflow A
+                if domain_request.domain == "strict.com":
+                    response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                    await ctx.send_message(response, target_id=request.workflow_executor_id)
                 else:
-                    # Unknown source, forward to external
+                    # Forward to external
+                    await ctx.send_message(request)
+            elif request.workflow_executor_id == "workflow_b":
+                # Lenient rules for workflow B
+                if domain_request.domain.endswith(".com"):
+                    response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                    await ctx.send_message(response, target_id=request.workflow_executor_id)
+                else:
+                    # Forward to external
                     await ctx.send_message(request)
             else:
-                # Forward other request types to external handler
+                # Unknown source, forward to external
                 await ctx.send_message(request)
 
         @handler

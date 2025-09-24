@@ -48,13 +48,13 @@ Prerequisites:
 
 Simple flow visualization:
 
-  Parent Orchestrator (handles SubWorkflowRequestInfo)
+  Parent Orchestrator (handles SubWorkflowRequestInfo[DomainCheckRequest])
       |
       |  EmailValidationRequest(email) x3 (concurrent)
       v
     [ Sub-workflow: WorkflowExecutor(EmailValidator) ]
       |
-      |  SubWorkflowRequestInfo(DomainCheckRequest(domain)) with request_id correlation
+      |  SubWorkflowRequestInfo[DomainCheckRequest](domain) with request_id correlation
       v
   Interception? yes -> handled locally with SubWorkflowResponse(data=True)
                no  -> forwarded to RequestInfoExecutor -> external service
@@ -92,7 +92,7 @@ class ValidationResult:
 class EmailValidator(Executor):
     """Validates email addresses - doesn't know it's in a sub-workflow."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the EmailValidator executor."""
         super().__init__(id="email_validator")
         # Use a dict to track multiple pending emails by request_id
@@ -182,28 +182,23 @@ class SmartEmailOrchestrator(Executor):
 
     @handler
     async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+        self, request: SubWorkflowRequestInfo[DomainCheckRequest], ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]]
     ) -> None:
         """Handle requests from sub-workflows."""
-        # Check if this is a domain check request we can handle
-        if isinstance(request.data, DomainCheckRequest):
-            domain_request = request.data
-            print(f"🔍 Parent intercepting domain check for: {domain_request.domain}")
+        domain_request = request.data
+        print(f"🔍 Parent intercepting domain check for: {domain_request.domain}")
 
-            if domain_request.domain in self.approved_domains:
-                print(f"✅ Domain '{domain_request.domain}' is pre-approved locally!")
-                # Send response back to sub-workflow
-                response = SubWorkflowResponse(
-                    request_id=request.request_id,
-                    data=True
-                )
-                await ctx.send_message(response, target_id=request.workflow_executor_id)
-            else:
-                print(f"❓ Domain '{domain_request.domain}' unknown, forwarding to external service...")
-                # Forward to external handler (preserve SubWorkflowRequestInfo wrapper)
-                await ctx.send_message(request)
+        if domain_request.domain in self.approved_domains:
+            print(f"✅ Domain '{domain_request.domain}' is pre-approved locally!")
+            # Send response back to sub-workflow
+            response = SubWorkflowResponse(
+                request_id=request.request_id,
+                data=True
+            )
+            await ctx.send_message(response, target_id=request.workflow_executor_id)
         else:
-            # Forward other request types to external handler (preserve SubWorkflowRequestInfo wrapper)
+            print(f"❓ Domain '{domain_request.domain}' unknown, forwarding to external service...")
+            # Forward to external handler (preserve SubWorkflowRequestInfo wrapper)
             await ctx.send_message(request)
 
     @handler

@@ -145,7 +145,22 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
                 return False
         return True
 
-    # Case 7: Other custom generic classes - check origin type only
+    # Case 7: target_type is SubWorkflowRequestInfo[T] - validate generic parameter
+    if origin and hasattr(origin, "__name__") and origin.__name__ == "SubWorkflowRequestInfo":
+        if not isinstance(data, origin):
+            return False
+        # Validate generic parameter for SubWorkflowRequestInfo[T]
+        if len(args) >= 1:
+            data_type = args[0]
+            # For Any type parameter, accept any data
+            if data_type is Any:
+                return True
+            # Check if the data field matches the expected type T
+            if hasattr(data, "data") and data.data is not None and not is_instance_of(data.data, data_type):
+                return False
+        return True
+
+    # Case 8: Other custom generic classes - check origin type only
     # For generic classes, we check if data is an instance of the origin type
     # We don't validate the generic parameters at runtime since that's handled by type system
     if origin and hasattr(origin, "__name__"):

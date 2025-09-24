@@ -521,7 +521,35 @@ class WorkflowGraphValidator:
                     for s_arg, t_arg in zip(source_args, target_args, strict=True)
                 )
 
-        return False
+        # Special handling for SubWorkflowRequestInfo compatibility
+        # Allow unparameterized SubWorkflowRequestInfo to be compatible with parameterized SubWorkflowRequestInfo[T]
+        # and vice versa - runtime type checking will handle the actual filtering.
+        #
+        # Specifically there are two cases:
+        #
+        # Case 1: source_type is SubWorkflowRequestInfo and target_type is SubWorkflowRequestInfo[T].
+        # This is when an executor's handler's output type is SubWorkflowRequestInfo without a type parameter.
+        # It is the case when the source executor is a WorkflowExecutor, which doesn't know the type of the
+        # sub-workflow's request at type-checking time.
+        #
+        # Case 2: source_type is SubWorkflowRequestInfo[T] and target_type is SubWorkflowRequestInfo.
+        # This is the case when the target executor is a RequestInfoExecutor, which can handle any
+        # SubWorkflowRequestInfo regardless of the type parameter.
+        return (
+            (hasattr(source_type, "__name__") and source_type.__name__ == "SubWorkflowRequestInfo")
+            and (
+                target_origin is not None
+                and hasattr(target_origin, "__name__")
+                and target_origin.__name__ == "SubWorkflowRequestInfo"
+            )
+        ) or (
+            (
+                source_origin is not None
+                and hasattr(source_origin, "__name__")
+                and source_origin.__name__ == "SubWorkflowRequestInfo"
+            )
+            and (hasattr(target_type, "__name__") and target_type.__name__ == "SubWorkflowRequestInfo")
+        )
 
     # endregion
 

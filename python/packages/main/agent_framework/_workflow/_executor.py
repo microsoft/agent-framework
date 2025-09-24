@@ -570,18 +570,21 @@ class RequestResponse(Generic[TRequest, TResponse]):
 
 
 @dataclass
-class SubWorkflowRequestInfo:
+class SubWorkflowRequestInfo(Generic[TRequest]):
     """A message type for delivering RequestInfoMessage from a sub-workflow to its parent workflow.
 
     This message type wraps requests from sub-workflows to add routing context,
     allowing parent workflows to intercept and potentially handle the request.
+
+    Type Parameters:
+        TRequest: The type of RequestInfoMessage being wrapped, must be a subclass of RequestInfoMessage.
     """
 
     request_id: str
     """The ID of the original request from the sub-workflow."""
     workflow_executor_id: str
     """The ID of the sub-workflow executor that made the request."""
-    data: RequestInfoMessage
+    data: TRequest
     """The request info message from the sub-workflow."""
 
 
