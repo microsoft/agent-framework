@@ -16,7 +16,7 @@ namespace Microsoft.Extensions.AI.Agents;
 public class ChatClientAgentThread : AgentThread
 {
     private string? _conversationId;
-    private IChatMessageStore? _messageStore;
+    private ChatMessageStore? _messageStore;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class.
@@ -30,12 +30,12 @@ public class ChatClientAgentThread : AgentThread
     /// </summary>
     /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="chatMessageStoreFactory">An optional factory function to create a custom <see cref="IChatMessageStore"/>.</param>
+    /// <param name="chatMessageStoreFactory">An optional factory function to create a custom <see cref="ChatMessageStore"/>.</param>
     /// <param name="aiContextProviderFactory">An optional factory function to create a custom <see cref="AIContextProvider"/>.</param>
     internal ChatClientAgentThread(
         JsonElement serializedThreadState,
         JsonSerializerOptions? jsonSerializerOptions = null,
-        Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = null,
+        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = null,
         Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = null)
     {
         if (serializedThreadState.ValueKind != JsonValueKind.Object)
@@ -77,7 +77,7 @@ public class ChatClientAgentThread : AgentThread
     /// <para>
     /// This property may be null in the following cases:
     /// <list type="bullet">
-    /// <item>The thread stores messages via the <see cref="IChatMessageStore"/> and not in the agent service.</item>
+    /// <item>The thread stores messages via the <see cref="ChatMessageStore"/> and not in the agent service.</item>
     /// <item>This thread object is new and a server managed thread has not yet been created in the agent service.</item>
     /// </list>
     /// </para>
@@ -110,7 +110,7 @@ public class ChatClientAgentThread : AgentThread
     }
 
     /// <summary>
-    /// Gets or sets the <see cref="IChatMessageStore"/> used by this thread, for cases where messages should be stored in a custom location.
+    /// Gets or sets the <see cref="ChatMessageStore"/> used by this thread, for cases where messages should be stored in a custom location.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -121,12 +121,12 @@ public class ChatClientAgentThread : AgentThread
     /// <para>
     /// This property may be null in the following cases:
     /// <list type="bullet">
-    /// <item>The thread stores messages in the agent service and just has an id to the remove thread, instead of in an <see cref="IChatMessageStore"/>.</item>
-    /// <item>This thread object is new it is not yet clear whether it will be backed by a server managed thread or an <see cref="IChatMessageStore"/>.</item>
+    /// <item>The thread stores messages in the agent service and just has an id to the remove thread, instead of in an <see cref="ChatMessageStore"/>.</item>
+    /// <item>This thread object is new it is not yet clear whether it will be backed by a server managed thread or an <see cref="ChatMessageStore"/>.</item>
     /// </list>
     /// </para>
     /// </remarks>
-    public IChatMessageStore? MessageStore
+    public ChatMessageStore? MessageStore
     {
         get => this._messageStore;
         internal set
@@ -179,12 +179,12 @@ public class ChatClientAgentThread : AgentThread
     }
 
     /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        return serviceType == typeof(AgentThreadMetadata) ?
-            new AgentThreadMetadata(this.ConversationId) :
-            base.GetService(serviceType, serviceKey);
-    }
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceType == typeof(AgentThreadMetadata)
+            ? new AgentThreadMetadata(this.ConversationId)
+            : base.GetService(serviceType, serviceKey)
+            ?? this.AIContextProvider?.GetService(serviceType, serviceKey)
+            ?? this.MessageStore?.GetService(serviceType, serviceKey);
 
     /// <inheritdoc />
     protected override async Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)

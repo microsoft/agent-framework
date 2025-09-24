@@ -85,6 +85,10 @@ public abstract class InMemoryAgentThread : AgentThread
         return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentThreadState)));
     }
 
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        base.GetService(serviceType, serviceKey) ?? this.MessageStore?.GetService(serviceType, serviceKey);
+
     /// <inheritdoc />
     protected internal override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
         => this.MessageStore.AddMessagesAsync(newMessages, cancellationToken);

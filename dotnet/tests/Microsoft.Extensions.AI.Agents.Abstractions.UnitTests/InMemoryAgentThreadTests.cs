@@ -131,6 +131,22 @@ public class InMemoryAgentThreadTests
 
     #endregion
 
+    #region GetService Tests
+
+    [Fact]
+    public void GetService_RequestingChatMessageStore_ReturnsChatMessageStore()
+    {
+        // Arrange
+        var thread = new TestInMemoryAgentThread();
+
+        // Act & Assert
+        Assert.NotNull(thread.GetService(typeof(ChatMessageStore)));
+        Assert.Same(thread.GetMessageStore(), thread.GetService(typeof(ChatMessageStore)));
+        Assert.Same(thread.GetMessageStore(), thread.GetService(typeof(InMemoryChatMessageStore)));
+    }
+
+    #endregion
+
     // Sealed test subclass to expose protected members for testing
     private sealed class TestInMemoryAgentThread : InMemoryAgentThread
     {

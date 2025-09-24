@@ -262,7 +262,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
+        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
             null :
             (jse, jso) => this._agentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
 

@@ -70,14 +70,17 @@ AgentThread resumedThread = agent.DeserializeThread(serializedThread);
 // Run the agent with the thread that stores conversation history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
 
+// We can access the VectorChatMessageStore via the thread's GetService method if we need to read the key under which threads are stored.
+var messageStore = resumedThread.GetService<VectorChatMessageStore>()!;
+Console.WriteLine($"\nThread is stored in vector store under key: {messageStore.ThreadDbKey}");
+
 namespace SampleApp
 {
     /// <summary>
-    /// A sample implementation of <see cref="IChatMessageStore"/> that stores chat messages in a vector store.
+    /// A sample implementation of <see cref="ChatMessageStore"/> that stores chat messages in a vector store.
     /// </summary>
-    internal sealed class VectorChatMessageStore : IChatMessageStore
+    internal sealed class VectorChatMessageStore : ChatMessageStore
     {
-        private string? _threadId;
         private readonly VectorStore _vectorStore;
 
         public VectorChatMessageStore(VectorStore vectorStore, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
@@ -87,35 +90,37 @@ namespace SampleApp
             if (serializedStoreState.ValueKind is JsonValueKind.String)
             {
                 // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
-                this._threadId = serializedStoreState.Deserialize<string>();
+                this.ThreadDbKey = serializedStoreState.Deserialize<string>();
             }
         }
 
-        public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
+        public string? ThreadDbKey { get; private set; }
+
+        public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
-            this._threadId ??= Guid.NewGuid().ToString();
+            this.ThreadDbKey ??= Guid.NewGuid().ToString();
 
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
             await collection.UpsertAsync(messages.Select(x => new ChatHistoryItem()
             {
-                Key = this._threadId + x.MessageId,
+                Key = this.ThreadDbKey + x.MessageId,
                 Timestamp = DateTimeOffset.UtcNow,
-                ThreadId = this._threadId,
+                ThreadId = this.ThreadDbKey,
                 SerializedMessage = JsonSerializer.Serialize(x),
                 MessageText = x.Text
             }), cancellationToken);
         }
 
-        public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
+        public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
         {
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
             var records = await collection
                 .GetAsync(
-                    x => x.ThreadId == this._threadId, 10,
+                    x => x.ThreadId == this.ThreadDbKey, 10,
                     new() { OrderBy = x => x.Descending(y => y.Timestamp) },
                     cancellationToken)
                 .ToListAsync(cancellationToken);
@@ -126,9 +131,9 @@ namespace SampleApp
             return messages;
         }
 
-        public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        public override ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
             // We have to serialize the thread id, so that on deserialization we can retrieve the messages using the same thread id.
-            new(JsonSerializer.SerializeToElement(this._threadId));
+            new(JsonSerializer.SerializeToElement(this.ThreadDbKey));
 
         /// <summary>
         /// The data structure used to store chat history items in the vector store.
