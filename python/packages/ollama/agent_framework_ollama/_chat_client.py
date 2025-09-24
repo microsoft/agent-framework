@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from itertools import chain
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
@@ -151,10 +152,12 @@ class OllamaChatClient(BaseChatClient):
         return options_dict
 
     def _prepare_chat_history_for_request(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
-        return [self._agent_framework_to_ollama_message(msg) for msg in messages]
+        ollama_messages = [self._agent_framework_to_ollama_message(msg) for msg in messages]
+        # Flatten the list of lists into a single list
+        return list(chain.from_iterable(ollama_messages))
 
-    def _agent_framework_to_ollama_message(self, message: ChatMessage) -> OllamaMessage:
-        MESSAGE_CONVERTERS: dict[str, Callable[[ChatMessage], OllamaMessage]] = {
+    def _agent_framework_to_ollama_message(self, message: ChatMessage) -> list[OllamaMessage]:
+        MESSAGE_CONVERTERS: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
             Role.SYSTEM.value: self._format_system_message,
             Role.USER.value: self._format_user_message,
             Role.ASSISTANT.value: self._format_assistant_message,
@@ -162,17 +165,17 @@ class OllamaChatClient(BaseChatClient):
         }
         return MESSAGE_CONVERTERS[message.role.value](message)
 
-    def _format_system_message(self, message: ChatMessage) -> OllamaMessage:
-        return OllamaMessage(role="system", content=message.text)
+    def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
+        return [OllamaMessage(role="system", content=message.text)]
 
-    def _format_user_message(self, message: ChatMessage) -> OllamaMessage:
+    def _format_user_message(self, message: ChatMessage) -> list[OllamaMessage]:
         if not any(isinstance(c, (DataContent, TextContent)) for c in message.contents) and not message.text:
             raise ServiceInvalidRequestError(
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
             )
 
         if not any(isinstance(c, DataContent) for c in message.contents):
-            return OllamaMessage(role="user", content=message.text)
+            return [OllamaMessage(role="user", content=message.text)]
 
         user_message = OllamaMessage(role="user", content=message.text)
         data_contents = [c for c in message.contents if isinstance(c, DataContent)]
@@ -180,9 +183,9 @@ class OllamaChatClient(BaseChatClient):
             if not any(c.has_top_level_media_type("image") for c in data_contents):
                 raise ServiceInvalidRequestError("Only image data content is supported for user messages in Ollama.")
             user_message["images"] = [c.uri for c in data_contents]
-        return user_message
+        return [user_message]
 
-    def _format_assistant_message(self, message: ChatMessage) -> OllamaMessage:
+    def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
         assistant_message = OllamaMessage(role="assistant", content=message.text)
 
         tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
@@ -190,6 +193,7 @@ class OllamaChatClient(BaseChatClient):
             assistant_message["tool_calls"] = [
                 {
                     "function": {
+                        "call_id": tool_call.call_id,
                         "name": tool_call.name,
                         "arguments": tool_call.arguments
                         if isinstance(tool_call.arguments, Mapping)
@@ -198,15 +202,19 @@ class OllamaChatClient(BaseChatClient):
                 }
                 for tool_call in tool_calls
             ]
-        return assistant_message
+        return [assistant_message]
 
-    def _format_tool_message(self, message: ChatMessage) -> OllamaMessage:
-        function_result_items = [item for item in message.contents if isinstance(item, FunctionResultContent)]
+    def _format_tool_message(self, message: ChatMessage) -> list[OllamaMessage]:
+        function_result_items = [
+            OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
+            for item in message.contents
+            if isinstance(item, FunctionResultContent)
+        ]
 
         if not function_result_items:
             raise ValueError("Tool message must have a function result content item.")
 
-        return OllamaMessage(role="tool", content=str(function_result_items[0].result))
+        return function_result_items
 
     def _ollama_to_agent_framework_content(self, response: OllamaChatResponse) -> list[Contents]:
         contents: list[Contents] = []
@@ -246,7 +254,7 @@ class OllamaChatClient(BaseChatClient):
         resp: list[Contents] = []
         for tool in tool_calls:
             fcc = FunctionCallContent(
-                call_id="",  # Ollama does not provide a call ID
+                call_id=tool.function.name,  # Use name of function as call ID since Ollama doesn't provide a call ID
                 name=tool.function.name,
                 arguments=tool.function.arguments if isinstance(tool.function.arguments, dict) else "",
                 raw_representation=tool.function,
