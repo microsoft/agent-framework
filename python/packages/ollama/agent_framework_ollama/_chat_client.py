@@ -39,7 +39,7 @@ class OllamaSettings(AFBaseSettings):
     env_prefix: ClassVar[str] = "OLLAMA_"
 
     host: str | None = None
-    chat_model_id: str
+    chat_model_id: str | None = None
 
 
 logger = get_logger("agent_framework.ollama")
