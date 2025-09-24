@@ -85,7 +85,7 @@ class ReviewerWithHumanInTheLoop(Executor):
         self, response: RequestResponse[HumanReviewRequest, ReviewResponse], ctx: WorkflowContext[ReviewResponse]
     ) -> None:
         # Accept the human review response and forward it back to the Worker.
-        human_response = response.response
+        human_response = response.data
         assert isinstance(human_response, ReviewResponse)
         print(f"Reviewer: Accepting human review for request {human_response.request_id[:8]}...")
         print(f"Reviewer: Human feedback: {human_response.feedback}")

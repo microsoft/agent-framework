@@ -130,7 +130,7 @@ class EmailValidator(Executor):
         ctx: WorkflowContext[ValidationResult, ValidationResult],
     ) -> None:
         """Handle domain check response from RequestInfo with correlation."""
-        approved = bool(response.response)
+        approved = bool(response.data)
         domain = (
             response.original_request.domain
             if (hasattr(response, "original_request") and response.original_request)

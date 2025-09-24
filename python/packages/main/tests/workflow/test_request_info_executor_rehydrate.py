@@ -172,7 +172,7 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
     request.request_id = "req-42"
 
     response = RequestResponse[SimpleApproval, str](
-        response="approve",
+        data="approve",
         original_request=request,
         request_id=request.request_id,
     )

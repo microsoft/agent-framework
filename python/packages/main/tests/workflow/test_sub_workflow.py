@@ -78,8 +78,8 @@ class EmailValidator(Executor):
         # Use the original email from the correlated response
         result = ValidationResult(
             email=response.original_request.email,
-            is_valid=response.response or False,
-            reason="Domain approved" if response.response else "Domain not approved",
+            is_valid=response.data or False,
+            reason="Domain approved" if response.data else "Domain not approved",
         )
         await ctx.yield_output(result)
 

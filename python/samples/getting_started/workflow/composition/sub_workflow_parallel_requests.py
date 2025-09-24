@@ -160,11 +160,11 @@ class ResourceRequester(Executor):
         ctx: WorkflowContext[Never, RequestFinished],
     ) -> None:
         """Handle resource allocation response."""
-        if response.response:
-            source_icon = "🏪" if response.response.source == "cache" else "🌐"
+        if response.data:
+            source_icon = "🏪" if response.data.source == "cache" else "🌐"
             print(
-                f"📦 {source_icon} Sub-workflow received: {response.response.allocated} {response.response.resource_type} "
-                f"from {response.response.source}"
+                f"📦 {source_icon} Sub-workflow received: {response.data.allocated} {response.data.resource_type} "
+                f"from {response.data.source}"
             )
             if self._collect_results():
                 # Yield completion result to the parent workflow.
@@ -175,11 +175,11 @@ class ResourceRequester(Executor):
         self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[Never, RequestFinished]
     ) -> None:
         """Handle policy check response."""
-        if response.response:
-            status_icon = "✅" if response.response.approved else "❌"
+        if response.data:
+            status_icon = "✅" if response.data.approved else "❌"
             print(
                 f"🛡️  {status_icon} Sub-workflow received policy response: "
-                f"{response.response.approved} - {response.response.reason}"
+                f"{response.data.approved} - {response.data.reason}"
             )
             if self._collect_results():
                 # Yield completion result to the parent workflow.
@@ -236,11 +236,11 @@ class ResourceCache(Executor):
         self, response: RequestResponse[ResourceRequest, ResourceResponse], ctx: WorkflowContext
     ) -> None:
         """Collect results from external requests that were forwarded."""
-        if response.response and response.response.source != "cache":  # Don't double-count our own results
-            self.results.append(response.response)
+        if response.data and response.data.source != "cache":  # Don't double-count our own results
+            self.results.append(response.data)
             print(
-                f"🏪 🌐 Cache received external response: {response.response.allocated} {response.response.resource_type} "
-                f"from {response.response.source}"
+                f"🏪 🌐 Cache received external response: {response.data.allocated} {response.data.resource_type} "
+                f"from {response.data.source}"
             )
 
 
@@ -295,9 +295,9 @@ class PolicyEngine(Executor):
         self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext
     ) -> None:
         """Collect policy results from external requests that were forwarded."""
-        if response.response:
-            self.results.append(response.response)
-            print(f"🛡️  🌐 Policy received external response: {response.response.approved} - {response.response.reason}")
+        if response.data:
+            self.results.append(response.data)
+            print(f"🛡️  🌐 Policy received external response: {response.data.approved} - {response.data.reason}")
 
 
 class Coordinator(Executor):

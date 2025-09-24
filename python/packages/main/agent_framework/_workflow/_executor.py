@@ -559,7 +559,7 @@ class RequestResponse(Generic[TRequest, TResponse]):
     that include the original request context for proper message routing.
     """
 
-    response: TResponse
+    data: TResponse
     """The response data returned from handling the request."""
 
     original_request: TRequest
@@ -706,7 +706,7 @@ class RequestInfoExecutor(Executor):
             if not isinstance(event.data, RequestInfoMessage):
                 raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
             correlated_response = RequestResponse(
-                response=response_data, original_request=event.data, request_id=request_id
+                data=response_data, original_request=event.data, request_id=request_id
             )
             await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 

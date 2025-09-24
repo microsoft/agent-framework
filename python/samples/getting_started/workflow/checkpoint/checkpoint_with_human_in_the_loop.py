@@ -161,7 +161,7 @@ class ReviewGateway(Executor):
     ) -> None:
         # The RequestResponse wrapper gives us both the human data and the
         # original request message, even when resuming from checkpoints.
-        reply = (feedback.response or "").strip()
+        reply = (feedback.data or "").strip()
         state = await ctx.get_state() or {}
         draft = state.get("last_draft") or (feedback.original_request.draft if feedback.original_request else "")
 
