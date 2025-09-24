@@ -122,14 +122,15 @@ class Executor(AFBaseModel):
     class ParentExecutor(Executor):
         @handler
         async def handle_sub_workflow_request(
-            self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse]
+            self,
+            request: SubWorkflowRequestInfo[DomainRequest],
+            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainRequest]],
         ) -> None:
-            if isinstance(request.data, DomainRequest):
-                if self.is_allowed(request.data.domain):
-                    response = SubWorkflowResponse(request_id=request.request_id, data=True)
-                    await ctx.send_message(response, target_id=request.workflow_executor_id)
-                else:
-                    await ctx.send_message(request)  # Forward to external
+            if self.is_allowed(request.data.domain):
+                response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                await ctx.send_message(response, target_id=request.workflow_executor_id)
+            else:
+                await ctx.send_message(request)  # Forward to external
     ```
 
     ## Context Types
@@ -354,8 +355,6 @@ class Executor(AFBaseModel):
                     if self._handlers.get(message_type) is not None:
                         raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
 
-                    # Allow any executor to handle SubWorkflowRequestInfo directly
-
                     # Get the bound method
                     bound_method = getattr(self, attr_name)
                     self._handlers[message_type] = bound_method
@@ -403,8 +402,6 @@ class Executor(AFBaseModel):
             output_types: List of output types for send_message()
             workflow_output_types: List of workflow output types for yield_output()
         """
-        # Allow any executor to handle SubWorkflowRequestInfo directly
-
         if message_type in self._handlers:
             raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
 
@@ -644,7 +641,9 @@ class RequestInfoExecutor(Executor):
     @handler
     async def handle_sub_workflow_request(
         self,
-        message: SubWorkflowRequestInfo,
+        message: SubWorkflowRequestInfo,  # type: ignore[type-arg]
+        # Ignore the type arg to allow any RequestInfoMessage subtype to be handled
+        # by this method. See _validation.py for validation logic and _typing_utils.py for runtime checks.
         ctx: WorkflowContext,
     ) -> None:
         """Handle forwarded sub-workflow request.
