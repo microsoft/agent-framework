@@ -35,6 +35,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
         }
 
         await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+
         return default;
     }
 
@@ -44,11 +45,11 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
         {
             object value = this._values[this._index];
             <# 
-            AssignVariable(this.Value, "value");
+            AssignVariable(this.Value, "value", tightFormat: true);
 
             if (this.Index is not null)
             {
-                AssignVariable(this.Index, "this._index");
+                AssignVariable(this.Index, "this._index", tightFormat: true);
             }
             #>
 
@@ -58,11 +59,11 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
 
     public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
     {<# 
-        AssignVariable(this.Value, "UnassignedValue.Instance");
+        AssignVariable(this.Value, "UnassignedValue.Instance", tightFormat: true);
 
         if (this.Index is not null)
         {
-            AssignVariable(this.Index, "UnassignedValue.Instance");
+            AssignVariable(this.Index, "UnassignedValue.Instance", tightFormat: true);
         }
       #>
     }

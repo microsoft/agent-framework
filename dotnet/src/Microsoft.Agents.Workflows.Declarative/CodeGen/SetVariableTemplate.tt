@@ -11,8 +11,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
         EvaluateValueExpression(this.Model.Value, "evaluatedValue");
-        AssignVariable(this.Variable, "evaluatedValue");
-     #>
+        AssignVariable(this.Variable, "evaluatedValue"); #>
         return default;
     }
 }

@@ -22,6 +22,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     [InlineData("EndConversation.yaml")]
     [InlineData("EndDialog.yaml")]
     [InlineData("Goto.yaml")]
+    [InlineData("InvokeAgent.yaml")]
     [InlineData("LoopBreak.yaml")]
     [InlineData("LoopContinue.yaml")]
     [InlineData("LoopEach.yaml")]
@@ -83,7 +84,11 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         using Process? buildProcess = Process.Start(startInfo);
         Assert.NotNull(buildProcess);
         buildProcess.WaitForExit();
-        this.Output.WriteLine(File.ReadAllText(Path.Combine(projectDirectory.FullName, "build.log")));
+        string logPath = Path.Combine(projectDirectory.FullName, "build.log");
+        if (File.Exists(logPath))
+        {
+            this.Output.WriteLine(File.ReadAllText(logPath));
+        }
         Assert.Equal(0, buildProcess.ExitCode);
 
         static string GetRepoFolder()

@@ -28,6 +28,7 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
         AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
         await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);<#
 } #>
+
         return default;
     }
 }

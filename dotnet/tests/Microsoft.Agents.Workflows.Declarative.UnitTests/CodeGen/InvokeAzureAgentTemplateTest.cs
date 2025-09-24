@@ -17,7 +17,7 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
             nameof(LiteralConversation),
             StringExpression.Literal("asst_123abc"),
             StringExpression.Literal("conv_123abc"),
-            "MyMessages");
+            messagesVariable: null);
     }
 
     [Fact]
@@ -80,7 +80,7 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        this.AssertGeneratedCode<AgentExecutor>(template.Id, workflowCode);
         this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
         this.AssertOptionalAssignment(model.Output?.Messages?.Path, workflowCode);
     }

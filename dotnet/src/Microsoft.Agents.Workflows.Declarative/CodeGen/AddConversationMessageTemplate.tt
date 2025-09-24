@@ -24,12 +24,8 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         int index = 0;
         foreach (AddConversationMessageContent content in this.Model.Content)
         {
-           ++index;#>
-        string contentValue<#= index #> =
-            await context.FormatTemplateAsync(
-                """<#
-                FormatMessageTemplate(content.Value); #>
-                """);<#
+           ++index;
+            EvaluateMessageTemplate(content.Value, $"contentValue{index}");
             AgentMessageContentType contentType = content.Type.Value;
             if (contentType == AgentMessageContentType.ImageUrl)
             {#>

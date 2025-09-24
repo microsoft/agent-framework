@@ -12,6 +12,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
     {<#
         EvaluateEnumExpression<VariablesToClearWrapper, string>(this.Model.Variables, "targetScopeName", TopicMap, isNullable: true); #>
         await context.QueueClearScopeAsync(targetScopeName).ConfigureAwait(false);
+
         return default;
     }
 }

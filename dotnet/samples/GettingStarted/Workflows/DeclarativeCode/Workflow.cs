@@ -9,6 +9,7 @@
 
 using System;
 using System.Collections;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
@@ -59,7 +60,31 @@ public static class WorkflowProvider
             return default;
         }
     }
+    /// <summary>
+    /// Invokes an agent to process messages and return a response within a conversation context.
+    /// </summary>
+    internal sealed class InvokeAgentExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "invoke_agent", session, agentProvider)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            string? agentName = await context.ReadStateAsync<string>(key: "MY_STUDENT", scopeName: "Env").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
+            bool autoSend = false;
+            string? additionalInstructions = null;
+            // %%% TODO: INPUT MESSAGES
 
+            AgentRunResponse agentResponse = InvokeAgentAsync(context, agentName, conversationId, autoSend, additionalInstructions, inputMessages: null, cancellationToken).ToEnumerable().ToAgentRunResponse();
+
+            if (autoSend)
+            {
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+            }
+
+
+            return default;
+        }
+    }
     /// <summary>
     /// Conditional branching similar to an if / elseif / elseif / else chain.
     /// </summary>

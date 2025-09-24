@@ -8,14 +8,9 @@
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {
-        string textValue =
-            await context.FormatTemplateAsync(
-                """<#
-                FormatMessageTemplate(this.Model.Value); #>
-                """);<# 
-        AssignVariable(this.Variable, "textValue");
-     #>
+    {<#
+        EvaluateMessageTemplate(this.Model.Value, "textValue");
+        AssignVariable(this.Variable, "textValue"); #>
         return default;
     }
 }
