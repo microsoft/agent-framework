@@ -115,7 +115,7 @@ internal sealed class AIAgentHostExecutor : Executor
 
         async ValueTask PublishCurrentMessageAsync()
         {
-            if (currentStreamingMessage is not null)
+            if (currentStreamingMessage is not null && updates.Count > 0)
             {
                 currentStreamingMessage.Contents = updates;
                 updates = [];

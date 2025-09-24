@@ -118,7 +118,7 @@ public class Run
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the workflow execution.</param>
     /// <param name="responses">An array of <see cref="ExternalResponse"/> objects to send to the workflow.</param>
     /// <returns><c>true</c> if the workflow had any output events, <c>false</c> otherwise.</returns>
-    public async ValueTask<bool> ResumeAsync(CancellationToken cancellation = default, params ExternalResponse[] responses)
+    public async ValueTask<bool> ResumeAsync(CancellationToken cancellation = default, params IEnumerable<ExternalResponse> responses)
     {
         foreach (ExternalResponse response in responses)
         {
@@ -135,9 +135,9 @@ public class Run
     /// <param name="messages">An array of messages to send to the workflow. Messages will only be sent if they are valid
     /// input types to the starting executor or a <see cref="ExternalResponse"/>.</param>
     /// <returns><c>true</c> if the workflow had any output events, <c>false</c> otherwise.</returns>
-    public async ValueTask<bool> ResumeAsync<T>(CancellationToken cancellation = default, params T[] messages)
+    public async ValueTask<bool> ResumeAsync<T>(CancellationToken cancellation = default, params IEnumerable<T> messages)
     {
-        if (messages is ExternalResponse[] responses)
+        if (messages is IEnumerable<ExternalResponse> responses)
         {
             return await this.ResumeAsync(cancellation, responses).ConfigureAwait(false);
         }

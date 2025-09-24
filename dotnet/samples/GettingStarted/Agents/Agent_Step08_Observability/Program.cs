@@ -21,7 +21,7 @@ AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
 
 // Create TracerProvider with console exporter
 // This will output the telemetry data to the console.
-string sourceName = Guid.NewGuid().ToString();
+string sourceName = Guid.NewGuid().ToString("N");
 using var tracerProvider = Sdk.CreateTracerProviderBuilder()
     .AddSource(sourceName)
     .AddConsoleExporter()

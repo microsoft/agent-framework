@@ -44,7 +44,7 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
         public IList<ChatMessage> Messages { get; set; } = [];
     }
 
-    internal void AddMessages(params ChatMessage[] messages) => this._chatMessages.AddRange(messages);
+    internal void AddMessages(params IEnumerable<ChatMessage> messages) => this._chatMessages.AddRange(messages);
 
     public override Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {

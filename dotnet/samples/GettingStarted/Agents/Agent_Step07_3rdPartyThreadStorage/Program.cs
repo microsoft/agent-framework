@@ -98,7 +98,7 @@ namespace SampleApp
 
         public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
         {
-            this.ThreadDbKey ??= Guid.NewGuid().ToString();
+            this.ThreadDbKey ??= Guid.NewGuid().ToString("N");
 
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
