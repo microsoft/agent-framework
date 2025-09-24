@@ -288,7 +288,7 @@ class Runner:
                 tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
                 if not tasks:
                     # No outgoing edges. If this is an AgentExecutorResponse, treat it as an
-                    # intentional terminal emission and emit a WorkflowCompletedEvent here.
+                    # intentional terminal emission and emit a WorkflowOutputEvent here.
                     # (Previously this relied on the executor to emit, but AgentExecutor only
                     # sends an AgentExecutorResponse message; centralized completion keeps the
                     # contract consistent with other executors.)

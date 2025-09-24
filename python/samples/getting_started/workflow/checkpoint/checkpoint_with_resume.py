@@ -39,7 +39,7 @@ Pipeline:
 2) ReverseTextExecutor reverses the string.
 3) SubmitToLowerAgent prepares an AgentExecutorRequest for the lowercasing agent.
 4) lower_agent (AgentExecutor) converts text to lowercase via Azure OpenAI.
-5) FinalizeFromAgent emits a WorkflowCompletedEvent with the final result.
+5) FinalizeFromAgent yields the final result.
 
 What you learn:
 - How to persist executor state using ctx.get_state and ctx.set_state.

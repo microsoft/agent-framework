@@ -3,7 +3,8 @@
 import asyncio
 import random
 
-from agent_framework import Executor, WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, handler
+from typing_extensions import Never
 
 """
 Sample: Concurrent fan out and fan in with two different tasks that output results of different types.
@@ -52,10 +53,10 @@ class Sum(Executor):
 
 
 class Aggregator(Executor):
-    """Aggregate the results from the different tasks and emit the `WorkflowCompletedEvent`."""
+    """Aggregate the results from the different tasks and yield the final output."""
 
     @handler
-    async def handle(self, results: list[int | float], ctx: WorkflowContext[None]):
+    async def handle(self, results: list[int | float], ctx: WorkflowContext[Never, list[int | float]]):
         """Receive the results from the source executors.
 
         The framework will automatically collect messages from the source executors
@@ -65,9 +66,9 @@ class Aggregator(Executor):
             results (list[int | float]): execution results from upstream executors.
                 The type annotation must be a list of union types that the upstream
                 executors will produce.
-            cts (WorkflowContext[None]): A workflow context.
+            ctx (WorkflowContext[Never, list[int | float]]): A workflow context that can yield the final output.
         """
-        await ctx.add_event(WorkflowCompletedEvent(data=results))
+        await ctx.yield_output(results)
 
 
 async def main() -> None:
@@ -87,13 +88,13 @@ async def main() -> None:
     )
 
     # 3) Run the workflow
-    completion: WorkflowCompletedEvent | None = None
+    output: list[int | float] | None = None
     async for event in workflow.run_stream([random.randint(1, 100) for _ in range(10)]):
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
+        if isinstance(event, WorkflowOutputEvent):
+            output = event.data
 
-    if completion is not None:
-        print(completion.data)
+    if output is not None:
+        print(output)
 
 
 if __name__ == "__main__":
