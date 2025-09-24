@@ -308,7 +308,7 @@ public class ChatClientAgentThreadTests
             new Dictionary<string, object> { ["Key"] = "TestValue" },
             TestJsonSerializerContext.Default.DictionaryStringObject);
 
-        var messageStoreMock = new Mock<IChatMessageStore>();
+        var messageStoreMock = new Mock<ChatMessageStore>();
         messageStoreMock
             .Setup(m => m.SerializeStateAsync(options, It.IsAny<CancellationToken>()))
             .ReturnsAsync(storeStateElement);
@@ -332,6 +332,45 @@ public class ChatClientAgentThreadTests
     }
 
     #endregion Serialize Tests
+
+    #region GetService Tests
+
+    [Fact]
+    public void GetService_RequestingAIContextProvider_ReturnsAIContextProvider()
+    {
+        // Arrange
+        var thread = new ChatClientAgentThread();
+        var mockProvider = new Mock<AIContextProvider>();
+        mockProvider
+            .Setup(m => m.GetService(It.Is<Type>(x => x == typeof(AIContextProvider)), null))
+            .Returns(mockProvider.Object);
+        thread.AIContextProvider = mockProvider.Object;
+
+        // Act
+        var result = thread.GetService(typeof(AIContextProvider));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(mockProvider.Object, result);
+    }
+
+    [Fact]
+    public void GetService_RequestingChatMessageStore_ReturnsChatMessageStore()
+    {
+        // Arrange
+        var thread = new ChatClientAgentThread();
+        var messageStore = new InMemoryChatMessageStore();
+        thread.MessageStore = messageStore;
+
+        // Act
+        var result = thread.GetService(typeof(ChatMessageStore));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(messageStore, result);
+    }
+
+    #endregion
 
     private sealed class MessageSendingAgent : AIAgent
     {

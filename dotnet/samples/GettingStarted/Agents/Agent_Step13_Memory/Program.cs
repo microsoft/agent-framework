@@ -62,20 +62,22 @@ Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedT
 
 Console.WriteLine("\n>> Read memories from memory component\n");
 
-// It's possible to access the memory component via the thread's AIContextProvider property.
-var userInfo = ((deserializedThread as ChatClientAgentThread)!.AIContextProvider as UserInfoMemory)!.UserInfo;
+// It's possible to access the memory component via the thread's GetService method.
+var userInfo = deserializedThread.GetService<UserInfoMemory>()?.UserInfo;
 
 // Output the user info that was captured by the memory component.
-Console.WriteLine($"MEMORY - User Name: {userInfo.UserName}");
-Console.WriteLine($"MEMORY - User Age: {userInfo.UserAge}");
+Console.WriteLine($"MEMORY - User Name: {userInfo?.UserName}");
+Console.WriteLine($"MEMORY - User Age: {userInfo?.UserAge}");
 
 Console.WriteLine("\n>> Use new thread with previously created memories\n");
 
 // It is also possible to set the memories in a memory component on an individual thread.
 // This is useful if we want to start a new thread, but have it share the same memories as a previous thread.
-// For this scenario, we have to know the underlying agent thread type and the memory component type.
 var newThread = agent.GetNewThread();
-((newThread as ChatClientAgentThread)!.AIContextProvider as UserInfoMemory)!.UserInfo = userInfo;
+if (userInfo is not null && newThread.GetService<UserInfoMemory>() is UserInfoMemory newThreadMemory)
+{
+    newThreadMemory.UserInfo = userInfo;
+}
 
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.
@@ -149,12 +151,6 @@ namespace SampleApp
         public override ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions));
-        }
-
-        public override ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        {
-            this.UserInfo = serializedState.Deserialize<UserInfo>(jsonSerializerOptions) ?? new UserInfo();
-            return default;
         }
     }
 
