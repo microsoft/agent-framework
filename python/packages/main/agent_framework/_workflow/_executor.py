@@ -1621,7 +1621,7 @@ class AgentExecutor(Executor):
     async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
         """Execute the underlying agent, emit events, and enqueue response.
 
-        Terminal detection & WorkflowCompletedEvent emission are handled centrally in Runner.
+        Terminal detection is handled centrally in Runner.
         This method only produces AgentRunEvent/AgentRunUpdateEvent plus enqueues an
         AgentExecutorResponse message for routing.
         """
