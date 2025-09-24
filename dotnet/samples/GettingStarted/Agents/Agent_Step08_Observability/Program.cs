@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend that logs telemetry using OpenTelemetry.
+// This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend that uses logs telemetry using OpenTelemetry.
 
 using System;
 using Azure.AI.OpenAI;
