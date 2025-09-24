@@ -74,7 +74,7 @@ public class LazyCosmosContainerTests
             Assert.Equal(testContainerName, container.Id);
 
             // Verify the container can perform basic operations
-            var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+            var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
             await using var storage = new CosmosActorStateStorage(lazyContainer);
 
             const string Key = "testKey";
@@ -219,7 +219,7 @@ public class LazyCosmosContainerTests
         {
             // Act - Create storage using the internal constructor (like DI would)
             await using var storage = new CosmosActorStateStorage(lazyContainer);
-            var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+            var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
             const string Key = "testKey";
             var value = JsonSerializer.SerializeToElement("testValue");

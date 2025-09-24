@@ -45,8 +45,7 @@ public abstract class ServiceIdAgentThread : AgentThread
             throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
         }
 
-        var state = JsonSerializer.Deserialize(
-            serializedThreadState,
+        var state = serializedThreadState.Deserialize(
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ServiceIdAgentThreadState))) as ServiceIdAgentThreadState;
 
         if (state?.ServiceThreadId is string serviceThreadId)

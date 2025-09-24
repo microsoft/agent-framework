@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
@@ -31,8 +30,7 @@ public class InMemoryAgentThreadTests
     public void Constructor_WithMessageStore_SetsProperty()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "Hello"));
+        InMemoryChatMessageStore store = [new(ChatRole.User, "Hello")];
 
         // Act
         var thread = new TestInMemoryAgentThread(store);
@@ -62,8 +60,7 @@ public class InMemoryAgentThreadTests
     public async Task Constructor_WithSerializedState_SetsPropertyAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "TestMsg"));
+        InMemoryChatMessageStore store = [new(ChatRole.User, "TestMsg")];
         var storeState = await store.SerializeStateAsync();
         var json = JsonSerializer.SerializeToElement(new { storeState });
 
@@ -94,9 +91,7 @@ public class InMemoryAgentThreadTests
     public async Task SerializeAsync_ReturnsCorrectJson_WhenMessagesExistAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "TestContent"));
-        var thread = new TestInMemoryAgentThread(store);
+        var thread = new TestInMemoryAgentThread([new(ChatRole.User, "TestContent")]);
 
         // Act
         var json = await thread.SerializeAsync();
@@ -150,11 +145,10 @@ public class InMemoryAgentThreadTests
     // Sealed test subclass to expose protected members for testing
     private sealed class TestInMemoryAgentThread : InMemoryAgentThread
     {
-        public TestInMemoryAgentThread() : base() { }
+        public TestInMemoryAgentThread() { }
         public TestInMemoryAgentThread(InMemoryChatMessageStore? store) : base(store) { }
         public TestInMemoryAgentThread(IEnumerable<ChatMessage> messages) : base(messages) { }
         public TestInMemoryAgentThread(JsonElement serializedThreadState) : base(serializedThreadState) { }
         public InMemoryChatMessageStore GetMessageStore() => this.MessageStore;
-        public override Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => base.SerializeAsync(jsonSerializerOptions, cancellationToken);
     }
 }
