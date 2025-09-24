@@ -2044,3 +2044,56 @@ def test_create_response_content_image_generation_fallback():
     assert isinstance(content, DataContent)
     assert content.media_type == "image/png"
     assert f"data:image/png;base64,{unrecognized_base64}" == content.uri
+
+
+def test_prepare_options_store_parameter_handling() -> None:
+    """Test that _prepare_options correctly handles the store parameter."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="Test message")]
+
+    # Test store=True
+    chat_options = ChatOptions(store=True)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is True
+
+    # Test store=False
+    chat_options = ChatOptions(store=False)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is False
+
+    # Test store=None (should default to False)
+    chat_options = ChatOptions(store=None)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is False
+
+    # Test store not set (should default to False)
+    chat_options = ChatOptions()
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is False
+
+
+def test_prepare_options_conversation_id_parameter_handling() -> None:
+    """Test that _prepare_options correctly handles the conversation_id parameter."""
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="Test message")]
+
+    # Test with conversation_id provided
+    test_conversation_id = "test-conversation-123"
+    chat_options = ChatOptions(conversation_id=test_conversation_id)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["previous_response_id"] == test_conversation_id
+
+    # Test with conversation_id=None (should not set previous_response_id)
+    chat_options = ChatOptions(conversation_id=None)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert "previous_response_id" not in options
+
+    # Test with conversation_id not set (should not set previous_response_id)
+    chat_options = ChatOptions()
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert "previous_response_id" not in options
+
+    # Test with empty string conversation_id (should not set previous_response_id)
+    chat_options = ChatOptions(conversation_id="")
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert "previous_response_id" not in options
