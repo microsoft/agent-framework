@@ -23,7 +23,7 @@ def enable_sensitive_data(request: Any) -> bool:
 
 @fixture(autouse=True)
 def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
-    """Fixture to remove environment variables for OtelSettings."""
+    """Fixture to remove environment variables for ObservabilitySettings."""
 
     env_vars = [
         "ENABLE_OTEL",
@@ -47,22 +47,29 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
     import agent_framework.observability as observability
 
     # Reload the module to ensure a clean state for tests, then create a
-    # fresh OtelSettings instance and patch the module attribute.
+    # fresh ObservabilitySettings instance and patch the module attribute.
     importlib.reload(observability)
 
     # recreate observability settings with values from above and no file.
     observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
-    observability_settings.configure()
     monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore
+
+    from agent_framework.observability import setup_observability
+
+    # Run setup_observability to create the tracer provider.
+    setup_observability()
+
     exporter = InMemorySpanExporter()
     with (
         patch("agent_framework.observability.OBSERVABILITY_SETTINGS", observability_settings),
         patch("agent_framework.observability.setup_observability"),
     ):
+        tracer_provider = trace.get_tracer_provider()
+        if not hasattr(tracer_provider, "add_span_processor"):
+            raise RuntimeError("Tracer provider does not support adding span processors.")
+
         if enable_otel or enable_sensitive_data:
-            trace.get_tracer_provider().add_span_processor(
-                SimpleSpanProcessor(exporter)  # type: ignore[func-returns-value]
-            )
+            tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))  # type: ignore
 
         yield exporter
         # Clean up
