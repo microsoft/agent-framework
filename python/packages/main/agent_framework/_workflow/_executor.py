@@ -124,10 +124,10 @@ class Executor(AFBaseModel):
         async def handle_sub_workflow_request(
             self,
             request: SubWorkflowRequestInfo[DomainRequest],
-            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainRequest]],
+            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | SubWorkflowRequestInfo[DomainRequest]],
         ) -> None:
             if self.is_allowed(request.data.domain):
-                response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                response = RequestResponse(data=True, original_request=request.data, request_id=request.request_id)
                 await ctx.send_message(response, target_id=request.workflow_executor_id)
             else:
                 await ctx.send_message(request)  # Forward to external
@@ -585,20 +585,6 @@ class SubWorkflowRequestInfo(Generic[TRequest]):
     """The request info message from the sub-workflow."""
 
 
-@dataclass
-class SubWorkflowResponse:
-    """A message type for delivering responses back to a sub-workflow that made a request.
-
-    This message type wraps the response data along with the original request ID
-    to ensure proper routing back to the sub-workflow.
-    """
-
-    request_id: str
-    """The ID of the original request from the sub-workflow."""
-    data: Any
-    """The response data to send back to the sub-workflow."""
-
-
 # endregion: Request/Response Types
 
 
@@ -670,7 +656,7 @@ class RequestInfoExecutor(Executor):
         self,
         response_data: Any,
         request_id: str,
-        ctx: WorkflowContext[SubWorkflowResponse | RequestResponse[RequestInfoMessage, Any]],
+        ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any]],
     ) -> None:
         """Handle a response to a request.
 
@@ -692,13 +678,14 @@ class RequestInfoExecutor(Executor):
             context = self._sub_workflow_contexts.pop(request_id)
 
             # Send back to sub-workflow that made the original request
-            await ctx.send_message(
-                SubWorkflowResponse(
-                    request_id=request_id,
-                    data=response_data,
-                ),
-                target_id=context["workflow_executor_id"],
+            if not isinstance(event.data, RequestInfoMessage):
+                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+            response = RequestResponse(
+                data=response_data,
+                original_request=event.data,
+                request_id=request_id,
             )
+            await ctx.send_message(response, target_id=context["workflow_executor_id"])
         else:
             # Regular response - send directly back to source
             # Create a correlated response that includes both the response data and original request

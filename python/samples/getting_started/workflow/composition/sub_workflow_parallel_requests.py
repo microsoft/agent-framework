@@ -12,7 +12,6 @@ from agent_framework import (
     RequestInfoMessage,
     RequestResponse,
     SubWorkflowRequestInfo,
-    SubWorkflowResponse,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
@@ -206,7 +205,7 @@ class ResourceCache(Executor):
 
     @handler
     async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo[ResourceRequest], ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[ResourceRequest]]
+        self, request: SubWorkflowRequestInfo[ResourceRequest], ctx: WorkflowContext[RequestResponse[ResourceRequest, Any] | SubWorkflowRequestInfo[ResourceRequest]]
     ) -> None:
         """Handle RESOURCE requests from sub-workflows and check cache first."""
         resource_request = request.data
@@ -224,7 +223,7 @@ class ResourceCache(Executor):
             self.results.append(response_data)
 
             # Send response back to sub-workflow
-            response = SubWorkflowResponse(request_id=request.request_id, data=response_data)
+            response = RequestResponse(data=response_data, original_request=request.data, request_id=request.request_id)
             await ctx.send_message(response, target_id=request.workflow_executor_id)
         else:
             # Cache miss - forward to external (preserve SubWorkflowRequestInfo wrapper)
@@ -262,7 +261,7 @@ class PolicyEngine(Executor):
 
     @handler
     async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo[PolicyCheckRequest], ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[PolicyCheckRequest]]
+        self, request: SubWorkflowRequestInfo[PolicyCheckRequest], ctx: WorkflowContext[RequestResponse[PolicyCheckRequest, Any] | SubWorkflowRequestInfo[PolicyCheckRequest]]
     ) -> None:
         """Handle POLICY requests from sub-workflows and apply rules."""
         policy_request = request.data
@@ -277,7 +276,7 @@ class PolicyEngine(Executor):
                 self.results.append(response_data)
 
                 # Send response back to sub-workflow
-                response = SubWorkflowResponse(request_id=request.request_id, data=response_data)
+                response = RequestResponse(data=response_data, original_request=request.data, request_id=request.request_id)
                 await ctx.send_message(response, target_id=request.workflow_executor_id)
                 return
 

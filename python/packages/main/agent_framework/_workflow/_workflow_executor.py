@@ -19,8 +19,8 @@ from ._executor import (
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,
+    RequestResponse,
     SubWorkflowRequestInfo,
-    SubWorkflowResponse,
     handler,
 )
 from ._typing_utils import is_instance_of
@@ -176,12 +176,14 @@ class WorkflowExecutor(Executor):
         async def handle_sub_workflow_request(
             self,
             request: SubWorkflowRequestInfo,
-            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo],
+            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | SubWorkflowRequestInfo],
         ) -> None:
             # Handle request locally or forward to external source
             if self.can_handle_locally(request.data):
                 # Send response back to sub-workflow
-                response = SubWorkflowResponse(request_id=request.request_id, data="local result")
+                response = RequestResponse(
+                    data="local result", original_request=request.data, request_id=request.request_id
+                )
                 await ctx.send_message(response, target_id=request.sub_workflow_id)
             else:
                 # Forward to external handler (preserve SubWorkflowRequestInfo wrapper)
@@ -224,9 +226,9 @@ class WorkflowExecutor(Executor):
         """
         input_types = list(self.workflow.input_types)
 
-        # WorkflowExecutor can also handle SubWorkflowResponse for sub-workflow responses
-        if SubWorkflowResponse not in input_types:
-            input_types.append(SubWorkflowResponse)
+        # WorkflowExecutor can also handle RequestResponse for sub-workflow responses
+        if RequestResponse not in input_types:
+            input_types.append(RequestResponse)
 
         return input_types
 
@@ -256,8 +258,8 @@ class WorkflowExecutor(Executor):
         This prevents the WorkflowExecutor from accepting messages that should go to other
         executors (like RequestInfoExecutor).
         """
-        # Always handle SubWorkflowResponse (for the handle_response handler)
-        if isinstance(message, SubWorkflowResponse):
+        # Always handle RequestResponse (for the handle_response handler)
+        if isinstance(message, RequestResponse):
             return True
 
         # For other messages, only handle if the wrapped workflow can accept them as input
@@ -274,8 +276,8 @@ class WorkflowExecutor(Executor):
             input_data: The input data to send to the sub-workflow.
             ctx: The workflow context from the parent.
         """
-        # Skip SubWorkflowResponse and SubWorkflowRequestInfo - they have specific handlers
-        if isinstance(input_data, (SubWorkflowResponse, SubWorkflowRequestInfo)):
+        # Skip RequestResponse and SubWorkflowRequestInfo - they have specific handlers
+        if isinstance(input_data, (RequestResponse, SubWorkflowRequestInfo)):
             logger.debug(f"WorkflowExecutor {self.id} ignoring input of type {type(input_data)}")
             return
 
@@ -403,7 +405,7 @@ class WorkflowExecutor(Executor):
     @handler
     async def handle_response(
         self,
-        response: SubWorkflowResponse,
+        response: RequestResponse[RequestInfoMessage, Any],
         ctx: WorkflowContext[Any],
     ) -> None:
         """Handle response from parent for a forwarded request.

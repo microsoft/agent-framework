@@ -12,7 +12,6 @@ from agent_framework import (
     RequestInfoMessage,
     RequestResponse,
     SubWorkflowRequestInfo,
-    SubWorkflowResponse,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -81,14 +80,16 @@ class BasicParent(Executor):
     async def handle_sub_workflow_request(
         self,
         request: SubWorkflowRequestInfo[DomainCheckRequest],
-        ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]],
+        ctx: WorkflowContext[RequestResponse[DomainCheckRequest, Any] | SubWorkflowRequestInfo[DomainCheckRequest]],
     ) -> None:
         """Handle requests from sub-workflows with optional caching."""
         domain_request = request.data
 
         if domain_request.domain in self.cache:
             # Return cached result
-            response = SubWorkflowResponse(request_id=request.request_id, data=self.cache[domain_request.domain])
+            response = RequestResponse(
+                data=self.cache[domain_request.domain], original_request=request.data, request_id=request.request_id
+            )
             await ctx.send_message(response, target_id=request.workflow_executor_id)
         else:
             # Not in cache, forward to external
@@ -159,7 +160,7 @@ class ParentOrchestrator(Executor):
     async def handle_sub_workflow_request(
         self,
         request: SubWorkflowRequestInfo[DomainCheckRequest],
-        ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo],
+        ctx: WorkflowContext[RequestResponse[DomainCheckRequest, Any] | SubWorkflowRequestInfo],
     ) -> None:
         """Handle requests from sub-workflows."""
         domain_request = request.data
@@ -167,7 +168,7 @@ class ParentOrchestrator(Executor):
         # Check if we know this domain
         if domain_request.domain in self.approved_domains:
             # Send response back to sub-workflow
-            response = SubWorkflowResponse(request_id=request.request_id, data=True)
+            response = RequestResponse(data=True, original_request=request.data, request_id=request.request_id)
             await ctx.send_message(response, target_id=request.workflow_executor_id)
         else:
             # We don't know this domain, forward to external (preserve SubWorkflowRequestInfo wrapper)
@@ -195,7 +196,7 @@ async def test_basic_sub_workflow() -> None:
         .add_edge(parent, workflow_executor)
         .add_edge(workflow_executor, parent)
         .add_edge(workflow_executor, main_request_info)
-        .add_edge(main_request_info, workflow_executor)  # CRITICAL: For SubWorkflowResponse routing
+        .add_edge(main_request_info, workflow_executor)  # CRITICAL: For RequestResponse routing
         .build()
     )
 
@@ -235,7 +236,7 @@ async def test_sub_workflow_with_interception():
         .add_edge(parent, workflow_executor)
         .add_edge(workflow_executor, parent)
         .add_edge(parent, parent_request_info)  # For forwarded requests
-        .add_edge(parent_request_info, workflow_executor)  # For SubWorkflowResponse routing
+        .add_edge(parent_request_info, workflow_executor)  # For RequestResponse routing
         .build()
     )
 
@@ -293,14 +294,14 @@ async def test_workflow_scoped_interception() -> None:
         async def handle_sub_workflow_request(
             self,
             request: SubWorkflowRequestInfo[DomainCheckRequest],
-            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]],
+            ctx: WorkflowContext[RequestResponse[DomainCheckRequest, Any] | SubWorkflowRequestInfo[DomainCheckRequest]],
         ) -> None:
             domain_request = request.data
 
             if request.workflow_executor_id == "workflow_a":
                 # Strict rules for workflow A
                 if domain_request.domain == "strict.com":
-                    response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                    response = RequestResponse(data=True, original_request=request.data, request_id=request.request_id)
                     await ctx.send_message(response, target_id=request.workflow_executor_id)
                 else:
                     # Forward to external
@@ -308,7 +309,7 @@ async def test_workflow_scoped_interception() -> None:
             elif request.workflow_executor_id == "workflow_b":
                 # Lenient rules for workflow B
                 if domain_request.domain.endswith(".com"):
-                    response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                    response = RequestResponse(data=True, original_request=request.data, request_id=request.request_id)
                     await ctx.send_message(response, target_id=request.workflow_executor_id)
                 else:
                     # Forward to external
@@ -338,8 +339,8 @@ async def test_workflow_scoped_interception() -> None:
         .add_edge(executor_a, parent)
         .add_edge(executor_b, parent)
         .add_edge(parent, parent_request_info)
-        .add_edge(parent_request_info, executor_a)  # For SubWorkflowResponse routing
-        .add_edge(parent_request_info, executor_b)  # For SubWorkflowResponse routing
+        .add_edge(parent_request_info, executor_a)  # For RequestResponse routing
+        .add_edge(parent_request_info, executor_b)  # For RequestResponse routing
         .build()
     )
 
@@ -394,7 +395,7 @@ async def test_concurrent_sub_workflow_execution() -> None:
         .add_edge(processor, workflow_executor)
         .add_edge(workflow_executor, processor)
         .add_edge(workflow_executor, parent_request_info)  # For external requests
-        .add_edge(parent_request_info, workflow_executor)  # For SubWorkflowResponse routing
+        .add_edge(parent_request_info, workflow_executor)  # For RequestResponse routing
         .build()
     )
 

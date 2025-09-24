@@ -9,7 +9,6 @@ from agent_framework import (
     RequestInfoMessage,
     RequestResponse,
     SubWorkflowRequestInfo,
-    SubWorkflowResponse,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
@@ -182,7 +181,9 @@ class SmartEmailOrchestrator(Executor):
 
     @handler
     async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo[DomainCheckRequest], ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]]
+        self, 
+        request: SubWorkflowRequestInfo[DomainCheckRequest], 
+        ctx: WorkflowContext[RequestResponse[DomainCheckRequest, bool] | SubWorkflowRequestInfo[DomainCheckRequest]]
     ) -> None:
         """Handle requests from sub-workflows."""
         domain_request = request.data
@@ -191,9 +192,10 @@ class SmartEmailOrchestrator(Executor):
         if domain_request.domain in self.approved_domains:
             print(f"✅ Domain '{domain_request.domain}' is pre-approved locally!")
             # Send response back to sub-workflow
-            response = SubWorkflowResponse(
-                request_id=request.request_id,
-                data=True
+            response = RequestResponse(
+                data=True,
+                original_request=request.data,
+                request_id=request.request_id
             )
             await ctx.send_message(response, target_id=request.workflow_executor_id)
         else:

@@ -48,7 +48,6 @@ from ._executor import (
     RequestInfoMessage,
     RequestResponse,
     SubWorkflowRequestInfo,
-    SubWorkflowResponse,
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
@@ -153,7 +152,6 @@ __all__ = [
     "SingleEdgeGroup",
     "StandardMagenticManager",
     "SubWorkflowRequestInfo",
-    "SubWorkflowResponse",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
