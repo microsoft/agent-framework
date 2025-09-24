@@ -47,7 +47,7 @@ internal static class IWorkflowContextExtensions
         await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
     }
 
-    // Ensure "System.Conversation.Id" and "System.ConversationId" are propertly initialized when referenced.
+    // Ensure "System.Conversation.Id" and "System.ConversationId" are properly initialized when referenced.
     public static async ValueTask EnsureWorkflowConversationAsync(this IWorkflowContext context, WorkflowAgentProvider agentProvider, StringExpression expression, CancellationToken cancellationToken)
     {
         if (expression.IsVariableReference &&
