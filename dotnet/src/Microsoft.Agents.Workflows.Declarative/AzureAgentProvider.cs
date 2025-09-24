@@ -1,5 +1,4 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -34,6 +33,11 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
             [ChatRole.Tool.Value.ToUpperInvariant()] = new MessageRole(ChatRole.Tool.Value),
         };
 
+    /// <summary>
+    /// The default page limit when querying agents when resolving by name.
+    /// </summary>
+    public const int DefaultAgentQueryLimit = 100;
+
     private PersistentAgentsClient? _agentsClient;
     private readonly Dictionary<string, PersistentAgent> _agentCache = [];
 
@@ -45,6 +49,12 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     /// Agent resolution will fail if multiple agents exist with the same name.
     /// </remarks>
     public bool AllowResolveByName { get; init; }
+
+    /// <summary>
+    /// The maximum number of agents to retrieved in each page when querying to resolve by name.
+    /// Defaults to <see cref="DefaultAgentQueryLimit"/>.
+    /// </summary>
+    public int AgentQueryLimit { get; init; } = DefaultAgentQueryLimit;
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
@@ -120,7 +130,6 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
 
         if (agent is null)
         {
-            const int AgentLimit = 100;
             if (this._agentCache.Count == 0)
             {
                 int count;
@@ -129,7 +138,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
                 {
                     count = 0;
                     string? lastId = null;
-                    await foreach (PersistentAgent knownAgent in client.Administration.GetAgentsAsync(limit: AgentLimit, ListSortOrder.Descending, after: startId, before: null, cancellationToken).ConfigureAwait(false))
+                    await foreach (PersistentAgent knownAgent in client.Administration.GetAgentsAsync(limit: this.AgentQueryLimit, ListSortOrder.Descending, after: startId, before: null, cancellationToken).ConfigureAwait(false))
                     {
                         ++count;
                         if (!string.IsNullOrWhiteSpace(knownAgent.Name))
@@ -140,7 +149,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
                     }
                     startId = lastId;
                 }
-                while (count == AgentLimit && startId is not null);
+                while (count == this.AgentQueryLimit && startId is not null);
             }
 
             this._agentCache.TryGetValue(agentId, out agent);
