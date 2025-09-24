@@ -44,13 +44,13 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
 
 
 async def main() -> None:
-    """Example showing Hosted MCP tools for a Foundry Agent."""
+    """Example showing Hosted MCP tools for a Azure AI Agent."""
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentClient(async_credential=credential) as chat_client,
     ):
-        # enable foundry observability
-        await chat_client.setup_foundry_observability()
+        # enable azure-ai observability
+        await chat_client.setup_observability()
         agent = chat_client.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",

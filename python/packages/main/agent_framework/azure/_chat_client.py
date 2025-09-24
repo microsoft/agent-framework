@@ -42,7 +42,7 @@ TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAICha
 @use_function_invocation
 @use_observability
 class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
-    """Azure Chat completion class."""
+    """Azure OpenAI Chat completion class."""
 
     def __init__(
         self,

@@ -95,30 +95,27 @@ else:
 logger = get_logger("agent_framework.azure")
 
 
-class AzureFoundrySettings(AFBaseSettings):
-    """Foundry model settings.
+class AzureAISettings(AFBaseSettings):
+    """Azure AI Project settings.
 
-    The settings are first loaded from environment variables with the prefix 'FOUNDRY_'.
+    The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.
     If the environment variables are not found, the settings can be loaded from a .env file
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
     Args:
-        project_endpoint: The Azure AI Foundry project endpoint URL.
-            (Env var AZURE_AZURE_FOUNDRY_PROJECT_ENDPOINT)
+        project_endpoint: The Azure AI Project endpoint URL.
+            (Env var AZURE_AI_PROJECT_ENDPOINT)
         model_deployment_name: The name of the model deployment to use.
-            (Env var AZURE_AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME)
-        agent_name: Default name for automatically created agents.
-            (Env var AZURE_AZURE_FOUNDRY_AGENT_NAME)
+            (Env var AZURE_AI_MODEL_DEPLOYMENT_NAME)
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """
 
-    env_prefix: ClassVar[str] = "AZURE_FOUNDRY_"
+    env_prefix: ClassVar[str] = "AZURE_AI_"
 
     project_endpoint: str | None = None
     model_deployment_name: str | None = None
-    agent_name: str | None = "UnnamedAgent"
 
 
 TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
@@ -127,10 +124,10 @@ TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
 @use_function_invocation
 @use_observability
 class AzureAIAgentClient(BaseChatClient):
-    """Azure AI Foundry Chat client."""
+    """Azure AI Agent Chat client."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
-    client: AIProjectClient = Field(...)
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    project_client: AIProjectClient = Field(...)
     credential: AsyncTokenCredential | None = Field(...)
     agent_id: str | None = Field(default=None)
     agent_name: str | None = Field(default=None)
@@ -142,7 +139,7 @@ class AzureAIAgentClient(BaseChatClient):
     def __init__(
         self,
         *,
-        client: AIProjectClient | None = None,
+        project_client: AIProjectClient | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
         thread_id: str | None = None,
@@ -156,79 +153,80 @@ class AzureAIAgentClient(BaseChatClient):
         """Initialize a AzureAIAgentClient.
 
         Args:
-            client: An existing AIProjectClient to use. If not provided, one will be created.
-            agent_id: The ID of an existing agent to use. If not provided and client is provided,
-                a new agent will be created (and deleted after the request). If neither client
+            project_client: An existing AIProjectClient to use. If not provided, one will be created.
+            agent_id: The ID of an existing agent to use. If not provided and project_client is provided,
+                a new agent will be created (and deleted after the request). If neither project_client
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
                 conversation_id property, when making a request.
-            project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
+            project_endpoint: The Azure AI Project endpoint URL, can also be set via
+                'AZURE_AI_PROJECT_ENDPOINT' environment variable. Is ignored when a project_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
+                Can also be set via 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable.
             async_credential: Azure async credential to use for authentication.
-            setup_tracing: Whether to setup tracing for the client. Defaults to True.
+            setup_tracing: Whether to setup tracing for the project_client. Defaults to True.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
         try:
-            foundry_settings = AzureFoundrySettings(
+            azure_ai_settings = AzureAISettings(
                 project_endpoint=project_endpoint,
                 model_deployment_name=model_deployment_name,
-                agent_name=agent_name,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
         except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Foundry settings.", ex) from ex
+            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
 
-        # If no client is provided, create one
+        # If no project_client is provided, create one
         should_close_client = False
-        if client is None:
-            if not foundry_settings.project_endpoint:
+        if project_client is None:
+            if not azure_ai_settings.project_endpoint:
                 raise ServiceInitializationError(
-                    "Foundry project endpoint is required. Set via 'project_endpoint' parameter "
-                    "or 'AZURE_FOUNDRY_PROJECT_ENDPOINT' environment variable."
+                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
+                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
-            if agent_id is None and not foundry_settings.model_deployment_name:
+            if agent_id is None and not azure_ai_settings.model_deployment_name:
                 raise ServiceInitializationError(
-                    "Foundry model deployment name is required. Set via 'model_deployment_name' parameter "
-                    "or 'AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME' environment variable."
+                    "Azure AI model deployment name is required. Set via 'model_deployment_name' parameter "
+                    "or 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
                 )
 
             # Use provided credential
             if not async_credential:
-                raise ServiceInitializationError("Azure credential is required when client is not provided.")
-            client = AIProjectClient(
-                endpoint=foundry_settings.project_endpoint,
+                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+            project_client = AIProjectClient(
+                endpoint=azure_ai_settings.project_endpoint,
                 credential=async_credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
 
         super().__init__(
-            client=client,  # type: ignore[reportCallIssue]
+            project_client=project_client,  # type: ignore[reportCallIssue]
             credential=async_credential,  # type: ignore[reportCallIssue]
             agent_id=agent_id,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
-            agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
-            ai_model_id=foundry_settings.model_deployment_name,  # type: ignore[reportCallIssue]
+            agent_name=agent_name,  # type: ignore[reportCallIssue]
+            ai_model_id=azure_ai_settings.model_deployment_name,  # type: ignore[reportCallIssue]
             **kwargs,
         )
         self._should_close_client = should_close_client
 
-    async def setup_foundry_observability(self, enable_live_metrics: bool = False) -> None:
-        """Call this method to setup tracing with Foundry.
+    async def setup_observability(self, enable_live_metrics: bool = False) -> None:
+        """Use this method to setup tracing in your Azure AI Project.
 
-        This will take the connection string from the project client.
+        This will take the connection string from the project project_client.
         It will override any connection string that is set in the environment variables.
         It will disable any OTLP endpoint that might have been set.
         """
         from agent_framework.observability import setup_observability
 
         setup_observability(
-            applicationinsights_connection_string=await self.client.telemetry.get_application_insights_connection_string(),  # noqa: E501
+            applicationinsights_connection_string=await self.project_client.telemetry.get_application_insights_connection_string(),  # noqa: E501
             enable_live_metrics=enable_live_metrics,
         )
 
@@ -241,7 +239,7 @@ class AzureAIAgentClient(BaseChatClient):
         await self.close()
 
     async def close(self) -> None:
-        """Close the client and clean up any agents we created."""
+        """Close the project_client and clean up any agents we created."""
         await self._cleanup_agent_if_needed()
         await self._close_client_if_needed()
 
@@ -253,7 +251,7 @@ class AzureAIAgentClient(BaseChatClient):
             settings: A dictionary of settings for the service.
         """
         return cls(
-            client=settings.get("client"),
+            project_client=settings.get("project_client"),
             agent_id=settings.get("agent_id"),
             thread_id=settings.get("thread_id"),
             project_endpoint=settings.get("project_endpoint"),
@@ -314,7 +312,7 @@ class AzureAIAgentClient(BaseChatClient):
             if not self.ai_model_id:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
-            agent_name = self.agent_name
+            agent_name: str = self.agent_name or "UnnamedAgent"
             args = {"model": self.ai_model_id, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
@@ -323,8 +321,8 @@ class AzureAIAgentClient(BaseChatClient):
                     args["instructions"] = run_options["instructions"]
                 if "response_format" in run_options:
                     args["response_format"] = run_options["response_format"]
-            created_agent = await self.client.agents.create_agent(**args)  # type: ignore[arg-type]
-            self.agent_id = created_agent.id
+            created_agent = await self.project_client.agents.create_agent(**args)  # type: ignore[arg-type]
+            self.agent_id = str(created_agent.id)  # type: ignore
             self._should_delete_agent = True
 
         return self.agent_id
@@ -366,7 +364,7 @@ class AzureAIAgentClient(BaseChatClient):
                 args["tool_outputs"] = tool_outputs
             if tool_approvals:
                 args["tool_approvals"] = tool_approvals
-            await self.client.agents.runs.submit_tool_outputs_stream(**args)  # type: ignore[reportUnknownMemberType]
+            await self.project_client.agents.runs.submit_tool_outputs_stream(**args)  # type: ignore[reportUnknownMemberType]
             # Pass the handler to the stream to continue processing
             stream = handler  # type: ignore
             final_thread_id = thread_run.thread_id
@@ -376,7 +374,7 @@ class AzureAIAgentClient(BaseChatClient):
 
             # Now create a new run and stream the results.
             run_options.pop("conversation_id", None)
-            stream = await self.client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
+            stream = await self.project_client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
                 final_thread_id, agent_id=agent_id, **run_options
             )
 
@@ -387,7 +385,9 @@ class AzureAIAgentClient(BaseChatClient):
         if thread_id is None:
             return None
 
-        async for run in self.client.agents.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):  # type: ignore[reportUnknownMemberType]
+        async for run in self.project_client.agents.runs.list(
+            thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING
+        ):  # type: ignore[reportUnknownMemberType]
             if run.status not in [
                 RunStatus.COMPLETED,
                 RunStatus.CANCELLED,
@@ -404,12 +404,12 @@ class AzureAIAgentClient(BaseChatClient):
         if thread_id is not None:
             if thread_run is not None:
                 # There was an active run; we need to cancel it before starting a new run.
-                await self.client.agents.runs.cancel(thread_id, thread_run.id)
+                await self.project_client.agents.runs.cancel(thread_id, thread_run.id)
 
             return thread_id
 
         # No thread ID was provided, so create a new thread.
-        thread = await self.client.agents.threads.create(
+        thread = await self.project_client.agents.threads.create(
             tool_resources=run_options.get("tool_resources"), metadata=run_options.get("metadata")
         )
         thread_id = thread.id
@@ -418,7 +418,7 @@ class AzureAIAgentClient(BaseChatClient):
         # once fixed, in the function above, readd:
         # `messages=run_options.pop("additional_messages")`
         for msg in run_options.pop("additional_messages", []):
-            await self.client.agents.messages.create(
+            await self.project_client.agents.messages.create(
                 thread_id=thread_id, role=msg.role, content=msg.content, metadata=msg.metadata
             )
         # and remove until here.
@@ -606,14 +606,14 @@ class AzureAIAgentClient(BaseChatClient):
         return []
 
     async def _close_client_if_needed(self) -> None:
-        """Close client session if we created it."""
+        """Close project_client session if we created it."""
         if self._should_close_client:
-            await self.client.close()
+            await self.project_client.close()
 
     async def _cleanup_agent_if_needed(self) -> None:
         """Clean up the agent if we created it."""
         if self._should_delete_agent and self.agent_id is not None:
-            await self.client.agents.delete_agent(self.agent_id)
+            await self.project_client.agents.delete_agent(self.agent_id)
             self.agent_id = None
             self._should_delete_agent = False
 
@@ -665,7 +665,7 @@ class AzureAIAgentClient(BaseChatClient):
 
         additional_messages: list[ThreadMessageOptions] | None = None
 
-        # System/developer messages are turned into instructions, since there is no such message roles in Foundry.
+        # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
         # All other messages are added 1:1, treating assistant messages as agent messages
         # and everything else as user messages.
         for chat_message in messages:
@@ -741,10 +741,13 @@ class AzureAIAgentClient(BaseChatClient):
                         bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
                     if custom_connection_name and custom_configuration_name:
                         try:
-                            bing_custom_connection = await self.client.connections.get(name=custom_connection_name)
+                            bing_custom_connection = await self.project_client.connections.get(
+                                name=custom_connection_name
+                            )
                         except HttpResponseError as err:
                             raise ServiceInitializationError(
-                                f"Bing custom connection '{custom_connection_name}' not found in Foundry.", err
+                                f"Bing custom connection '{custom_connection_name}' not found in the Azure AI Project.",
+                                err,
                             ) from err
                         else:
                             bing_search = BingCustomSearchTool(
@@ -780,15 +783,18 @@ class AzureAIAgentClient(BaseChatClient):
                         index_name = additional_props.get("index_name") or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
                         if not index_name:
                             raise ServiceInitializationError(
-                                "File search tool requires at least one vector store input, for file search in Foundry "
+                                "File search tool requires at least one vector store input, "
+                                "for file search in the Azure AI Project "
                                 "or an 'index_name' to use Azure AI Search, "
                                 "in additional_properties or environment variable 'AZURE_AI_SEARCH_INDEX_NAME'."
                             )
                         try:
-                            azs_conn_id = await self.client.connections.get_default(ConnectionType.AZURE_AI_SEARCH)
+                            azs_conn_id = await self.project_client.connections.get_default(
+                                ConnectionType.AZURE_AI_SEARCH
+                            )
                         except HttpResponseError as err:
                             raise ServiceInitializationError(
-                                "No default Azure AI Search connection found in Foundry. "
+                                "No default Azure AI Search connection found in the Azure AI Project. "
                                 "Please create one or provide vector store inputs for the file search tool.",
                                 err,
                             ) from err
@@ -889,4 +895,4 @@ class AzureAIAgentClient(BaseChatClient):
         Returns:
             The service URL for the chat client, or None if not set.
         """
-        return self.client._config.endpoint
+        return self.project_client._config.endpoint

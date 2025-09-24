@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._chat_client import AzureAIAgentClient, AzureFoundrySettings
+from ._chat_client import AzureAIAgentClient, AzureAISettings
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -11,6 +11,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "AzureAIAgentClient",
-    "AzureFoundrySettings",
+    "AzureAISettings",
     "__version__",
 ]

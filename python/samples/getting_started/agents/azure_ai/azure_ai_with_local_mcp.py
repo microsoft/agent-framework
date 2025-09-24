@@ -71,7 +71,7 @@ async def mcp_tools_on_agent_level() -> None:
 
 
 async def main() -> None:
-    print("=== Foundry Chat Client Agent with MCP Tools Examples ===\n")
+    print("=== Azure AI Chat Client Agent with MCP Tools Examples ===\n")
 
     await mcp_tools_on_agent_level()
     await mcp_tools_on_run_level()

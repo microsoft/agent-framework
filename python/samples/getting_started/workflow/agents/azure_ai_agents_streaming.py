@@ -24,14 +24,14 @@ Demonstrate:
 - The workflow completes when idle and outputs are available in events.get_outputs().
 
 Prerequisites:
-- Foundry Agent Service configured, along with the required environment variables.
+- Azure AI Agent Service configured, along with the required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming runs.
 """
 
 
 async def create_azure_ai_agent() -> tuple[Callable[..., Awaitable[Any]], Callable[[], Awaitable[None]]]:
-    """Helper method to create a Foundry agent factory and a close function.
+    """Helper method to create a Azure AI agent factory and a close function.
 
     This makes sure the async context managers are properly handled.
     """

@@ -18,8 +18,8 @@ def override_env_param_dict(request: Any) -> dict[str, str]:
 
 
 @fixture()
-def foundry_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
-    """Fixture to set environment variables for AzureFoundrySettings."""
+def azure_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
+    """Fixture to set environment variables for AzureAISettings."""
 
     if exclude_list is None:
         exclude_list = []
@@ -28,9 +28,8 @@ def foundry_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  
         override_env_param_dict = {}
 
     env_vars = {
-        "AZURE_FOUNDRY_PROJECT_ENDPOINT": "https://test-project.cognitiveservices.azure.com/",
-        "AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME": "test-gpt-4o",
-        "AZURE_FOUNDRY_AGENT_NAME": "TestAgent",
+        "AZURE_AI_PROJECT_ENDPOINT": "https://test-project.cognitiveservices.azure.com/",
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "test-gpt-4o",
     }
 
     env_vars.update(override_env_param_dict)  # type: ignore

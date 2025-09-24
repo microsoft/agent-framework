@@ -20,7 +20,7 @@ def get_weather(
 
 
 async def main() -> None:
-    print("=== Foundry Chat Client with Explicit Settings ===")
+    print("=== Azure AI Chat Client with Explicit Settings ===")
 
     # Since no Agent ID is provided, the agent will be automatically created
     # and deleted after getting a response
@@ -30,8 +30,8 @@ async def main() -> None:
         AzureCliCredential() as credential,
         ChatAgent(
             chat_client=AzureAIAgentClient(
-                project_endpoint=os.environ["AZURE_FOUNDRY_PROJECT_ENDPOINT"],
-                model_deployment_name=os.environ["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+                project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+                model_deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
                 async_credential=credential,
                 agent_name="WeatherAgent",
             ),

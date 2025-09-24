@@ -65,7 +65,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Basic Foundry Chat Client Agent Example ===")
+    print("=== Basic Azure AI Chat Client Agent Example ===")
 
     await non_streaming_example()
     await streaming_example()

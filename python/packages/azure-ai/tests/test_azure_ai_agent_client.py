@@ -23,7 +23,7 @@ from agent_framework import (
     TextContent,
     UriContent,
 )
-from agent_framework.azure import AzureAIAgentClient, AzureFoundrySettings
+from agent_framework.azure import AzureAIAgentClient, AzureAISettings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     RequiredFunctionToolCall,
@@ -34,48 +34,47 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field, ValidationError
 
-skip_if_foundry_integration_tests_disabled = pytest.mark.skipif(
+skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
-    reason="No real AZURE_FOUNDRY_PROJECT_ENDPOINT provided; skipping integration tests."
+    or os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
+    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests."
     if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
     else "Integration tests are disabled.",
 )
 
 
-def create_test_foundry_chat_client(
+def create_test_azure_ai_chat_client(
     mock_ai_project_client: MagicMock,
     agent_id: str | None = None,
     thread_id: str | None = None,
-    foundry_settings: AzureFoundrySettings | None = None,
+    azure_ai_settings: AzureAISettings | None = None,
     should_delete_agent: bool = False,
 ) -> AzureAIAgentClient:
     """Helper function to create AzureAIAgentClient instances for testing, bypassing Pydantic validation."""
-    if foundry_settings is None:
-        foundry_settings = AzureFoundrySettings(env_file_path="test.env")
+    if azure_ai_settings is None:
+        azure_ai_settings = AzureAISettings(env_file_path="test.env")
 
     return AzureAIAgentClient.model_construct(
-        client=mock_ai_project_client,
+        project_client=mock_ai_project_client,
         agent_id=agent_id,
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
-        agent_name=foundry_settings.agent_name,  # type: ignore[reportCallIssue]
-        ai_model_id=foundry_settings.model_deployment_name,
+        ai_model_id=azure_ai_settings.model_deployment_name,
     )
 
 
-def test_foundry_settings_init(foundry_unit_test_env: dict[str, str]) -> None:
-    """Test AzureFoundrySettings initialization."""
-    settings = AzureFoundrySettings()
+def test_azure_ai_settings_init(azure_ai_unit_test_env: dict[str, str]) -> None:
+    """Test AzureAISettings initialization."""
+    settings = AzureAISettings()
 
-    assert settings.project_endpoint == foundry_unit_test_env["AZURE_FOUNDRY_PROJECT_ENDPOINT"]
-    assert settings.model_deployment_name == foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"]
-    assert settings.agent_name == foundry_unit_test_env["AZURE_FOUNDRY_AGENT_NAME"]
+    assert settings.project_endpoint == azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
+    assert settings.model_deployment_name == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    assert settings.agent_name == azure_ai_unit_test_env["AZURE_FOUNDRY_AGENT_NAME"]
 
 
-def test_foundry_settings_init_with_explicit_values() -> None:
-    """Test AzureFoundrySettings initialization with explicit values."""
-    settings = AzureFoundrySettings(
+def test_azure_ai_settings_init_with_explicit_values() -> None:
+    """Test AzureAISettings initialization with explicit values."""
+    settings = AzureAISettings(
         project_endpoint="https://custom-endpoint.com/",
         model_deployment_name="custom-model",
         agent_name="CustomAgent",
@@ -86,9 +85,9 @@ def test_foundry_settings_init_with_explicit_values() -> None:
     assert settings.agent_name == "CustomAgent"
 
 
-def test_foundry_chat_client_init_with_client(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_init_with_client(mock_ai_project_client: MagicMock) -> None:
     """Test AzureAIAgentClient initialization with existing client."""
-    chat_client = create_test_foundry_chat_client(
+    chat_client = create_test_azure_ai_chat_client(
         mock_ai_project_client, agent_id="existing-agent-id", thread_id="test-thread-id"
     )
 
@@ -99,18 +98,18 @@ def test_foundry_chat_client_init_with_client(mock_ai_project_client: MagicMock)
     assert isinstance(chat_client, ChatClientProtocol)
 
 
-def test_foundry_chat_client_init_auto_create_client(
-    foundry_unit_test_env: dict[str, str],
+def test_azure_ai_chat_client_init_auto_create_client(
+    azure_ai_unit_test_env: dict[str, str],
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test AzureAIAgentClient initialization with auto-created client."""
-    foundry_settings = AzureFoundrySettings(**foundry_unit_test_env)  # type: ignore
+    azure_ai_settings = AzureAISettings(**azure_ai_unit_test_env)  # type: ignore
     chat_client = AzureAIAgentClient.model_construct(
         client=mock_ai_project_client,
         agent_id=None,
         thread_id=None,
         _should_delete_agent=False,
-        _foundry_settings=foundry_settings,
+        _azure_ai_settings=azure_ai_settings,
         credential=None,
     )
 
@@ -119,10 +118,10 @@ def test_foundry_chat_client_init_auto_create_client(
     assert not chat_client._should_delete_agent  # type: ignore
 
 
-def test_foundry_chat_client_init_missing_project_endpoint() -> None:
+def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
     """Test AzureAIAgentClient initialization when project_endpoint is missing and no client provided."""
-    # Mock AzureFoundrySettings to return settings with None project_endpoint
-    with patch("agent_framework_azure_ai._chat_client.AzureFoundrySettings") as mock_settings:
+    # Mock AzureAISettings to return settings with None project_endpoint
+    with patch("agent_framework_azure_ai._chat_client.AzureAISettings") as mock_settings:
         mock_settings_instance = MagicMock()
         mock_settings_instance.project_endpoint = None  # This should trigger the error
         mock_settings_instance.model_deployment_name = "test-model"
@@ -139,10 +138,10 @@ def test_foundry_chat_client_init_missing_project_endpoint() -> None:
             )
 
 
-def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation() -> None:
+def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation() -> None:
     """Test AzureAIAgentClient initialization when model deployment is missing for agent creation."""
-    # Mock AzureFoundrySettings to return settings with None model_deployment_name
-    with patch("agent_framework_azure_ai._chat_client.AzureFoundrySettings") as mock_settings:
+    # Mock AzureAISettings to return settings with None model_deployment_name
+    with patch("agent_framework_azure_ai._chat_client.AzureAISettings") as mock_settings:
         mock_settings_instance = MagicMock()
         mock_settings_instance.project_endpoint = "https://test.com"
         mock_settings_instance.model_deployment_name = None  # This should trigger the error
@@ -159,7 +158,7 @@ def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation() 
             )
 
 
-def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_from_dict(mock_ai_project_client: MagicMock) -> None:
     """Test AzureAIAgentClient.from_dict method."""
     settings = {
         "client": mock_ai_project_client,
@@ -170,17 +169,17 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
         "agent_name": "TestAgent",
     }
 
-    foundry_settings = AzureFoundrySettings(
+    azure_ai_settings = AzureAISettings(
         project_endpoint=settings["project_endpoint"],
         model_deployment_name=settings["model_deployment_name"],
         agent_name=settings["agent_name"],
     )
 
-    chat_client: AzureAIAgentClient = create_test_foundry_chat_client(
+    chat_client: AzureAIAgentClient = create_test_azure_ai_chat_client(
         mock_ai_project_client,
         agent_id=settings["agent_id"],  # type: ignore
         thread_id=settings["thread_id"],  # type: ignore
-        foundry_settings=foundry_settings,
+        azure_ai_settings=azure_ai_settings,
     )
 
     assert chat_client.client is mock_ai_project_client
@@ -188,25 +187,25 @@ def test_foundry_chat_client_from_dict(mock_ai_project_client: MagicMock) -> Non
     assert chat_client.thread_id == "test-thread-id"
 
 
-def test_foundry_chat_client_init_missing_credential(foundry_unit_test_env: dict[str, str]) -> None:
+def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIAgentClient.__init__ when async_credential is missing and no client provided."""
     with pytest.raises(ServiceInitializationError, match="Azure credential is required when client is not provided"):
         AzureAIAgentClient(
             client=None,
             agent_id="existing-agent",
-            project_endpoint=foundry_unit_test_env["AZURE_FOUNDRY_PROJECT_ENDPOINT"],
-            model_deployment_name=foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+            project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             async_credential=None,  # Missing credential
         )
 
 
-def test_foundry_chat_client_init_validation_error(mock_azure_credential: MagicMock) -> None:
-    """Test that ValidationError in AzureFoundrySettings is properly handled."""
-    with patch("agent_framework_azure_ai._chat_client.AzureFoundrySettings") as mock_settings:
+def test_azure_ai_chat_client_init_validation_error(mock_azure_credential: MagicMock) -> None:
+    """Test that ValidationError in AzureAISettings is properly handled."""
+    with patch("agent_framework_azure_ai._chat_client.AzureAISettings") as mock_settings:
         # Create a proper ValidationError with empty errors list and model dict
-        mock_settings.side_effect = ValidationError.from_exception_data("AzureFoundrySettings", [])
+        mock_settings.side_effect = ValidationError.from_exception_data("AzureAISettings", [])
 
-        with pytest.raises(ServiceInitializationError, match="Failed to create Foundry settings"):
+        with pytest.raises(ServiceInitializationError, match="Failed to create Azure AI settings."):
             AzureAIAgentClient(
                 project_endpoint="https://test.com",
                 model_deployment_name="test-model",
@@ -214,11 +213,11 @@ def test_foundry_chat_client_init_validation_error(mock_azure_credential: MagicM
             )
 
 
-async def test_foundry_chat_client_get_agent_id_or_create_existing_agent(
+async def test_azure_ai_chat_client_get_agent_id_or_create_existing_agent(
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test _get_agent_id_or_create when agent_id is already provided."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="existing-agent-id")
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="existing-agent-id")
 
     agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
 
@@ -226,15 +225,15 @@ async def test_foundry_chat_client_get_agent_id_or_create_existing_agent(
     assert not chat_client._should_delete_agent  # type: ignore
 
 
-async def test_foundry_chat_client_get_agent_id_or_create_create_new(
+async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
     mock_ai_project_client: MagicMock,
-    foundry_unit_test_env: dict[str, str],
+    azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test _get_agent_id_or_create when creating a new agent."""
-    foundry_settings = AzureFoundrySettings(
-        model_deployment_name=foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
+    azure_ai_settings = AzureAISettings(
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
     )
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, foundry_settings=foundry_settings)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
 
@@ -242,11 +241,11 @@ async def test_foundry_chat_client_get_agent_id_or_create_create_new(
     assert chat_client._should_delete_agent  # type: ignore
 
 
-async def test_foundry_chat_client_tool_results_without_thread_error_via_public_api(
+async def test_azure_ai_chat_client_tool_results_without_thread_error_via_public_api(
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test that tool results without thread ID raise error through public API."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
     # Create messages with tool results but no thread/conversation ID
     messages = [
@@ -262,9 +261,9 @@ async def test_foundry_chat_client_tool_results_without_thread_error_via_public_
             pass
 
 
-async def test_foundry_chat_client_thread_management_through_public_api(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ai_project_client: MagicMock) -> None:
     """Test thread creation and management through public API."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
     mock_thread = MagicMock()
     mock_thread.id = "new-thread-456"
@@ -293,22 +292,22 @@ async def test_foundry_chat_client_thread_management_through_public_api(mock_ai_
     mock_ai_project_client.agents.threads.create.assert_called_once()
 
 
-@pytest.mark.parametrize("exclude_list", [["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"]], indirect=True)
-async def test_foundry_chat_client_get_agent_id_or_create_missing_model(
-    mock_ai_project_client: MagicMock, foundry_unit_test_env: dict[str, str]
+@pytest.mark.parametrize("exclude_list", [["AZURE_AI_MODEL_DEPLOYMENT_NAME"]], indirect=True)
+async def test_azure_ai_chat_client_get_agent_id_or_create_missing_model(
+    mock_ai_project_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create when model_deployment_name is missing."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
         await chat_client._get_agent_id_or_create()  # type: ignore
 
 
-async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
+async def test_azure_ai_chat_client_cleanup_agent_if_needed_should_delete(
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test _cleanup_agent_if_needed when agent should be deleted."""
-    chat_client = create_test_foundry_chat_client(
+    chat_client = create_test_azure_ai_chat_client(
         mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
     )
 
@@ -318,11 +317,11 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_delete(
     assert not chat_client._should_delete_agent  # type: ignore
 
 
-async def test_foundry_chat_client_cleanup_agent_if_needed_should_not_delete(
+async def test_azure_ai_chat_client_cleanup_agent_if_needed_should_not_delete(
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test _cleanup_agent_if_needed when agent should not be deleted."""
-    chat_client = create_test_foundry_chat_client(
+    chat_client = create_test_azure_ai_chat_client(
         mock_ai_project_client, agent_id="agent-to-keep", should_delete_agent=False
     )
 
@@ -333,11 +332,11 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_should_not_delete(
     assert not chat_client._should_delete_agent  # type: ignore
 
 
-async def test_foundry_chat_client_cleanup_agent_if_needed_exception_handling(
+async def test_azure_ai_chat_client_cleanup_agent_if_needed_exception_handling(
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test _cleanup_agent_if_needed propagates exceptions (it doesn't handle them)."""
-    chat_client = create_test_foundry_chat_client(
+    chat_client = create_test_azure_ai_chat_client(
         mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
     )
     mock_ai_project_client.agents.delete_agent.side_effect = Exception("Deletion failed")
@@ -346,9 +345,9 @@ async def test_foundry_chat_client_cleanup_agent_if_needed_exception_handling(
         await chat_client._cleanup_agent_if_needed()  # type: ignore
 
 
-async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_aclose(mock_ai_project_client: MagicMock) -> None:
     """Test aclose method calls cleanup."""
-    chat_client = create_test_foundry_chat_client(
+    chat_client = create_test_azure_ai_chat_client(
         mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
     )
 
@@ -358,9 +357,9 @@ async def test_foundry_chat_client_aclose(mock_ai_project_client: MagicMock) -> 
     mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
 
 
-async def test_foundry_chat_client_async_context_manager(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_async_context_manager(mock_ai_project_client: MagicMock) -> None:
     """Test async context manager functionality."""
-    chat_client = create_test_foundry_chat_client(
+    chat_client = create_test_azure_ai_chat_client(
         mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
     )
 
@@ -372,9 +371,9 @@ async def test_foundry_chat_client_async_context_manager(mock_ai_project_client:
     mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
 
 
-async def test_foundry_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with basic ChatOptions."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
     chat_options = ChatOptions(max_tokens=100, temperature=0.7)
@@ -385,9 +384,9 @@ async def test_foundry_chat_client_create_run_options_basic(mock_ai_project_clie
     assert tool_results is None
 
 
-async def test_foundry_chat_client_create_run_options_no_chat_options(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_create_run_options_no_chat_options(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with no ChatOptions."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
@@ -397,10 +396,10 @@ async def test_foundry_chat_client_create_run_options_no_chat_options(mock_ai_pr
     assert tool_results is None
 
 
-async def test_foundry_chat_client_create_run_options_with_image_content(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_create_run_options_with_image_content(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with image content."""
 
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
     image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
@@ -414,9 +413,9 @@ async def test_foundry_chat_client_create_run_options_with_image_content(mock_ai
     assert len(message.content) == 1
 
 
-def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_convert_function_results_to_tool_output_none(mock_ai_project_client: MagicMock) -> None:
     """Test _convert_required_action_to_tool_output with None input."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     run_id, tool_outputs, tool_approvals = chat_client._convert_required_action_to_tool_output(None)  # type: ignore
 
@@ -425,9 +424,9 @@ def test_foundry_chat_client_convert_function_results_to_tool_output_none(mock_a
     assert tool_approvals is None
 
 
-async def test_foundry_chat_client_close_client_when_should_close_true(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_close_client_when_should_close_true(mock_ai_project_client: MagicMock) -> None:
     """Test _close_client_if_needed closes client when should_close_client is True."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
     chat_client._should_close_client = True  # type: ignore
 
     mock_ai_project_client.close = AsyncMock()
@@ -437,9 +436,9 @@ async def test_foundry_chat_client_close_client_when_should_close_true(mock_ai_p
     mock_ai_project_client.close.assert_called_once()
 
 
-async def test_foundry_chat_client_close_client_when_should_close_false(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_close_client_when_should_close_false(mock_ai_project_client: MagicMock) -> None:
     """Test _close_client_if_needed does not close client when should_close_client is False."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
     chat_client._should_close_client = False  # type: ignore
 
     await chat_client._close_client_if_needed()  # type: ignore
@@ -447,9 +446,9 @@ async def test_foundry_chat_client_close_client_when_should_close_false(mock_ai_
     mock_ai_project_client.close.assert_not_called()
 
 
-def test_foundry_chat_client_update_agent_name_when_current_is_none(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_update_agent_name_when_current_is_none(mock_ai_project_client: MagicMock) -> None:
     """Test _update_agent_name updates name when current agent_name is None."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
     chat_client.agent_name = None  # type: ignore
 
     chat_client._update_agent_name("NewAgentName")  # type: ignore
@@ -457,9 +456,9 @@ def test_foundry_chat_client_update_agent_name_when_current_is_none(mock_ai_proj
     assert chat_client.agent_name == "NewAgentName"
 
 
-def test_foundry_chat_client_update_agent_name_when_current_exists(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_update_agent_name_when_current_exists(mock_ai_project_client: MagicMock) -> None:
     """Test _update_agent_name does not update when current agent_name exists."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
     chat_client.agent_name = "ExistingName"  # type: ignore
 
     chat_client._update_agent_name("NewAgentName")  # type: ignore
@@ -467,9 +466,9 @@ def test_foundry_chat_client_update_agent_name_when_current_exists(mock_ai_proje
     assert chat_client.agent_name == "ExistingName"
 
 
-def test_foundry_chat_client_update_agent_name_with_none_input(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_update_agent_name_with_none_input(mock_ai_project_client: MagicMock) -> None:
     """Test _update_agent_name with None input."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
     chat_client.agent_name = None  # type: ignore
 
     chat_client._update_agent_name(None)  # type: ignore
@@ -477,9 +476,9 @@ def test_foundry_chat_client_update_agent_name_with_none_input(mock_ai_project_c
     assert chat_client.agent_name is None
 
 
-async def test_foundry_chat_client_create_run_options_with_messages(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_create_run_options_with_messages(mock_ai_project_client: MagicMock) -> None:
     """Test _create_run_options with different message types."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     # Test with system message (becomes instruction)
     messages = [
@@ -495,9 +494,9 @@ async def test_foundry_chat_client_create_run_options_with_messages(mock_ai_proj
     assert len(run_options["additional_messages"]) == 1  # Only user message
 
 
-async def test_foundry_chat_client_inner_get_response(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_inner_get_response(mock_ai_project_client: MagicMock) -> None:
     """Test _inner_get_response method."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
     messages = [ChatMessage(role=Role.USER, text="Hello")]
     chat_options = ChatOptions()
 
@@ -517,14 +516,14 @@ async def test_foundry_chat_client_inner_get_response(mock_ai_project_client: Ma
         mock_from_generator.assert_called_once()
 
 
-async def test_foundry_chat_client_get_agent_id_or_create_with_run_options(
-    mock_ai_project_client: MagicMock, foundry_unit_test_env: dict[str, str]
+async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
+    mock_ai_project_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create with run_options containing tools and instructions."""
-    foundry_settings = AzureFoundrySettings(
-        model_deployment_name=foundry_unit_test_env["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
+    azure_ai_settings = AzureAISettings(
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
     )
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, foundry_settings=foundry_settings)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     run_options = {
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
@@ -543,9 +542,9 @@ async def test_foundry_chat_client_get_agent_id_or_create_with_run_options(
     assert "response_format" in call_args
 
 
-async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_prepare_thread_cancels_active_run(mock_ai_project_client: MagicMock) -> None:
     """Test _prepare_thread cancels active thread run when provided."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client, agent_id="test-agent")
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
     mock_thread_run = MagicMock()
     mock_thread_run.id = "run_123"
@@ -559,9 +558,9 @@ async def test_foundry_chat_client_prepare_thread_cancels_active_run(mock_ai_pro
     mock_ai_project_client.agents.runs.cancel.assert_called_once_with("test-thread", "run_123")
 
 
-def test_foundry_chat_client_create_function_call_contents_basic(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_create_function_call_contents_basic(mock_ai_project_client: MagicMock) -> None:
     """Test _create_function_call_contents with basic function call."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     mock_tool_call = MagicMock(spec=RequiredFunctionToolCall)
     mock_tool_call.id = "call_123"
@@ -582,9 +581,9 @@ def test_foundry_chat_client_create_function_call_contents_basic(mock_ai_project
     assert result[0].call_id == '["response_123", "call_123"]'
 
 
-def test_foundry_chat_client_create_function_call_contents_no_submit_action(mock_ai_project_client: MagicMock) -> None:
+def test_azure_ai_chat_client_create_function_call_contents_no_submit_action(mock_ai_project_client: MagicMock) -> None:
     """Test _create_function_call_contents when required_action is not SubmitToolOutputsAction."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     mock_event_data = MagicMock(spec=ThreadRun)
     mock_event_data.required_action = MagicMock()
@@ -594,11 +593,11 @@ def test_foundry_chat_client_create_function_call_contents_no_submit_action(mock
     assert result == []
 
 
-def test_foundry_chat_client_create_function_call_contents_non_function_tool_call(
+def test_azure_ai_chat_client_create_function_call_contents_non_function_tool_call(
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test _create_function_call_contents with non-function tool call."""
-    chat_client = create_test_foundry_chat_client(mock_ai_project_client)
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     mock_tool_call = MagicMock()
 
@@ -620,11 +619,11 @@ def get_weather(
     return f"The weather in {location} is sunny with a high of 25°C."
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_get_response() -> None:
-    """Test Foundry Chat Client response."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClientProtocol)
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_get_response() -> None:
+    """Test Azure AI Chat Client response."""
+    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(
@@ -637,24 +636,24 @@ async def test_foundry_chat_client_get_response() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
-        response = await foundry_chat_client.get_response(messages=messages)
+        response = await azure_ai_chat_client.get_response(messages=messages)
 
         assert response is not None
         assert isinstance(response, ChatResponse)
         assert any(word in response.text.lower() for word in ["sunny", "25"])
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_get_response_tools() -> None:
-    """Test Foundry Chat Client response with tools."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClientProtocol)
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_get_response_tools() -> None:
+    """Test Azure AI Chat Client response with tools."""
+    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the client can be used to get a response
-        response = await foundry_chat_client.get_response(
+        response = await azure_ai_chat_client.get_response(
             messages=messages,
             tools=[get_weather],
             tool_choice="auto",
@@ -665,11 +664,11 @@ async def test_foundry_chat_client_get_response_tools() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25"])
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_streaming() -> None:
-    """Test Foundry Chat Client streaming response."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClientProtocol)
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_streaming() -> None:
+    """Test Azure AI Chat Client streaming response."""
+    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(
@@ -682,7 +681,7 @@ async def test_foundry_chat_client_streaming() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
-        response = foundry_chat_client.get_streaming_response(messages=messages)
+        response = azure_ai_chat_client.get_streaming_response(messages=messages)
 
         full_message: str = ""
         async for chunk in response:
@@ -695,17 +694,17 @@ async def test_foundry_chat_client_streaming() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25"])
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_streaming_tools() -> None:
-    """Test Foundry Chat Client streaming response with tools."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as foundry_chat_client:
-        assert isinstance(foundry_chat_client, ChatClientProtocol)
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_streaming_tools() -> None:
+    """Test Azure AI Chat Client streaming response with tools."""
+    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the client can be used to get a response
-        response = foundry_chat_client.get_streaming_response(
+        response = azure_ai_chat_client.get_streaming_response(
             messages=messages,
             tools=[get_weather],
             tool_choice="auto",
@@ -721,8 +720,8 @@ async def test_foundry_chat_client_streaming_tools() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25"])
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_agent_basic_run() -> None:
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_basic_run() -> None:
     """Test ChatAgent basic run functionality with AzureAIAgentClient."""
     async with ChatAgent(
         chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
@@ -737,8 +736,8 @@ async def test_foundry_chat_client_agent_basic_run() -> None:
         assert "Hello World" in response.text
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_agent_basic_run_streaming() -> None:
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
     """Test ChatAgent basic streaming functionality with AzureAIAgentClient."""
     async with ChatAgent(
         chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
@@ -756,8 +755,8 @@ async def test_foundry_chat_client_agent_basic_run_streaming() -> None:
         assert "streaming response test" in full_message.lower()
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_agent_thread_persistence() -> None:
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
     """Test ChatAgent thread persistence across runs with AzureAIAgentClient."""
     async with ChatAgent(
         chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
@@ -781,8 +780,8 @@ async def test_foundry_chat_client_agent_thread_persistence() -> None:
         assert "42" in second_response.text
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_agent_existing_thread_id() -> None:
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
     """Test ChatAgent existing thread ID functionality with AzureAIAgentClient."""
     async with ChatAgent(
         chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
@@ -818,8 +817,8 @@ async def test_foundry_chat_client_agent_existing_thread_id() -> None:
         assert "alice" in response2.text.lower()
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_agent_code_interpreter():
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_code_interpreter():
     """Test ChatAgent with code interpreter through AzureAIAgentClient."""
 
     async with ChatAgent(
@@ -837,8 +836,8 @@ async def test_foundry_chat_client_agent_code_interpreter():
         assert "120" in response.text or "factorial" in response.text.lower()
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_agent_with_mcp_tools() -> None:
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_with_mcp_tools() -> None:
     """Test MCP tools defined at agent creation with AzureAIAgentClient."""
     async with ChatAgent(
         chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
@@ -858,8 +857,8 @@ async def test_foundry_chat_client_agent_with_mcp_tools() -> None:
         assert any(term in response.text.lower() for term in ["app service", "azure", "web", "application"])
 
 
-@skip_if_foundry_integration_tests_disabled
-async def test_foundry_chat_client_agent_level_tool_persistence():
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""
     async with ChatAgent(
         chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),

@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.1.0b1"
+version = "0.1.0b1" # TODO: decide on initial version and versioning strategy
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,18 +24,18 @@ classifiers = [
 ]
 dependencies = [
     "openai>=1.99.0",
-    "pydantic>=2.11.7",
-    "pydantic-settings>=2.10.1",
-    "typing-extensions>=4.14.0",
-    "opentelemetry-api ~= 1.24",
-    "opentelemetry-sdk ~= 1.24",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+    "typing-extensions",
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
     "mcp[ws]>=1.13",
     "azure-monitor-opentelemetry>=1.7.0",
     "azure-monitor-opentelemetry-exporter>=1.0.0b41",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     "aiofiles>=24.1.0",
-    "azure-identity >= 1.13"
+    "azure-identity>=1,<2"
 ]
 
 [project.optional-dependencies]

@@ -136,7 +136,7 @@ async def example_with_existing_thread_id() -> None:
 
 
 async def main() -> None:
-    print("=== Foundry Chat Client Agent Thread Management Examples ===\n")
+    print("=== Azure AI Chat Client Agent Thread Management Examples ===\n")
 
     await example_with_automatic_thread_creation()
     await example_with_thread_persistence()

@@ -15,12 +15,12 @@ from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 """
-This sample, shows you can leverage the built-in telemetry in Foundry.
-It uses the Foundry client to setup the telemetry, this calls
-out to Foundry for a telemetry connection strings,
+This sample, shows you can leverage the built-in telemetry in Azure AI.
+It uses the Azure AI client to setup the telemetry, this calls
+out to Azure AI for a telemetry connection strings,
 and then call the setup_observability function in the agent framework.
 If you want to compare with the trace sent to a generic OTLP endpoint,
-switch the `use_foundry_telemetry` variable to False.
+switch the `use_azure_ai_telemetry` variable to False.
 """
 
 
@@ -47,10 +47,10 @@ async def main() -> None:
 
     The telemetry will include information about the AI service execution.
 
-    In foundry you will also see specific operations happening that are called by the Foundry implementation,
+    In azure_ai you will also see specific operations happening that are called by the Azure AI implementation,
     such as `create_agent`.
     """
-    use_foundry_obs = True
+    use_azure_ai_obs = True
     questions = [
         "What's the weather in Amsterdam and in Paris?",
         "Why is the sky blue?",
@@ -59,16 +59,16 @@ async def main() -> None:
     ]
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
+        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
         AzureAIAgentClient(client=project, setup_tracing=False) as client,
     ):
-        if use_foundry_obs:
-            await client.setup_foundry_observability(enable_live_metrics=True)
+        if use_azure_ai_obs:
+            await client.setup_observability(enable_live_metrics=True)
         else:
             setup_observability()
 
         with get_tracer().start_as_current_span(
-            name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT
+            name="Azure AI Telemetry from Agent Framework", kind=SpanKind.CLIENT
         ) as span:
             for question in questions:
                 print(f"{BLUE}User: {question}{RESET}")

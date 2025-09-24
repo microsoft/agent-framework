@@ -122,7 +122,7 @@ async def mixed_tools_example() -> None:
 
 
 async def main() -> None:
-    print("=== Foundry Chat Client Agent with Function Tools Examples ===\n")
+    print("=== Azure AI Chat Client Agent with Function Tools Examples ===\n")
 
     await tools_on_agent_level()
     await tools_on_run_level()

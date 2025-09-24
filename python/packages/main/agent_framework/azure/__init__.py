@@ -8,7 +8,7 @@ _IMPORTS: dict[str, tuple[str, list[str]]] = {
     "AzureAIAgentClient": ("agent_framework_azure_ai", ["azure_ai", "azure"]),
     "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", []),
     "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", []),
-    "AzureFoundrySettings": ("agent_framework_azure_ai", ["azure_ai", "azure"]),
+    "AzureAISettings": ("agent_framework_azure_ai", ["azure_ai", "azure"]),
     "AzureOpenAISettings": ("agent_framework.azure._shared", []),
     "AzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", []),
     "get_entra_auth_token": ("agent_framework.azure._entra_id_authentication", []),

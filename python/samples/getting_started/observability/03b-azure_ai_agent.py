@@ -14,8 +14,8 @@ from opentelemetry.trace import SpanKind
 from pydantic import Field
 
 """
-This sample shows you can can setup telemetry with a agent from Foundry.
-We once again call the `setup_foundry_observability` method to set up telemetry in order to include the overall spans.
+This sample shows you can can setup telemetry with a agent from Azure AI.
+We once again call the `setup_observability` method to set up telemetry in order to include the overall spans.
 """
 
 
@@ -34,11 +34,11 @@ async def main():
     questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
-        # this calls `setup_foundry_observability` through the context manager
+        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
+        # this calls `setup_observability` through the context manager
         AzureAIAgentClient(client=project) as client,
     ):
-        await client.setup_foundry_observability(enable_live_metrics=True)
+        await client.setup_observability(enable_live_metrics=True)
         with get_tracer().start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):
             print("Running Single Agent Chat")
             print("Welcome to the chat, type 'exit' to quit.")

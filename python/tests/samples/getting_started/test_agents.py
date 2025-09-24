@@ -291,7 +291,7 @@ agent_samples = [
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
-    # Foundry Agent samples
+    # Azure AI Agent samples
     param(
         azure_ai_basic,
         [],  # Non-interactive sample

@@ -21,16 +21,16 @@ def get_weather(
 
 
 async def main() -> None:
-    print("=== Foundry Chat Client with Existing Agent ===")
+    print("=== Azure AI Chat Client with Existing Agent ===")
 
     # Create the client
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as client,
+        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as client,
     ):
         # Create an agent that will persist
         created_agent = await client.agents.create_agent(
-            model=os.environ["AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME"], name="WeatherAgent"
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"], name="WeatherAgent"
         )
 
         try:

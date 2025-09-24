@@ -25,8 +25,8 @@ def print_code_interpreter_inputs(response: AgentRunResponse) -> None:
 
 
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with Foundry."""
-    print("=== Foundry Agent with Code Interpreter Example ===")
+    """Example showing how to use the HostedCodeInterpreterTool with Azure AI."""
+    print("=== Azure AI Agent with Code Interpreter Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
