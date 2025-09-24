@@ -68,6 +68,9 @@ target-version = "py310"
 fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
 exclude = ["docs/*", "run_tasks_in_packages_if_exists.py", "check_md_code_blocks.py"]
+extend-exclude = [
+    "[{][{]cookiecutter.package_name[}][}]",
+]
 preview = true
 
 [tool.ruff.lint]
@@ -185,7 +188,21 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
-all-tests = "pytest --import-mode=importlib --cov=agent_framework --cov=agent_framework_azure_ai --cov=agent_framework_copilotstudio --cov=agent_framework_mem0 --cov=agent_framework_redis --cov-report=term-missing:skip-covered packages/**/tests --ignore-glob=packages/lab/**"
+
+[tool.poe.tasks.all-tests]
+cmd = """
+pytest --import-mode=importlib
+--cov=agent_framework
+--cov=agent_framework_azure_ai
+--cov=agent_framework_copilotstudio
+--cov=agent_framework_mem0
+--cov=agent_framework_redis
+--cov-report=term-missing:skip-covered
+--ignore-glob=packages/lab/**
+--ignore-glob=packages/devui/**
+-n logical --dist loadfile --dist worksteal
+packages/**/tests
+"""
 
 
 [tool.poe.tasks.venv]
