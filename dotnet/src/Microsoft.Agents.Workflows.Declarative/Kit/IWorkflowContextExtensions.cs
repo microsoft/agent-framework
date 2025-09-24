@@ -9,6 +9,7 @@ using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
@@ -78,6 +79,19 @@ public static class IWorkflowContextExtensions
         EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
 
         return result.Value.ToObject();
+    }
+
+    /// <summary>
+    /// Evaluate an expression using the workflow's declarative state.
+    /// </summary>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="expression">The expression to evaluate.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>The evaluated expression value</returns>
+    public static async ValueTask<TValue?> EvaluateExpressionAsync<TValue>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
+    {
+        object? result = await context.EvaluateExpressionAsync(expression, cancellationToken).ConfigureAwait(false);
+        return (TValue?)result;
     }
 
     private static async Task<WorkflowFormulaState> GetStateAsync(this IWorkflowContext context, CancellationToken cancellationToken)

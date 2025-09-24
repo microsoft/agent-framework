@@ -155,8 +155,8 @@ public static class WorkflowProvider
         builder.AddEdge(myWorkflowRoot, myWorkflow);
         builder.AddEdge(myWorkflow, setVariableTest);
         builder.AddEdge(setVariableTest, conditionGroupTest);
-        builder.AddEdge(conditionGroupTest, conditionItemOdd, (object? result) => string.Equals("conditionItem_odd", result, StringComparison.Ordinal));
-        builder.AddEdge(conditionGroupTest, conditionItemEven, (object? result) => string.Equals("conditionItem_even", result, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupTest, conditionItemOdd, (object? result) => string.Equals("conditionItem_odd", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupTest, conditionItemEven, (object? result) => string.Equals("conditionItem_even", result as string, StringComparison.Ordinal));
         builder.AddEdge(conditionItemOdd, conditionItemOddactions);
         builder.AddEdge(conditionItemOddactions, sendActivityOdd);
         builder.AddEdge(conditionItemEven, conditionItemEvenactions);
