@@ -28,7 +28,10 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
         system_message: str | None = None,
         tool_definitions: Any | None = None,
     ):
-        super().__init__(messages)  # type: ignore[reportArgumentType]
+        if messages is not None:
+            super().__init__(messages)  # type: ignore[reportArgumentType]
+        else:
+            super().__init__()
         self.truncated_messages = self.messages.copy()  # Separate truncated view
         self.max_tokens = max_tokens
         self.system_message = system_message  # Included in token count
