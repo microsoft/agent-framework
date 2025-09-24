@@ -613,12 +613,74 @@ def setup_observability(
     Call this method once during application startup, before any telemetry is captured.
     DO NOT call this method multiple times, as it may lead to unexpected behavior.
 
-    If you have configured the providers manually, calling this method will override
-    your configuration.
+    If you have configured the providers manually, calling this method will not have any effect:
+
+    ```python
+    # Some where in your application startup code
+    trace.set_tracer_provider(TracerProvider(...))
+
+    # After the above call, calling setup_observability will not have any effect
+    setup_observability()
+    ```
+
+    The reverse is also true:
+
+    ```python
+    # Some where in your application startup code
+    setup_observability()
+
+    # After the above call, calling trace.set_tracer_provider will not have any effect
+    trace.set_tracer_provider(TracerProvider(...))
+    ```
 
     The OTel endpoint and the Application Insights connection string can be set through
     environment variables or you can pass additional ones here. In the case where both
-    are present, non-duplicate values will be added.
+    are present, non-duplicate values will be added:
+
+    ## With environment variables
+
+    This method will read the settings from the environment:
+
+    ```python
+    setup_observability()
+    ```
+
+    ## Without environment variables and use parameters
+
+    It is also possible to pass the settings directly:
+
+    ```python
+    setup_observability(
+        enable_sensitive_data=True,
+        otlp_endpoint=["http://localhost:7431"],
+        applicationinsights_connection_string=["..."],
+        enable_live_metrics=True,
+        exporters=[...],  # your custom exporters
+        vs_code_extension_port=4317,
+    )
+    ```
+
+    ## Mixed
+
+    When both environment variables and parameters are used, the following settings will get overridden:
+    - enable_sensitive_data
+    - enable_live_metrics
+    - vs_code_extension_port
+
+    The endpoints and connection strings will be combined, excluding duplicates.
+
+    ```env
+    OTEL_ENDPOINT="http://localhost:7431"
+    ```
+
+    ```python
+    setup_observability(
+        enable_sensitive_data=True,
+        otlp_endpoint=["http://localhost:4317"],
+    )
+    ```
+
+    Exporters will be created for both endpoints.
 
     Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events.
@@ -633,8 +695,8 @@ def setup_observability(
         enable_live_metrics: Enable Azure Monitor live metrics.
             If set, this will override the value set through the environment variable.
             Default is None.
-        exporters: A list of exporters, for logs, metrics or spans, or any combination,
-            these will be added directly, and allows you to customize the spans completely.
+        exporters: A list of exporters, for logs, metrics or spans, or any combination.
+            These will be added directly, and allows you to customize the spans completely.
         vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are
             listening on. When this is set, additional OTEL exporters will be created with endpoint
             `http://localhost:{vs_code_extension_port}` unless this endpoint is already configured.
