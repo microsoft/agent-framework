@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +13,7 @@ from agent_framework import (
     RequestResponse,
     SubWorkflowRequestInfo,
     SubWorkflowResponse,
+    Workflow,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
@@ -44,6 +44,59 @@ class ValidationResult:
     email: str
     is_valid: bool
     reason: str
+
+
+# Test helper functions
+def create_email_validation_workflow() -> Workflow:
+    """Create a standard email validation workflow."""
+    email_validator = EmailValidator()
+    email_request_info = RequestInfoExecutor(id="email_request_info")
+
+    return (
+        WorkflowBuilder()
+        .set_start_executor(email_validator)
+        .add_edge(email_validator, email_request_info)
+        .add_edge(email_request_info, email_validator)
+        .build()
+    )
+
+
+class BasicParent(Executor):
+    """Basic parent executor for simple sub-workflow tests."""
+
+    result: ValidationResult | None = Field(default=None)
+    cache: dict[str, bool] = Field(default_factory=dict)
+
+    def __init__(self, cache: dict[str, bool] | None = None, **kwargs: Any):
+        if cache is not None:
+            kwargs["cache"] = cache
+        super().__init__(id="basic_parent", **kwargs)
+
+    @handler
+    async def start(self, email: str, ctx: WorkflowContext[EmailValidationRequest]) -> None:
+        request = EmailValidationRequest(email=email)
+        await ctx.send_message(request, target_id="email_workflow")
+
+    @handler
+    async def handle_sub_workflow_request(
+        self,
+        request: SubWorkflowRequestInfo[DomainCheckRequest],
+        ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]],
+    ) -> None:
+        """Handle requests from sub-workflows with optional caching."""
+        domain_request = request.data
+
+        if domain_request.domain in self.cache:
+            # Return cached result
+            response = SubWorkflowResponse(request_id=request.request_id, data=self.cache[domain_request.domain])
+            await ctx.send_message(response, target_id=request.workflow_executor_id)
+        else:
+            # Not in cache, forward to external
+            await ctx.send_message(request)
+
+    @handler
+    async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+        self.result = result
 
 
 # Test executors
@@ -129,34 +182,10 @@ class ParentOrchestrator(Executor):
 async def test_basic_sub_workflow() -> None:
     """Test basic sub-workflow execution without interception."""
     # Create sub-workflow
-    email_validator = EmailValidator()
-    email_request_info = RequestInfoExecutor(id="email_request_info")
-
-    validation_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(email_validator)
-        .add_edge(email_validator, email_request_info)
-        .add_edge(email_request_info, email_validator)
-        .build()
-    )
+    validation_workflow = create_email_validation_workflow()
 
     # Create parent workflow without interception
-    class SimpleParent(Executor):
-        result: ValidationResult | None = Field(default=None)
-
-        def __init__(self, **kwargs: Any):
-            super().__init__(id="simple_parent", **kwargs)
-
-        @handler
-        async def start(self, email: str, ctx: WorkflowContext[EmailValidationRequest]) -> None:
-            request = EmailValidationRequest(email=email)
-            await ctx.send_message(request, target_id="email_workflow")
-
-        @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
-            self.result = result
-
-    parent = SimpleParent()
+    parent = BasicParent()
     workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
     main_request_info = RequestInfoExecutor(id="main_request_info")
 
@@ -191,21 +220,12 @@ async def test_basic_sub_workflow() -> None:
 
 
 async def test_sub_workflow_with_interception():
-    """Test sub-workflow with parent interception of requests."""
+    """Test sub-workflow with parent interception and conditional forwarding."""
     # Create sub-workflow
-    email_validator = EmailValidator()
-    email_request_info = RequestInfoExecutor(id="email_request_info")
+    validation_workflow = create_email_validation_workflow()
 
-    validation_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(email_validator)
-        .add_edge(email_validator, email_request_info)
-        .add_edge(email_request_info, email_validator)
-        .build()
-    )
-
-    # Create parent workflow with interception
-    parent = ParentOrchestrator(approved_domains={"example.com", "internal.org"})
+    # Create parent workflow with interception cache
+    parent = BasicParent(cache={"example.com": True, "internal.org": True})
     workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
     parent_request_info = RequestInfoExecutor(id="request_info")
 
@@ -219,25 +239,19 @@ async def test_sub_workflow_with_interception():
         .build()
     )
 
-    # Test 1: Email with known domain (intercepted)
-    result = await main_workflow.run(["user@example.com"])
-
-    # Should complete without external requests
+    # Test 1: Email with cached domain (intercepted)
+    result = await main_workflow.run("user@example.com")
     request_events = result.get_request_info_events()
-    assert len(request_events) == 0  # No external requests, handled internally
+    assert len(request_events) == 0  # No external requests, handled from cache
+    assert parent.result is not None
+    assert parent.result.email == "user@example.com"
+    assert parent.result.is_valid is True
 
-    assert len(parent.results) == 1
-    assert parent.results[0].email == "user@example.com"
-    assert parent.results[0].is_valid is True
-    assert parent.results[0].reason == "Domain approved"
-
-    # Test 2: Email with unknown domain (forwarded)
-    parent.results.clear()
-    result = await main_workflow.run(["user@unknown.com"])
-
-    # Should have external request
+    # Test 2: Email with unknown domain (forwarded to external)
+    parent.result = None
+    result = await main_workflow.run("user@unknown.com")
     request_events = result.get_request_info_events()
-    assert len(request_events) == 1
+    assert len(request_events) == 1  # Forwarded to external
     assert isinstance(request_events[0].data, DomainCheckRequest)
     assert request_events[0].data.domain == "unknown.com"
 
@@ -245,91 +259,15 @@ async def test_sub_workflow_with_interception():
     await main_workflow.send_responses({
         request_events[0].request_id: False  # Domain not approved
     })
+    assert parent.result is not None
+    assert parent.result.email == "user@unknown.com"
+    assert parent.result.is_valid is False
 
-    assert len(parent.results) == 1
-    assert parent.results[0].email == "user@unknown.com"
-    assert parent.results[0].is_valid is False
-    assert parent.results[0].reason == "Domain not approved"
-
-
-async def test_conditional_forwarding() -> None:
-    """Test conditional forwarding by sending SubWorkflowRequestInfo to external handlers."""
-
-    class ConditionalParent(Executor):
-        """Parent that conditionally handles requests."""
-
-        cache: dict[str, bool] = Field(default_factory=lambda: {"cached.com": True})
-        result: ValidationResult | None = Field(default=None)
-
-        def __init__(self, **kwargs: Any):
-            super().__init__(id="conditional_parent", **kwargs)
-
-        @handler
-        async def start(self, email: str, ctx: WorkflowContext[EmailValidationRequest]) -> None:
-            request = EmailValidationRequest(email=email)
-            await ctx.send_message(request, target_id="email_workflow")
-
-        @handler
-        async def handle_sub_workflow_request(
-            self,
-            request: SubWorkflowRequestInfo[DomainCheckRequest],
-            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo[DomainCheckRequest]],
-        ) -> None:
-            """Handle requests from sub-workflows."""
-            domain_request = request.data
-
-            if domain_request.domain in self.cache:
-                # Return cached result
-                response = SubWorkflowResponse(request_id=request.request_id, data=self.cache[domain_request.domain])
-                await ctx.send_message(response, target_id=request.workflow_executor_id)
-            else:
-                # Not in cache, forward to external
-                await ctx.send_message(request)
-
-        @handler
-        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
-            self.result = result
-
-    # Setup workflows
-    email_validator = EmailValidator()
-    request_info = RequestInfoExecutor(id="request_info")
-
-    validation_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(email_validator)
-        .add_edge(email_validator, request_info)
-        .add_edge(request_info, email_validator)
-        .build()
-    )
-
-    parent = ConditionalParent()
-    workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
-    parent_request_info = RequestInfoExecutor(id="request_info")
-
-    main_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(parent)
-        .add_edge(parent, workflow_executor)
-        .add_edge(workflow_executor, parent)
-        .add_edge(parent, parent_request_info)
-        .add_edge(parent_request_info, workflow_executor)  # For SubWorkflowResponse routing
-        .build()
-    )
-
-    # Test cached domain
-    result = await main_workflow.run("user@cached.com")
+    # Test 3: Another cached domain
+    parent.result = None
+    result = await main_workflow.run("user@internal.org")
     request_events = result.get_request_info_events()
     assert len(request_events) == 0  # Handled from cache
-    assert parent.result is not None
-    assert parent.result.is_valid is True
-
-    # Test uncached domain
-    parent.result = None
-    result = await main_workflow.run("user@new.com")
-    request_events = result.get_request_info_events()
-    assert len(request_events) == 1  # Forwarded to external
-
-    await main_workflow.send_responses({request_events[0].request_id: True})
     assert parent.result is not None
     assert parent.result.is_valid is True
 
@@ -384,19 +322,8 @@ async def test_workflow_scoped_interception() -> None:
             self.results[result.email] = result
 
     # Create two identical sub-workflows
-    def create_validation_workflow():
-        validator = EmailValidator()
-        request_info = RequestInfoExecutor(id="request_info")
-        return (
-            WorkflowBuilder()
-            .set_start_executor(validator)
-            .add_edge(validator, request_info)
-            .add_edge(request_info, validator)
-            .build()
-        )
-
-    workflow_a = create_validation_workflow()
-    workflow_b = create_validation_workflow()
+    workflow_a = create_email_validation_workflow()
+    workflow_b = create_email_validation_workflow()
 
     parent = MultiWorkflowParent()
     executor_a = WorkflowExecutor(workflow_a, "workflow_a")
@@ -454,16 +381,7 @@ async def test_concurrent_sub_workflow_execution() -> None:
             self.results.append(result)
 
     # Create sub-workflow for email validation
-    email_validator = EmailValidator()
-    email_request_info = RequestInfoExecutor(id="email_request_info")
-
-    validation_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(email_validator)
-        .add_edge(email_validator, email_request_info)
-        .add_edge(email_request_info, email_validator)
-        .build()
-    )
+    validation_workflow = create_email_validation_workflow()
 
     # Create parent workflow
     processor = ConcurrentProcessor()
@@ -519,12 +437,3 @@ async def test_concurrent_sub_workflow_execution() -> None:
 
     # Verify that concurrent executions were properly isolated
     # (This is implicitly tested by the fact that we got correct results for all emails)
-
-
-if __name__ == "__main__":
-    # Run tests
-    asyncio.run(test_basic_sub_workflow())
-    asyncio.run(test_sub_workflow_with_interception())
-    asyncio.run(test_conditional_forwarding())
-    asyncio.run(test_workflow_scoped_interception())
-    asyncio.run(test_concurrent_sub_workflow_execution())
