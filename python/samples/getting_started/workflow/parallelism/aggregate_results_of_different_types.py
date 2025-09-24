@@ -66,7 +66,7 @@ class Aggregator(Executor):
             results (list[int | float]): execution results from upstream executors.
                 The type annotation must be a list of union types that the upstream
                 executors will produce.
-            cts (WorkflowContext[None]): A workflow context.
+            ctx (WorkflowContext[Never, list[int | float]]): A workflow context that can yield the final output.
         """
         await ctx.yield_output(results)
 
