@@ -68,17 +68,17 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         File.Copy(Path.GetFullPath(workflowPath), Path.Combine(projectDirectory.FullName, "Workflow.cs"));
         string projectText = File.ReadAllText(Path.GetFullPath("Workflows/TestProject.csproj"));
         File.WriteAllText(Path.Combine(projectDirectory.FullName, "TestProject.csproj"), projectText.Replace("{PROJECTPATH}", referencePath));
+        string shellCommand = Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.MacOSX ? "sh" : "cmd.exe";
         ProcessStartInfo startInfo =
             new()
             {
-                FileName = "cmd.exe",
+                FileName = shellCommand,
                 Arguments = @"/C ""dotnet build > build.log""",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
                 WorkingDirectory = projectDirectory.FullName,
             };
-
         this.Output.WriteLine($"\nBUILDING PROJECT AT: {projectDirectory.FullName}\n");
         using Process? buildProcess = Process.Start(startInfo);
         Assert.NotNull(buildProcess);

@@ -72,7 +72,7 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
                 conversation,
                 messagesVariable,
                 autoSend,
-                TemplateLine.Parse(additionalInstructions));
+                additionalInstructions is null ? null : (TemplateLine.Builder)TemplateLine.Parse(additionalInstructions));
 
         // Act
         InvokeAzureAgentTemplate template = new(model);
