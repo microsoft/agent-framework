@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import ChatMessage, ConcurrentBuilder, Role, WorkflowCompletedEvent
+from agent_framework import ChatMessage, ConcurrentBuilder, Role
 from agent_framework.azure import AzureChatClient
 from azure.identity import AzureCliCredential
 
@@ -14,12 +14,13 @@ Build a concurrent workflow with ConcurrentBuilder that fans out one prompt to
 multiple domain agents and fans in their responses. Override the default
 aggregator with a custom async callback that uses AzureChatClient.get_response()
 to synthesize a concise, consolidated summary from the experts' outputs.
+The workflow completes when all participants become idle.
 
 Demonstrates:
 - ConcurrentBuilder().participants([...]).with_custom_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
 - Aggregation implemented via an LLM call (chat_client.get_response)
-- WorkflowCompletedEvent carrying the synthesized summary string
+- Workflow output yielded with the synthesized summary string
 
 Prerequisites:
 - Azure OpenAI configured for AzureChatClient (az login + required env vars)
@@ -82,20 +83,18 @@ async def main() -> None:
     #   Each participant becomes a parallel branch (fan-out) from an internal dispatcher.
     # - with_aggregator(...) overrides the default aggregator:
     #   • Default aggregator -> returns list[ChatMessage] (one user + one assistant per agent)
-    #   • Custom callback    -> return value becomes WorkflowCompletedEvent.data (string here)
+    #   • Custom callback    -> return value becomes workflow output (string here)
     #   The callback can be sync or async; it receives list[AgentExecutorResponse].
     workflow = (
         ConcurrentBuilder().participants([researcher, marketer, legal]).with_aggregator(summarize_results).build()
     )
 
-    completion: WorkflowCompletedEvent | None = None
-    async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
+    events = await workflow.run("We are launching a new budget-friendly electric bike for urban commuters.")
+    outputs = events.get_outputs()
 
-    if completion:
+    if outputs:
         print("===== Final Consolidated Output =====")
-        print(completion.data)
+        print(outputs[0])  # Get the first (and typically only) output
 
     """
     Sample Output:

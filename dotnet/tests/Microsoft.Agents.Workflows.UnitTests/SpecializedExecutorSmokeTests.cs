@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -48,6 +49,12 @@ public class SpecializedExecutorSmokeTests
 
             return result;
         }
+
+        public override AgentThread GetNewThread()
+            => new TestAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => new TestAgentThread();
 
         public static TestAIAgent FromStrings(params string[] messages) =>
             new(ToChatMessages(messages));
@@ -102,6 +109,8 @@ public class SpecializedExecutorSmokeTests
             return candidateMessages;
         }
     }
+
+    public sealed class TestAgentThread() : InMemoryAgentThread();
 
     internal sealed class TestWorkflowContext : IWorkflowContext
     {

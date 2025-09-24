@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import (
     Executor,
@@ -15,7 +16,6 @@ from agent_framework import (
     SharedState,
     Workflow,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEventSource,
     WorkflowFailedEvent,
@@ -32,7 +32,7 @@ class FailingExecutor(Executor):
     """Executor that raises at runtime to test failure signaling."""
 
     @handler
-    async def fail(self, msg: int, ctx: WorkflowContext[None]) -> None:  # pragma: no cover - invoked via workflow
+    async def fail(self, msg: int, ctx: WorkflowContext) -> None:  # pragma: no cover - invoked via workflow
         raise RuntimeError("boom")
 
 
@@ -57,14 +57,14 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
 async def test_executor_failed_event_emitted_on_direct_execute():
     failing = FailingExecutor(id="f")
     ctx = InProcRunnerContext()
-    wf_ctx: WFContext[None] = WFContext(
-        executor_id=failing.id,
-        source_executor_ids=["START"],
-        shared_state=SharedState(),
-        runner_context=ctx,
-    )
+    shared_state = SharedState()
     with pytest.raises(RuntimeError, match="boom"):
-        await failing.execute(0, wf_ctx)
+        await failing.execute(
+            0,
+            ["START"],
+            shared_state,
+            ctx,
+        )
     drained = await ctx.drain_events()
     failed = [e for e in drained if isinstance(e, ExecutorFailedEvent)]
     assert failed
@@ -98,17 +98,17 @@ class Completer(Executor):
     """Executor that completes immediately with provided data for testing."""
 
     @handler
-    async def run(self, msg: str, ctx: WorkflowContext[str]) -> None:  # pragma: no cover
-        await ctx.add_event(WorkflowCompletedEvent(msg))
+    async def run(self, msg: str, ctx: WorkflowContext[Never, str]) -> None:  # pragma: no cover
+        await ctx.yield_output(msg)
 
 
 async def test_completed_status_streaming():
     c = Completer(id="c")
     wf = WorkflowBuilder().set_start_executor(c).build()
     events = [ev async for ev in wf.run_stream("ok")]  # no raise
-    # Last status should be COMPLETED
+    # Last status should be IDLE
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
-    assert status and status[-1].state == WorkflowRunState.COMPLETED
+    assert status and status[-1].state == WorkflowRunState.IDLE
     assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
 
 
@@ -120,8 +120,12 @@ async def test_started_and_completed_event_origins():
     started = next(e for e in events if isinstance(e, WorkflowStartedEvent))
     assert started.origin is WorkflowEventSource.FRAMEWORK
 
-    completed = next(e for e in events if isinstance(e, WorkflowCompletedEvent))
-    assert completed.origin is WorkflowEventSource.EXECUTOR
+    # Check for IDLE status indicating completion
+    idle_status = next(
+        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE), None
+    )
+    assert idle_status is not None
+    assert idle_status.origin is WorkflowEventSource.FRAMEWORK
 
 
 async def test_non_streaming_final_state_helpers():
@@ -129,7 +133,7 @@ async def test_non_streaming_final_state_helpers():
     c = Completer(id="c")
     wf1 = WorkflowBuilder().set_start_executor(c).build()
     result1: WorkflowRunResult = await wf1.run("done")
-    assert result1.get_final_state() == WorkflowRunState.COMPLETED
+    assert result1.get_final_state() == WorkflowRunState.IDLE
 
     # Idle-with-pending-request case
     req = Requester(id="req")
@@ -145,7 +149,7 @@ async def test_run_includes_status_events_completed():
     result: WorkflowRunResult = await wf.run("ok")
     timeline = result.status_timeline()
     assert timeline, "Expected status timeline in non-streaming run() results"
-    assert timeline[-1].state == WorkflowRunState.COMPLETED
+    assert timeline[-1].state == WorkflowRunState.IDLE
 
 
 async def test_run_includes_status_events_idle_with_requests():

@@ -100,6 +100,8 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New("Hello World"));
+        this.State.Bind();
+
         ExpressionSegment expressionSegment = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
         TemplateLine line = new([expressionSegment]);
 

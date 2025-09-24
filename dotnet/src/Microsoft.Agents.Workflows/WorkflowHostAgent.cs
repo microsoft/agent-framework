@@ -48,7 +48,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
     public override AgentThread GetNewThread() => new WorkflowThread(this.Id, this.Name, this.GenerateNewId());
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new WorkflowThread(serializedThread, jsonSerializerOptions);
 
     private async

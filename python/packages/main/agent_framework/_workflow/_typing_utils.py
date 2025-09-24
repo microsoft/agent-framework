@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
+from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 logger = logging.getLogger(__name__)
@@ -54,7 +56,7 @@ def _coerce_to_type(value: Any, target_type: type) -> Any | None:
     return None
 
 
-def is_instance_of(data: Any, target_type: type) -> bool:
+def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     """Check if the data is an instance of the target type.
 
     Args:
@@ -77,16 +79,27 @@ def is_instance_of(data: Any, target_type: type) -> bool:
 
     # Case 2: target_type is Optional[T] or Union[T1, T2, ...]
     # Optional[T] is really just as Union[T, None]
+    if origin is UnionType:
+        return any(is_instance_of(data, arg) for arg in args)
+
+    # Case 2b: Handle typing.Union (legacy Union syntax)
     if origin is Union:
         return any(is_instance_of(data, arg) for arg in args)
 
     # Case 3: target_type is a generic type
     if origin in [list, set]:
-        return isinstance(data, origin) and all(is_instance_of(item, args[0]) for item in data)  # type: ignore
+        return isinstance(data, origin) and (
+            not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)
+        )  # type: ignore
 
     # Case 4: target_type is a tuple
     if origin is tuple:
+        if len(args) == 2 and args[1] is Ellipsis:  # Tuple[T, ...] case
+            element_type = args[0]
+            return isinstance(data, tuple) and all(is_instance_of(item, element_type) for item in data)
         if len(args) == 1 and args[0] is Ellipsis:  # Tuple[...] case
+            return isinstance(data, tuple)
+        if len(args) == 0:
             return isinstance(data, tuple)
         return (
             isinstance(data, tuple)
@@ -96,9 +109,12 @@ def is_instance_of(data: Any, target_type: type) -> bool:
 
     # Case 5: target_type is a dict
     if origin is dict:
-        return isinstance(data, dict) and all(
-            is_instance_of(key, args[0]) and is_instance_of(value, args[1])
-            for key, value in data.items()  # type: ignore
+        return isinstance(data, dict) and (
+            not args
+            or all(
+                is_instance_of(key, args[0]) and is_instance_of(value, args[1])
+                for key, value in data.items()  # type: ignore
+            )
         )
 
     # Case 6: target_type is RequestResponse[T, U] - validate generic parameters
@@ -114,10 +130,17 @@ def is_instance_of(data: Any, target_type: type) -> bool:
                 and data.original_request is not None
                 and not is_instance_of(data.original_request, request_type)
             ):
-                coerced = _coerce_to_type(data.original_request, request_type)
-                if coerced is None:
+                # Checkpoint decoding can leave original_request as a plain mapping. In that
+                # case we coerce it back into the expected request type so downstream handlers
+                # and validators still receive a fully typed RequestResponse instance.
+                original_request = data.original_request
+                if isinstance(original_request, Mapping):
+                    coerced = _coerce_to_type(dict(original_request), request_type)
+                    if coerced is None or not isinstance(coerced, request_type):
+                        return False
+                    data.original_request = coerced
+                else:
                     return False
-                data.original_request = coerced
             if hasattr(data, "data") and data.data is not None and not is_instance_of(data.data, response_type):
                 return False
         return True
