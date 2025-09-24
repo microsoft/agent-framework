@@ -69,7 +69,6 @@ def test_azure_ai_settings_init(azure_ai_unit_test_env: dict[str, str]) -> None:
 
     assert settings.project_endpoint == azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
     assert settings.model_deployment_name == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
-    assert settings.agent_name == azure_ai_unit_test_env["AZURE_FOUNDRY_AGENT_NAME"]
 
 
 def test_azure_ai_settings_init_with_explicit_values() -> None:
@@ -77,21 +76,19 @@ def test_azure_ai_settings_init_with_explicit_values() -> None:
     settings = AzureAISettings(
         project_endpoint="https://custom-endpoint.com/",
         model_deployment_name="custom-model",
-        agent_name="CustomAgent",
     )
 
     assert settings.project_endpoint == "https://custom-endpoint.com/"
     assert settings.model_deployment_name == "custom-model"
-    assert settings.agent_name == "CustomAgent"
 
 
 def test_azure_ai_chat_client_init_with_client(mock_ai_project_client: MagicMock) -> None:
-    """Test AzureAIAgentClient initialization with existing client."""
+    """Test AzureAIAgentClient initialization with existing project_client."""
     chat_client = create_test_azure_ai_chat_client(
         mock_ai_project_client, agent_id="existing-agent-id", thread_id="test-thread-id"
     )
 
-    assert chat_client.client is mock_ai_project_client
+    assert chat_client.project_client is mock_ai_project_client
     assert chat_client.agent_id == "existing-agent-id"
     assert chat_client.thread_id == "test-thread-id"
     assert not chat_client._should_delete_agent  # type: ignore
@@ -102,10 +99,10 @@ def test_azure_ai_chat_client_init_auto_create_client(
     azure_ai_unit_test_env: dict[str, str],
     mock_ai_project_client: MagicMock,
 ) -> None:
-    """Test AzureAIAgentClient initialization with auto-created client."""
+    """Test AzureAIAgentClient initialization with auto-created project_client."""
     azure_ai_settings = AzureAISettings(**azure_ai_unit_test_env)  # type: ignore
     chat_client = AzureAIAgentClient.model_construct(
-        client=mock_ai_project_client,
+        project_client=mock_ai_project_client,
         agent_id=None,
         thread_id=None,
         _should_delete_agent=False,
@@ -113,13 +110,13 @@ def test_azure_ai_chat_client_init_auto_create_client(
         credential=None,
     )
 
-    assert chat_client.client is mock_ai_project_client
+    assert chat_client.project_client is mock_ai_project_client
     assert chat_client.agent_id is None
     assert not chat_client._should_delete_agent  # type: ignore
 
 
 def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
-    """Test AzureAIAgentClient initialization when project_endpoint is missing and no client provided."""
+    """Test AzureAIAgentClient initialization when project_endpoint is missing and no project_client provided."""
     # Mock AzureAISettings to return settings with None project_endpoint
     with patch("agent_framework_azure_ai._chat_client.AzureAISettings") as mock_settings:
         mock_settings_instance = MagicMock()
@@ -130,7 +127,7 @@ def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
 
         with pytest.raises(ServiceInitializationError, match="project endpoint is required"):
             AzureAIAgentClient(
-                client=None,
+                project_client=None,
                 agent_id=None,
                 project_endpoint=None,  # Missing endpoint
                 model_deployment_name="test-model",
@@ -150,7 +147,7 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
 
         with pytest.raises(ServiceInitializationError, match="model deployment name is required"):
             AzureAIAgentClient(
-                client=None,
+                project_client=None,
                 agent_id=None,  # No existing agent
                 project_endpoint="https://test.com",
                 model_deployment_name=None,  # Missing for agent creation
@@ -161,7 +158,7 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
 def test_azure_ai_chat_client_from_dict(mock_ai_project_client: MagicMock) -> None:
     """Test AzureAIAgentClient.from_dict method."""
     settings = {
-        "client": mock_ai_project_client,
+        "project_client": mock_ai_project_client,
         "agent_id": "test-agent-id",
         "thread_id": "test-thread-id",
         "project_endpoint": "https://test-endpoint.com/",
@@ -182,16 +179,18 @@ def test_azure_ai_chat_client_from_dict(mock_ai_project_client: MagicMock) -> No
         azure_ai_settings=azure_ai_settings,
     )
 
-    assert chat_client.client is mock_ai_project_client
+    assert chat_client.project_client is mock_ai_project_client
     assert chat_client.agent_id == "test-agent-id"
     assert chat_client.thread_id == "test-thread-id"
 
 
 def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
-    """Test AzureAIAgentClient.__init__ when async_credential is missing and no client provided."""
-    with pytest.raises(ServiceInitializationError, match="Azure credential is required when client is not provided"):
+    """Test AzureAIAgentClient.__init__ when async_credential is missing and no project_client provided."""
+    with pytest.raises(
+        ServiceInitializationError, match="Azure credential is required when project_client is not provided"
+    ):
         AzureAIAgentClient(
-            client=None,
+            project_client=None,
             agent_id="existing-agent",
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
@@ -425,7 +424,7 @@ def test_azure_ai_chat_client_convert_function_results_to_tool_output_none(mock_
 
 
 async def test_azure_ai_chat_client_close_client_when_should_close_true(mock_ai_project_client: MagicMock) -> None:
-    """Test _close_client_if_needed closes client when should_close_client is True."""
+    """Test _close_client_if_needed closes project_client when should_close_client is True."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
     chat_client._should_close_client = True  # type: ignore
 
@@ -437,7 +436,7 @@ async def test_azure_ai_chat_client_close_client_when_should_close_true(mock_ai_
 
 
 async def test_azure_ai_chat_client_close_client_when_should_close_false(mock_ai_project_client: MagicMock) -> None:
-    """Test _close_client_if_needed does not close client when should_close_client is False."""
+    """Test _close_client_if_needed does not close project_client when should_close_client is False."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
     chat_client._should_close_client = False  # type: ignore
 
@@ -635,7 +634,7 @@ async def test_azure_ai_chat_client_get_response() -> None:
         )
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
-        # Test that the client can be used to get a response
+        # Test that the project_client can be used to get a response
         response = await azure_ai_chat_client.get_response(messages=messages)
 
         assert response is not None
@@ -652,7 +651,7 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
-        # Test that the client can be used to get a response
+        # Test that the project_client can be used to get a response
         response = await azure_ai_chat_client.get_response(
             messages=messages,
             tools=[get_weather],
@@ -680,7 +679,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
         )
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
-        # Test that the client can be used to get a response
+        # Test that the project_client can be used to get a response
         response = azure_ai_chat_client.get_streaming_response(messages=messages)
 
         full_message: str = ""
@@ -703,7 +702,7 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
         messages: list[ChatMessage] = []
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
-        # Test that the client can be used to get a response
+        # Test that the project_client can be used to get a response
         response = azure_ai_chat_client.get_streaming_response(
             messages=messages,
             tools=[get_weather],
