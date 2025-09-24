@@ -608,6 +608,7 @@ async def _auto_invoke_function(
         middleware_context = FunctionInvocationContext(
             function=tool,
             arguments=args,
+            kwargs=custom_args or {},
         )
 
         async def final_function_handler(context_obj: Any) -> Any:

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from agent_framework import (
     ChatAgent,
@@ -267,3 +268,48 @@ class TestChatMiddleware:
         response3 = await chat_client_base.get_response(messages, middleware=[counting_middleware])
         assert response3 is not None
         assert execution_count["count"] == 2  # Should be 2 now
+
+    async def test_chat_client_middleware_can_access_and_override_custom_kwargs(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that chat client middleware can access and override custom parameters like temperature."""
+        captured_kwargs: dict[str, Any] = {}
+        modified_kwargs: dict[str, Any] = {}
+
+        @chat_middleware
+        async def kwargs_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            # Capture the original kwargs
+            captured_kwargs.update(context.kwargs)
+
+            # Modify some kwargs
+            context.kwargs["temperature"] = 0.9
+            context.kwargs["max_tokens"] = 500
+            context.kwargs["new_param"] = "added_by_middleware"
+
+            # Store modified kwargs for verification
+            modified_kwargs.update(context.kwargs)
+
+            await next(context)
+
+        # Add middleware to chat client
+        chat_client_base.middleware = [kwargs_middleware]
+
+        # Execute chat client with custom parameters
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await chat_client_base.get_response(
+            messages, temperature=0.7, max_tokens=100, custom_param="test_value"
+        )
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+
+        assert captured_kwargs["temperature"] == 0.7
+        assert captured_kwargs["max_tokens"] == 100
+        assert captured_kwargs["custom_param"] == "test_value"
+
+        # Verify middleware could modify the kwargs
+        assert modified_kwargs["temperature"] == 0.9
+        assert modified_kwargs["max_tokens"] == 500
+        assert modified_kwargs["new_param"] == "added_by_middleware"
+        assert modified_kwargs["custom_param"] == "test_value"  # Should still be there

@@ -61,14 +61,16 @@ class AgentRunContext:
                 For streaming: should be AsyncIterable[AgentRunResponseUpdate]
         terminate: A flag indicating whether to terminate execution after current middleware.
                 When set to True, execution will stop as soon as control returns to framework.
+        kwargs: Additional keyword arguments passed to the agent run method.
     """
 
     agent: "AgentProtocol"
     messages: list[ChatMessage]
     is_streaming: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)  # type: ignore
     result: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None
     terminate: bool = False
+    kwargs: dict[str, Any] = field(default_factory=dict)  # type: ignore
 
 
 @dataclass
@@ -83,13 +85,15 @@ class FunctionInvocationContext:
                 to see the actual execution result or can be set to override the execution result.
         terminate: A flag indicating whether to terminate execution after current middleware.
                 When set to True, execution will stop as soon as control returns to framework.
+        kwargs: Additional keyword arguments passed to the chat method that invoked this function.
     """
 
     function: "AIFunction[Any, Any]"
     arguments: "BaseModel"
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)  # type: ignore
     result: Any = None
     terminate: bool = False
+    kwargs: dict[str, Any] = field(default_factory=dict)  # type: ignore
 
 
 @dataclass
@@ -115,9 +119,10 @@ class ChatContext:
     messages: "MutableSequence[ChatMessage]"
     chat_options: "ChatOptions"
     is_streaming: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)  # type: ignore
     result: "ChatResponse | AsyncIterable[ChatResponseUpdate] | None" = None
     terminate: bool = False
+    kwargs: dict[str, Any] = field(default_factory=dict)  # type: ignore
 
 
 class AgentMiddleware(ABC):
@@ -957,10 +962,11 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
                 is_streaming=False,
+                kwargs=kwargs,
             )
 
             async def _execute_handler(ctx: AgentRunContext) -> AgentRunResponse:
-                return await original_run(self, ctx.messages, thread=thread, **kwargs)  # type: ignore
+                return await original_run(self, ctx.messages, thread=thread, **ctx.kwargs)  # type: ignore
 
             result = await agent_pipeline.execute(
                 self,  # type: ignore[arg-type]
@@ -1003,10 +1009,11 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
                 is_streaming=True,
+                kwargs=kwargs,
             )
 
             async def _execute_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
-                async for update in original_run_stream(self, ctx.messages, thread=thread, **kwargs):  # type: ignore[misc]
+                async for update in original_run_stream(self, ctx.messages, thread=thread, **ctx.kwargs):  # type: ignore[misc]
                     yield update
 
             async def _stream_generator() -> AsyncIterable[AgentRunResponseUpdate]:
@@ -1076,15 +1083,16 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
             messages=self.prepare_messages(messages),
             chat_options=chat_options,
             is_streaming=False,
+            kwargs=kwargs,
         )
 
         async def final_handler(ctx: ChatContext) -> Any:
-            return await original_get_response(self, list(ctx.messages), chat_options=ctx.chat_options)
+            return await original_get_response(self, list(ctx.messages), chat_options=ctx.chat_options, **ctx.kwargs)
 
         return await pipeline.execute(
             chat_client=self,
             messages=context.messages,
-            chat_options=chat_options,
+            chat_options=context.chat_options,
             context=context,
             final_handler=final_handler,
             **kwargs,
@@ -1125,15 +1133,18 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
                 messages=self.prepare_messages(messages),
                 chat_options=chat_options,
                 is_streaming=True,
+                kwargs=kwargs,
             )
 
             def final_handler(ctx: ChatContext) -> Any:
-                return original_get_streaming_response(self, list(ctx.messages), chat_options=ctx.chat_options)
+                return original_get_streaming_response(
+                    self, list(ctx.messages), chat_options=ctx.chat_options, **ctx.kwargs
+                )
 
             async for update in pipeline.execute_stream(
                 chat_client=self,
                 messages=context.messages,
-                chat_options=chat_options,
+                chat_options=context.chat_options,
                 context=context,
                 final_handler=final_handler,
                 **kwargs,

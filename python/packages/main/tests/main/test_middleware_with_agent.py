@@ -717,6 +717,101 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert function_calls[0].name == "sample_tool_function"
         assert function_results[0].call_id == function_calls[0].call_id
 
+    async def test_function_middleware_can_access_and_override_custom_kwargs(
+        self, chat_client: "MockChatClient"
+    ) -> None:
+        """Test that function middleware can access and override custom parameters like temperature."""
+        captured_kwargs: dict[str, Any] = {}
+        modified_kwargs: dict[str, Any] = {}
+        middleware_called = False
+
+        @function_middleware
+        async def kwargs_middleware(
+            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        ) -> None:
+            nonlocal middleware_called
+            middleware_called = True
+
+            # Capture the original kwargs
+            captured_kwargs["has_chat_options"] = "chat_options" in context.kwargs
+            captured_kwargs["has_custom_param"] = "custom_param" in context.kwargs
+            captured_kwargs["custom_param"] = context.kwargs.get("custom_param")
+
+            # Capture original chat_options values if present
+            if "chat_options" in context.kwargs:
+                chat_options = context.kwargs["chat_options"]
+                captured_kwargs["original_temperature"] = getattr(chat_options, "temperature", None)
+                captured_kwargs["original_max_tokens"] = getattr(chat_options, "max_tokens", None)
+
+            # Modify some kwargs
+            context.kwargs["temperature"] = 0.9
+            context.kwargs["max_tokens"] = 500
+            context.kwargs["new_param"] = "added_by_middleware"
+
+            # Also modify chat_options if present
+            if "chat_options" in context.kwargs:
+                context.kwargs["chat_options"].temperature = 0.9
+                context.kwargs["chat_options"].max_tokens = 500
+
+            # Store modified kwargs for verification
+            modified_kwargs["temperature"] = context.kwargs.get("temperature")
+            modified_kwargs["max_tokens"] = context.kwargs.get("max_tokens")
+            modified_kwargs["new_param"] = context.kwargs.get("new_param")
+            modified_kwargs["custom_param"] = context.kwargs.get("custom_param")
+
+            # Capture modified chat_options values if present
+            if "chat_options" in context.kwargs:
+                chat_options = context.kwargs["chat_options"]
+                modified_kwargs["chat_options_temperature"] = getattr(chat_options, "temperature", None)
+                modified_kwargs["chat_options_max_tokens"] = getattr(chat_options, "max_tokens", None)
+
+            await next(context)
+
+        chat_client.responses = [
+            ChatResponse(
+                messages=[
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        contents=[
+                            FunctionCallContent(
+                                call_id="test_call", name="sample_tool_function", arguments={"location": "Seattle"}
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Function completed")])]),
+        ]
+
+        # Create ChatAgent with function middleware
+        agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware], tools=[sample_tool_function])
+
+        # Execute the agent with custom parameters
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages, temperature=0.7, max_tokens=100, custom_param="test_value")
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+
+        # First check if middleware was called at all
+        assert middleware_called, "Function middleware was not called"
+
+        # Verify middleware captured the original kwargs
+        assert captured_kwargs["has_chat_options"] is True
+        assert captured_kwargs["has_custom_param"] is True
+        assert captured_kwargs["custom_param"] == "test_value"
+        assert captured_kwargs["original_temperature"] == 0.7
+        assert captured_kwargs["original_max_tokens"] == 100
+
+        # Verify middleware could modify the kwargs
+        assert modified_kwargs["temperature"] == 0.9
+        assert modified_kwargs["max_tokens"] == 500
+        assert modified_kwargs["new_param"] == "added_by_middleware"
+        assert modified_kwargs["custom_param"] == "test_value"
+        assert modified_kwargs["chat_options_temperature"] == 0.9
+        assert modified_kwargs["chat_options_max_tokens"] == 500
+
 
 class TestMiddlewareDynamicRebuild:
     """Test cases for dynamic middleware pipeline rebuilding with ChatAgent."""
@@ -1655,3 +1750,48 @@ class TestChatAgentChatMiddleware:
         assert len(function_results) == 1
         assert function_calls[0].name == "sample_tool_function"
         assert function_results[0].call_id == function_calls[0].call_id
+
+    async def test_agent_middleware_can_access_and_override_custom_kwargs(self) -> None:
+        """Test that agent middleware can access and override custom parameters like temperature."""
+        captured_kwargs: dict[str, Any] = {}
+        modified_kwargs: dict[str, Any] = {}
+
+        @agent_middleware
+        async def kwargs_middleware(
+            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+        ) -> None:
+            # Capture the original kwargs
+            captured_kwargs.update(context.kwargs)
+
+            # Modify some kwargs
+            context.kwargs["temperature"] = 0.9
+            context.kwargs["max_tokens"] = 500
+            context.kwargs["new_param"] = "added_by_middleware"
+
+            # Store modified kwargs for verification
+            modified_kwargs.update(context.kwargs)
+
+            await next(context)
+
+        # Create ChatAgent with agent middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware])
+
+        # Execute the agent with custom parameters
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages, temperature=0.7, max_tokens=100, custom_param="test_value")
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+
+        # Verify middleware captured the original kwargs
+        assert captured_kwargs["temperature"] == 0.7
+        assert captured_kwargs["max_tokens"] == 100
+        assert captured_kwargs["custom_param"] == "test_value"
+
+        # Verify middleware could modify the kwargs
+        assert modified_kwargs["temperature"] == 0.9
+        assert modified_kwargs["max_tokens"] == 500
+        assert modified_kwargs["new_param"] == "added_by_middleware"
+        assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
