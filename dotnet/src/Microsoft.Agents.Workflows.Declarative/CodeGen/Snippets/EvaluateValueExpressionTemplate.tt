@@ -5,8 +5,8 @@ void EvaluateValueExpression(ValueExpression expression, string targetVariable) 
 void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVariable)
 {
     if (expression is null)
-    { 
-        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = null;<#+ 
     }
     else if (expression.IsLiteral)
     {#>

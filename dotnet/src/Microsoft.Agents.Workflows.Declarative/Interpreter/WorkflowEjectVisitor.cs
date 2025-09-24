@@ -160,7 +160,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this._workflowModel.AddLink(loopId, continuationId, $"!{action.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
 
         // Transition to start of inner actions if there is a current item
-        string startId = ForeachExecutor.Steps.Start(action.Id); // %%% PRUNE - Start really needed at all?
+        string startId = ForeachExecutor.Steps.Start(action.Id);
         this._workflowModel.AddNode(new EmptyTemplate(startId, this._rootId), action.Id);
         this._workflowModel.AddLink(loopId, startId, $"{action.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
 

@@ -81,13 +81,21 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true);
         EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend" /* %%% TODO: defaultValue: true */); 
         EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
+        EvaluateValueExpression<ChatMessage[]>(this.Model.Input?.Messages, "inputMessages");
             
             #line default
             #line hidden
             this.Write(@"
-        // %%% TODO: INPUT MESSAGES
-
-        AgentRunResponse agentResponse = InvokeAgentAsync(context, agentName, conversationId, autoSend, additionalInstructions, inputMessages: null, cancellationToken).ToEnumerable().ToAgentRunResponse();
+        
+        AgentRunResponse agentResponse = 
+            InvokeAgentAsync(
+                context,
+                agentName,
+                conversationId, 
+                autoSend, 
+                additionalInstructions, 
+                inputMessages, 
+                cancellationToken).ToEnumerable().ToAgentRunResponse();
 
         if (autoSend)
         {
@@ -1630,8 +1638,48 @@ void EvaluateValueExpression(ValueExpression expression, string targetVariable) 
 void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVariable)
 {
     if (expression is null)
-    { 
-        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    {
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write("\n        ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write("? ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(" = null;");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+ 
     }
     else if (expression.IsLiteral)
     {

@@ -49,7 +49,14 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write(".Session);\n");
+            this.Write(".Session");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\EmptyTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Action is not null ? $", {this.Action}" : ""));
+            
+            #line default
+            #line hidden
+            this.Write(");\n");
             return this.GenerationEnvironment.ToString();
         }
     }

@@ -56,13 +56,38 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
             additionalInstructions: "Test instructions...");
     }
 
+    [Fact]
+    public void InputMessagesVariable()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(VariableConversation),
+            StringExpression.Literal("asst_123abc"),
+            StringExpression.Variable(PropertyPath.TopicVariable("TestConversation")),
+            "MyMessages",
+            messages: ValueExpression.Variable(PropertyPath.TopicVariable("TestConversation")));
+    }
+
+    [Fact]
+    public void InputMessagesExpression()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(VariableConversation),
+            StringExpression.Literal("asst_123abc"),
+            StringExpression.Literal("conv_123abc"),
+            "MyMessages",
+            messages: ValueExpression.Expression("[UserMessage(System.LastMessageText)]"));
+    }
+
     private void ExecuteTest(
         string displayName,
         StringExpression.Builder agentName,
         StringExpression.Builder conversation,
         string? messagesVariable = null,
         BoolExpression.Builder? autoSend = null,
-        string? additionalInstructions = null)
+        string? additionalInstructions = null,
+        ValueExpression.Builder? messages = null)
     {
         // Arrange
         InvokeAzureAgent model =
@@ -72,7 +97,8 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
                 conversation,
                 messagesVariable,
                 autoSend,
-                additionalInstructions is null ? null : (TemplateLine.Builder)TemplateLine.Parse(additionalInstructions));
+                additionalInstructions is null ? null : (TemplateLine.Builder)TemplateLine.Parse(additionalInstructions),
+                messages);
 
         // Act
         InvokeAzureAgentTemplate template = new(model);
@@ -91,13 +117,15 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
         StringExpression.Builder conversation,
         string? messagesVariable = null,
         BoolExpression.Builder? autoSend = null,
-        TemplateLine.Builder? additionalInstructions = null)
+        TemplateLine.Builder? additionalInstructions = null,
+        ValueExpression.Builder? messages = null)
     {
-        InitializablePropertyPath? messages = null;
+        InitializablePropertyPath? outputMessages = null;
         if (messagesVariable is not null)
         {
-            messages = InitializablePropertyPath.Create(FormatVariablePath(messagesVariable));
+            outputMessages = InitializablePropertyPath.Create(FormatVariablePath(messagesVariable));
         }
+
         InvokeAzureAgent.Builder actionBuilder =
             new()
             {
@@ -112,13 +140,14 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
                 Input =
                     new AzureAgentInput.Builder
                     {
+                        Messages = messages,
                         AdditionalInstructions = additionalInstructions,
                     },
                 Output =
                     new AzureAgentOutput.Builder
                     {
                         AutoSend = autoSend,
-                        Messages = messages,
+                        Messages = outputMessages,
                     },
             };
 
