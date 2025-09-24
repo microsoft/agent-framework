@@ -30,7 +30,7 @@ async def main() -> None:
 
     # For Azure authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    # By deafult, local Mem0 authenticates to your OpenAI using the OPENAI_API_KEY environment variable. 
+    # By default, local Mem0 authenticates to your OpenAI using the OPENAI_API_KEY environment variable.
     # See the Mem0 documentation for other LLM providers and authentication options.
     local_mem0_client = AsyncMemory()
     async with (
@@ -58,6 +58,7 @@ async def main() -> None:
         print(f"Agent: {result}\n")
 
         print("\nRequest within a new thread:")
+
         # Create a new thread for the agent.
         # The new thread has no context of the previous conversation.
         thread = agent.get_new_thread()
