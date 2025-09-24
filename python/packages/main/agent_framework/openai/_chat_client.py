@@ -413,23 +413,20 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     },
                 }
             case DataContent() | UriContent() if content.media_type and content.media_type.startswith("application/"):
-                if content.media_type == "application/pdf":
-                    if content.uri.startswith("data:"):
-                        filename = (
-                            getattr(content, "filename", None)
-                            or content.additional_properties.get("filename", "document.pdf")
-                            if hasattr(content, "additional_properties") and content.additional_properties
-                            else "document.pdf"
-                        )
-                        return {
-                            "type": "file",
-                            "file": {
-                                "file_data": content.uri,  # Send full data URI
-                                "filename": filename,
-                            },
-                        }
-
-                    return content.model_dump(exclude_none=True)
+                # All application/* media types should be treated as files for OpenAI
+                if content.uri.startswith("data:"):
+                    filename = getattr(content, "filename", None) or (
+                        content.additional_properties.get("filename")
+                        if hasattr(content, "additional_properties") and content.additional_properties
+                        else None
+                    )
+                    file_obj = {"file_data": content.uri}  # Send full data URI
+                    if filename:
+                        file_obj["filename"] = filename
+                    return {
+                        "type": "file",
+                        "file": file_obj,
+                    }
 
                 return content.model_dump(exclude_none=True)
             case _:
