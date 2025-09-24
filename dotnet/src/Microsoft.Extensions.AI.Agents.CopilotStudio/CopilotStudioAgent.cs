@@ -41,7 +41,7 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override sealed AgentThread GetNewThread()
+    public sealed override AgentThread GetNewThread()
         => new CopilotStudioAgentThread();
 
     /// <summary>

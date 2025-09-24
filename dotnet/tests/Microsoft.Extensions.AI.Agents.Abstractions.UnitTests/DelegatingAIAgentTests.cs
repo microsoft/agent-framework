@@ -300,9 +300,7 @@ public class DelegatingAIAgentTests
         public new AIAgent InnerAgent => base.InnerAgent;
     }
 
-    private sealed class TestAgentThread : AgentThread
-    {
-    }
+    private sealed class TestAgentThread : AgentThread;
 
     #endregion
 }

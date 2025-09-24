@@ -137,6 +137,8 @@ public sealed class ChatClientAgent : AIAgent
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
             chatResponseMessage.AuthorName ??= agentName;
+            chatResponseMessage.MessageId ??= Guid.NewGuid().ToString("N");
+            chatResponseMessage.CreatedAt ??= DateTimeOffset.UtcNow;
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
@@ -194,13 +196,17 @@ public sealed class ChatClientAgent : AIAgent
             throw;
         }
 
+        string? messageId = null;
         while (hasUpdates)
         {
             var update = responseUpdatesEnumerator.Current;
             if (update is not null)
             {
-                responseUpdates.Add(update);
                 update.AuthorName ??= this.Name;
+                update.CreatedAt ??= DateTimeOffset.UtcNow;
+                update.MessageId ??= (messageId ??= Guid.NewGuid().ToString("N"));
+
+                responseUpdates.Add(update);
                 yield return new(update) { AgentId = this.Id };
             }
 
@@ -262,7 +268,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        Func<JsonElement, JsonSerializerOptions?, IChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
+        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
             null :
             (jse, jso) => this._agentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
 
