@@ -3,6 +3,8 @@
 import asyncio
 from dataclasses import dataclass
 
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -33,13 +35,11 @@ class SimpleSubExecutor(Executor):
         super().__init__(id="simple_sub")
 
     @handler
-    async def process(self, request: SimpleRequest, ctx: WorkflowContext[None]) -> None:
+    async def process(self, request: SimpleRequest, ctx: WorkflowContext[Never, SimpleResponse]) -> None:
         """Process a simple request."""
-        from agent_framework import WorkflowCompletedEvent
-
         # Just echo back with prefix and complete
         response = SimpleResponse(result=f"processed: {request.text}")
-        await ctx.add_event(WorkflowCompletedEvent(data=response))
+        await ctx.yield_output(response)
 
 
 class SimpleParent(Executor):
@@ -57,7 +57,7 @@ class SimpleParent(Executor):
         await ctx.send_message(request, target_id="sub_workflow")
 
     @handler
-    async def collect(self, response: SimpleResponse, ctx: WorkflowContext[None]) -> None:
+    async def collect(self, response: SimpleResponse, ctx: WorkflowContext) -> None:
         """Collect the result."""
         self.result = response
 
@@ -72,7 +72,7 @@ async def test_simple_sub_workflow():
             super().__init__(id="dummy")
 
         @handler
-        async def process(self, message: object, ctx: WorkflowContext[None]) -> None:
+        async def process(self, message: object, ctx: WorkflowContext) -> None:
             pass  # Do nothing
 
     dummy = DummyExecutor()

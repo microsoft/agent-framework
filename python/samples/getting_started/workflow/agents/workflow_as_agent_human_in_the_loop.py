@@ -39,7 +39,7 @@ This sample demonstrates how to build a workflow agent that escalates uncertain
 decisions to a human manager. A Worker generates results, while a Reviewer
 evaluates them. When the Reviewer is not confident, it escalates the decision
 to a human via RequestInfoExecutor, receives the human response, and then
-forwards that response back to the Worker.
+forwards that response back to the Worker. The workflow completes when idle.
 
 Prerequisites:
 - OpenAI account configured and accessible for OpenAIChatClient.

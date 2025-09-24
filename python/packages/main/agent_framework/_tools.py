@@ -224,11 +224,18 @@ class HostedWebSearchTool(BaseTool):
             additional_properties: Additional properties associated with the tool
                 (e.g., {"user_location": {"city": "Seattle", "country": "US"}}).
             **kwargs: Additional keyword arguments to pass to the base class.
+                if additional_properties is not provided, any kwargs will be added to additional_properties.
         """
         args: dict[str, Any] = {
             "name": "web_search",
         }
-        super().__init__(**args, **kwargs)
+        if additional_properties is not None:
+            args["additional_properties"] = additional_properties
+        elif kwargs:
+            args["additional_properties"] = kwargs
+        if description is not None:
+            args["description"] = description
+        super().__init__(**args)
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):

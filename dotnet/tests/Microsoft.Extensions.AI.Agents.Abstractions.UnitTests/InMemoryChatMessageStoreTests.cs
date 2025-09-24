@@ -149,7 +149,7 @@ public class InMemoryChatMessageStoreTests
     {
         // Arrange
         var stateWithEmptyMessages = JsonSerializer.SerializeToElement(
-            new Dictionary<string, object> { ["Messages"] = new List<ChatMessage>() },
+            new Dictionary<string, object> { ["messages"] = new List<ChatMessage>() },
             TestJsonSerializerContext.Default.IDictionaryStringObject);
 
         // Act
@@ -164,7 +164,7 @@ public class InMemoryChatMessageStoreTests
     {
         // Arrange
         var stateWithNullMessages = JsonSerializer.SerializeToElement(
-            new Dictionary<string, object> { ["Messages"] = null! },
+            new Dictionary<string, object> { ["messages"] = null! },
             TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
@@ -183,7 +183,7 @@ public class InMemoryChatMessageStoreTests
             new(ChatRole.User, "User message"),
             new(ChatRole.Assistant, "Assistant message")
         };
-        var state = new Dictionary<string, object> { ["Messages"] = messages };
+        var state = new Dictionary<string, object> { ["messages"] = messages };
         var serializedState = JsonSerializer.SerializeToElement(
             state,
             TestJsonSerializerContext.Default.DictionaryStringObject);

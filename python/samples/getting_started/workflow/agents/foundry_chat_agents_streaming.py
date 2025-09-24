@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from typing import Any
 
-from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowCompletedEvent
+from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
@@ -21,7 +21,7 @@ Show how to wire chat agents directly into a WorkflowBuilder pipeline where agen
 Demonstrate:
 - Automatic streaming of agent deltas via AgentRunUpdateEvent.
 - A simple console aggregator that groups updates by executor id and prints them as they arrive.
-- A final WorkflowCompletedEvent that contains the reviewer outcome after both agents finish.
+- The workflow completes when idle and outputs are available in events.get_outputs().
 
 Prerequisites:
 - Foundry Agent Service configured, along with the required environment variables.
@@ -69,12 +69,10 @@ async def main() -> None:
 
         workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
-        completed: WorkflowCompletedEvent | None = None
         last_executor_id: str | None = None
 
-        async for event in workflow.run_stream(
-            "Create a slogan for a new electric SUV that is affordable and fun to drive."
-        ):
+        events = workflow.run_stream("Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        async for event in events:
             if isinstance(event, AgentRunUpdateEvent):
                 eid = event.executor_id
                 if eid != last_executor_id:
@@ -83,13 +81,9 @@ async def main() -> None:
                     print(f"{eid}:", end=" ", flush=True)
                     last_executor_id = eid
                 print(event.data, end="", flush=True)
-            elif isinstance(event, WorkflowCompletedEvent):
-                completed = event
-
-        if completed:
-            print("\n===== Final Output =====")
-            print(completed.data)
-
+            elif isinstance(event, WorkflowOutputEvent):
+                print("\n===== Final output =====")
+                print(event.data)
     finally:
         await close()
 

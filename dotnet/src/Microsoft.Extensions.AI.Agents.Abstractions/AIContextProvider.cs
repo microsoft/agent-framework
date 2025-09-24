@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents;
 
@@ -52,17 +53,34 @@ public abstract class AIContextProvider
         return default;
     }
 
-    /// <summary>
-    /// Deserializes the state contained in the provided <see cref="JsonElement"/> into the properties on this object.
-    /// </summary>
-    /// <param name="serializedState">A <see cref="JsonElement"/> representing the state of the object.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ValueTask"/> that completes when the state has been deserialized.</returns>
-    public virtual ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    /// <summary>Asks the <see cref="AIContextProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
+    /// <param name="serviceType">The type of object being requested.</param>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="serviceType"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly-typed services that might be provided by the <see cref="AIContextProvider"/>,
+    /// including itself or any services it might be wrapping.
+    /// </remarks>
+    public virtual object? GetService(Type serviceType, object? serviceKey = null)
     {
-        return default;
+        _ = Throw.IfNull(serviceType);
+
+        return serviceKey is null && serviceType.IsInstanceOfType(this)
+            ? this
+            : null;
     }
+
+    /// <summary>Asks the <see cref="AIContextProvider"/> for an object of type <typeparamref name="TService"/>.</summary>
+    /// <typeparam name="TService">The type of the object to be retrieved.</typeparam>
+    /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
+    /// <returns>The found object, otherwise <see langword="null"/>.</returns>
+    /// <remarks>
+    /// The purpose of this method is to allow for the retrieval of strongly typed services that may be provided by the <see cref="AIContextProvider"/>,
+    /// including itself or any services it might be wrapping.
+    /// </remarks>
+    public TService? GetService<TService>(object? serviceKey = null)
+        => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
 
     /// <summary>
     /// Contains the event context provided to <see cref="InvokingAsync(InvokingContext, CancellationToken)"/>.

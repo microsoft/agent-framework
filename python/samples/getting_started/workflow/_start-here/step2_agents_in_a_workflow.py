@@ -13,9 +13,9 @@ This sample uses two custom executors. A Writer agent creates or edits content,
 then hands the conversation to a Reviewer agent which evaluates and finalizes the result.
 
 Purpose:
-Show how to wrap chat agents created by AzureChatClient inside workflow executors. Demonstrate the @handler pattern
-with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder, and finish
-by emitting a WorkflowCompletedEvent from the terminal node.
+Show how to wrap chat agents created by AzureChatClient inside workflow executors. Demonstrate how agents
+automatically yield outputs when they complete, removing the need for explicit completion events.
+The workflow completes when it becomes idle.
 
 Prerequisites:
 - Azure OpenAI configured for AzureChatClient with required environment variables.
@@ -51,14 +51,12 @@ async def main():
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the terminal event.
     events = await workflow.run("Create a slogan for a new electric SUV that is affordable and fun to drive.")
-    # The terminal node emits a WorkflowCompletedEvent; print its contents.
-
-    # Print interim-agent run events
+    # Print agent run events and final outputs
     for event in events:
         if isinstance(event, AgentRunEvent):
             print(f"{event.executor_id}: {event.data}")
 
-    print(f"{'=' * 60}\n{events.get_completed_event()}")
+    print(f"{'=' * 60}\nWorkflow Outputs: {events.get_outputs()}")
     # Summarize the final run state (e.g., COMPLETED)
     print("Final state:", events.get_final_state())
 
@@ -74,14 +72,13 @@ async def main():
     - Consider specifying "SUV" for clarity in some uses.
     - Strong, upbeat tone suitable for marketing.
     ============================================================
-    Workflow Completed Event:
-    WorkflowCompletedEvent(data=Slogan: "Plug Into Fun—Affordable Adventure, Electrified."
+    Workflow Outputs: ['Slogan: "Plug Into Fun—Affordable Adventure, Electrified."
 
-    **Feedback:**s
+    **Feedback:**
     - Clear focus on affordability and enjoyment.
     - "Plug into fun" connects emotionally and highlights electric nature.
     - Consider specifying "SUV" for clarity in some uses.
-    - Strong, upbeat tone suitable for marketing.)
+    - Strong, upbeat tone suitable for marketing.']
     """
 
 

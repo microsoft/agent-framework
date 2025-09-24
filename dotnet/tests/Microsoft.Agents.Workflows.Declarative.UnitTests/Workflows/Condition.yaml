@@ -1,15 +1,14 @@
-kind: AdaptiveDialog
-beginDialog:
-  
-  kind: OnActivity
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
   id: my_workflow
-  type: Message
   actions:
   
     - kind: SetVariable
       id: setVariable_test
       variable: Topic.TestValue
-      value: =System.LastMessageText
+      value: =Value(System.LastMessageText)
 
     - kind: ConditionGroup
       id: conditionGroup_test

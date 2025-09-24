@@ -10,7 +10,7 @@ namespace Microsoft.Extensions.AI.Agents.Hosting;
 /// <summary>
 /// Represents an agent thread for a <see cref="AgentProxy"/>.
 /// </summary>
-internal sealed partial class AgentProxyThread : AgentThread
+internal sealed partial class AgentProxyThread : ServiceIdAgentThread
 {
 #if NET7_0_OR_GREATER
     [System.Diagnostics.CodeAnalysis.StringSyntax("Regex")]
@@ -42,7 +42,7 @@ internal sealed partial class AgentProxyThread : AgentThread
     /// Initializes a new instance of the <see cref="AgentProxyThread"/> class with the specified identifier.
     /// </summary>
     /// <param name="id">The unique identifier for the agent proxy thread.</param>
-    public AgentProxyThread(string id)
+    internal AgentProxyThread(string id)
     {
         Throw.IfNullOrEmpty(id);
         ValidateId(id);
@@ -52,7 +52,7 @@ internal sealed partial class AgentProxyThread : AgentThread
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentProxyThread"/> class with the specified identifier.
     /// </summary>
-    public AgentProxyThread() : this(CreateId())
+    internal AgentProxyThread() : this(CreateId())
     {
     }
 
@@ -61,9 +61,18 @@ internal sealed partial class AgentProxyThread : AgentThread
     /// </summary>
     /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    public AgentProxyThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+    internal AgentProxyThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
         : base(serializedThreadState, jsonSerializerOptions)
     {
+    }
+
+    /// <summary>
+    /// Gets the ID that the conversation state is stored under for the agent.
+    /// </summary>
+    public string? ConversationId
+    {
+        get => this.ServiceThreadId;
+        private set => this.ServiceThreadId = value;
     }
 
     internal static string CreateId() => Guid.NewGuid().ToString("N");

@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -95,6 +96,12 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     public override string Id => id;
     public override string? Name => id;
 
+    public override AgentThread GetNewThread()
+        => new HelloAgentThread();
+
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        => new HelloAgentThread();
+
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         IEnumerable<AgentRunResponseUpdate> update = [
@@ -116,6 +123,8 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     }
 }
 
+internal sealed class HelloAgentThread() : InMemoryAgentThread();
+
 internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
 {
     public const string Prefix = "You said: ";
@@ -123,6 +132,12 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
 
     public override string Id => id;
     public override string? Name => id;
+
+    public override AgentThread GetNewThread()
+        => new EchoAgentThread();
+
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        => new EchoAgentThread();
 
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -158,6 +173,8 @@ internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
         };
     }
 }
+
+internal sealed class EchoAgentThread() : InMemoryAgentThread();
 
 internal sealed class GroupChatHistory
 {

@@ -1,13 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Any
+from typing import cast
+
+from typing_extensions import Never
 
 from agent_framework import (
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
     handler,
 )
 
@@ -19,8 +21,8 @@ the second reverses the text and completes the workflow. The run_stream loop pri
 
 Purpose:
 Show how to define explicit Executor classes with @handler methods, wire them in order with
-WorkflowBuilder, and consume streaming events. Demonstrate typed WorkflowContext[T] for outputs,
-ctx.send_message to pass intermediate values, and ctx.add_event to signal completion with a WorkflowCompletedEvent.
+WorkflowBuilder, and consume streaming events. Demonstrate typed WorkflowContext[T_Out, T_W_Out] for outputs,
+ctx.send_message to pass intermediate values, and ctx.yield_output to provide workflow outputs.
 
 Prerequisites:
 - No external services required.
@@ -44,21 +46,21 @@ class UpperCaseExecutor(Executor):
 
 
 class ReverseTextExecutor(Executor):
-    """Reverses the incoming string and completes the workflow.
+    """Reverses the incoming string and yields workflow output.
 
     Concepts:
-    - Use ctx.add_event to publish a WorkflowCompletedEvent when the terminal result is ready.
+    - Use ctx.yield_output to provide workflow outputs when the terminal result is ready.
     - The terminal node does not forward messages further.
     """
 
     @handler
-    async def reverse_text(self, text: str, ctx: WorkflowContext[Any]) -> None:
-        """Reverse the input string and emit a completion event."""
+    async def reverse_text(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+        """Reverse the input string and yield the workflow output."""
         result = text[::-1]
-        await ctx.add_event(WorkflowCompletedEvent(result))
+        await ctx.yield_output(result)
 
 
-async def main():
+async def main() -> None:
     """Build a two step sequential workflow and run it with streaming to observe events."""
     # Step 1: Create executor instances.
     upper_case_executor = UpperCaseExecutor(id="upper_case_executor")
@@ -74,15 +76,15 @@ async def main():
     )
 
     # Step 3: Stream events for a single input.
-    # The stream will include executor invoke and completion events, plus the final WorkflowCompletedEvent.
-    completion_event = None
+    # The stream will include executor invoke and completion events, plus workflow outputs.
+    outputs: list[str] = []
     async for event in workflow.run_stream("hello world"):
         print(f"Event: {event}")
-        if isinstance(event, WorkflowCompletedEvent):
-            completion_event = event
+        if isinstance(event, WorkflowOutputEvent):
+            outputs.append(cast(str, event.data))
 
-    if completion_event:
-        print(f"Workflow completed with result: {completion_event.data}")
+    if outputs:
+        print(f"Workflow outputs: {outputs}")
 
 
 if __name__ == "__main__":

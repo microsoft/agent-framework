@@ -24,11 +24,11 @@ from agent_framework import (
     Default,
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
 from pydantic import BaseModel, Field
+from typing_extensions import Never
 
 
 @dataclass
@@ -259,7 +259,7 @@ class FinalProcessor(Executor):
     async def handle_processing_result(
         self,
         result: ProcessingResult,
-        ctx: WorkflowContext[None],
+        ctx: WorkflowContext[Never, str],
     ) -> None:
         """Complete the workflow with final processing and logging."""
         await asyncio.sleep(1.5)  # Simulate final processing time
@@ -278,7 +278,7 @@ class FinalProcessor(Executor):
             f"Total time: {total_time:.1f}s"
         )
 
-        await ctx.add_event(WorkflowCompletedEvent(completion_message))
+        await ctx.yield_output(completion_message)
 
 
 # Create the workflow instance that DevUI can discover

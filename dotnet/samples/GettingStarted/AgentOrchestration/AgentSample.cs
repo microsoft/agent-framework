@@ -153,9 +153,9 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id, cancellationToken);
 
         // If a thread is provided, delete it as well.
-        if (thread is not null)
+        if (thread is ChatClientAgentThread chatThread)
         {
-            await persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId, cancellationToken);
+            await persistentAgentsClient.Threads.DeleteThreadAsync(chatThread.ConversationId, cancellationToken);
         }
     }
 
@@ -169,9 +169,9 @@ public class AgentSample(ITestOutputHelper output) : BaseSample(output)
         await assistantClient.DeleteAssistantAsync(agent.Id, cancellationToken);
 
         // If a thread is provided, delete it as well.
-        if (thread is not null)
+        if (thread is ChatClientAgentThread chatThread)
         {
-            await assistantClient.DeleteThreadAsync(thread.ConversationId, cancellationToken);
+            await assistantClient.DeleteThreadAsync(chatThread.ConversationId, cancellationToken);
         }
     }
 
