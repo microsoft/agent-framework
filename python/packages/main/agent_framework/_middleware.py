@@ -66,7 +66,7 @@ class AgentRunContext:
     agent: "AgentProtocol"
     messages: list[ChatMessage]
     is_streaming: bool = False
-    metadata: dict[str, Any] = field(default_factory=lambda: {})
+    metadata: dict[str, Any] = field(default_factory=dict)
     result: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None
     terminate: bool = False
 
@@ -87,7 +87,7 @@ class FunctionInvocationContext:
 
     function: "AIFunction[Any, Any]"
     arguments: "BaseModel"
-    metadata: dict[str, Any] = field(default_factory=lambda: {})
+    metadata: dict[str, Any] = field(default_factory=dict)
     result: Any = None
     terminate: bool = False
 
@@ -115,7 +115,7 @@ class ChatContext:
     messages: "MutableSequence[ChatMessage]"
     chat_options: "ChatOptions"
     is_streaming: bool = False
-    metadata: dict[str, Any] = field(default_factory=lambda: {})
+    metadata: dict[str, Any] = field(default_factory=dict)
     result: "ChatResponse | AsyncIterable[ChatResponseUpdate] | None" = None
     terminate: bool = False
 

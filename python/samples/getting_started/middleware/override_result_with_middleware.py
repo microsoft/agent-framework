@@ -5,8 +5,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentRunContext, AgentRunResponseUpdate
-from agent_framework._types import AgentRunResponse, ChatMessage, Role, TextContent
+from agent_framework import AgentRunContext, AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role, TextContent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
