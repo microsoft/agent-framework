@@ -13,7 +13,7 @@ namespace Microsoft.Extensions.AI.Agents;
 /// <summary>
 /// Represents an in-memory store for chat messages associated with a specific thread.
 /// </summary>
-public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageStore
+public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessage>
 {
     private List<ChatMessage> _messages;
 
@@ -96,7 +96,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     }
 
     /// <inheritdoc />
-    public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
+    public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(messages);
 
@@ -109,7 +109,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
+    public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
     {
         if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
@@ -120,7 +120,7 @@ public sealed class InMemoryChatMessageStore : IList<ChatMessage>, IChatMessageS
     }
 
     /// <inheritdoc />
-    public ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         StoreState state = new()
         {

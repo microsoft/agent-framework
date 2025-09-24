@@ -20,7 +20,7 @@ internal static class ActorEntitiesConverter
 
         return new Message
         {
-            MessageId = response.MessageId ?? Guid.NewGuid().ToString(),
+            MessageId = response.MessageId ?? Guid.NewGuid().ToString("N"),
             ContextId = contextId,
             Role = MessageRole.Agent,
             Parts = parts

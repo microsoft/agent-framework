@@ -247,7 +247,7 @@ internal sealed class EmailAnalysisExecutor : ReflectingExecutor<EmailAnalysisEx
         // Generate a random email ID and store the email content
         var newEmail = new Email
         {
-            EmailId = Guid.NewGuid().ToString(),
+            EmailId = Guid.NewGuid().ToString("N"),
             EmailContent = message.Text
         };
         await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope);

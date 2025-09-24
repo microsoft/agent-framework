@@ -30,7 +30,7 @@ internal sealed class A2AAgentWrapper
 
     public async Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
     {
-        var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString();
+        var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
         var messageId = messageSendParams.Message.MessageId;
 
         var actorId = new ActorId(type: this.GetActorType(), key: contextId!);

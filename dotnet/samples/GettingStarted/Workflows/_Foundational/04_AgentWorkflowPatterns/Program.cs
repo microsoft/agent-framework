@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
@@ -30,7 +31,7 @@ public static class Program
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
         var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
-        Console.Write("Choose workflow type ('sequential', 'concurrent', 'handoffs'): ");
+        Console.Write("Choose workflow type ('sequential', 'concurrent', 'handoffs', 'groupchat'): ");
         switch (Console.ReadLine())
         {
             case "sequential":
@@ -58,10 +59,9 @@ public static class Program
                     "You determine which agent to use based on the user's homework question. ALWAYS handoff to another agent.",
                     "triage_agent",
                     "Routes messages to the appropriate specialist agent");
-                var workflow = AgentWorkflowBuilder.StartHandoffWith(triageAgent)
-                    .WithHandoff(triageAgent, [mathTutor, historyTutor])
-                    .WithHandoff(mathTutor, triageAgent)
-                    .WithHandoff(historyTutor, triageAgent)
+                var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triageAgent)
+                    .WithHandoffs(triageAgent, [mathTutor, historyTutor])
+                    .WithHandoffs([mathTutor, historyTutor], triageAgent)
                     .Build();
 
                 List<ChatMessage> messages = [];
@@ -72,22 +72,45 @@ public static class Program
                     messages.AddRange(await RunWorkflowAsync(workflow, messages));
                 }
 
+            case "groupchat":
+                await RunWorkflowAsync(
+                    AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new AgentWorkflowBuilder.RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
+                        .AddParticipants(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client))
+                        .Build(),
+                    [new(ChatRole.User, "Hello, world!")]);
+                break;
+
             default:
                 throw new InvalidOperationException("Invalid workflow type.");
         }
 
         static async Task<List<ChatMessage>> RunWorkflowAsync(Workflow<List<ChatMessage>> workflow, List<ChatMessage> messages)
         {
+            string? lastExecutorId = null;
+
             StreamingRun run = await InProcessExecution.StreamAsync(workflow, messages);
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
             await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
             {
                 if (evt is AgentRunUpdateEvent e)
                 {
-                    Console.WriteLine($"{e.ExecutorId}: {e.Data}");
+                    if (e.ExecutorId != lastExecutorId)
+                    {
+                        lastExecutorId = e.ExecutorId;
+                        Console.WriteLine();
+                        Console.WriteLine(e.ExecutorId);
+                    }
+
+                    Console.Write(e.Update.Text);
+                    if (e.Update.Contents.OfType<FunctionCallContent>().FirstOrDefault() is FunctionCallContent call)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine($"  [Calling function '{call.Name}' with arguments: {JsonSerializer.Serialize(call.Arguments)}]");
+                    }
                 }
                 else if (evt is WorkflowCompletedEvent completed)
                 {
+                    Console.WriteLine();
                     return (List<ChatMessage>)completed.Data!;
                 }
             }
