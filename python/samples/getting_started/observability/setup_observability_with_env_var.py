@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-# type: ignore
+
 import argparse
 import asyncio
 from contextlib import suppress
@@ -17,13 +17,17 @@ if TYPE_CHECKING:
     from agent_framework import ChatClientProtocol
 
 """
-This sample, show how you can get telemetry from a chat client and tool.
-it uses the `tracer` that is configured by agent framework,
-which also sets up the traces with the configured environment.
+This sample, show how you can configure observability of an application via the
+`setup_observability` function with environment variables.
+
+When you run this sample with an OTLP endpoint or an Application Insights connection string,
+you should see traces, logs, and metrics in the configured backend.
+
+If no OTLP endpoint or Application Insights connection string is configured, the sample will
+output traces, logs, and metrics to the console.
 """
 
-
-# Define the scenarios that can be run
+# Define the scenarios that can be run to show the telemetry data collected by the SDK
 SCENARIOS = ["chat_client", "chat_client_stream", "ai_function", "all"]
 
 
@@ -93,7 +97,11 @@ async def run_ai_function() -> None:
 
 async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
     """Run the selected scenario(s)."""
+
+    # This will enable tracing and create the necessary tracing, logging and metrics providers
+    # based on environment variables. See the .env.example file for the available configuration options.
     setup_observability()
+
     with get_tracer().start_as_current_span("Sample Scenario's", kind=trace.SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 

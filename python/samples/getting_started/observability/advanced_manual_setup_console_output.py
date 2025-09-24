@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-# type: ignore
+
 import asyncio
 import logging
 from random import randint
@@ -15,26 +15,25 @@ from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExpo
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from opentelemetry.semconv.resource import ResourceAttributes
+from opentelemetry.semconv._incubating.attributes.service_attributes import SERVICE_NAME
 from opentelemetry.trace import set_tracer_provider
 from pydantic import Field
 
 """
-This sample shows how to manually set up OpenTelemetry to log to the console.
-And this can also be used as a reference for more complex telemetry setups.
+This sample shows how to manually configure to send traces, logs, and metrics to the console,
+without using the `setup_observability` helper function.
 """
 
-resource = Resource.create({ResourceAttributes.SERVICE_NAME: "ManualSetup"})
+resource = Resource.create({SERVICE_NAME: "ManualSetup"})
 
 
-def setup_console_telemetry():
+def setup_logging():
     # Create and set a global logger provider for the application.
     logger_provider = LoggerProvider(resource=resource)
     # Log processors are initialized with an exporter which is responsible
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
     # Sets the global default logger provider
     set_logger_provider(logger_provider)
-
     # Create a logging handler to write logging records, in OTLP format, to the exporter.
     handler = LoggingHandler()
     # Attach the handler to the root logger. `getLogger()` with no arguments returns the root logger.
@@ -43,6 +42,9 @@ def setup_console_telemetry():
     logger.addHandler(handler)
     # Set the logging level to NOTSET to allow all records to be processed by the handler.
     logger.setLevel(logging.NOTSET)
+
+
+def setup_tracing():
     # Initialize a trace provider for the application. This is a factory for creating tracers.
     tracer_provider = TracerProvider(resource=resource)
     # Span processors are initialized with an exporter which is responsible
@@ -50,6 +52,9 @@ def setup_console_telemetry():
     tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
     # Sets the global default tracer provider
     set_tracer_provider(tracer_provider)
+
+
+def setup_metrics():
     # Initialize a metric provider for the application. This is a factory for creating meters.
     meter_provider = MeterProvider(
         metric_readers=[PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=5000)],
@@ -106,7 +111,10 @@ async def run_chat_client() -> None:
 
 async def main():
     """Run the selected scenario(s)."""
-    setup_console_telemetry()
+    setup_logging()
+    setup_tracing()
+    setup_metrics()
+
     await run_chat_client()
 
 

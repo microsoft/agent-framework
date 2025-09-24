@@ -50,13 +50,13 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
     # fresh OtelSettings instance and patch the module attribute.
     importlib.reload(observability)
 
-    # recreate otel settings with values from above and no file.
-    otel = observability.OtelSettings(env_file_path="test.env")
-    otel.setup_observability()
-    monkeypatch.setattr(observability, "OTEL_SETTINGS", otel, raising=False)  # type: ignore
+    # recreate observability settings with values from above and no file.
+    observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
+    observability_settings.configure()
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore
     exporter = InMemorySpanExporter()
     with (
-        patch("agent_framework.observability.OTEL_SETTINGS", otel),
+        patch("agent_framework.observability.OBSERVABILITY_SETTINGS", observability_settings),
         patch("agent_framework.observability.setup_observability"),
     ):
         if enable_otel or enable_sensitive_data:

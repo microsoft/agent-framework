@@ -1,22 +1,32 @@
 # Copyright (c) Microsoft. All rights reserved.
-# type: ignore
+
 import asyncio
 import os
 from random import randint
 from typing import Annotated
 
+import dotenv
 from agent_framework import ChatAgent
 from agent_framework.observability import get_tracer
 from agent_framework_foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
+from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 """
-This sample shows you can can setup telemetry with a agent from Foundry.
-We once again call the `setup_foundry_observability` method to set up telemetry in order to include the overall spans.
+This sample shows you can can setup telemetry for a Foundry agent.
+It uses the Foundry client to setup the telemetry, this calls out to
+Foundry for the connection string of the attached Application Insights
+instance.
+
+You must add an Application Insights instance to your Foundry project
+for this sample to work.
 """
+
+# For loading the `FOUNDRY_PROJECT_ENDPOINT` environment variable
+dotenv.load_dotenv()
 
 
 async def get_weather(
@@ -29,19 +39,21 @@ async def get_weather(
 
 
 async def main():
-    # Set up the providers
-    # This must be done before any other telemetry calls
-    questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project,
-        # this calls `setup_foundry_observability` through the context manager
         FoundryChatClient(client=project) as client,
     ):
+        # This will enable tracing and configure the application to send telemetry data to the
+        # Application Insights instance attached to the Foundry project.
+        # This will override any existing configuration.
         await client.setup_foundry_observability(enable_live_metrics=True)
-        with get_tracer().start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT):
-            print("Running Single Agent Chat")
-            print("Welcome to the chat, type 'exit' to quit.")
+
+        questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
+
+        with get_tracer().start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT) as current_span:
+            print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
+
             agent = ChatAgent(
                 chat_client=client,
                 tools=get_weather,

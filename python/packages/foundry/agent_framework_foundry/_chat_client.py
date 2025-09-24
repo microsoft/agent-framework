@@ -167,7 +167,6 @@ class FoundryChatClient(BaseChatClient):
             project_endpoint: The Azure AI Foundry project endpoint URL. Used if client is not provided.
             model_deployment_name: The model deployment name to use for agent creation.
             async_credential: Azure async credential to use for authentication.
-            setup_tracing: Whether to setup tracing for the client. Defaults to True.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
