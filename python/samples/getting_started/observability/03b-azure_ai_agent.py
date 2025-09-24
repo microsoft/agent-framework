@@ -6,8 +6,8 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
+from agent_framework.azure import AzureAIAgentClient
 from agent_framework.observability import get_tracer
-from agent_framework_foundry import AzureAIAgentClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind

@@ -122,7 +122,7 @@ def test_foundry_chat_client_init_auto_create_client(
 def test_foundry_chat_client_init_missing_project_endpoint() -> None:
     """Test AzureAIAgentClient initialization when project_endpoint is missing and no client provided."""
     # Mock AzureFoundrySettings to return settings with None project_endpoint
-    with patch("agent_framework_foundry._chat_client.AzureFoundrySettings") as mock_settings:
+    with patch("agent_framework_azure_ai._chat_client.AzureFoundrySettings") as mock_settings:
         mock_settings_instance = MagicMock()
         mock_settings_instance.project_endpoint = None  # This should trigger the error
         mock_settings_instance.model_deployment_name = "test-model"
@@ -142,7 +142,7 @@ def test_foundry_chat_client_init_missing_project_endpoint() -> None:
 def test_foundry_chat_client_init_missing_model_deployment_for_agent_creation() -> None:
     """Test AzureAIAgentClient initialization when model deployment is missing for agent creation."""
     # Mock AzureFoundrySettings to return settings with None model_deployment_name
-    with patch("agent_framework_foundry._chat_client.AzureFoundrySettings") as mock_settings:
+    with patch("agent_framework_azure_ai._chat_client.AzureFoundrySettings") as mock_settings:
         mock_settings_instance = MagicMock()
         mock_settings_instance.project_endpoint = "https://test.com"
         mock_settings_instance.model_deployment_name = None  # This should trigger the error
@@ -202,7 +202,7 @@ def test_foundry_chat_client_init_missing_credential(foundry_unit_test_env: dict
 
 def test_foundry_chat_client_init_validation_error(mock_azure_credential: MagicMock) -> None:
     """Test that ValidationError in AzureFoundrySettings is properly handled."""
-    with patch("agent_framework_foundry._chat_client.AzureFoundrySettings") as mock_settings:
+    with patch("agent_framework_azure_ai._chat_client.AzureFoundrySettings") as mock_settings:
         # Create a proper ValidationError with empty errors list and model dict
         mock_settings.side_effect = ValidationError.from_exception_data("AzureFoundrySettings", [])
 
