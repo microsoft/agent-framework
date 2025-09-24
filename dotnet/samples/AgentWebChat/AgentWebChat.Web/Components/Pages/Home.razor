@@ -909,7 +909,7 @@
 
 	private sealed class Conversation
 	{
-		public string SessionId { get; set; } = Guid.NewGuid().ToString();
+		public string SessionId { get; set; } = Guid.NewGuid().ToString("N");
 		public string AgentName { get; set; } = "";
 		public List<ChatMessage> Messages { get; set; } = new();
 	}

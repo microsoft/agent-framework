@@ -19,7 +19,7 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <param name="messageStore">An optional <see cref="InMemoryChatMessageStore"/> to use for storing chat messages. If null, a new instance will be created.</param>
     protected InMemoryAgentThread(InMemoryChatMessageStore? messageStore = null)
     {
-        this.MessageStore = messageStore ?? new InMemoryChatMessageStore();
+        this.MessageStore = messageStore ?? [];
     }
 
     /// <summary>
@@ -28,11 +28,7 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <param name="messages">The messages to initialize the thread with.</param>
     protected InMemoryAgentThread(IEnumerable<ChatMessage> messages)
     {
-        this.MessageStore = new InMemoryChatMessageStore();
-        foreach (var message in messages)
-        {
-            this.MessageStore.Add(message);
-        }
+        this.MessageStore = [.. messages];
     }
 
     /// <summary>
@@ -53,8 +49,7 @@ public abstract class InMemoryAgentThread : AgentThread
             throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
         }
 
-        var state = JsonSerializer.Deserialize(
-            serializedThreadState,
+        var state = serializedThreadState.Deserialize(
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentThreadState))) as InMemoryAgentThreadState;
 
         this.MessageStore =

@@ -31,6 +31,8 @@ namespace SampleApp
     // Custom agent that parrot's the user input back in upper case.
     internal sealed class UpperCaseParrotAgent : AIAgent
     {
+        public override string? Name => "UpperCaseParrotAgent";
+
         public override AgentThread GetNewThread()
             => new CustomAgentThread();
 
@@ -51,7 +53,7 @@ namespace SampleApp
             return new AgentRunResponse
             {
                 AgentId = this.Id,
-                ResponseId = Guid.NewGuid().ToString(),
+                ResponseId = Guid.NewGuid().ToString("N"),
                 Messages = responseMessages
             };
         }
@@ -75,8 +77,8 @@ namespace SampleApp
                     AuthorName = this.DisplayName,
                     Role = ChatRole.Assistant,
                     Contents = message.Contents,
-                    ResponseId = Guid.NewGuid().ToString(),
-                    MessageId = Guid.NewGuid().ToString()
+                    ResponseId = Guid.NewGuid().ToString("N"),
+                    MessageId = Guid.NewGuid().ToString("N")
                 };
             }
         }
@@ -86,7 +88,7 @@ namespace SampleApp
                 // Clone the message and update its author to be the agent.
                 var messageClone = x.Clone();
                 messageClone.Role = ChatRole.Assistant;
-                messageClone.MessageId = Guid.NewGuid().ToString();
+                messageClone.MessageId = Guid.NewGuid().ToString("N");
                 messageClone.AuthorName = agentName;
 
                 // Clone and convert any text content to upper case.
@@ -109,8 +111,7 @@ namespace SampleApp
         /// </summary>
         internal sealed class CustomAgentThread : InMemoryAgentThread
         {
-            internal CustomAgentThread()
-                : base() { }
+            internal CustomAgentThread() { }
 
             internal CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
                 : base(serializedThreadState, jsonSerializerOptions) { }

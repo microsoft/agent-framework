@@ -239,8 +239,7 @@ public class ChatClientAgentThreadTests
     public async Task VerifyThreadSerializationWithMessagesAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" });
+        InMemoryChatMessageStore store = [new(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }];
         var thread = new ChatClientAgentThread { MessageStore = store };
 
         // Act
@@ -273,13 +272,15 @@ public class ChatClientAgentThreadTests
     {
         // Arrange
         Mock<AIContextProvider> mockProvider = new();
-        var providerStateElement = JsonSerializer.SerializeToElement(new[] { "CP1" }, TestJsonSerializerContext.Default.StringArray);
+        var providerStateElement = JsonSerializer.SerializeToElement(["CP1"], TestJsonSerializerContext.Default.StringArray);
         mockProvider
             .Setup(m => m.SerializeAsync(It.IsAny<JsonSerializerOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(providerStateElement);
 
-        var thread = new ChatClientAgentThread();
-        thread.AIContextProvider = mockProvider.Object;
+        var thread = new ChatClientAgentThread
+        {
+            AIContextProvider = mockProvider.Object
+        };
 
         // Act
         var json = await thread.SerializeAsync();
