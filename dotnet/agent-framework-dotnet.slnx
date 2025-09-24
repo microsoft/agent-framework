@@ -61,7 +61,7 @@
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server_Auth/Agent_MCP_Server_Auth.csproj" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/Telemetry/">
+  <Folder Name="/Samples/GettingStarted/Observability/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/">
