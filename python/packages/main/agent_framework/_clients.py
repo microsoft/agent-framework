@@ -18,7 +18,7 @@ from ._middleware import (
     Middleware,
 )
 from ._pydantic import AFBaseModel
-from ._threads import ChatMessageStore
+from ._threads import ChatMessageStoreProtocol
 from ._tools import ToolProtocol
 from ._types import (
     ChatMessage,
@@ -492,7 +492,7 @@ class BaseChatClient(AFBaseModel, ABC):
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
@@ -503,8 +503,8 @@ class BaseChatClient(AFBaseModel, ABC):
             name: The name of the agent.
             instructions: The instructions for the agent.
             tools: Optional list of tools to associate with the agent.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
-                the default in-memory store will be used.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
+                If not provided, the default in-memory store will be used.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             **kwargs: Additional keyword arguments to pass to the agent.

@@ -13,7 +13,7 @@ from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
-    ChatMessageList,
+    ChatMessageStore,
     ChatResponse,
     Contents,
     HostedCodeInterpreterTool,
@@ -98,7 +98,7 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClientProtocol)
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
     message = ChatMessage(role=Role.USER, text="Hello")
-    thread = AgentThread(message_store=ChatMessageList(messages=[message]))
+    thread = AgentThread(message_store=ChatMessageStore(messages=[message]))
 
     _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,

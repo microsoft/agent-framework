@@ -15,7 +15,7 @@ from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._pydantic import AFBaseModel
-from ._threads import AgentThread, ChatMessageStore, deserialize_thread_state, thread_on_new_messages
+from ._threads import AgentThread, ChatMessageStoreProtocol
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
 from ._types import (
     AgentRunResponse,
@@ -27,7 +27,7 @@ from ._types import (
     ChatToolMode,
     Role,
 )
-from .exceptions import AgentExecutionException
+from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_observability
 
 if sys.version_info >= (3, 11):
@@ -154,7 +154,7 @@ class BaseAgent(AFBaseModel):
     ) -> None:
         """Notify the thread of new messages."""
         if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
-            await thread_on_new_messages(thread, new_messages)
+            await thread.on_new_messages(new_messages)
 
     @property
     def display_name(self) -> str:
@@ -171,7 +171,7 @@ class BaseAgent(AFBaseModel):
     async def deserialize_thread(self, serialized_thread: Any, **kwargs: Any) -> AgentThread:
         """Deserializes the thread."""
         thread: AgentThread = self.get_new_thread()
-        await deserialize_thread_state(thread, serialized_thread, **kwargs)
+        await thread.deserialize(serialized_thread, **kwargs)
         return thread
 
     def as_tool(
@@ -266,7 +266,7 @@ class ChatAgent(BaseAgent):
     chat_client: ChatClientProtocol
     instructions: str | None = None
     chat_options: ChatOptions
-    chat_message_store_factory: Callable[[], ChatMessageStore] | None = None
+    chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None
     _local_mcp_tools: list[MCPTool] = PrivateAttr(default_factory=list)  # type: ignore[reportUnknownVariableType]
     _async_exit_stack: AsyncExitStack = PrivateAttr(default_factory=AsyncExitStack)
 
@@ -278,6 +278,9 @@ class ChatAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
+        middleware: Middleware | list[Middleware] | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -298,9 +301,6 @@ class ChatAgent(BaseAgent):
         top_p: float | None = None,
         user: str | None = None,
         additional_properties: dict[str, Any] | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a ChatAgent.
@@ -317,6 +317,10 @@ class ChatAgent(BaseAgent):
             id: The unique identifier for the agent, will be created automatically if not provided.
             name: The name of the agent.
             description: A brief description of the agent's purpose.
+            chat_message_store_factory: factory function to create an instance of ChatMessageStoreProtocol.
+                If not provided, the default in-memory store will be used.
+            context_providers: The collection of multiple context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
             frequency_penalty: the frequency penalty to use.
             logit_bias: the logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -333,10 +337,6 @@ class ChatAgent(BaseAgent):
             top_p: the nucleus sampling probability to use.
             user: the user to associate with the request.
             additional_properties: additional properties to include in the request.
-            chat_message_store_factory: factory function to create an instance of ChatMessageStore. If not provided,
-                the default in-memory store will be used.
-            context_providers: The collection of multiple context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
             kwargs: any additional keyword arguments.
                 Unused, can be used by subclasses of this Agent.
         """
@@ -687,13 +687,51 @@ class ChatAgent(BaseAgent):
             await self.context_providers.thread_created(response.conversation_id)
             await self.context_providers.messages_adding(thread.service_thread_id, input_messages + response.messages)
 
-    def get_new_thread(self) -> AgentThread:
-        message_store: ChatMessageStore | None = None
+    def get_new_thread(
+        self,
+        *,
+        service_thread_id: str | None = None,
+        chat_message_store: ChatMessageStoreProtocol | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+    ) -> AgentThread:
+        """Get a new conversation thread for the agent.
 
-        if self.chat_message_store_factory:
-            message_store = self.chat_message_store_factory()
+        If you supply a service_thread_id, the thread will be marked as service managed.
+        If you supply a chat_message_store, the thread will use the provided store.
+        If you supply a chat_message_store_factory, the thread will
+        use the provided factory to create a message store for the thread and the thread will be managed
+        locally.
+        if you don't supply either but have a chat_message_store_factory configured on the agent,
+        that factory will be used to create a message store for the thread and the thread will be
+        managed locally.
+        When neither is provided, the thread will be created without a service ID or message store,
+        this will be updated based on usage, when you run the agent with this thread.
+        If you run with store=True, the response will respond with a thread_id and that will be set.
+        Otherwise a messages store is created from the default factory.
 
-        return AgentThread() if message_store is None else AgentThread(message_store=message_store)
+        Args:
+            service_thread_id: Optional service managed thread ID.
+            chat_message_store: Optional instance of ChatMessageStoreProtocol to use for the thread.
+            chat_message_store_factory: factory function to create an instance of ChatMessageStoreProtocol.
+                If not provided, the default in-memory store will be used.
+        """
+        if service_thread_id is not None and (
+            chat_message_store_factory is not None
+            or self.chat_message_store_factory is not None
+            or chat_message_store is not None
+        ):
+            raise AgentInitializationError(
+                "You can only provide either a service_thread_id or a chat_message_store_factory, not both."
+            )
+        if service_thread_id is not None:
+            return AgentThread(service_thread_id=service_thread_id)
+        if chat_message_store is not None:
+            return AgentThread(message_store=chat_message_store)
+        if chat_message_store_factory is not None:
+            return AgentThread(message_store=chat_message_store_factory())
+        if self.chat_message_store_factory is not None:
+            return AgentThread(message_store=self.chat_message_store_factory())
+        return AgentThread()
 
     def _update_thread_with_type_and_conversation_id(
         self, thread: AgentThread, response_conversation_id: str | None

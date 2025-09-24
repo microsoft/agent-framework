@@ -2,21 +2,24 @@
 
 import json
 from collections.abc import Sequence
+from dataclasses import field
 from typing import Any
 
 import tiktoken
-from agent_framework._threads import ChatMessageList
+from agent_framework._threads import ChatMessageStore
 from agent_framework._types import ChatMessage, Role
 from loguru import logger
 
 
-class SlidingWindowChatMessageList(ChatMessageList):
-    """A token-aware sliding window implementation of ChatMessageList.
+class SlidingWindowChatMessageStore(ChatMessageStore):
+    """A token-aware sliding window implementation of ChatMessageStore.
 
     Maintains two message lists: complete history and truncated window.
     Automatically removes oldest messages when token limit is exceeded.
     Also removes leading tool messages to ensure valid conversation flow.
     """
+
+    truncated_messages: list[ChatMessage] = field(default_factory=list)
 
     def __init__(
         self,
@@ -25,8 +28,8 @@ class SlidingWindowChatMessageList(ChatMessageList):
         system_message: str | None = None,
         tool_definitions: Any | None = None,
     ):
-        super().__init__(messages)
-        self._truncated_messages = self._messages.copy()  # Separate truncated view
+        super().__init__(messages)  # type: ignore[reportArgumentType]
+        self.truncated_messages = self.messages.copy()  # Separate truncated view
         self.max_tokens = max_tokens
         self.system_message = system_message  # Included in token count
         self.tool_definitions = tool_definitions
@@ -36,25 +39,25 @@ class SlidingWindowChatMessageList(ChatMessageList):
     async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
         await super().add_messages(messages)
 
-        self._truncated_messages = self._messages.copy()
+        self.truncated_messages = self.messages.copy()
         self.truncate_messages()
 
     async def list_messages(self) -> list[ChatMessage]:
         """Get the current list of messages, which may be truncated."""
-        return self._truncated_messages
+        return self.truncated_messages
 
     async def list_all_messages(self) -> list[ChatMessage]:
         """Get all messages from the store including the truncated ones."""
-        return self._messages
+        return self.messages
 
     def truncate_messages(self) -> None:
-        while len(self._truncated_messages) > 0 and self.get_token_count() > self.max_tokens:
+        while len(self.truncated_messages) > 0 and self.get_token_count() > self.max_tokens:
             logger.warning("Messages exceed max tokens. Truncating oldest message.")
-            self._truncated_messages.pop(0)
+            self.truncated_messages.pop(0)
         # Remove leading tool messages
-        while len(self._truncated_messages) > 0 and self._truncated_messages[0].role == Role.TOOL:
+        while len(self.truncated_messages) > 0 and self.truncated_messages[0].role == Role.TOOL:
             logger.warning("Removing leading tool message because tool result cannot be the first message.")
-            self._truncated_messages.pop(0)
+            self.truncated_messages.pop(0)
 
     def get_token_count(self) -> int:
         """Estimate token count for a list of messages using tiktoken.
@@ -72,7 +75,7 @@ class SlidingWindowChatMessageList(ChatMessageList):
             total_tokens += len(self.encoding.encode(self.system_message))
             total_tokens += 4  # Extra tokens for system message formatting
 
-        for msg in self._truncated_messages:
+        for msg in self.truncated_messages:
             # Add 4 tokens per message for role, formatting, etc.
             total_tokens += 4
 
