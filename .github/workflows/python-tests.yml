@@ -16,7 +16,6 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        package: [main, azure-ai, copilotstudio, mem0, redis, runtime]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         os: [ubuntu-latest, windows-latest, macos-latest]
     env:
@@ -37,9 +36,9 @@ jobs:
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
-      # Package tests
-      - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ matrix.package }} test  -n logical --dist loadfile --dist worksteal
+      # Unit tests
+      - name: Run all tests
+        run: uv run poe all-tests
         working-directory: ./python
 
       # Surface failing tests
