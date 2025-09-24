@@ -55,15 +55,15 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             // No completion for root scope
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                string? action = null;
-                ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
-                if (conditionGroup is not null)
-                {
-                    action = $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}";
-                }
+                //string? action = null; // %%% NEEDED ???
+                //ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
+                //if (conditionGroup is not null)
+                //{
+                //    action = $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}";
+                //}
 
                 // Define post action for this scope
-                string completionId = this.ContinuationFor(item.Id.Value, action);
+                string completionId = this.ContinuationFor(item.Id.Value/*, action*/);
                 this._workflowModel.AddLinkFromPeer(item.Id.Value, completionId);
                 // Transition to post action of parent scope
                 this._workflowModel.AddLink(completionId, WorkflowActionVisitor.Steps.Post(parentId));
@@ -87,7 +87,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             // Complete the condition item.
             void CompletionHandler()
             {
-                string completionId = this.ContinuationFor(stepId, $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}");
+                string completionId = this.ContinuationFor(stepId/*, /// %%% NEEDED ??? $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}"*/);
                 this._workflowModel.AddLink(completionId, WorkflowActionVisitor.Steps.Post(conditionGroup.Id));
 
                 // Merge link when no action group is defined
@@ -105,7 +105,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
         ConditionGroupTemplate action = new(item);
         this.ContinueWith(action);
-        this.ContinuationFor(action.Id, action.ParentId);
+        this.ContinuationFor(action.Id, parentId: action.ParentId);
 
         string? lastConditionItemId = null;
         foreach (ConditionItem conditionItem in item.Conditions)
@@ -156,7 +156,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.ContinueWith(new EmptyTemplate(loopId, this._rootId, $"{action.Id.FormatName()}.{nameof(ForeachExecutor.TakeNextAsync)}"), action.Id);
 
         // Transition to post action if no more items
-        string continuationId = this.ContinuationFor(action.Id, action.ParentId); // Action continuation
+        string continuationId = this.ContinuationFor(action.Id, parentId: action.ParentId); // Action continuation
         this._workflowModel.AddLink(loopId, continuationId, $"!{action.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
 
         // Transition to start of inner actions if there is a current item

@@ -18,7 +18,7 @@ void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVa
     }
     else if (expression.IsExpression)
     {#>
-        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
     else
     {
