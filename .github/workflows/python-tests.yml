@@ -39,18 +39,8 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       # Package tests
       - name: Test with pytest
-        run: uv run poe --directory ./packages/${{ matrix.package }} test  -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
+        run: uv run poe --directory ./packages/${{ matrix.package }} test  -n logical --dist loadfile --dist worksteal
         working-directory: ./python
-      - name: Move coverage file
-        run: |
-          mv ./packages/${{ matrix.package }}/coverage.xml coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ matrix.package }}.xml
-        working-directory: ./python
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.OS }}-${{ matrix.python-version }}-${{ matrix.package }}
-          path: ./python/coverage_${{ matrix.OS }}_${{ matrix.python-version }}_${{ matrix.package }}.xml
-
 
       # Surface failing tests
       - name: Surface failing tests
