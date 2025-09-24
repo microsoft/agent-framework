@@ -59,7 +59,7 @@ public static class WorkflowProvider
         public bool HasValue { get; private set; }
     
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             this._index = 0;
             object? evaluatedValue = await context.EvaluateExpressionAsync("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
@@ -80,6 +80,7 @@ public static class WorkflowProvider
             }
     
             await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+            return default;
         }
     
         public async ValueTask TakeNextAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
@@ -108,10 +109,11 @@ public static class WorkflowProvider
     internal sealed class SetVariableInnerExecutor(FormulaSession session) : ActionExecutor(id: "set_variable_inner", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.EvaluateExpressionAsync("Topic.Count + 1").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            return default;
         }
     }
     
@@ -121,7 +123,7 @@ public static class WorkflowProvider
     internal sealed class SendActivityInnerExecutor(FormulaSession session) : ActionExecutor(id: "send_activity_inner", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             string activityText =
                 await context.FormatTemplateAsync(
@@ -131,6 +133,7 @@ public static class WorkflowProvider
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            return default;
         }
     }
     
@@ -161,13 +164,13 @@ public static class WorkflowProvider
         builder.AddEdge(myWorkflowRoot, myWorkflow);
         builder.AddEdge(myWorkflow, foreachLoop);
         builder.AddEdge(foreachLoop, foreachLoopNext);
-        builder.AddEdge(foreachLoopNext, foreachLoopPost, (object? condition) => !foreachLoop.HasValue);
-        builder.AddEdge(foreachLoopNext, foreachLoopStart, (object? condition) => foreachLoop.HasValue);
+        builder.AddEdge(foreachLoopNext, foreachLoopPost, (object? result) => !foreachLoop.HasValue);
+        builder.AddEdge(foreachLoopNext, foreachLoopStart, (object? result) => foreachLoop.HasValue);
         builder.AddEdge(foreachLoopStart, continueLoopNow);
         builder.AddEdge(continueLoopNow, foreachLoopStart);
         builder.AddEdge(continueLoopNowRestart, setVariableInner);
         builder.AddEdge(setVariableInner, sendActivityInner);
-        builder.AddEdge(foreachLoopPost, endAll);
+        builder.AddEdge(foreachLoop, endAll);
         builder.AddEdge(sendActivityInner, foreachLoopEnd);
         builder.AddEdge(foreachLoopEnd, foreachLoopNext);
 

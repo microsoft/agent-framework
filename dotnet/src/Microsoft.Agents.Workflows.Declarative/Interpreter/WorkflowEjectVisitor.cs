@@ -2,9 +2,9 @@
 
 using System;
 using System.Diagnostics;
+using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
-using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
@@ -55,15 +55,15 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             // No completion for root scope
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                //DelegateAction<ActionExecutorResult>? action = null; // %%% TODO - CONDITION
-                //ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
-                //if (conditionGroup is not null)
-                //{
-                //    action = conditionGroup.DoneAsync;
-                //}
+                string? action = null;
+                ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
+                if (conditionGroup is not null)
+                {
+                    action = $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}";
+                }
 
                 // Define post action for this scope
-                string completionId = this.ContinuationFor(item.Id.Value);
+                string completionId = this.ContinuationFor(item.Id.Value, action);
                 this._workflowModel.AddLinkFromPeer(item.Id.Value, completionId);
                 // Transition to post action of parent scope
                 this._workflowModel.AddLink(completionId, WorkflowActionVisitor.Steps.Post(parentId));
@@ -71,70 +71,64 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         }
     }
 
-    public override void VisitConditionItem(ConditionItem item) // %%% TODO - CONDITION
-    {
-        Trace(item);
-
-        //ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(item.GetParentId());
-        //if (conditionGroup is not null)
-        //{
-        //    string stepId = ConditionGroupExecutor.Steps.Item(conditionGroup.Model, item);
-        //    string parentId = GetParentId(item);
-        //    this._workflowModel.AddNode(this.CreateStep(stepId), parentId, CompletionHandler);
-
-        //    base.VisitConditionItem(item);
-
-        //    // Complete the condition item.
-        //    void CompletionHandler()
-        //    {
-        //        string completionId = this.ContinuationFor(stepId); // End items
-        //        this._workflowModel.AddLink(completionId, PostId(conditionGroup.Id)); // Merge with parent scope
-
-        //        // Merge link when no action group is defined
-        //        if (!item.Actions.Any())
-        //        {
-        //            this._workflowModel.AddLink(stepId, completionId);
-        //        }
-        //    }
-        //}
-    }
-
-    protected override void Visit(ConditionGroup item) // %%% TODO - CONDITION
+    public override void VisitConditionItem(ConditionItem item)
     {
         this.Trace(item);
 
-        //string actionId = item.GetId();
-        //this.Executors.Add(new ConditionGroupTemplate(item).TransformText());
-        //this.Instances.Add(new InstanceTemplate(actionId, this._rootId).TransformText());
+        string parentId = GetParentId(item);
+        ConditionGroupTemplate? conditionGroup = this._workflowModel.LocateParent<ConditionGroupTemplate>(parentId);
+        if (conditionGroup is not null)
+        {
+            string stepId = ConditionGroupExecutor.Steps.Item(conditionGroup.Model, item);
+            this._workflowModel.AddNode(new EmptyTemplate(stepId, this._rootId), parentId, CompletionHandler);
 
-        //this.Edges.Add(new EdgeTemplate("root", actionId).TransformText()); // %%% CONTINUE WITH
+            base.VisitConditionItem(item);
 
-        ////ConditionGroupExecutor action = new(item, this._workflowState);
-        ////this.ContinueWith(action);
-        ////this.ContinuationFor(action.Id, action.ParentId);
+            // Complete the condition item.
+            void CompletionHandler()
+            {
+                string completionId = this.ContinuationFor(stepId, $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}");
+                this._workflowModel.AddLink(completionId, WorkflowActionVisitor.Steps.Post(conditionGroup.Id));
 
-        //string? lastConditionItemId = null;
-        //foreach (ConditionItem conditionItem in item.Conditions)
-        //{
-        //    // Create conditional link for conditional action
-        //    lastConditionItemId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
-        //    this.Edges.Add(new EdgeTemplate(actionId, lastConditionItemId).TransformText()); // %%% CONDITION (result) => action.IsMatch(conditionItem, result));
+                // Merge link when no action group is defined
+                if (!item.Actions.Any())
+                {
+                    this._workflowModel.AddLink(stepId, completionId);
+                }
+            }
+        }
+    }
 
-        //    conditionItem.Accept(this);
-        //}
+    protected override void Visit(ConditionGroup item)
+    {
+        this.Trace(item);
 
-        //if (item.ElseActions?.Actions.Length > 0)
-        //{
-        //    if (lastConditionItemId is not null)
-        //    {
-        //        // Create clean start for else action from prior conditions
-        //        //this.RestartAfter(lastConditionItemId, action.Id);
-        //    }
+        ConditionGroupTemplate action = new(item);
+        this.ContinueWith(action);
+        this.ContinuationFor(action.Id, action.ParentId);
 
-        //    // Create conditional link for else action
-        //    string stepId = ConditionGroupExecutor.Steps.Else(item);
-        //    this.Edges.Add(new EdgeTemplate(actionId, stepId).TransformText()); // %%% CONDITION (result) => action.IsElse(result));
-        //}
+        string? lastConditionItemId = null;
+        foreach (ConditionItem conditionItem in item.Conditions)
+        {
+            // Create conditional link for conditional action
+            lastConditionItemId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
+            this._workflowModel.AddLink(action.Id, lastConditionItemId, @$"string.Equals(""{lastConditionItemId}"", result as string, StringComparison.Ordinal)");
+
+            conditionItem.Accept(this);
+        }
+
+        if (item.ElseActions?.Actions.Length > 0)
+        {
+            if (lastConditionItemId is not null)
+            {
+                // Create clean start for else action from prior conditions
+                this.RestartAfter(lastConditionItemId, action.Id);
+            }
+
+            // Create conditional link for else action
+            string stepId = ConditionGroupExecutor.Steps.Else(item);
+            this._workflowModel.AddLink(action.Id, stepId, @$"string.Equals(""{stepId}"", result as string, StringComparison.Ordinal)");
+        }
     }
 
     protected override void Visit(GotoAction item)
@@ -155,26 +149,26 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Entry point for loop
-        ForeachTemplate template = new(item);
-        string loopId = ForeachExecutor.Steps.Next(template.Id);
-        this.ContinueWith(template, condition: null, CompletionHandler); // Foreach
+        ForeachTemplate action = new(item);
+        string loopId = ForeachExecutor.Steps.Next(action.Id);
+        this.ContinueWith(action, condition: null, CompletionHandler); // Foreach
         // Transition to select the next item
-        this.ContinueWith(new EmptyTemplate(loopId, this._rootId, $"{template.Id.FormatName()}.{nameof(ForeachExecutor.TakeNextAsync)}"), template.Id);
+        this.ContinueWith(new EmptyTemplate(loopId, this._rootId, $"{action.Id.FormatName()}.{nameof(ForeachExecutor.TakeNextAsync)}"), action.Id);
 
         // Transition to post action if no more items
-        string continuationId = this.ContinuationFor(template.Id, template.ParentId); // Action continuation
-        this._workflowModel.AddLink(loopId, continuationId, $"!{template.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
+        string continuationId = this.ContinuationFor(action.Id, action.ParentId); // Action continuation
+        this._workflowModel.AddLink(loopId, continuationId, $"!{action.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
 
         // Transition to start of inner actions if there is a current item
-        string startId = ForeachExecutor.Steps.Start(template.Id); // %%% PRUNE - Start really needed at all?
-        this._workflowModel.AddNode(new EmptyTemplate(startId, this._rootId), template.Id);
-        this._workflowModel.AddLink(loopId, startId, $"{template.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
+        string startId = ForeachExecutor.Steps.Start(action.Id); // %%% PRUNE - Start really needed at all?
+        this._workflowModel.AddNode(new EmptyTemplate(startId, this._rootId), action.Id);
+        this._workflowModel.AddLink(loopId, startId, $"{action.Id.FormatName()}.{nameof(ForeachExecutor.HasValue)}");
 
         void CompletionHandler()
         {
             // Transition to end of inner actions
-            string endActionsId = ForeachExecutor.Steps.End(template.Id); // Loop continuation
-            this.ContinueWith(new EmptyTemplate(endActionsId, this._rootId, $"{template.Id.FormatName()}.{nameof(ForeachExecutor.ResetAsync)}"), template.Id);
+            string endActionsId = ForeachExecutor.Steps.End(action.Id); // Loop continuation
+            this.ContinueWith(new EmptyTemplate(endActionsId, this._rootId, $"{action.Id.FormatName()}.{nameof(ForeachExecutor.ResetAsync)}"), action.Id);
             // Transition to select the next item
             this._workflowModel.AddLink(endActionsId, loopId);
         }
@@ -185,17 +179,17 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Locate the nearest "Foreach" loop that contains this action
-        ForeachTemplate? loopTemplate = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
+        ForeachTemplate? loopAction = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
         // Skip action if its not contained a loop
-        if (loopTemplate is not null)
+        if (loopAction is not null)
         {
             // Represent action with default executor
-            DefaultTemplate template = new(item, this._rootId);
-            this.ContinueWith(template);
+            DefaultTemplate action = new(item, this._rootId);
+            this.ContinueWith(action);
             // Transition to post action
-            this._workflowModel.AddLink(template.Id, WorkflowActionVisitor.Steps.Post(loopTemplate.Id));
+            this._workflowModel.AddLink(action.Id, WorkflowActionVisitor.Steps.Post(loopAction.Id));
             // Define a clean-start to ensure "break" is not a source for any edge
-            this.RestartAfter(template.Id, template.ParentId);
+            this.RestartAfter(action.Id, action.ParentId);
         }
     }
 
@@ -204,17 +198,17 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Locate the nearest "Foreach" loop that contains this action
-        ForeachTemplate? loopTemplate = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
+        ForeachTemplate? loopAction = this._workflowModel.LocateParent<ForeachTemplate>(item.GetParentId());
         // Skip action if its not contained a loop
-        if (loopTemplate is not null)
+        if (loopAction is not null)
         {
             // Represent action with default executor
-            DefaultTemplate template = new(item, this._rootId);
-            this.ContinueWith(template);
+            DefaultTemplate action = new(item, this._rootId);
+            this.ContinueWith(action);
             // Transition to select the next item
-            this._workflowModel.AddLink(template.Id, ForeachExecutor.Steps.Start(loopTemplate.Id));
+            this._workflowModel.AddLink(action.Id, ForeachExecutor.Steps.Start(loopAction.Id));
             // Define a clean-start to ensure "continue" is not a source for any edge
-            this.RestartAfter(template.Id, template.ParentId);
+            this.RestartAfter(action.Id, action.ParentId);
         }
     }
 
@@ -230,10 +224,10 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Represent action with default executor
-        DefaultTemplate template = new(item, this._rootId);
-        this.ContinueWith(template);
+        DefaultTemplate action = new(item, this._rootId);
+        this.ContinueWith(action);
         // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(template.Id, template.ParentId);
+        this.RestartAfter(action.Id, action.ParentId);
     }
 
     protected override void Visit(EndConversation item)
@@ -241,10 +235,10 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Represent action with default executor
-        DefaultTemplate template = new(item, this._rootId);
-        this.ContinueWith(template);
+        DefaultTemplate action = new(item, this._rootId);
+        this.ContinueWith(action);
         // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(template.Id, template.ParentId);
+        this.RestartAfter(action.Id, action.ParentId);
     }
 
     protected override void Visit(CreateConversation item)
@@ -425,11 +419,11 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     #endregion
 
     private void ContinueWith(
-        ActionTemplate template,
+        ActionTemplate action,
         string? condition = null,
         Action? completionHandler = null)
     {
-        this.ContinueWith(template, template.ParentId, condition, completionHandler);
+        this.ContinueWith(action, action.ParentId, condition, completionHandler);
     }
 
     private void ContinueWith(
@@ -442,13 +436,13 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this._workflowModel.AddLinkFromPeer(parentId, action.Id, condition);
     }
 
-    private string ContinuationFor(string parentId, DelegateAction<ActionExecutorResult>? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
+    private string ContinuationFor(string parentId, string? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
 
-    private string ContinuationFor(string actionId, string parentId, DelegateAction<ActionExecutorResult>? stepAction = null)
+    private string ContinuationFor(string actionId, string parentId, string? stepAction = null)
     {
         actionId = WorkflowActionVisitor.Steps.Post(actionId);
 
-        this._workflowModel.AddNode(new EmptyTemplate(actionId, this._rootId), parentId);
+        this._workflowModel.AddNode(new EmptyTemplate(actionId, this._rootId, stepAction), parentId);
 
         return actionId;
     }
@@ -466,10 +460,8 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         this.HasUnsupportedActions = true;
     }
 
-    private static void Trace(BotElement item)
-    {
-        Debug.WriteLine($"> VISIT: {FormatItem(item)} => {FormatParent(item)}");
-    }
+    private void Trace(BotElement item) =>
+        Debug.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}");
 
     private void Trace(DialogAction item)
     {

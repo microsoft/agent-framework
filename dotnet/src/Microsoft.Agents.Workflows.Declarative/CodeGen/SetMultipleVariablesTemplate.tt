@@ -8,7 +8,7 @@
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     // <inheritdoc />
-    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# int index = 0;
         foreach (var assignment in this.Model.Assignments) 
         {
@@ -22,5 +22,6 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
             AssignVariable(assignment.Variable, $"evaluatedValue{index}");
         } 
      #>
-    }
+        return default;
+   }
 }

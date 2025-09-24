@@ -69,8 +69,8 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("\", session)\n{\n    protected override async ValueTask ExecuteAsync(IWorkflowContex" +
-                    "t context, CancellationToken cancellationToken)\n    {");
+            this.Write("\", session)\n{\n    protected override async ValueTask<object?> ExecuteAsync(IWorkf" +
+                    "lowContext context, CancellationToken cancellationToken)\n    {");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ResetVariableTemplate.tt"
  
@@ -79,7 +79,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("\n    }\n}");
+            this.Write("\n        return default;\n   }\n}");
             return this.GenerationEnvironment.ToString();
         }
         

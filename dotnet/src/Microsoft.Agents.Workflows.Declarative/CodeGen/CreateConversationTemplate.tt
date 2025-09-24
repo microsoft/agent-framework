@@ -7,10 +7,11 @@
 /// </summary>
 internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
 {
-    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-    {<# // %%% METADATA #>
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
         string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);<#
         AssignVariable(this.ConversationId, "conversationId");
         #>
+        return default;
     }
 }

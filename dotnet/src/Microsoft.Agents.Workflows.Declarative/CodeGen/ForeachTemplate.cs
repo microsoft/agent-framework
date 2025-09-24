@@ -75,7 +75,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
     public bool HasValue { get; private set; }
 
     // <inheritdoc />
-    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         this._index = 0;");
             
@@ -104,6 +104,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         }
 
         await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+        return default;
     }
 
     public async ValueTask TakeNextAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)

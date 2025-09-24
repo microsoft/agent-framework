@@ -52,10 +52,11 @@ public static class WorkflowProvider
     internal sealed class SetVarExecutor(FormulaSession session) : ActionExecutor(id: "set_var", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.EvaluateExpressionAsync("[{id: 3}]").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "MyTable", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            return default;
         }
     }
     

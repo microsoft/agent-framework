@@ -50,10 +50,11 @@ public static class WorkflowProvider
     internal sealed class ClearAllExecutor(FormulaSession session) : ActionExecutor(id: "clear_all", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             string? targetScopeName = "Topic";
             await context.QueueClearScopeAsync(targetScopeName).ConfigureAwait(false);
+            return default;
         }
     }
     

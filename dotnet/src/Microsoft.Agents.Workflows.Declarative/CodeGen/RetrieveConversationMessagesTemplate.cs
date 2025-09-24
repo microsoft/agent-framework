@@ -62,8 +62,9 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask Execut" +
-                    "eAsync(IWorkflowContext context, CancellationToken cancellationToken)\n    {");
+            this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask<object" +
+                    "?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)\n " +
+                    "   {");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RetrieveConversationMessagesTemplate.tt"
 
@@ -92,7 +93,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("\n    }\n}");
+            this.Write("\n        return default;\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
         

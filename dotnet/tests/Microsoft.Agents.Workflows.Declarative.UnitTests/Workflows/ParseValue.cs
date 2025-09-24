@@ -52,8 +52,9 @@ public static class WorkflowProvider
     internal sealed class ParseVarExecutor(FormulaSession session) : ActionExecutor(id: "parse_var", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
+            return default;
         }
     }
     

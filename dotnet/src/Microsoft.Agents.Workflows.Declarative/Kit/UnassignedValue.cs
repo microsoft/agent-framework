@@ -5,7 +5,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// <summary>
 /// Represents the absence of an assigned value for a variable used in an expression.
 /// </summary>
-public sealed record class UnassignedValue
+public sealed record class UnassignedValue // %%% NOT PUBLIC
 {
     /// <summary>
     /// A singleton instance of <see cref="UnassignedValue"/>.

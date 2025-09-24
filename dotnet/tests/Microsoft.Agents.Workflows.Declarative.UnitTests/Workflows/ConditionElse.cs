@@ -41,13 +41,47 @@ public static class WorkflowProvider
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
+            // Initialize variables
+            await context.QueueStateUpdateAsync("TestValue", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+        }
+    }
+    
+    /// <summary>
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.TestValue" variable.
+    /// </summary>
+    internal sealed class SetvariableTestExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_test", session)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            object? evaluatedValue = await context.EvaluateExpressionAsync("Value(System.LastMessageText)").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            return default;
+        }
+    }
+    
+    /// <summary>
+    /// Conditional branching similar to an if / elseif / elseif / else chain.
+    /// </summary>
+    internal sealed class ConditiongroupTestExecutor(FormulaSession session) : ActionExecutor(id: "conditionGroup_test", session)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            bool condition0 = await context.EvaluateExpressionAsync<bool>("Mod(Topic.TestValue, 2) = 1").ConfigureAwait(false);
+            if (condition0)
+            {
+                return "conditionItem_odd";
+            }
+    
+            return "conditionGroup_testElseActions";
         }
     }
     
     /// <summary>
     /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class SendActivity1Executor(FormulaSession session) : ActionExecutor(id: "send_activity_1", session)
+    internal sealed class SendactivityOddExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_odd", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -55,7 +89,7 @@ public static class WorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    NEVER 1!
+                    ODD
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -67,7 +101,7 @@ public static class WorkflowProvider
     /// <summary>
     /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class SendActivity2Executor(FormulaSession session) : ActionExecutor(id: "send_activity_2", session)
+    internal sealed class SendactivityElseExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_else", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -75,27 +109,7 @@ public static class WorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    NEVER 2!
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
-            return default;
-        }
-    }
-    
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendActivity3Executor(FormulaSession session) : ActionExecutor(id: "send_activity_3", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    NEVER 3!
+                    EVEN
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -113,24 +127,39 @@ public static class WorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
-        DelegateExecutor gotoEnd = new(id: "goto_end", myWorkflowRoot.Session);
+        SetvariableTestExecutor setVariableTest = new(myWorkflowRoot.Session);
+        ConditiongroupTestExecutor conditionGroupTest = new(myWorkflowRoot.Session);
+        DelegateExecutor conditionItemOdd = new(id: "conditionItem_odd", myWorkflowRoot.Session);
+        DelegateExecutor conditionGroupTestelseactions = new(id: "conditionGroup_testElseActions", myWorkflowRoot.Session);
+        DelegateExecutor conditionItemOddactions = new(id: "conditionItem_oddActions", myWorkflowRoot.Session);
+        SendactivityOddExecutor sendActivityOdd = new(myWorkflowRoot.Session);
+        DelegateExecutor conditionItemOddRestart = new(id: "conditionItem_odd_Restart", myWorkflowRoot.Session);
+        SendactivityElseExecutor sendActivityElse = new(myWorkflowRoot.Session);
         DelegateExecutor endAll = new(id: "end_all", myWorkflowRoot.Session);
-        DelegateExecutor gotoEndRestart = new(id: "goto_end_Restart", myWorkflowRoot.Session);
-        SendActivity1Executor sendActivity1 = new(myWorkflowRoot.Session);
-        SendActivity2Executor sendActivity2 = new(myWorkflowRoot.Session);
-        SendActivity3Executor sendActivity3 = new(myWorkflowRoot.Session);
+        DelegateExecutor conditionItemOddPost = new(id: "conditionItem_odd_Post", myWorkflowRoot.Session);
+        DelegateExecutor conditionGroupTestPost = new(id: "conditionGroup_test_Post", myWorkflowRoot.Session);
+        DelegateExecutor conditionItemOddactionsPost = new(id: "conditionItem_oddActions_Post", myWorkflowRoot.Session);
+        DelegateExecutor conditionGroupTestelseactionsPost = new(id: "conditionGroup_testElseActions_Post", myWorkflowRoot.Session);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(myWorkflowRoot);
 
         // Connect executors
         builder.AddEdge(myWorkflowRoot, myWorkflow);
-        builder.AddEdge(myWorkflow, gotoEnd);
-        builder.AddEdge(gotoEnd, endAll);
-        builder.AddEdge(gotoEndRestart, sendActivity1);
-        builder.AddEdge(sendActivity1, sendActivity2);
-        builder.AddEdge(sendActivity2, sendActivity3);
-        builder.AddEdge(sendActivity3, endAll);
+        builder.AddEdge(myWorkflow, setVariableTest);
+        builder.AddEdge(setVariableTest, conditionGroupTest);
+        builder.AddEdge(conditionGroupTest, conditionItemOdd, (object? result) => string.Equals("conditionItem_odd", result, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupTest, conditionGroupTestelseactions, (object? result) => string.Equals("conditionGroup_testElseActions", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionItemOdd, conditionItemOddactions);
+        builder.AddEdge(conditionItemOddactions, sendActivityOdd);
+        builder.AddEdge(conditionItemOddRestart, conditionGroupTestelseactions);
+        builder.AddEdge(conditionGroupTestelseactions, sendActivityElse);
+        builder.AddEdge(conditionGroupTest, endAll);
+        builder.AddEdge(conditionItemOddPost, conditionGroupTestPost);
+        builder.AddEdge(sendActivityOdd, conditionItemOddactionsPost);
+        builder.AddEdge(conditionItemOddactionsPost, conditionItemOddPost);
+        builder.AddEdge(sendActivityElse, conditionGroupTestelseactionsPost);
+        builder.AddEdge(conditionGroupTestelseactionsPost, conditionGroupTestPost);
 
         // Build the workflow
         return builder.Build<TInput>();

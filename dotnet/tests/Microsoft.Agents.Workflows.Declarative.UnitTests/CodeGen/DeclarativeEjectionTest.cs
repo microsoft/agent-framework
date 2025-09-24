@@ -15,6 +15,8 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
 {
     [Theory]
     [InlineData("ClearAllVariables.yaml")]
+    [InlineData("Condition.yaml")]
+    [InlineData("ConditionElse.yaml")]
     [InlineData("EditTable.yaml")]
     [InlineData("EditTableV2.yaml")]
     [InlineData("Goto.yaml")]
@@ -36,7 +38,6 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
 
         string baselinePath = Path.Combine("Workflows", Path.ChangeExtension(workflowFile, ".cs"));
         string generatedPath = Path.Combine("Workflows", Path.ChangeExtension(workflowFile, ".g.cs"));
-        string expectedCode = File.ReadAllText(baselinePath);
 
         this.Output.WriteLine($"WRITING BASELINE TO: {Path.GetFullPath(generatedPath)}\n");
         Console.WriteLine(workflowCode);
@@ -44,6 +45,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         File.WriteAllText(Path.GetFullPath(generatedPath), workflowCode);
         this.BuildWorkflow(generatedPath);
 
+        string expectedCode = File.ReadAllText(baselinePath);
         string[] expectedLines = expectedCode.Trim().Split('\n');
         string[] workflowLines = workflowCode.Trim().Split('\n');
 
@@ -67,12 +69,11 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         ProcessStartInfo startInfo =
             new()
             {
-                FileName = "dotnet",
-                Arguments = "build",
+                FileName = "cmd.exe",
+                Arguments = @"/C ""dotnet build > build.log""",
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
                 WorkingDirectory = projectDirectory.FullName,
             };
 
@@ -80,7 +81,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         using Process? buildProcess = Process.Start(startInfo);
         Assert.NotNull(buildProcess);
         buildProcess.WaitForExit();
-        this.Output.WriteLine(buildProcess.StandardOutput.ReadToEnd());
+        this.Output.WriteLine(File.ReadAllText(Path.Combine(projectDirectory.FullName, "build.log")));
         Assert.Equal(0, buildProcess.ExitCode);
 
         static string GetRepoFolder()

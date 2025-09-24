@@ -52,10 +52,11 @@ public static class WorkflowProvider
     internal sealed class SetVarExecutor(FormulaSession session) : ActionExecutor(id: "set_var", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = 42;
             await context.QueueStateUpdateAsync(key: "MyVar", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            return default;
         }
     }
     
@@ -65,10 +66,11 @@ public static class WorkflowProvider
     /// </summary>
     internal sealed class ClearVarExecutor(FormulaSession session) : ActionExecutor(id: "clear_var", session)
     {
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             await context.QueueStateUpdateAsync(key: "MyVar", value: UnassignedValue.Instance, scopeName: "Topic").ConfigureAwait(false);
-        }
+            return default;
+       }
     }
     
     public static Workflow<TInput> CreateWorkflow<TInput>(

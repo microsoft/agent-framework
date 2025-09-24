@@ -15,11 +15,8 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 public abstract class ActionExecutor(string id, FormulaSession session) : ActionExecutor<ActionExecutorResult>(id, session)
 {
     /// <inheritdoc/>
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken = default)
-    {
-        await this.ExecuteAsync(context, cancellationToken).ConfigureAwait(false);
-        return default;
-    }
+    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken = default) =>
+        this.ExecuteAsync(context, cancellationToken);
 
     /// <summary>
     /// Executes the core logic of the action.
@@ -27,7 +24,7 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
     /// <param name="context">The workflow execution context providing messaging and state services.</param>
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
-    protected abstract ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+    protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

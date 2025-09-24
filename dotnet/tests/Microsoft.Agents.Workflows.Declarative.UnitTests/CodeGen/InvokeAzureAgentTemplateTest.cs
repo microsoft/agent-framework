@@ -1,15 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using Microsoft.Agents.Workflows.Declarative.CodeGen;
-using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests.CodeGen;
 
-public class CreateConversationTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
+public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
     public void Basic()
@@ -23,59 +21,43 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
     [Fact]
     public void WithMetadata()
     {
-        Dictionary<string, string> metadata =
-            new()
-            {
-                ["key1"] = "value1",
-                ["key2"] = "value2",
-            };
-
         // Act, Assert
         this.ExecuteTest(
             nameof(WithMetadata),
-            "TestVariable",
-            ObjectExpression<RecordDataValue>.Literal(metadata.ToRecordValue()));
+            "TestVariable");
     }
 
     private void ExecuteTest(
         string displayName,
-        string variableName,
-        ObjectExpression<RecordDataValue>? metadata = null)
+        string variableName)
     {
         // Arrange
-        CreateConversation model =
+        InvokeAzureAgent model =
             this.CreateModel(
                 displayName,
-                FormatVariablePath(variableName),
-                metadata);
+                FormatVariablePath(variableName));
 
         // Act
-        CreateConversationTemplate template = new(model);
+        InvokeAzureAgentTemplate template = new(model);
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
         this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
-        this.AssertGeneratedAssignment(model.ConversationId?.Path, workflowCode);
+        //this.AssertGeneratedAssignment(model.ConversationId?.Path, workflowCode);
     }
 
-    private CreateConversation CreateModel(
+    private InvokeAzureAgent CreateModel(
         string displayName,
-        string variablePath,
-        ObjectExpression<RecordDataValue>? metadata = null)
+        string variablePath)
     {
-        CreateConversation.Builder actionBuilder =
+        InvokeAzureAgent.Builder actionBuilder =
             new()
             {
                 Id = this.CreateActionId("create_conversation"),
                 DisplayName = this.FormatDisplayName(displayName),
-                ConversationId = InitializablePropertyPath.Create(variablePath),
+                //ConversationId = InitializablePropertyPath.Create(variablePath),
             };
-
-        if (metadata is not null)
-        {
-            actionBuilder.Metadata = metadata;
-        }
 
         return actionBuilder.Build();
     }

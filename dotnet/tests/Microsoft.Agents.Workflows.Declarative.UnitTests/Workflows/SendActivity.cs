@@ -52,10 +52,11 @@ public static class WorkflowProvider
     internal sealed class SetInputExecutor(FormulaSession session) : ActionExecutor(id: "set_input", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.ReadStateAsync<object>(key: "LastMessageText", scopeName: "System").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            return default;
         }
     }
     
@@ -65,7 +66,7 @@ public static class WorkflowProvider
     internal sealed class ActivityInputExecutor(FormulaSession session) : ActionExecutor(id: "activity_input", session)
     {
         // <inheritdoc />
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             string activityText =
                 await context.FormatTemplateAsync(
@@ -75,6 +76,7 @@ public static class WorkflowProvider
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            return default;
         }
     }
     

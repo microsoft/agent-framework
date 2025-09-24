@@ -8,10 +8,11 @@
 internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     // <inheritdoc />
-    protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
         EvaluateValueExpression(this.Model.Value, "evaluatedValue");
         AssignVariable(this.Variable, "evaluatedValue");
      #>
+        return default;
     }
 }

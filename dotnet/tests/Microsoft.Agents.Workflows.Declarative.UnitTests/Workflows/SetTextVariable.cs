@@ -51,7 +51,7 @@ public static class WorkflowProvider
     /// </summary>
     internal sealed class SetTextExecutor(FormulaSession session) : ActionExecutor(id: "set_text", session)
     {
-        protected override async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             string textValue =
                 await context.FormatTemplateAsync(
@@ -59,6 +59,7 @@ public static class WorkflowProvider
                     Test content
                     """);
             await context.QueueStateUpdateAsync(key: "TestVar", value: textValue, scopeName: "Topic").ConfigureAwait(false);
+            return default;
         }
     }
     
