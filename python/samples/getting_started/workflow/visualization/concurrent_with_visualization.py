@@ -2,7 +2,8 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+
+from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
@@ -13,8 +14,8 @@ from agent_framework import (
     Executor,
     Role,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
     WorkflowViz,
     handler,
 )
@@ -71,7 +72,7 @@ class AggregateInsights(Executor):
         self._expert_ids = expert_ids
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:
@@ -97,7 +98,7 @@ class AggregateInsights(Executor):
             f"Legal/Compliance Notes:\n{aggregated.legal}\n"
         )
 
-        await ctx.add_event(WorkflowCompletedEvent(data=consolidated))
+        await ctx.yield_output(consolidated)
 
 
 async def main() -> None:
@@ -165,17 +166,13 @@ async def main() -> None:
         print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz]")
 
     # 3) Run with a single prompt
-    completion: WorkflowCompletedEvent | None = None
     async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
         if isinstance(event, AgentRunEvent):
             # Show which agent ran and what step completed.
             print(event)
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
-
-    if completion:
-        print("===== Final Aggregated Output =====")
-        print(completion.data)
+        elif isinstance(event, WorkflowOutputEvent):
+            print("===== Final Aggregated Output =====")
+            print(event.data)
 
 
 if __name__ == "__main__":

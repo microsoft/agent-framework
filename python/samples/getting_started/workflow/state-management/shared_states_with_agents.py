@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from typing_extensions import Never
+
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessage,
     Role,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     executor,
 )
@@ -31,7 +32,7 @@ Show how to:
 - Use shared state to decouple large payloads from messages and pass around lightweight references.
 - Enforce structured agent outputs with Pydantic models via response_format for robust parsing.
 - Route using conditional edges based on a typed intermediate DetectionResult.
-- Compose agent backed executors with function style executors and print a terminal WorkflowCompletedEvent.
+- Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
 - Azure OpenAI configured for AzureChatClient with required environment variables.
@@ -139,17 +140,17 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 
 
 @executor(id="finalize_and_send")
-async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
-    """Validate the drafted reply and complete the workflow with a terminal event."""
+async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
+    """Validate the drafted reply and yield the final output."""
     parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
-    await ctx.add_event(WorkflowCompletedEvent(f"Email sent: {parsed.response}"))
+    await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
 @executor(id="handle_spam")
-async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[None]) -> None:
-    """Emit a completion event describing why the email was marked as spam."""
+async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
+    """Yield output describing why the email was marked as spam."""
     if detection.is_spam:
-        await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {detection.reason}"))
+        await ctx.yield_output(f"Email marked as spam: {detection.reason}")
     else:
         raise RuntimeError("This executor should only handle spam messages.")
 
@@ -206,18 +207,20 @@ async def main() -> None:
         print("Unable to find resource file, using default text.")
         email = "You are a WINNER! Click here for a free lottery offer!!!"
 
-    # Run and print the terminal result. Streaming surfaces intermediate execution events as well.
-    async for event in workflow.run_stream(email):
-        if isinstance(event, WorkflowCompletedEvent):
-            print(event)
+    # Run and print the final result. Streaming surfaces intermediate execution events as well.
+    events = await workflow.run(email)
+    outputs = events.get_outputs()
+
+    if outputs:
+        print(f"Final result: {outputs[0]}")
 
     """
     Sample Output:
 
-    WorkflowCompletedEvent(data=Email marked as spam: This email exhibits several common spam and scam characteristics:
+    Final result: Email marked as spam: This email exhibits several common spam and scam characteristics:
     unrealistic claims of large cash winnings, urgent time pressure, requests for sensitive personal and financial
     information, and a demand for a processing fee. The sender impersonates a generic lottery commission, and the
-    message contains a suspicious link. All these are typical of phishing and lottery scam emails.)
+    message contains a suspicious link. All these are typical of phishing and lottery scam emails.
     """
 
 

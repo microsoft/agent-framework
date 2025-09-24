@@ -4,6 +4,7 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from pydantic import PrivateAttr
+from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
@@ -16,11 +17,13 @@ from agent_framework import (
     SequentialBuilder,
     TextContent,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
-    WorkflowContext,
+    WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
 )
 from agent_framework._workflow._executor import AgentExecutorResponse, Executor
+from agent_framework._workflow._workflow_context import WorkflowContext
 
 
 class _SimpleAgent(BaseAgent):
@@ -54,19 +57,17 @@ class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
     @handler
-    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
+    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict]) -> None:
         full = response.full_conversation
         # The AgentExecutor contract guarantees full_conversation is populated.
         assert full is not None
-        await ctx.add_event(
-            WorkflowCompletedEvent(
-                data={
-                    "length": len(full),
-                    "roles": [m.role for m in full],
-                    "texts": [m.text for m in full],
-                }
-            )
-        )
+        payload = {
+            "length": len(full),
+            "roles": [m.role for m in full],
+            "texts": [m.text for m in full],
+        }
+        await ctx.yield_output(payload)
+        pass
 
 
 async def test_agent_executor_populates_full_conversation_non_streaming() -> None:
@@ -78,15 +79,20 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
     wf = WorkflowBuilder().set_start_executor(agent_exec).add_edge(agent_exec, capturer).build()
 
     # Act: run with a simple user prompt
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
+    output: dict | None = None
     async for ev in wf.run_stream("hello world"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = ev.data  # type: ignore[assignment]
+        if completed and output is not None:
             break
 
     # Assert: full_conversation contains [user("hello world"), assistant("agent-reply")]
-    assert completed is not None
-    payload = completed.data  # type: ignore[assignment]
+    assert completed
+    assert output is not None
+    payload = output
     assert isinstance(payload, dict)
     assert payload["length"] == 2
     assert payload["roles"][0] == Role.USER and "hello world" in (payload["texts"][0] or "")
@@ -148,7 +154,7 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
 
     # Act
     async for ev in wf.run_stream("hello seq"):
-        if isinstance(ev, WorkflowCompletedEvent):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             break
 
     # Assert: second agent should have seen the user prompt and A1's assistant reply

@@ -9,24 +9,10 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
-from ._executor import Executor
+from ._executor import Executor, RequestInfoExecutor
+from ._workflow_executor import WorkflowExecutor
 
 logger = logging.getLogger(__name__)
-
-
-def _is_type_like(x: Any) -> bool:
-    """Check if a value is a type-like entity.
-
-    A "type-like" entry is either a class/type or a typing alias
-    (e.g., list[str] has an origin and args).
-
-    Args:
-        x: The value to check
-
-    Returns:
-        True if the value is type-like, False otherwise
-    """
-    return isinstance(x, type) or get_origin(x) is not None
 
 
 # region Enums and Base Classes
@@ -106,23 +92,6 @@ class GraphConnectivityError(WorkflowValidationError):
 
     def __init__(self, message: str):
         super().__init__(message, validation_type=ValidationTypeEnum.GRAPH_CONNECTIVITY)
-
-
-class HandlerOutputAnnotationError(WorkflowValidationError):
-    """Exception raised when a handler's WorkflowContext output annotation is invalid or missing."""
-
-    def __init__(self, executor_id: str, handler_name: str, reason: str):
-        super().__init__(
-            message=(
-                "Invalid WorkflowContext output annotation in handler "
-                f"'{handler_name}' of executor '{executor_id}': {reason}. "
-                "Handlers must annotate their third parameter as WorkflowContext[T]. "
-                "Use WorkflowContext[None] if the handler emits no messages."
-            ),
-            validation_type=ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION,
-        )
-        self.executor_id = executor_id
-        self.handler_name = handler_name
 
 
 class InterceptorConflictError(WorkflowValidationError):
@@ -216,7 +185,6 @@ class WorkflowGraphValidator:
         self._validate_type_compatibility()
         self._validate_graph_connectivity(start_executor_id)
         self._validate_self_loops()
-        self._validate_handler_ambiguity()
         self._validate_dead_ends()
         self._validate_cycles()
         self._validate_interceptor_uniqueness()
@@ -224,158 +192,18 @@ class WorkflowGraphValidator:
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
 
-        Requirements:
-        - WorkflowContext annotation must be present
-        - T_Out must be provided; if no outputs, it must be None
-                - T_Out elements must be valid types (class) or typing generics (e.g., list[str]);
-                    values like int() or 123 are invalid
+        Note: This validation is now primarily handled at handler registration time
+        via the unified validation functions in _workflow_context.py when the @handler
+        decorator is applied. This method is kept minimal for any edge cases.
         """
-        from ._workflow_context import WorkflowContext  # Local import to avoid cycles
-
-        # Iterate over all registered executors in the workflow graph
-        for executor_id, executor in self._executors.items():
-            for attr_name in dir(executor.__class__):
-                if attr_name.startswith("_"):
-                    continue
-                # Retrieve attributes without binding (so the first parameter remains 'self').
-                # This ensures inspect.signature sees all three parameters: (self, message, ctx).
-                attr = None
-                from contextlib import suppress
-
-                with suppress(Exception):
-                    attr = inspect.getattr_static(executor.__class__, attr_name)
-                if attr is None:
-                    continue
-                # Consider only callables that were decorated with @handler
-                if not callable(attr) or not hasattr(attr, "_handler_spec"):
-                    continue
-
-                handler_spec = attr._handler_spec  # type: ignore[attr-defined]
-                handler_name = handler_spec.get("name", attr_name)
-
-                try:
-                    # Inspect the function signature of the unbound function
-                    sig = inspect.signature(attr)
-                except (TypeError, ValueError):
-                    continue
-
-                params = list(sig.parameters.values())
-                # Handlers must have exactly three parameters: (self, message, ctx)
-                if len(params) != 3:
-                    continue
-
-                ctx_param = params[2]
-                ctx_ann = ctx_param.annotation
-
-                # If ctx lacks an annotation entirely, fail fast with a clear message
-                if ctx_ann is inspect.Parameter.empty:
-                    raise HandlerOutputAnnotationError(executor_id, handler_name, "missing type annotation for ctx")
-
-                # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
-                ctx_origin = get_origin(ctx_ann)
-                if ctx_origin is None:
-                    # If it's exactly the WorkflowContext class, T_Out is missing (e.g., WorkflowContext)
-                    if ctx_ann is WorkflowContext:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                        )
-                else:
-                    # The annotation is parameterized, but must be for WorkflowContext
-                    if ctx_origin is not WorkflowContext:
-                        raise HandlerOutputAnnotationError(
-                            executor_id, handler_name, f"ctx must be WorkflowContext[T], got {ctx_ann}"
-                        )
-
-                # Extract and validate T_Out
-                type_args = get_args(ctx_ann)
-                if not type_args:
-                    raise HandlerOutputAnnotationError(
-                        executor_id,
-                        handler_name,
-                        "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                    )
-
-                t_out = type_args[0]
-
-                # Allow Any for T_Out (unspecified outputs). We accept this here and
-                # skip type compatibility later, but still enforce shape validity elsewhere.
-                if t_out is Any:
-                    continue
-
-                # Allow None (no outputs) explicitly declared
-                if t_out is type(None):
-                    continue
-
-                # If T_Out is a union, validate each member (e.g., str | int)
-                union_origin = get_origin(t_out)
-                type_items: list[Any]
-                type_items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
-
-                invalid = [x for x in type_items if not _is_type_like(x) and x is not type(None)]
-                if invalid:
-                    raise HandlerOutputAnnotationError(
-                        executor_id,
-                        handler_name,
-                        f"T_Out contains invalid entries: {invalid}. Use proper types or typing generics",
-                    )
-
-            # Also validate instance-level handler specs if present
-            if hasattr(executor, "_instance_handler_specs"):
-                for spec in executor._instance_handler_specs:
-                    handler_name = spec.get("name", "unknown")
-                    ctx_ann = spec.get("ctx_annotation")
-
-                    if ctx_ann is None:
-                        continue  # Skip if no annotation stored
-
-                    # Validate that the ctx annotation is WorkflowContext[...] and is properly parameterized
-                    ctx_origin = get_origin(ctx_ann)
-                    if ctx_origin is None:
-                        if ctx_ann is WorkflowContext:
-                            raise HandlerOutputAnnotationError(
-                                executor_id,
-                                handler_name,
-                                "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                            )
-                    else:
-                        if ctx_origin is not WorkflowContext:
-                            raise HandlerOutputAnnotationError(
-                                executor_id, handler_name, f"ctx must be WorkflowContext[T], got {ctx_ann}"
-                            )
-
-                    # Extract and validate T_Out
-                    type_args = get_args(ctx_ann)
-                    if not type_args:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            "T_Out is missing; use WorkflowContext[None] or specify concrete types",
-                        )
-
-                    t_out = type_args[0]
-
-                    # Allow Any for T_Out (unspecified outputs)
-                    if t_out is Any:
-                        continue
-
-                    # Allow None (no outputs) explicitly declared
-                    if t_out is type(None):
-                        continue
-
-                    # If T_Out is a union, validate each member
-                    union_origin = get_origin(t_out)
-                    instance_type_items: list[Any]
-                    instance_type_items = list(get_args(t_out)) if union_origin in (Union, UnionType) else [t_out]
-
-                    invalid = [x for x in instance_type_items if not _is_type_like(x) and x is not type(None)]
-                    if invalid:
-                        raise HandlerOutputAnnotationError(
-                            executor_id,
-                            handler_name,
-                            f"T_Out contains invalid entries: {invalid}. Use proper types or typing generics",
-                        )
+        # The comprehensive validation is already done during handler registration:
+        # 1. @handler decorator calls validate_function_signature()
+        # 2. FunctionExecutor constructor calls validate_function_signature()
+        # 3. Both use validate_workflow_context_annotation() for WorkflowContext validation
+        #
+        # All executors in the workflow must have gone through one of these paths,
+        # so redundant validation here is unnecessary and has been removed.
+        pass
 
     # endregion
 
@@ -444,29 +272,25 @@ class WorkflowGraphValidator:
         target_executor = self._executors[edge.target_id]
 
         # Get output types from source executor
-        source_output_types = self._get_executor_output_types(source_executor)
+        source_output_types = list(source_executor.output_types)
+        # Also include intercepted request types as potential outputs
+        # since @intercepts_request methods can forward requests
+        source_output_types.extend(source_executor.request_types)
 
         # Get input types from target executor
-        target_input_types = self._get_executor_input_types(target_executor)
+        target_input_types = target_executor.input_types
 
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
         if not source_output_types or not target_input_types:
-            # Suppress warnings for built-in workflow components where dynamic typing is expected
-            try:
-                from ._executor import RequestInfoExecutor, WorkflowExecutor  # local import to avoid cycles
-
-                builtin_types = (RequestInfoExecutor, WorkflowExecutor)
-            except Exception:
-                builtin_types = tuple()  # type: ignore[assignment]
-
-            if not source_output_types and not isinstance(source_executor, builtin_types):
+            # Suppress warnings for RequestInfoExecutor where dynamic typing is expected
+            if not source_output_types and not isinstance(source_executor, RequestInfoExecutor):
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
                     f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
-            if not target_input_types and not isinstance(target_executor, builtin_types):
+            if not target_input_types and not isinstance(target_executor, RequestInfoExecutor):
                 logger.warning(
                     f"Executor '{target_executor.id}' has no input type annotations. "
                     f"Type compatibility validation will be skipped for edges to this executor. "
@@ -505,62 +329,6 @@ class WorkflowGraphValidator:
                 source_output_types,
                 target_input_types,
             )
-
-    def _get_executor_output_types(self, executor: Executor) -> list[type[Any]]:
-        """Extract output types from an executor's message handlers.
-
-        Args:
-            executor: The executor to analyze
-
-        Returns:
-            list of types that this executor can output
-        """
-        output_types: list[type[Any]] = []
-
-        for attr_name in dir(executor.__class__):
-            if attr_name.startswith("_"):
-                continue
-            try:
-                attr = getattr(executor.__class__, attr_name)
-                if callable(attr) and hasattr(attr, "_handler_spec"):
-                    handler_spec = attr._handler_spec  # type: ignore
-                    handler_output_types = handler_spec.get("output_types", [])
-                    output_types.extend(handler_output_types)
-            except AttributeError:
-                # Skip attributes that may not be accessible
-                continue
-
-        # Also include intercepted request types as potential outputs
-        # since @intercepts_request methods can forward requests
-        if hasattr(executor, "_request_interceptors"):
-            for request_type in executor._request_interceptors:
-                if isinstance(request_type, type):
-                    output_types.append(request_type)
-
-        # Include output types from instance-level handler specs
-        if hasattr(executor, "_instance_handler_specs"):
-            for spec in executor._instance_handler_specs:
-                handler_output_types = spec.get("output_types", [])
-                output_types.extend(handler_output_types)
-
-        return output_types
-
-    def _get_executor_input_types(self, executor: Executor) -> list[type[Any]]:
-        """Extract input types from an executor's message handlers.
-
-        Args:
-            executor: The executor to analyze
-
-        Returns:
-            list of types that this executor can handle as input
-        """
-        input_types: list[type[Any]] = []
-
-        # Access the private _handlers attribute to get input types
-        if hasattr(executor, "_handlers"):
-            input_types.extend(executor._handlers.keys())  # type: ignore
-
-        return input_types
 
     # endregion
 
@@ -650,30 +418,6 @@ class WorkflowGraphValidator:
                 f"This may cause infinite recursion if not properly handled with conditions."
             )
 
-    def _validate_handler_ambiguity(self) -> None:
-        """Check for potential ambiguity in message handlers.
-
-        Warns when executors have multiple handlers that could handle the same type,
-        which might lead to unexpected behavior.
-        """
-        for executor_id, executor in self._executors.items():
-            input_types = self._get_executor_input_types(executor)
-
-            # Check for duplicate input types
-            seen_types: set[type[Any]] = set()
-            duplicate_types: set[type[Any]] = set()
-
-            for input_type in input_types:
-                if input_type in seen_types:
-                    duplicate_types.add(input_type)
-                seen_types.add(input_type)
-
-            if duplicate_types:
-                logger.warning(
-                    f"Executor '{executor_id}' has multiple handlers for the same input types: "
-                    f"{[str(t) for t in duplicate_types]}. This may lead to ambiguous message routing."
-                )
-
     def _validate_dead_ends(self) -> None:
         """Identify executors that have no outgoing edges (potential dead ends).
 
@@ -744,8 +488,6 @@ class WorkflowGraphValidator:
         This prevents non-deterministic behavior where multiple executors could intercept
         the same request type from the same sub-workflow.
         """
-        from ._executor import WorkflowExecutor
-
         # Find all WorkflowExecutor instances in the workflow
         workflow_executors: dict[str, WorkflowExecutor] = {}
         for executor_id, executor in self._executors.items():

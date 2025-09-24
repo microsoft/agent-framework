@@ -20,7 +20,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
-        FormulaValue table = this.State.Get(variablePath);
+        FormulaValue table = context.ReadState(variablePath);
         if (table is not TableValue tableValue)
         {
             throw this.Exception($"Require '{variablePath}' to be a table, not: '{table.GetType().Name}'.");
@@ -30,7 +30,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
         if (changeType is AddItemOperation addItemOperation)
         {
             ValueExpression addItemValue = Throw.IfNull(addItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
-            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(addItemValue);
+            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(addItemValue);
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormula());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
             await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
@@ -43,7 +43,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
         else if (changeType is RemoveItemOperation removeItemOperation)
         {
             ValueExpression removeItemValue = Throw.IfNull(removeItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
-            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(removeItemValue);
+            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(removeItemValue);
             if (expressionResult.Value.ToFormula() is TableValue removeItemTable)
             {
                 await tableValue.RemoveAsync(removeItemTable?.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);

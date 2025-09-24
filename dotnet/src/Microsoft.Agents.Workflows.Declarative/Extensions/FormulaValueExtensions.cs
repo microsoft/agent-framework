@@ -146,7 +146,7 @@ internal static class FormulaValueExtensions
     public static RecordDataValue ToRecord(this RecordValue value) =>
         DataValue.RecordFromFields(value.OriginalFields.Select(field => field.GetKeyValuePair()));
 
-    private static RecordValue ToRecord(this IDictionary value)
+    public static RecordValue ToRecord(this IDictionary value)
     {
         return FormulaValue.NewRecordFromFields(GetFields());
 

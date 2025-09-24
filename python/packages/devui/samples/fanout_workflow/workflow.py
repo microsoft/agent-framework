@@ -23,11 +23,11 @@ from typing import Literal
 from agent_framework import (
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
 from pydantic import BaseModel, Field
+from typing_extensions import Never
 
 
 class DataType(Enum):
@@ -315,7 +315,9 @@ class ValidationAggregator(Executor):
     """Aggregates validation results and decides on next steps."""
 
     @handler
-    async def aggregate_validations(self, reports: list[ValidationReport], ctx: WorkflowContext[DataBatch]) -> None:
+    async def aggregate_validations(
+        self, reports: list[ValidationReport], ctx: WorkflowContext[DataBatch, str]
+    ) -> None:
         """Aggregate all validation reports and make processing decision."""
         if not reports:
             return
@@ -345,11 +347,9 @@ class ValidationAggregator(Executor):
                 )
 
             reason = " and ".join(failure_reason)
-            await ctx.add_event(
-                WorkflowCompletedEvent(
-                    f"Batch {batch_id} failed validation: {reason}. "
-                    f"Total issues: {total_issues}, Quality score: {quality_score:.2f}"
-                )
+            await ctx.yield_output(
+                f"Batch {batch_id} failed validation: {reason}. "
+                f"Total issues: {total_issues}, Quality score: {quality_score:.2f}"
             )
             return
 
@@ -584,10 +584,12 @@ class FinalProcessor(Executor):
     """Final processing stage that combines all results."""
 
     @handler
-    async def process_final_results(self, assessments: list[QualityAssessment], ctx: WorkflowContext[None]) -> None:
+    async def process_final_results(
+        self, assessments: list[QualityAssessment], ctx: WorkflowContext[Never, str]
+    ) -> None:
         """Generate final processing summary and complete workflow."""
         if not assessments:
-            await ctx.add_event(WorkflowCompletedEvent("No quality assessments received"))
+            await ctx.yield_output("No quality assessments received")
             return
 
         batch_id = assessments[0].batch_id
@@ -618,7 +620,7 @@ class FinalProcessor(Executor):
             f"🎖️  Final Status: {final_status}"
         )
 
-        await ctx.add_event(WorkflowCompletedEvent(completion_message))
+        await ctx.yield_output(completion_message)
 
 
 # Workflow Builder Helper

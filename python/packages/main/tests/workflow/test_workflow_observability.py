@@ -48,7 +48,7 @@ class SecondExecutor(Executor):
         self._processed_messages: list[str] = []
 
     @handler
-    async def handle_message(self, message: str, ctx: WorkflowContext[None]) -> None:
+    async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
         """Handle string messages."""
         self._processed_messages.append(message)
 
@@ -87,7 +87,7 @@ class FanInAggregator(Executor):
         self._processed_messages: list[Any] = []
 
     @handler
-    async def handle_aggregated_data(self, messages: list[str], ctx: WorkflowContext[None]) -> None:
+    async def handle_aggregated_data(self, messages: list[str], ctx: WorkflowContext) -> None:
         # Process aggregated messages from fan-in
         aggregated = f"aggregated: {', '.join(messages)}"
         self._processed_messages.append(aggregated)
@@ -196,7 +196,14 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     assert message.source_span_id is not None
 
     # Test executor trace context handling
-    await executor.execute("test message", workflow_ctx)
+    await executor.execute(
+        "test message",
+        ["source"],  # source_executor_ids
+        shared_state,  # shared_state
+        ctx,  # runner_context
+        trace_contexts=[{"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"}],
+        source_span_ids=["1234567890123456"],
+    )
 
     # Check that spans were created with proper attributes
     spans = span_exporter.get_finished_spans()
@@ -372,7 +379,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
             super().__init__(id="failing_executor")
 
         @handler
-        async def handle_message(self, message: str, ctx: WorkflowContext[None]) -> None:
+        async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
             raise ValueError("Test error")
 
     failing_executor = FailingExecutor()

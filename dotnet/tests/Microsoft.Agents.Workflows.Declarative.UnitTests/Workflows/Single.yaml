@@ -1,8 +1,9 @@
-kind: AdaptiveDialog
-beginDialog:
-  kind: OnActivity
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
   id: my_workflow
-  type: Message
   actions:
+
     - kind: EndConversation
       id: end_all

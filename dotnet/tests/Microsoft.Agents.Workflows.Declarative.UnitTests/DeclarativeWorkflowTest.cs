@@ -58,7 +58,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopContinueActionAsync()
     {
         await this.RunWorkflowAsync("LoopContinue.yaml");
-        this.AssertExecutionCount(expectedCount: 7);
+        this.AssertExecutionCount(expectedCount: 23);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("continueLoop_now");
         this.AssertExecuted("end_all");
