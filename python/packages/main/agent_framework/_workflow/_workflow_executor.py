@@ -207,7 +207,7 @@ class WorkflowExecutor(Executor):
         # Map request_id to execution_id for response routing
         self._request_to_execution: dict[str, str] = {}  # request_id -> execution_id
         self._active_executions: int = 0  # Count of active sub-workflow executions
-        self._pending_requests: dict[str, RequestInfoMessage | None] = {}
+        self._execute_contexts: dict[str, RequestInfoMessage | None] = {}
         self._collected_responses: dict[str, Any] = {}
         self._state_loaded: bool = False
 
@@ -464,7 +464,7 @@ class WorkflowExecutor(Executor):
         pending: dict[str, RequestInfoMessage | None] = {}
         if isinstance(pending_ids, list):
             pending = {rid: cast(RequestInfoMessage | None, None) for rid in pending_ids if isinstance(rid, str)}
-        self._pending_requests = pending
+        self._execute_contexts = pending
 
         try:
             self._expected_response_count = int(state.get("expected_response_count", 0))
@@ -495,8 +495,8 @@ class WorkflowExecutor(Executor):
 
         if restored_request_data:
             for req_id, data in restored_request_data.items():
-                if req_id in self._pending_requests:
-                    self._pending_requests[req_id] = data
+                if req_id in self._execute_contexts:
+                    self._execute_contexts[req_id] = data
 
         # Responses are accumulated per batch; start clean whenever we restore.
         self._collected_responses = {}
