@@ -138,7 +138,7 @@ class TurnManager(Executor):
         The RequestResponse contains both the human's string reply and the correlated HumanFeedbackRequest,
         which carries the prior guess for convenience.
         """
-        reply = (feedback.data or "").strip().lower()
+        reply = (feedback.response or "").strip().lower()
         # Prefer the correlated request's guess to avoid extra shared state reads.
         last_guess = getattr(feedback.original_request, "guess", None)
 

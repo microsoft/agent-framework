@@ -79,8 +79,8 @@ class MockExecutorRequestApproval(Executor):
         """A mock handler that processes the approval response."""
         data = await ctx.get_shared_state(self.id)
         assert isinstance(data, int)
-        assert isinstance(message.data, ApprovalMessage)
-        if message.data.approved:
+        assert isinstance(message.response, ApprovalMessage)
+        if message.response.approved:
             await ctx.yield_output(data)
         else:
             await ctx.send_message(NumberMessage(data=data))

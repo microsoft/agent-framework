@@ -926,7 +926,7 @@ class MagenticOrchestratorExecutor(Executor):
         if self._context is None:
             return
 
-        human = response.data
+        human = response.response
         if human is None:
             # Defensive fallback: treat as revise with empty comments
             human = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="")

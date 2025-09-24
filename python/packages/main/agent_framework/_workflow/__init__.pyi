@@ -50,7 +50,6 @@ from ._executor import (
     SubWorkflowRequestInfo,
     SubWorkflowResponse,
     handler,
-    intercepts_request,
 )
 from ._function_executor import FunctionExecutor, executor
 from ._magentic import (
@@ -181,6 +180,5 @@ __all__ = [
     "create_edge_runner",
     "executor",
     "handler",
-    "intercepts_request",
     "validate_workflow_graph",
 ]

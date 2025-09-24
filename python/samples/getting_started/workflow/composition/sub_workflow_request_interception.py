@@ -8,11 +8,12 @@ from agent_framework import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
+    SubWorkflowRequestInfo,
+    SubWorkflowResponse,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
     handler,
-    intercepts_request,
 )
 
 """
@@ -20,8 +21,8 @@ Sample: Sub-Workflows with Request Interception
 
 This sample shows how to:
 1. Create workflows that execute other workflows as sub-workflows
-2. Intercept requests from sub-workflows in parent workflows using @intercepts_request
-3. Conditionally handle or forward requests using RequestResponse.handled() and RequestResponse.forward()
+2. Intercept requests from sub-workflows using an executor with @handler for SubWorkflowRequestInfo
+3. Conditionally handle or forward requests using SubWorkflowResponse messages
 4. Handle external requests that are forwarded by the parent workflow
 5. Proper request/response correlation for concurrent processing
 
@@ -35,8 +36,7 @@ The example simulates an email validation system where:
 
 Key concepts demonstrated:
 - WorkflowExecutor: Wraps a workflow to make it behave as an executor
-- @intercepts_request: Decorator for parent workflows to handle sub-workflow requests
-- RequestResponse: Enables conditional handling vs forwarding of requests
+- SubWorkflowRequestInfo handler: @handler method to intercept sub-workflow requests
 - Request correlation: Using request_id to match responses with original requests
 - Concurrent processing: Multiple emails processed simultaneously without interference
 - External request routing: RequestInfoExecutor handles forwarded external requests
@@ -48,15 +48,15 @@ Prerequisites:
 
 Simple flow visualization:
 
-  Parent Orchestrator (@intercepts_request)
+  Parent Orchestrator (handles SubWorkflowRequestInfo)
       |
       |  EmailValidationRequest(email) x3 (concurrent)
       v
     [ Sub-workflow: WorkflowExecutor(EmailValidator) ]
       |
-      |  DomainCheckRequest(domain) with request_id correlation
+      |  SubWorkflowRequestInfo(DomainCheckRequest(domain)) with request_id correlation
       v
-  Interception? yes -> handled locally with RequestResponse.handled(True)
+  Interception? yes -> handled locally with SubWorkflowResponse(data=True)
                no  -> forwarded to RequestInfoExecutor -> external service
                                 |
                                 v
@@ -130,7 +130,7 @@ class EmailValidator(Executor):
         ctx: WorkflowContext[ValidationResult, ValidationResult],
     ) -> None:
         """Handle domain check response from RequestInfo with correlation."""
-        approved = bool(response.data)
+        approved = bool(response.response)
         domain = (
             response.original_request.domain
             if (hasattr(response, "original_request") and response.original_request)
@@ -180,17 +180,31 @@ class SmartEmailOrchestrator(Executor):
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_validator_workflow")
 
-    @intercepts_request
-    async def check_domain(
-        self, request: DomainCheckRequest, ctx: WorkflowContext
-    ) -> RequestResponse[DomainCheckRequest, bool]:
-        """Intercept domain check requests from sub-workflows."""
-        print(f"🔍 Parent intercepting domain check for: {request.domain}")
-        if request.domain in self.approved_domains:
-            print(f"✅ Domain '{request.domain}' is pre-approved locally!")
-            return RequestResponse[DomainCheckRequest, bool].handled(True)
-        print(f"❓ Domain '{request.domain}' unknown, forwarding to external service...")
-        return RequestResponse[DomainCheckRequest, bool].forward()
+    @handler
+    async def handle_sub_workflow_request(
+        self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+    ) -> None:
+        """Handle requests from sub-workflows."""
+        # Check if this is a domain check request we can handle
+        if isinstance(request.data, DomainCheckRequest):
+            domain_request = request.data
+            print(f"🔍 Parent intercepting domain check for: {domain_request.domain}")
+
+            if domain_request.domain in self.approved_domains:
+                print(f"✅ Domain '{domain_request.domain}' is pre-approved locally!")
+                # Send response back to sub-workflow
+                response = SubWorkflowResponse(
+                    request_id=request.request_id,
+                    data=True
+                )
+                await ctx.send_message(response, target_id=request.workflow_executor_id)
+            else:
+                print(f"❓ Domain '{domain_request.domain}' unknown, forwarding to external service...")
+                # Forward to external handler (preserve SubWorkflowRequestInfo wrapper)
+                await ctx.send_message(request)
+        else:
+            # Forward other request types to external handler (preserve SubWorkflowRequestInfo wrapper)
+            await ctx.send_message(request)
 
     @handler
     async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
@@ -233,7 +247,7 @@ async def run_example() -> None:
         WorkflowBuilder()
         .set_start_executor(orchestrator)
         .add_edge(orchestrator, workflow_executor)
-        .add_edge(workflow_executor, orchestrator)
+        .add_edge(workflow_executor, orchestrator)  # For ValidationResult collection and SubWorkflowRequestInfo interception
         # Add edges for external request handling
         .add_edge(orchestrator, main_request_info)
         .add_edge(main_request_info, workflow_executor)  # Route external responses to sub-workflow

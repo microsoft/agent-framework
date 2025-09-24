@@ -12,11 +12,12 @@ from agent_framework import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
+    SubWorkflowRequestInfo,
+    SubWorkflowResponse,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
     handler,
-    intercepts_request,
 )
 
 
@@ -54,7 +55,7 @@ class EmailValidator(Executor):
 
     @handler
     async def validate_request(
-        self, request: EmailValidationRequest, ctx: WorkflowContext[RequestInfoMessage, ValidationResult]
+        self, request: EmailValidationRequest, ctx: WorkflowContext[DomainCheckRequest, ValidationResult]
     ) -> None:
         """Validate an email address."""
         # Extract domain and check if it's approved
@@ -77,8 +78,8 @@ class EmailValidator(Executor):
         # Use the original email from the correlated response
         result = ValidationResult(
             email=response.original_request.email,
-            is_valid=response.data or False,
-            reason="Domain approved" if response.data else "Domain not approved",
+            is_valid=response.response or False,
+            reason="Domain approved" if response.response else "Domain not approved",
         )
         await ctx.yield_output(result)
 
@@ -101,17 +102,26 @@ class ParentOrchestrator(Executor):
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
-    @intercepts_request
-    async def check_domain(
-        self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
-    ) -> RequestResponse[DomainCheckRequest, bool]:
-        """Intercept domain check requests from sub-workflows."""
-        # Check if we know this domain
-        if request.domain in self.approved_domains:
-            return RequestResponse[DomainCheckRequest, bool].handled(True)
+    @handler
+    async def handle_sub_workflow_request(
+        self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+    ) -> None:
+        """Handle requests from sub-workflows."""
+        # Check if this is a domain check request we can handle
+        if isinstance(request.data, DomainCheckRequest):
+            domain_request = request.data
 
-        # We don't know this domain, forward to external
-        return RequestResponse[DomainCheckRequest, bool].forward()
+            # Check if we know this domain
+            if domain_request.domain in self.approved_domains:
+                # Send response back to sub-workflow
+                response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                await ctx.send_message(response, target_id=request.workflow_executor_id)
+            else:
+                # We don't know this domain, forward to external (preserve SubWorkflowRequestInfo wrapper)
+                await ctx.send_message(request)
+        else:
+            # Forward other request types to external handler (preserve SubWorkflowRequestInfo wrapper)
+            await ctx.send_message(request)
 
     @handler
     async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
@@ -246,7 +256,7 @@ async def test_sub_workflow_with_interception():
 
 
 async def test_conditional_forwarding() -> None:
-    """Test conditional forwarding with RequestResponse.forward()."""
+    """Test conditional forwarding by sending SubWorkflowRequestInfo to external handlers."""
 
     class ConditionalParent(Executor):
         """Parent that conditionally handles requests."""
@@ -262,17 +272,27 @@ async def test_conditional_forwarding() -> None:
             request = EmailValidationRequest(email=email)
             await ctx.send_message(request, target_id="email_workflow")
 
-        @intercepts_request
-        async def check_domain(
-            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
-        ) -> RequestResponse[DomainCheckRequest, bool]:
-            """Check cache first, then forward if not found."""
-            if request.domain in self.cache:
-                # Return cached result
-                return RequestResponse[DomainCheckRequest, bool].handled(self.cache[request.domain])
+        @handler
+        async def handle_sub_workflow_request(
+            self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+        ) -> None:
+            """Handle requests from sub-workflows."""
+            # Check if this is a domain check request we can handle
+            if isinstance(request.data, DomainCheckRequest):
+                domain_request = request.data
 
-            # Not in cache, forward to external
-            return RequestResponse[DomainCheckRequest, bool].forward()
+                if domain_request.domain in self.cache:
+                    # Return cached result
+                    response = SubWorkflowResponse(
+                        request_id=request.request_id, data=self.cache[domain_request.domain]
+                    )
+                    await ctx.send_message(response, target_id=request.workflow_executor_id)
+                else:
+                    # Not in cache, forward to external
+                    await ctx.send_message(request)
+            else:
+                # Forward other request types to external handler
+                await ctx.send_message(request)
 
         @handler
         async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
@@ -339,23 +359,36 @@ async def test_workflow_scoped_interception() -> None:
             await ctx.send_message(EmailValidationRequest(email=data["email1"]), target_id="workflow_a")
             await ctx.send_message(EmailValidationRequest(email=data["email2"]), target_id="workflow_b")
 
-        @intercepts_request(from_workflow="workflow_a")
-        async def check_domain_a(
-            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
-        ) -> RequestResponse[DomainCheckRequest, bool]:
-            """Strict rules for workflow A."""
-            if request.domain == "strict.com":
-                return RequestResponse[DomainCheckRequest, bool].handled(True)
-            return RequestResponse[DomainCheckRequest, bool].forward()
+        @handler
+        async def handle_sub_workflow_request(
+            self, request: SubWorkflowRequestInfo, ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo]
+        ) -> None:
+            """Handle requests from sub-workflows with different rules based on source."""
+            if isinstance(request.data, DomainCheckRequest):
+                domain_request = request.data
 
-        @intercepts_request(from_workflow="workflow_b")
-        async def check_domain_b(
-            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
-        ) -> RequestResponse[DomainCheckRequest, bool]:
-            """Lenient rules for workflow B."""
-            if request.domain.endswith(".com"):
-                return RequestResponse[DomainCheckRequest, bool].handled(True)
-            return RequestResponse[DomainCheckRequest, bool].forward()
+                if request.workflow_executor_id == "workflow_a":
+                    # Strict rules for workflow A
+                    if domain_request.domain == "strict.com":
+                        response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                        await ctx.send_message(response, target_id=request.workflow_executor_id)
+                    else:
+                        # Forward to external
+                        await ctx.send_message(request)
+                elif request.workflow_executor_id == "workflow_b":
+                    # Lenient rules for workflow B
+                    if domain_request.domain.endswith(".com"):
+                        response = SubWorkflowResponse(request_id=request.request_id, data=True)
+                        await ctx.send_message(response, target_id=request.workflow_executor_id)
+                    else:
+                        # Forward to external
+                        await ctx.send_message(request)
+                else:
+                    # Unknown source, forward to external
+                    await ctx.send_message(request)
+            else:
+                # Forward other request types to external handler
+                await ctx.send_message(request)
 
         @handler
         async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:

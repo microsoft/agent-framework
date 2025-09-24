@@ -23,6 +23,7 @@ from ._executor import (
     SubWorkflowResponse,
     handler,
 )
+from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,9 @@ class WorkflowExecutor(Executor):
 
     # WorkflowExecutor wraps and forwards to parent
     wrapped = SubWorkflowRequestInfo(request_id="...", sub_workflow_id="child_workflow", data=request)
-    # Parent workflow can intercept via @intercepts_request
+    # Parent workflow can handle via @handler for SubWorkflowRequestInfo,
+    # or directly forward to external source via a RequestInfoExecutor in the parent
+    # workflow.
     ```
 
     ### State Management
@@ -169,14 +172,20 @@ class WorkflowExecutor(Executor):
     Parent workflows can intercept sub-workflow requests:
     ```python
     class ParentExecutor(Executor):
-        @intercepts_request
-        async def handle_child_request(
-            self, request: MyDataRequest, ctx: WorkflowContext[Any]
-        ) -> RequestResponse[MyDataRequest, str]:
+        @handler
+        async def handle_sub_workflow_request(
+            self,
+            request: SubWorkflowRequestInfo,
+            ctx: WorkflowContext[SubWorkflowResponse | SubWorkflowRequestInfo],
+        ) -> None:
             # Handle request locally or forward to external source
-            if self.can_handle_locally(request):
-                return RequestResponse.handled("local result")
-            return RequestResponse.forward()  # Send to external handler
+            if self.can_handle_locally(request.data):
+                # Send response back to sub-workflow
+                response = SubWorkflowResponse(request_id=request.request_id, data="local result")
+                await ctx.send_message(response, target_id=request.sub_workflow_id)
+            else:
+                # Forward to external handler (preserve SubWorkflowRequestInfo wrapper)
+                await ctx.send_message(request)
     ```
 
     ## Implementation Notes
@@ -208,12 +217,18 @@ class WorkflowExecutor(Executor):
 
     @property
     def input_types(self) -> list[type[Any]]:
-        """Get the input types based on the underlying workflow's input types.
+        """Get the input types based on the underlying workflow's input types plus WorkflowExecutor-specific types.
 
         Returns:
-            A list of input types that the underlying workflow can accept.
+            A list of input types that the WorkflowExecutor can accept.
         """
-        return self.workflow.input_types
+        input_types = list(self.workflow.input_types)
+
+        # WorkflowExecutor can also handle SubWorkflowResponse for sub-workflow responses
+        if SubWorkflowResponse not in input_types:
+            input_types.append(SubWorkflowResponse)
+
+        return input_types
 
     @property
     def output_types(self) -> list[type[Any]]:
@@ -234,6 +249,19 @@ class WorkflowExecutor(Executor):
                 break
 
         return output_types
+
+    def can_handle(self, message: Any) -> bool:
+        """Override can_handle to only accept messages that the wrapped workflow can handle.
+
+        This prevents the WorkflowExecutor from accepting messages that should go to other
+        executors (like RequestInfoExecutor).
+        """
+        # Always handle SubWorkflowResponse (for the handle_response handler)
+        if isinstance(message, SubWorkflowResponse):
+            return True
+
+        # For other messages, only handle if the wrapped workflow can accept them as input
+        return any(is_instance_of(message, input_type) for input_type in self.workflow.input_types)
 
     @handler  # No output_types - can send any completion data type
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
@@ -323,7 +351,7 @@ class WorkflowExecutor(Executor):
                 raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
             wrapped_request = SubWorkflowRequestInfo(
                 request_id=event.request_id,
-                sub_workflow_id=self.id,
+                workflow_executor_id=self.id,
                 data=event.data,
             )
             await ctx.send_message(wrapped_request)
