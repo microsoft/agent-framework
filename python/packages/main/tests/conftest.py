@@ -52,23 +52,19 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
 
     # recreate observability settings with values from above and no file.
     observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
+    observability_settings._configure()  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore
 
-    from agent_framework.observability import setup_observability
-
-    # Run setup_observability to create the tracer provider.
-    setup_observability()
-
-    exporter = InMemorySpanExporter()
     with (
         patch("agent_framework.observability.OBSERVABILITY_SETTINGS", observability_settings),
         patch("agent_framework.observability.setup_observability"),
     ):
-        tracer_provider = trace.get_tracer_provider()
-        if not hasattr(tracer_provider, "add_span_processor"):
-            raise RuntimeError("Tracer provider does not support adding span processors.")
-
+        exporter = InMemorySpanExporter()
         if enable_otel or enable_sensitive_data:
+            tracer_provider = trace.get_tracer_provider()
+            if not hasattr(tracer_provider, "add_span_processor"):
+                raise RuntimeError("Tracer provider does not support adding span processors.")
+
             tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))  # type: ignore
 
         yield exporter
