@@ -3,7 +3,7 @@
 import inspect
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -352,16 +352,17 @@ class WorkflowExecutor(Executor):
 
         # Process request info events
         for event in request_info_events:
-            # Track the pending request in execution context
-            execution_context.pending_requests[event.request_id] = event.data
-            # Map request to execution for response routing
-            self._request_to_execution[event.request_id] = execution_context.execution_id
-            # Set source_executor_id for response routing and send to parent
             if not isinstance(event.data, RequestInfoMessage):
                 raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+            # Create a copy of the request to avoid mutating the original event data
+            request = replace(event.data)
+            # Track the pending request in execution context
+            execution_context.pending_requests[event.request_id] = request
+            # Map request to execution for response routing
+            self._request_to_execution[event.request_id] = execution_context.execution_id
             # Set the source_executor_id to this WorkflowExecutor's ID for response routing
-            event.data.source_executor_id = self.id
-            await ctx.send_message(event.data)
+            request.source_executor_id = self.id
+            await ctx.send_message(request)
 
         # Update expected response count for this execution
         execution_context.expected_response_count = len(request_info_events)
