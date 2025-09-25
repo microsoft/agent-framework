@@ -12,7 +12,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using SampleApp;
 
 AIAgent agent = new UpperCaseParrotAgent();

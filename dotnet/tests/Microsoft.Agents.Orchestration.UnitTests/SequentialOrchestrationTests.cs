@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
 

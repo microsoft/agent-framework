@@ -6,7 +6,7 @@ using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.Orchestration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore;
 using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;

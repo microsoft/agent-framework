@@ -10,7 +10,7 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 

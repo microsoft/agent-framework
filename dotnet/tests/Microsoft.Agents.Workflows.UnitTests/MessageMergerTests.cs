@@ -3,7 +3,7 @@
 using System;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 

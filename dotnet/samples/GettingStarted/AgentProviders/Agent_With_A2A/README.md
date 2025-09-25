@@ -19,7 +19,7 @@ This method can be used to create AI agents for A2A agents whose hosts support t
 
 ```csharp
 using A2A;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.A2A;
 
 // Create an A2AClient pointing to your `echo` A2A agent endpoint

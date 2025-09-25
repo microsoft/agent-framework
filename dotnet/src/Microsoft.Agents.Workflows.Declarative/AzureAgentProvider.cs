@@ -10,7 +10,7 @@ using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Core.Pipeline;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.Workflows.Declarative;
 

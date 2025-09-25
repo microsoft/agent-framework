@@ -9,10 +9,10 @@ using AgentConformance.IntegrationTests.Support;
 using CopilotStudio.IntegrationTests.Support;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.CopilotStudio;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Agents.AI.CopilotStudio;
 
 namespace CopilotStudio.IntegrationTests;
 

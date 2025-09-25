@@ -9,7 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
 #pragma warning disable RCS1186 // Use Regex instance instead of static method

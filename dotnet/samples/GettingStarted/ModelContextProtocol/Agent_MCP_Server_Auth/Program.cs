@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 using System.Web;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using OpenAI;

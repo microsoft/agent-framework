@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Threading;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting;
 

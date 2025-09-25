@@ -3,7 +3,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.Shared.Samples;
 using OpenAIClient = OpenAI.OpenAIClient;
 
