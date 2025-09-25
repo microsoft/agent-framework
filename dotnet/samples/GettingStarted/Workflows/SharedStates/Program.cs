@@ -62,7 +62,7 @@ internal sealed class FileReadExecutor() : ReflectingExecutor<FileReadExecutor>(
         // Read file content from embedded resource
         string fileContent = Resources.Read(message);
         // Store file content in a shared state for access by other executors
-        string fileID = Guid.NewGuid().ToString();
+        string fileID = Guid.NewGuid().ToString("N");
         await context.QueueStateUpdateAsync(fileID, fileContent, scopeName: FileContentStateConstants.FileContentStateScope);
 
         return fileID;

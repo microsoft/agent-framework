@@ -1707,7 +1707,7 @@ public class ChatClientAgentTests
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
-        var mockStore = new Mock<IChatMessageStore>();
+        var mockStore = new Mock<ChatMessageStore>();
         var factoryCalled = false;
 
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions

@@ -30,7 +30,7 @@ internal static class TextMessageStreamingExtensions
         new()
         {
             Role = ChatRole.Assistant,
-            CreatedAt = createdAt ?? DateTimeOffset.Now,
+            CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             MessageId = messageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
             AgentId = agentId,
@@ -50,7 +50,7 @@ internal static class TextMessageStreamingExtensions
         new(ChatRole.Assistant, contents is List<AIContent> contentsList ? contentsList : contents.ToList())
         {
             AuthorName = authorName,
-            CreatedAt = createdAt ?? DateTimeOffset.Now,
+            CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             MessageId = messageId ?? Guid.NewGuid().ToString("N"),
             RawRepresentation = rawRepresentation,
         };
@@ -77,7 +77,7 @@ internal static class TextMessageStreamingExtensions
                 AuthorName = authorName,
                 MessageId = Guid.NewGuid().ToString("N"),
                 RawRepresentation = text,
-                CreatedAt = DateTimeOffset.Now,
+                CreatedAt = DateTimeOffset.UtcNow,
             };
         }
 

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
 
@@ -24,15 +25,19 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor from which messages will be forwarded.</param>
     /// <param name="executors">The target executors to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
-    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
     {
-        Throw.IfNullOrEmpty(executors);
+        Throw.IfNull(executors);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
 
-        if (executors.Length == 1)
+#if NET
+        if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
+#else
+        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+#endif
         {
-            return builder.AddEdge(source, executors[0], predicate);
+            return builder.AddEdge(source, executors.First(), predicate);
         }
 
         return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
@@ -50,15 +55,19 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor from which messages will be forwarded.</param>
     /// <param name="executors">The target executors to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
-    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
     {
-        Throw.IfNullOrEmpty(executors);
+        Throw.IfNull(executors);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
 
-        if (executors.Length == 1)
+#if NET
+        if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
+#else
+        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+#endif
         {
-            return builder.AddEdge(source, executors[0], predicate);
+            return builder.AddEdge(source, executors.First(), predicate);
         }
 
         return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
@@ -79,25 +88,25 @@ public static class WorkflowBuilderExtensions
     /// <param name="executors">An ordered array of executors to be added to the chain after the source.</param>
     /// <returns>The original workflow builder instance with the specified executor chain added.</returns>
     /// <exception cref="ArgumentException">Thrown if there is a cycle in the chain.</exception>
-    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
 
         HashSet<string> seenExecutors = [source.Id];
 
-        for (int i = 0; i < executors.Length; i++)
+        foreach (var executor in executors)
         {
-            Throw.IfNull(executors[i], nameof(executors) + $"[{i}]");
+            Throw.IfNull(executor, nameof(executors));
 
-            if (seenExecutors.Contains(executors[i].Id))
+            if (seenExecutors.Contains(executor.Id))
             {
-                throw new ArgumentException($"Executor '{executors[i].Id}' is already in the chain.", nameof(executors));
+                throw new ArgumentException($"Executor '{executor.Id}' is already in the chain.", nameof(executors));
             }
-            seenExecutors.Add(executors[i].Id);
+            seenExecutors.Add(executor.Id);
 
-            builder.AddEdge(source, executors[i]);
-            source = executors[i];
+            builder.AddEdge(source, executor);
+            source = executor;
         }
 
         return builder;
