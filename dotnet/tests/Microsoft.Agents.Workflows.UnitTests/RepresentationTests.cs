@@ -16,7 +16,7 @@ namespace Microsoft.Agents.Workflows.UnitTests;
 
 public class RepresentationTests
 {
-    private sealed class TestExecutor : Executor
+    private sealed class TestExecutor() : Executor("TestExecutor")
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder;
     }
@@ -79,9 +79,6 @@ public class RepresentationTests
     {
         await RunExecutorishInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
         await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestInputPort));
-
-        OutputCollectorExecutor<ChatMessage, IEnumerable<ChatMessage>> outputCollector = new(StreamingAggregators.Union<ChatMessage>());
-        await RunExecutorishInfoMatchTestAsync(outputCollector);
     }
 
     private static string Source(int id) => $"Source/{id}";
@@ -158,17 +155,23 @@ public class RepresentationTests
     }
 
     [Fact]
-    public void Test_Sample_WorkflowInfos()
+    public async Task Test_Sample_WorkflowInfosAsync()
     {
-        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance);
-        RunWorkflowInfoMatchTest(Step2EntryPoint.WorkflowInstance);
-        RunWorkflowInfoMatchTest(Step3EntryPoint.WorkflowInstance);
-        RunWorkflowInfoMatchTest(Step4EntryPoint.WorkflowInstance);
+        Workflow<string> workflowStep1 = (await Step1EntryPoint.WorkflowInstance.TryPromoteAsync<string>())!;
+        RunWorkflowInfoMatchTest(workflowStep1);
+
+        Workflow<string> workflowStep2 = (await Step2EntryPoint.WorkflowInstance.TryPromoteAsync<string>())!;
+        RunWorkflowInfoMatchTest(workflowStep2);
+
+        RunWorkflowInfoMatchTest((await Step3EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
+
+        RunWorkflowInfoMatchTest((await Step4EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
+
         // Step 5 reuses the workflow from Step 4, so we don't need to test it separately.
-        RunWorkflowInfoMatchTest(Step6EntryPoint.CreateWorkflow(2));
+        RunWorkflowInfoMatchTest((await Step6EntryPoint.CreateWorkflow(2).TryPromoteAsync<List<ChatMessage>>())!);
         // Step 7 reuses the workflow from Step 6, so we don't need to test it separately.
 
-        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance, Step2EntryPoint.WorkflowInstance, expect: false);
+        RunWorkflowInfoMatchTest(workflowStep1, workflowStep2, expect: false);
 
         static void RunWorkflowInfoMatchTest<TInput>(Workflow<TInput> workflow, Workflow<TInput>? comparator = null, bool expect = true)
         {

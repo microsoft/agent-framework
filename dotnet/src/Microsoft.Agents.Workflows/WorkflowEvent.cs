@@ -10,9 +10,9 @@ namespace Microsoft.Agents.Workflows;
 [JsonDerivedType(typeof(ExecutorEvent))]
 [JsonDerivedType(typeof(SuperStepEvent))]
 [JsonDerivedType(typeof(WorkflowStartedEvent))]
-[JsonDerivedType(typeof(WorkflowCompletedEvent))]
 [JsonDerivedType(typeof(WorkflowErrorEvent))]
 [JsonDerivedType(typeof(WorkflowWarningEvent))]
+[JsonDerivedType(typeof(WorkflowOutputEvent))]
 [JsonDerivedType(typeof(RequestInfoEvent))]
 public class WorkflowEvent(object? data = null)
 {
