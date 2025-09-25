@@ -25,8 +25,8 @@ from ._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatToolMode,
     Role,
+    ToolMode,
 )
 from .exceptions import AgentExecutionException
 from .observability import use_agent_observability
@@ -345,11 +345,11 @@ class ChatAgent(BaseAgent):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
@@ -489,7 +489,7 @@ class ChatAgent(BaseAgent):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -558,7 +558,7 @@ class ChatAgent(BaseAgent):
             messages=thread_messages,
             chat_options=run_chat_options
             & ChatOptions(
-                ai_model_id=model,
+                model_id=model,
                 conversation_id=thread.service_thread_id,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
@@ -571,7 +571,7 @@ class ChatAgent(BaseAgent):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=final_tools,  # type: ignore[reportArgumentType]
+                tools=final_tools,
                 top_p=top_p,
                 user=user,
                 additional_properties=additional_properties or {},
@@ -615,7 +615,7 @@ class ChatAgent(BaseAgent):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -692,7 +692,7 @@ class ChatAgent(BaseAgent):
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
                 metadata=metadata,
-                ai_model_id=model,
+                model_id=model,
                 presence_penalty=presence_penalty,
                 response_format=response_format,
                 seed=seed,

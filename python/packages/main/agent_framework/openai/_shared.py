@@ -17,13 +17,13 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, validate_call
+from pydantic import ConfigDict, Field, SecretStr, validate_call
 from pydantic.types import StringConstraints
 
 from .._logging import get_logger
 from .._pydantic import AFBaseModel, AFBaseSettings
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._types import ChatOptions, Contents, SpeechToTextOptions, TextToSpeechOptions
+from .._types import ChatOptions, Contents
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -42,7 +42,7 @@ RESPONSE_TYPE = Union[
     _legacy_response.HttpxBinaryResponseContent,
 ]
 
-OPTION_TYPE = Union[ChatOptions, SpeechToTextOptions, TextToSpeechOptions, dict[str, Any]]
+OPTION_TYPE = Union[ChatOptions, dict[str, Any]]
 
 
 __all__ = [
@@ -52,20 +52,20 @@ __all__ = [
 
 def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Contents | Any]) -> Any:
     if isinstance(content, list):
-        # Particularly deal with lists of BaseModel
+        # Particularly deal with lists of Content
         return [_prepare_function_call_results_as_dumpable(item) for item in content]
     if isinstance(content, dict):
         return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
-    if isinstance(content, BaseModel):
-        return content.model_dump(exclude={"raw_representation", "additional_properties"})
+    if hasattr(content, "to_dict"):
+        return content.to_dict(exclude={"raw_representation", "additional_properties"})
     return content
 
 
 def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str | list[str]:
     """Prepare the values of the function call results."""
-    if isinstance(content, BaseModel):
-        # BaseModel is already dumpable, shortcut for performance
-        return content.model_dump_json(exclude={"raw_representation", "additional_properties"})
+    if isinstance(content, Contents):
+        # For BaseContent objects, use to_dict and serialize to JSON
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
 
     dumpable = _prepare_function_call_results_as_dumpable(content)
     if isinstance(dumpable, str):

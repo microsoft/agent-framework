@@ -217,7 +217,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             return ChatResponseUpdate(
                 role=Role.ASSISTANT,
                 contents=[UsageContent(details=self._usage_details_from_openai(chunk.usage), raw_representation=chunk)],
-                ai_model_id=chunk.model,
+                model_id=chunk.model,
                 additional_properties=chunk_metadata,
                 response_id=chunk.id,
                 message_id=chunk.id,
@@ -236,7 +236,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             created_at=datetime.fromtimestamp(chunk.created).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
             role=Role.ASSISTANT,
-            ai_model_id=chunk.model,
+            model_id=chunk.model,
             additional_properties=chunk_metadata,
             finish_reason=finish_reason,
             raw_representation=chunk,
@@ -402,8 +402,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 elif content.media_type and "mp3" in content.media_type:
                     audio_format = "mp3"
                 else:
-                    # Fallback to default model_dump for unsupported audio formats
-                    return content.model_dump(exclude_none=True)
+                    # Fallback to default to_dict for unsupported audio formats
+                    return content.to_dict(exclude_none=True)
 
                 # Extract base64 data from data URI
                 audio_data = content.uri
@@ -435,11 +435,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                             },
                         }
 
-                    return content.model_dump(exclude_none=True)
+                    return content.to_dict(exclude_none=True)
 
-                return content.model_dump(exclude_none=True)
+                return content.to_dict(exclude_none=True)
             case _:
-                return content.model_dump(exclude_none=True)
+                return content.to_dict(exclude_none=True)
 
     @override
     def service_url(self) -> str:

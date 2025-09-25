@@ -772,7 +772,7 @@ def _trace_get_response(
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
-            model_id = str(kwargs.get("ai_model_id") or getattr(self, "ai_model_id", "unknown"))
+            model_id = str(kwargs.get("model_id") or getattr(self, "model_id", "unknown"))
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -853,7 +853,7 @@ def _trace_get_streaming_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
-            model_id = kwargs.get("ai_model_id") or getattr(self, "ai_model_id", None)
+            model_id = kwargs.get("model_id") or getattr(self, "model_id", None)
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -1244,7 +1244,7 @@ def _capture_messages(
     for index, message in enumerate(prepped):
         otel_messages.append(_to_otel_message(message))
         try:
-            message_data = message.model_dump(exclude_none=True)
+            message_data = message.to_dict(exclude_none=True)
         except Exception:
             message_data = {"role": message.role.value, "contents": message.contents}
         logger.info(
@@ -1298,7 +1298,7 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
         case _:
             # GenericPart in otel output messages json spec.
             # just required type, and arbitrary other fields.
-            return content.model_dump(exclude_none=True)
+            return content.to_dict(exclude_none=True)
     return None
 
 
@@ -1317,8 +1317,8 @@ def _get_response_attributes(
         )
     if finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason.value])
-    if ai_model_id := getattr(response, "ai_model_id", None):
-        attributes[SpanAttributes.LLM_RESPONSE_MODEL] = ai_model_id
+    if model_id := getattr(response, "model_id", None):
+        attributes[SpanAttributes.LLM_RESPONSE_MODEL] = model_id
     if usage := response.usage_details:
         if usage.input_token_count:
             attributes[OtelAttr.INPUT_TOKENS] = usage.input_token_count
