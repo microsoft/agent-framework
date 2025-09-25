@@ -94,6 +94,10 @@
     <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.922-1" />
     <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.922-1" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250821-1001" />
+    <!-- M365 Agents SDK-->
+    <PackageVersion Include="AdaptiveCards" Version="3.1.0"/>
+		<PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.2.41" />
+		<PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.2.41" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.6.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
