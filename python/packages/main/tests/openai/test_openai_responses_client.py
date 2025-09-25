@@ -937,7 +937,7 @@ def test_streaming_response_basic_structure() -> None:
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
     assert response.role == Role.ASSISTANT
-    assert response.ai_model_id == "test-model"
+    assert response.model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
 
