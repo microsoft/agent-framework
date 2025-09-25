@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
+TContext = TypeVar("TContext")
 
 
 class MiddlewareType(Enum):
@@ -300,13 +301,17 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
     return func
 
 
-class MiddlewareWrapper:
-    """Generic wrapper to convert pure functions into middleware protocol objects."""
+class MiddlewareWrapper(Generic[TContext]):
+    """Generic wrapper to convert pure functions into middleware protocol objects.
 
-    def __init__(self, func: Callable[..., Any]) -> None:
+    Type Parameters:
+        TContext: The type of context object this middleware operates on.
+    """
+
+    def __init__(self, func: Callable[[TContext, Callable[[TContext], Awaitable[None]]], Awaitable[None]]) -> None:
         self.func = func
 
-    async def process(self, context: Any, next: Callable[[Any], Awaitable[None]]) -> None:
+    async def process(self, context: TContext, next: Callable[[TContext], Awaitable[None]]) -> None:
         await self.func(context, next)
 
 
@@ -341,7 +346,7 @@ class BaseMiddlewarePipeline(ABC):
         if isinstance(middleware, expected_type):
             self._middlewares.append(middleware)
         elif callable(middleware):
-            self._middlewares.append(MiddlewareWrapper(middleware))
+            self._middlewares.append(MiddlewareWrapper(middleware))  # type: ignore[arg-type]
 
     def _create_handler_chain(
         self,
