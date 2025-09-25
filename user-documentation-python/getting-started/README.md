@@ -47,4 +47,4 @@ if __name__ == "__main__":
 
 ## More Examples
 
-For more detailed examples and advanced scenarios, see the [Foundry Agent Examples](../../python/samples/getting_started/agents/foundry/README.md).
+For more detailed examples and advanced scenarios, see the [Foundry Agent Examples](../../python/samples/getting_started/agents/azure_ai/README.md).
