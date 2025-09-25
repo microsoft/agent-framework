@@ -43,10 +43,16 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         string generatedPath = Path.Combine("Workflows", Path.ChangeExtension(workflowFile, ".g.cs"));
 
         this.Output.WriteLine($"WRITING BASELINE TO: {Path.GetFullPath(generatedPath)}\n");
-        Console.WriteLine(workflowCode);
 
-        File.WriteAllText(Path.GetFullPath(generatedPath), workflowCode);
-        this.BuildWorkflow(generatedPath);
+        try
+        {
+            File.WriteAllText(Path.GetFullPath(generatedPath), workflowCode);
+            this.BuildWorkflow(generatedPath);
+        }
+        finally
+        {
+            Console.WriteLine(workflowCode);
+        }
 
         string expectedCode = File.ReadAllText(baselinePath);
         string[] expectedLines = expectedCode.Trim().Split('\n');
@@ -69,13 +75,12 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         File.Copy(Path.GetFullPath(workflowPath), Path.Combine(projectDirectory.FullName, "Workflow.cs"));
         string projectText = File.ReadAllText(Path.GetFullPath("Workflows/TestProject.csproj"));
         File.WriteAllText(Path.Combine(projectDirectory.FullName, "TestProject.csproj"), projectText.Replace("{PROJECTPATH}", referencePath));
-        string shellCommand = Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.MacOSX ? "sh" : "cmd.exe";
         ProcessStartInfo startInfo =
             new()
             {
-                FileName = shellCommand,
-                Arguments = @"/C ""dotnet build > build.log""",
-                UseShellExecute = false,
+                FileName = "dotnet.exe",
+                Arguments = "build",
+                UseShellExecute = true,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
                 WorkingDirectory = projectDirectory.FullName,
