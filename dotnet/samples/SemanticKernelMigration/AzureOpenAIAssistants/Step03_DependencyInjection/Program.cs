@@ -92,5 +92,9 @@ async Task AFAgent()
 
     // Clean up
     var assistantClient = serviceProvider.GetRequiredService<AssistantClient>();
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantClient.DeleteAssistantAsync(agent.Id);
 }

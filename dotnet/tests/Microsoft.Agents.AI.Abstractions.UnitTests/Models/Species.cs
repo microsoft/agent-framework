@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.Models;
+namespace Microsoft.Agents.AI.Abstractions.UnitTests.Models;
 
 internal enum Species
 {

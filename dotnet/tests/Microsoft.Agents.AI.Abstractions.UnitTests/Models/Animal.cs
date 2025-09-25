@@ -2,7 +2,7 @@
 
 using System.ComponentModel;
 
-namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests.Models;
+namespace Microsoft.Agents.AI.Abstractions.UnitTests.Models;
 
 [Description("Some test description")]
 internal sealed class Animal

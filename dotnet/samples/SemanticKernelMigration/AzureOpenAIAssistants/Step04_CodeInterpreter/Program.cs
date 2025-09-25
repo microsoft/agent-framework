@@ -3,6 +3,7 @@
 using System.Text;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
@@ -123,5 +124,9 @@ async Task AFAgent()
     }
 
     // Clean up
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantsClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }
