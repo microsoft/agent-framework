@@ -128,3 +128,9 @@ class AdditionItemMismatch(AgentFrameworkException):
     """An error occurred while adding two types."""
 
     pass
+
+
+class MiddlewareException(AgentFrameworkException):
+    """An error occurred during middleware execution."""
+
+    pass

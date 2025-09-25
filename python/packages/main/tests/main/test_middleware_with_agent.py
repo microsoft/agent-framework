@@ -29,6 +29,7 @@ from agent_framework._middleware import (
     FunctionMiddleware,
     MiddlewareType,
 )
+from agent_framework.exceptions import MiddlewareException
 
 from .conftest import MockBaseChatClient, MockChatClient
 
@@ -1286,8 +1287,8 @@ class TestMiddlewareDecoratorLogic:
         """Both decorator and parameter type specified but don't match."""
 
         # This will cause a type error at decoration time, so we need to test differently
-        # Should raise ValueError due to mismatch during agent creation
-        with pytest.raises(ValueError, match="Middleware type mismatch"):
+        # Should raise MiddlewareException due to mismatch during agent creation
+        with pytest.raises(MiddlewareException, match="Middleware type mismatch"):
 
             @agent_middleware  # type: ignore[arg-type]
             async def mismatched_middleware(
@@ -1403,8 +1404,8 @@ class TestMiddlewareDecoratorLogic:
         async def no_info_middleware(context: Any, next: Any) -> None:  # No decorator, no type
             await next(context)
 
-        # Should raise ValueError
-        with pytest.raises(ValueError, match="Cannot determine middleware type"):
+        # Should raise MiddlewareException
+        with pytest.raises(MiddlewareException, match="Cannot determine middleware type"):
             agent = ChatAgent(chat_client=chat_client, middleware=[no_info_middleware])
             await agent.run([ChatMessage(role=Role.USER, text="test")])
 
@@ -1412,8 +1413,8 @@ class TestMiddlewareDecoratorLogic:
         """Test that middleware with insufficient parameters raises an error."""
         from agent_framework import ChatAgent, agent_middleware
 
-        # Should raise ValueError about insufficient parameters
-        with pytest.raises(ValueError, match="must have at least 2 parameters"):
+        # Should raise MiddlewareException about insufficient parameters
+        with pytest.raises(MiddlewareException, match="must have at least 2 parameters"):
 
             @agent_middleware  # type: ignore[arg-type]
             async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter

@@ -8,6 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from .exceptions import MiddlewareException
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterable, MutableSequence
@@ -756,7 +757,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         MiddlewareType.AGENT, MiddlewareType.FUNCTION, or MiddlewareType.CHAT indicating the middleware type.
 
     Raises:
-        ValueError: When middleware type cannot be determined or there's a mismatch.
+        MiddlewareException: When middleware type cannot be determined or there's a mismatch.
     """
     # Check for decorator marker
     decorator_type: MiddlewareType | None = getattr(middleware, "_middleware_type", None)
@@ -780,12 +781,12 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
                     param_type = MiddlewareType.CHAT
         else:
             # Not enough parameters - can't be valid middleware
-            raise ValueError(
+            raise MiddlewareException(
                 f"Middleware function must have at least 2 parameters (context, next), "
                 f"but {middleware.__name__} has {len(params)}"
             )
     except Exception as e:
-        if isinstance(e, ValueError):
+        if isinstance(e, MiddlewareException):
             raise
         # Signature inspection failed - continue with other checks
         pass
@@ -793,7 +794,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
     if decorator_type and param_type:
         # Both decorator and parameter type specified - they must match
         if decorator_type != param_type:
-            raise ValueError(
+            raise MiddlewareException(
                 f"Middleware type mismatch: decorator indicates '{decorator_type.value}' "
                 f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
             )
@@ -808,7 +809,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         return param_type
 
     # Neither decorator nor parameter type specified - throw exception
-    raise ValueError(
+    raise MiddlewareException(
         f"Cannot determine middleware type for function {middleware.__name__}. "
         f"Please either use @agent_middleware/@function_middleware/@chat_middleware decorators "
         f"or specify parameter types (AgentRunContext, FunctionInvocationContext, or ChatContext)."
@@ -891,7 +892,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                     chat_middlewares.append(middleware)  # type: ignore
                 else:
                     # This should not happen if _determine_middleware_type is implemented correctly
-                    raise ValueError(f"Unknown middleware type: {middleware_type}")
+                    raise MiddlewareException(f"Unknown middleware type: {middleware_type}")
             else:
                 # Fallback
                 agent_middlewares.append(middleware)  # type: ignore
@@ -1223,7 +1224,7 @@ def _merge_and_filter_chat_middleware(
                 middleware_type = _determine_middleware_type(middleware)
                 if middleware_type == MiddlewareType.CHAT:
                     chat_middleware_list.append(middleware)  # type: ignore[arg-type]
-            except ValueError:
+            except MiddlewareException:
                 # If we can't determine the type, skip this middleware
                 continue
 
