@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from agent_framework import ChatMessage, ConcurrentBuilder
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -21,14 +21,14 @@ Demonstrates:
 - Workflow completion when idle with no pending work
 
 Prerequisites:
-- Azure OpenAI access configured for AzureChatClient (use az login + env vars)
+- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
 - Familiarity with Workflow events (AgentRunEvent, WorkflowOutputEvent)
 """
 
 
 async def main() -> None:
-    # 1) Create three domain agents using AzureChatClient
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    # 1) Create three domain agents using AzureOpenAIChatClient
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     researcher = chat_client.create_agent(
         instructions=(

@@ -26,7 +26,7 @@ The Agent Framework Python SDK is designed to efficiently generate comprehensive
 ### Required resources
 
 2. OpenAI or [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/create-resource?pivots=web-portal)
-2. [Foundry project](https://ai.azure.com/doc/azure/ai-foundry/what-is-azure-ai-foundry)
+2. [Azure AI project](https://ai.azure.com/doc/azure/ai-foundry/what-is-azure-ai-foundry)
 
 ### Optional resources
 
@@ -55,12 +55,12 @@ This folder contains different samples demonstrating how to use telemetry in var
 ### [01 - zero_code](./01-zero_code.py):
 A simple example showing how to enable telemetry in a zero-touch scenario. When the above environment variables are set, telemetry will be automatically enabled, however since you do not define any overarching tracer, you will only see the spans for the specific calls to the chat client and tools.
 
-### [02a](./02a-generic_chat_client.py) and [02b](./02b-foundry_chat_client.py) Chat Clients:
-These two samples show how to first setup the telemetry by manually importing the `setup_observability` function from the `agent_framework.observability` module and calling it. After this is done, the trace that get's created will live in the same context as the chat client calls, allowing you to see the end-to-end flow of your application. For Foundry, there is a method in the Foundry project client to get the azure monitor connection string for your project, the `.setup_foundry_observability()` method in the `FoundryChatClient` class will use this url to configure telemetry and you then do not have to import and call `setup_observability()` manually.
+### [02a](./02a-generic_chat_client.py) and [02b](./02b-azure_ai_chat_client.py) Chat Clients:
+These two samples show how to first setup the telemetry by manually importing the `setup_observability` function from the `agent_framework.observability` module and calling it. After this is done, the trace that get's created will live in the same context as the chat client calls, allowing you to see the end-to-end flow of your application. For Azure AI, there is a method in the Azure AI project client to get the azure monitor connection string for your project, the `.setup_observability()` method in the `AzureAIAgentClient` class will use this url to configure telemetry and you then do not have to import and call `setup_observability()` manually.
 If you or some other process already configure global tracer_providers or metrics_providers, the `setup_observability()` function will not override them, but instead use the existing tracer_provider, if possible. Metrics cannot be setup this way, so if you want to use metrics, you will have to call `setup_observability()` manually, before another process.
 
-### [03a](./03a-generic_agent.py) and [03b](./03b-foundry_agent.py) Agents:
-These two samples show how to setup telemetry when using the Agent Framework's agent abstraction layer. They are similar to the chat client samples, but also show how to create an agent and invoke it. The same rules apply for setting up telemetry, you can either call `setup_observability()` manually, or use the `setup_foundry_observability()` method in the `FoundryChatClient` class.
+### [03a](./03a-generic_agent.py) and [03b](./03b-azure_ai_agent.py) Agents:
+These two samples show how to setup telemetry when using the Agent Framework's agent abstraction layer. They are similar to the chat client samples, but also show how to create an agent and invoke it. The same rules apply for setting up telemetry, you can either call `setup_observability()` manually, or use the `setup_observability()` method in the `AzureAIAgentClient` class.
 
 ### [04 - workflow](./04-workflow.py) Workflow:
 This sample shows how to setup telemetry when using the Agent Framework's workflow execution engine. It demonstrates a simple workflow scenario with telemetry.

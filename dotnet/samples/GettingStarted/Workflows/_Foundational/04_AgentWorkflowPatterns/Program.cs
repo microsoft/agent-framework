@@ -84,7 +84,7 @@ public static class Program
                 throw new InvalidOperationException("Invalid workflow type.");
         }
 
-        static async Task<List<ChatMessage>> RunWorkflowAsync(Workflow<List<ChatMessage>> workflow, List<ChatMessage> messages)
+        static async Task<List<ChatMessage>> RunWorkflowAsync(Workflow workflow, List<ChatMessage> messages)
         {
             string? lastExecutorId = null;
 
@@ -108,10 +108,10 @@ public static class Program
                         Console.WriteLine($"  [Calling function '{call.Name}' with arguments: {JsonSerializer.Serialize(call.Arguments)}]");
                     }
                 }
-                else if (evt is WorkflowCompletedEvent completed)
+                else if (evt is WorkflowOutputEvent output)
                 {
                     Console.WriteLine();
-                    return (List<ChatMessage>)completed.Data!;
+                    return output.As<List<ChatMessage>>()!;
                 }
             }
 

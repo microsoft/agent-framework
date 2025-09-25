@@ -17,7 +17,7 @@ This folder contains examples demonstrating how to use the Mem0 context provider
 ### Required Resources
 
 1. [Mem0 API Key](https://app.mem0.ai/) - Sign up for a Mem0 account and get your API key - _or_ self-host [Mem0 Open Source](https://docs.mem0.ai/open-source/overview)
-2. Azure AI Foundry project endpoint (used in these examples)
+2. Azure AI project endpoint (used in these examples)
 3. Azure CLI authentication (run `az login`)
 
 ## Configuration
@@ -32,9 +32,9 @@ Set the following environment variables:
 **For Mem0 Open Source:**
 - `OPENAI_API_KEY`: Your OpenAI API key (used by Mem0 OSS for embedding generation and automatic memory extraction)
 
-**For Azure AI Foundry:**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
-- `FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
+**For Azure AI:**
+- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint
+- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
 
 ## Key Concepts
 

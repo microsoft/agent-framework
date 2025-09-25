@@ -22,7 +22,6 @@ from ._runner_context import (
     _decode_checkpoint_value,
 )
 from ._shared_state import SharedState
-from ._typing_utils import is_instance_of
 
 logger = logging.getLogger(__name__)
 
@@ -160,90 +159,6 @@ class Runner:
         async def _deliver_messages(source_executor_id: str, messages: list[Message]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
 
-            # Special handling for SubWorkflowRequestInfo messages
-            async def _deliver_sub_workflow_requests(messages: list[Message]) -> None:
-                from ._executor import SubWorkflowRequestInfo
-
-                # Handle SubWorkflowRequestInfo messages - only process those not already targeted
-                sub_workflow_messages: list[Message] = []
-                for msg in messages:
-                    # Skip messages sent directly to RequestInfoExecutor - they are already forwarded
-                    if self._is_message_to_request_info_executor(msg):
-                        continue
-
-                    if isinstance(msg.data, SubWorkflowRequestInfo):
-                        sub_workflow_messages.append(msg)
-
-                for message in sub_workflow_messages:
-                    # message.data is guaranteed to be SubWorkflowRequestInfo via filtering above
-                    sub_request = message.data  # type: ignore[assignment]
-
-                    # Find executor that can intercept the wrapped type
-                    interceptor_found = False
-                    for executor in self._executors.values():
-                        interceptors = getattr(executor, "_request_interceptors", [])
-                        if interceptors and executor.id != message.source_id:
-                            for registered_type in interceptors:  # type: ignore[assignment]
-                                # Check type matching - handle both type and string cases
-                                matched = False
-                                if (
-                                    isinstance(registered_type, type)
-                                    and is_instance_of(sub_request.data, registered_type)
-                                ) or (
-                                    isinstance(registered_type, str)
-                                    and hasattr(sub_request.data, "__class__")
-                                    and sub_request.data.__class__.__name__ == registered_type
-                                ):
-                                    matched = True
-
-                                if matched:
-                                    # Send directly to the intercepting executor
-                                    logger.info(
-                                        f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "
-                                        f"from sub-workflow '{sub_request.sub_workflow_id}' "
-                                        f"to executor '{executor.id}' for interception."
-                                    )
-                                    await executor.execute(
-                                        sub_request,
-                                        [message.source_id],  # source_executor_ids
-                                        self._shared_state,  # shared_state
-                                        self._ctx,  # runner_context
-                                        trace_contexts=[message.trace_context] if message.trace_context else None,
-                                        source_span_ids=[message.source_span_id] if message.source_span_id else None,
-                                    )
-                                    interceptor_found = True
-                                    break
-                            if interceptor_found:
-                                break
-
-                    if not interceptor_found:
-                        # No interceptor found - send directly to RequestInfoExecutor if available.
-
-                        # Find the RequestInfoExecutor instance
-                        request_info_executor = self._find_request_info_executor()
-
-                        if request_info_executor:
-                            logger.info(
-                                f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "
-                                f"from sub-workflow '{sub_request.sub_workflow_id}' to RequestInfoExecutor "
-                                f"'{request_info_executor.id}'"
-                            )
-                            await request_info_executor.execute(
-                                sub_request,
-                                [message.source_id],  # source_executor_ids
-                                self._shared_state,  # shared_state
-                                self._ctx,  # runner_context
-                                trace_contexts=[message.trace_context] if message.trace_context else None,
-                                source_span_ids=[message.source_span_id] if message.source_span_id else None,
-                            )
-                        else:
-                            logger.warning(
-                                f"Sub-workflow request of type '{sub_request.data.__class__.__name__}' "
-                                f"from sub-workflow '{sub_request.sub_workflow_id}' could not be handled: "
-                                f"no RequestInfoExecutor found in the workflow. Add a RequestInfoExecutor "
-                                f"to handle external requests or add an @intercepts_request handler."
-                            )
-
             async def _deliver_message_inner(edge_runner: EdgeRunner, message: Message) -> bool:
                 """Inner loop to deliver a single message through an edge runner."""
                 return await edge_runner.send_message(message, self._shared_state, self._ctx)
@@ -261,28 +176,9 @@ class Runner:
                     return
                 message.data = decoded
 
-            # Handle SubWorkflowRequestInfo messages specially
-            await _deliver_sub_workflow_requests(messages)
-
-            # Filter out SubWorkflowRequestInfo messages from normal edge routing
-            # since they were handled specially
-            from ._executor import SubWorkflowRequestInfo
-
-            non_sub_workflow_messages: list[Message] = []
-            for msg in messages:
-                # Keep messages sent directly to RequestInfoExecutor (forwarded messages)
-                if self._is_message_to_request_info_executor(msg):
-                    non_sub_workflow_messages.append(msg)
-                    continue
-
-                # Skip SubWorkflowRequestInfo messages (handled by special routing)
-                if isinstance(msg.data, SubWorkflowRequestInfo):
-                    continue
-
-                non_sub_workflow_messages.append(msg)
-
+            # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
-            for message in non_sub_workflow_messages:
+            for message in messages:
                 _normalize_message_payload(message)
                 # Deliver a message through all edge runners associated with the source executor concurrently.
                 tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]

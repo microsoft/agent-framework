@@ -37,7 +37,7 @@ public static class Program
         var workflow = new WorkflowBuilder(frenchAgent)
             .AddEdge(frenchAgent, spanishAgent)
             .AddEdge(spanishAgent, englishAgent)
-            .Build<ChatMessage>();
+            .Build();
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
