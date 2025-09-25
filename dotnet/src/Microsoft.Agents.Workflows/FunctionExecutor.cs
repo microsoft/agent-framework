@@ -10,11 +10,11 @@ namespace Microsoft.Agents.Workflows;
 /// Executes a user-provided asynchronous function in response to workflow messages of the specified input type.
 /// </summary>
 /// <typeparam name="TInput">The type of input message.</typeparam>
+/// <param name="id">A unique identifier for the executor.</param>
 /// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
-/// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
-public class FunctionExecutor<TInput>(Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerAsync,
-        string? id = null,
+public class FunctionExecutor<TInput>(string id,
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerAsync,
         ExecutorOptions? options = null) : Executor<TInput>(id, options)
 {
     internal static Func<TInput, IWorkflowContext, CancellationToken, ValueTask> WrapAction(Action<TInput, IWorkflowContext, CancellationToken> handlerSync)
@@ -34,8 +34,9 @@ public class FunctionExecutor<TInput>(Func<TInput, IWorkflowContext, Cancellatio
     /// <summary>
     /// Creates a new instance of the <see cref="FunctionExecutor{TInput}"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
-    public FunctionExecutor(Action<TInput, IWorkflowContext, CancellationToken> handlerSync) : this(WrapAction(handlerSync))
+    public FunctionExecutor(string id, Action<TInput, IWorkflowContext, CancellationToken> handlerSync) : this(id, WrapAction(handlerSync))
     {
     }
 }
@@ -45,11 +46,11 @@ public class FunctionExecutor<TInput>(Func<TInput, IWorkflowContext, Cancellatio
 /// </summary>
 /// <typeparam name="TInput">The type of input message.</typeparam>
 /// <typeparam name="TOutput">The type of output message.</typeparam>
+/// <param name="id">A unique identifier for the executor.</param>
 /// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
-/// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
-public class FunctionExecutor<TInput, TOutput>(Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerAsync,
-        string? id = null,
+public class FunctionExecutor<TInput, TOutput>(string id,
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerAsync,
         ExecutorOptions? options = null) : Executor<TInput, TOutput>(id, options)
 {
     internal static Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> WrapFunc(Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync)
@@ -69,8 +70,9 @@ public class FunctionExecutor<TInput, TOutput>(Func<TInput, IWorkflowContext, Ca
     /// <summary>
     /// Creates a new instance of the <see cref="FunctionExecutor{TInput,TOutput}"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
-    public FunctionExecutor(Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync) : this(WrapFunc(handlerSync))
+    public FunctionExecutor(string id, Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync) : this(id, WrapFunc(handlerSync))
     {
     }
 }

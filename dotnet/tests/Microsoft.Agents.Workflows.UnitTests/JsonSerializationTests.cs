@@ -8,6 +8,7 @@ using System.Linq.Expressions;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Execution;
@@ -154,7 +155,7 @@ public class JsonSerializationTests
     private static InputPortInfo IntToString => InputPort.Create<int, string>(IntToStringId).ToPortInfo();
     private static InputPortInfo StringToInt => InputPort.Create<string, int>(StringToIntId).ToPortInfo();
 
-    private static Workflow<string, int> CreateTestWorkflow()
+    private static ValueTask<Workflow<string>> CreateTestWorkflowAsync()
     {
         ForwardMessageExecutor<string> forwardString = new(ForwardStringId);
         ForwardMessageExecutor<int> forwardInt = new(ForwardIntId);
@@ -165,14 +166,17 @@ public class JsonSerializationTests
         WorkflowBuilder builder = new(forwardString);
         builder.AddEdge(forwardString, stringToInt)
                .AddEdge(stringToInt, forwardInt)
-               .AddEdge(forwardInt, intToString);
+               .AddEdge(forwardInt, intToString)
+               .AddEdge(intToString, StreamingAggregators.Last<int>().AsExecutor("Aggregate"));
 
-        return builder.BuildWithOutput<string, int, int>(
-            intToString,
-            StreamingAggregators.Last<int>(), (_, __) => true);
+        return builder.BuildAsync<string>();
     }
 
-    private static WorkflowInfo TestWorkflowInfo => CreateTestWorkflow().ToWorkflowInfo();
+    private static async ValueTask<WorkflowInfo> CreateTestWorkflowInfoAsync()
+    {
+        Workflow<string> testWorkflow = await CreateTestWorkflowAsync().ConfigureAwait(false);
+        return testWorkflow.ToWorkflowInfo();
+    }
 
     private static void ValidateWorkflowInfo(WorkflowInfo actual, WorkflowInfo prototype)
     {
@@ -182,8 +186,8 @@ public class JsonSerializationTests
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());
         actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
 
-        actual.OutputType.Should().NotBeNull().And.Match(prototype.OutputType!.CreateValidator());
-        actual.OutputCollectorId.Should().NotBeNull().And.Be(prototype.OutputCollectorId);
+        actual.OutputExecutorIds.Should().HaveCount(prototype.OutputExecutorIds.Count)
+                            .And.AllSatisfy(id => prototype.OutputExecutorIds.Contains(id));
 
         void ValidateExecutorDictionary(Dictionary<string, ExecutorInfo> expected,
                                         Dictionary<string, List<EdgeInfo>> expectedEdges,
@@ -226,9 +230,9 @@ public class JsonSerializationTests
     }
 
     [Fact]
-    public void Test_WorkflowInfo_JsonRoundtrip()
+    public async Task Test_WorkflowInfo_JsonRoundtripAsync()
     {
-        WorkflowInfo prototype = TestWorkflowInfo;
+        WorkflowInfo prototype = await CreateTestWorkflowInfoAsync();
 
         JsonMarshaller marshaller = new();
 
@@ -634,9 +638,10 @@ public class JsonSerializationTests
     private static CheckpointInfo TestParentCheckpointInfo => new(s_runId, s_parentCheckpointId);
 
     [Fact]
-    public void Test_Checkpoint_JsonRoundTrip()
+    public async Task Test_Checkpoint_JsonRoundTripAsync()
     {
-        Checkpoint prototype = new(12, TestWorkflowInfo, TestRunnerStateData, TestStateData, TestEdgeState, TestParentCheckpointInfo);
+        WorkflowInfo testWorkflowInfo = await CreateTestWorkflowInfoAsync();
+        Checkpoint prototype = new(12, testWorkflowInfo, TestRunnerStateData, TestStateData, TestEdgeState, TestParentCheckpointInfo);
         Checkpoint result = RunJsonRoundtrip(prototype, TestCustomSerializedJsonOptions);
 
         result.Should().Match((Checkpoint checkpoint) => checkpoint.StepNumber == prototype.StepNumber);

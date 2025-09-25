@@ -95,12 +95,12 @@ public class InProcessStateTests
                 ValidateState(1)
             );
 
-        Workflow<TurnToken> workflow =
+        Workflow workflow =
             new WorkflowBuilder(writer)
                 .AddEdge(writer, validator, MaxTurns(4))
-                .AddEdge(validator, writer, MaxTurns(4)).Build<TurnToken>();
+                .AddEdge(validator, writer, MaxTurns(4)).Build();
 
-        Run run = await InProcessExecution.RunAsync(workflow, new());
+        Run run = await InProcessExecution.RunAsync<TurnToken>(workflow, new());
 
         run.Status.Should().Be(RunStatus.Idle);
     }
@@ -122,12 +122,12 @@ public class InProcessStateTests
                 ValidateState(1)
             );
 
-        Workflow<TurnToken> workflow =
+        Workflow workflow =
             new WorkflowBuilder(writer)
                 .AddEdge(writer, validator, MaxTurns(4))
-                .AddEdge(validator, writer, MaxTurns(4)).Build<TurnToken>();
+                .AddEdge(validator, writer, MaxTurns(4)).Build();
 
-        Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync(workflow, new(), CheckpointManager.Default);
+        Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync<TurnToken>(workflow, new(), CheckpointManager.Default);
 
         checkpointed.Checkpoints.Should().HaveCount(6);
         checkpointed.Run.Status.Should().Be(RunStatus.Idle);
@@ -136,7 +136,7 @@ public class InProcessStateTests
     [Fact]
     public async Task InProcessRun_StateShouldError_TwoExecutorsAsync()
     {
-        ForwardMessageExecutor<TurnToken> forward = new();
+        ForwardMessageExecutor<TurnToken> forward = new(nameof(ForwardMessageExecutor<TurnToken>));
         using StateTestExecutor<int?> testExecutor = new(
                 new ScopeKey("StateTestExecutor", "TestScope", "TestKey"),
                 loop: false,
@@ -149,12 +149,12 @@ public class InProcessStateTests
                 CreateOrIncrement()
             );
 
-        Workflow<TurnToken> workflow =
+        Workflow workflow =
             new WorkflowBuilder(forward)
                 .AddFanOutEdge(forward, targets: [testExecutor, testExecutor2])
-                .Build<TurnToken>();
+                .Build();
 
-        var act = async () => await InProcessExecution.RunAsync(workflow, new());
+        var act = async () => await InProcessExecution.RunAsync(workflow, new TurnToken());
 
         var result = await act.Should()
                               .ThrowAsync("multiple writers to the same shared scope key");

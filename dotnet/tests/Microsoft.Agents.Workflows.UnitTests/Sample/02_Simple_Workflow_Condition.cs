@@ -10,20 +10,21 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step2EntryPoint
 {
-    public static Workflow<string> WorkflowInstance
+    public static Workflow WorkflowInstance
     {
         get
         {
             string[] spamKeywords = ["spam", "advertisement", "offer"];
 
-            DetectSpamExecutor detectSpam = new(spamKeywords);
-            RespondToMessageExecutor respondToMessage = new();
-            RemoveSpamExecutor removeSpam = new();
+            DetectSpamExecutor detectSpam = new("DetectSpam", spamKeywords);
+            RespondToMessageExecutor respondToMessage = new("RespondToMessage");
+            RemoveSpamExecutor removeSpam = new("RemoveSpam");
 
             return new WorkflowBuilder(detectSpam)
                 .AddEdge(detectSpam, respondToMessage, (bool isSpam) => !isSpam) // If not spam, respond
                 .AddEdge(detectSpam, removeSpam, (bool isSpam) => isSpam) // If spam, remove
-                .Build<string>();
+                .WithOutputFrom(respondToMessage, removeSpam)
+                .Build();
         }
     }
 
@@ -34,9 +35,9 @@ internal static class Step2EntryPoint
         {
             switch (evt)
             {
-                case WorkflowCompletedEvent workflowCompleteEvt:
+                case WorkflowOutputEvent workflowOutputEvt:
                     // The workflow has completed successfully, return the result
-                    string workflowResult = workflowCompleteEvt.Data!.ToString()!;
+                    string workflowResult = workflowOutputEvt.As<string>()!;
                     writer.WriteLine($"Result: {workflowResult}");
                     return workflowResult;
                 case ExecutorCompletedEvent executorCompletedEvt:
@@ -45,7 +46,7 @@ internal static class Step2EntryPoint
             }
         }
 
-        throw new InvalidOperationException("Workflow failed to yield the completion event.");
+        throw new InvalidOperationException("Workflow failed to yield an output.");
     }
 }
 
@@ -53,7 +54,7 @@ internal sealed class DetectSpamExecutor : ReflectingExecutor<DetectSpamExecutor
 {
     public string[] SpamKeywords { get; }
 
-    public DetectSpamExecutor(params string[] spamKeywords)
+    public DetectSpamExecutor(string id, params string[] spamKeywords) : base(id)
     {
         this.SpamKeywords = spamKeywords;
     }
@@ -70,7 +71,7 @@ internal sealed class DetectSpamExecutor : ReflectingExecutor<DetectSpamExecutor
     }
 }
 
-internal sealed class RespondToMessageExecutor : ReflectingExecutor<RespondToMessageExecutor>, IMessageHandler<bool>
+internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id), IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
@@ -84,12 +85,12 @@ internal sealed class RespondToMessageExecutor : ReflectingExecutor<RespondToMes
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(ActionResult))
+        await context.YieldOutputAsync(ActionResult)
                      .ConfigureAwait(false);
     }
 }
 
-internal sealed class RemoveSpamExecutor : ReflectingExecutor<RemoveSpamExecutor>, IMessageHandler<bool>
+internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id), IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 
@@ -103,7 +104,7 @@ internal sealed class RemoveSpamExecutor : ReflectingExecutor<RemoveSpamExecutor
 
         await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(ActionResult))
+        await context.YieldOutputAsync(ActionResult)
                      .ConfigureAwait(false);
     }
 }

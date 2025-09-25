@@ -8,6 +8,8 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal interface ISuperStepRunner
 {
+    string RunId { get; }
+
     bool HasUnservicedRequests { get; }
     bool HasUnprocessedMessages { get; }
 

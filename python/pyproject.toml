@@ -5,9 +5,8 @@ version = "0.0.0"
 requires-python = ">=3.10"
 dependencies = [
     "agent-framework",
-    "agent-framework-azure",
+    "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
-    "agent-framework-foundry",
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
@@ -55,9 +54,8 @@ exclude = [ "packages/agent_framework_project.egg-info", "packages/lab", "packag
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
-agent-framework-azure = { workspace = true }
+agent-framework-azure-ai = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
-agent-framework-foundry = { workspace = true }
 agent-framework-lab-gaia = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
@@ -70,6 +68,9 @@ target-version = "py310"
 fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
 exclude = ["docs/*", "run_tasks_in_packages_if_exists.py", "check_md_code_blocks.py"]
+extend-exclude = [
+    "[{][{]cookiecutter.package_name[}][}]",
+]
 preview = true
 
 [tool.ruff.lint]
@@ -131,7 +132,7 @@ filterwarnings = []
 timeout = 120
 markers = [
     "azure: marks tests as Azure provider specific",
-    "foundry: marks tests as Foundry provider specific",
+    "azure-ai: marks tests as Azure AI provider specific",
     "openai: marks tests as OpenAI provider specific",
 ]
 
@@ -187,8 +188,30 @@ build = "python run_tasks_in_packages_if_exists.py build"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
-all-tests = "pytest --import-mode=importlib --cov=agent_framework --cov=agent_framework_azure --cov=agent_framework_copilotstudio --cov=agent_framework_foundry --cov=agent_framework_mem0 --cov-report=term-missing:skip-covered packages/azure/tests packages/copilotstudio/tests packages/foundry/tests packages/main/tests packages/mem0/tests packages/redis/tests"
 
+[tool.poe.tasks.all-tests-cov]
+cmd = """
+pytest --import-mode=importlib
+--cov=agent_framework
+--cov=agent_framework_azure_ai
+--cov=agent_framework_copilotstudio
+--cov=agent_framework_mem0
+--cov=agent_framework_redis
+--cov-report=term-missing:skip-covered
+--ignore-glob=packages/lab/**
+--ignore-glob=packages/devui/**
+-n logical --dist loadfile --dist worksteal
+packages/**/tests
+"""
+
+[tool.poe.tasks.all-tests]
+cmd = """
+pytest --import-mode=importlib
+--ignore-glob=packages/lab/**
+--ignore-glob=packages/devui/**
+-n logical --dist loadfile --dist worksteal
+packages/**/tests
+"""
 
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"

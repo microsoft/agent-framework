@@ -26,7 +26,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = WorkflowHelper.GetWorkflow();
+        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
 
         // Execute the workflow
         StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
@@ -40,9 +40,9 @@ public static class Program
                     await handle.SendResponseAsync(response).ConfigureAwait(false);
                     break;
 
-                case WorkflowCompletedEvent workflowCompleteEvt:
-                    // The workflow has completed successfully
-                    Console.WriteLine($"Workflow completed with result: {workflowCompleteEvt.Data}");
+                case WorkflowOutputEvent outputEvt:
+                    // The workflow has yielded output
+                    Console.WriteLine($"Workflow completed with result: {outputEvt.Data}");
                     return;
             }
         }
