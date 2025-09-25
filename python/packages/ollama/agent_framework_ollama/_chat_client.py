@@ -24,7 +24,7 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from agent_framework.telemetry import use_telemetry
 from ollama import AsyncClient
 
@@ -101,12 +101,15 @@ class OllamaChatClient(BaseChatClient):
     ) -> ChatResponse:
         options_dict = self._prepare_options(messages, chat_options)
 
-        response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
-            model=self.chat_model_id,
-            stream=False,
-            **options_dict,
-            **kwargs,
-        )
+        try:
+            response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
+                model=self.chat_model_id,
+                stream=False,
+                **options_dict,
+                **kwargs,
+            )
+        except Exception as ex:
+            raise ServiceResponseException("Ollama chat request failed.", ex) from ex
 
         return self._ollama_response_to_agent_framework_message(response)
 
@@ -119,12 +122,15 @@ class OllamaChatClient(BaseChatClient):
     ) -> AsyncIterable[ChatResponseUpdate]:
         options_dict = self._prepare_options(messages, chat_options)
 
-        response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
-            model=self.chat_model_id,
-            stream=True,
-            **options_dict,
-            **kwargs,
-        )
+        try:
+            response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
+                model=self.chat_model_id,
+                stream=True,
+                **options_dict,
+                **kwargs,
+            )
+        except Exception as ex:
+            raise ServiceResponseException("Ollama streaming chat request failed.", ex) from ex
 
         async for part in response_object:
             yield self._ollama_streaming_response_to_agent_framework_message(part)
@@ -186,6 +192,10 @@ class OllamaChatClient(BaseChatClient):
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
+        if not any(isinstance(c, (FunctionCallContent, TextContent)) for c in message.contents):
+            raise ServiceInvalidRequestError(
+                "Ollama connector currently only supports user messages with TextContent or FunctionCallContent."
+            )
         assistant_message = OllamaMessage(role="assistant", content=message.text)
 
         tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
@@ -205,6 +215,7 @@ class OllamaChatClient(BaseChatClient):
         return [assistant_message]
 
     def _format_tool_message(self, message: ChatMessage) -> list[OllamaMessage]:
+        # Ollama does not support multiple tool results in a single message, so we create a separate
         function_result_items = [
             OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
             for item in message.contents
