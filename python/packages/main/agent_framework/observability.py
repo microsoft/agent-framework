@@ -343,8 +343,6 @@ class ObservabilitySettings(AFBaseSettings):
                     (Env var ENABLE_SENSITIVE_DATA)
         applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
                     (Env var APPLICATIONINSIGHTS_CONNECTION_STRING)
-        applicationinsights_live_metrics: Enable Azure Monitor live metrics. Default is False.
-                    (Env var APPLICATIONINSIGHTS_LIVE_METRICS)
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
                     (Env var OTLP_ENDPOINT)
         vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are listening on.
@@ -357,7 +355,6 @@ class ObservabilitySettings(AFBaseSettings):
     enable_otel: bool = False
     enable_sensitive_data: bool = False
     applicationinsights_connection_string: str | list[str] | None = None
-    applicationinsights_live_metrics: bool = False
     otlp_endpoint: str | list[str] | None = None
     vs_code_extension_port: int | None = None
     _resource: "Resource" = PrivateAttr(default_factory=_create_resource)
@@ -432,26 +429,6 @@ class ObservabilitySettings(AFBaseSettings):
             )
         self._configure_providers(exporters)
         self._executed_setup = True
-        if self.applicationinsights_connection_string and self.applicationinsights_live_metrics:
-            from azure.monitor.opentelemetry import configure_azure_monitor
-
-            conn_strings = (
-                self.applicationinsights_connection_string
-                if isinstance(self.applicationinsights_connection_string, list)
-                else [self.applicationinsights_connection_string]
-            )
-            for con_str in conn_strings:
-                # only configure using this for live_metrics, ignore the rest.
-                configure_azure_monitor(
-                    connection_string=con_str,
-                    credential=credential,
-                    logger_name="agent_framework",
-                    resource=self.resource,
-                    enable_live_metrics=self.applicationinsights_live_metrics,
-                    disable_logging=True,
-                    disable_metric=True,
-                    disable_tracing=True,
-                )
 
     def check_endpoint_already_configured(self, otlp_endpoint: str) -> bool:
         """Check if the endpoint is already configured.
@@ -461,9 +438,7 @@ class ObservabilitySettings(AFBaseSettings):
         """
         if not self.otlp_endpoint:
             return False
-        return otlp_endpoint not in (
-            self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
-        )
+        return otlp_endpoint in (self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint])
 
     def check_connection_string_already_configured(self, connection_string: str) -> bool:
         """Check if the connection string is already configured.
@@ -473,7 +448,7 @@ class ObservabilitySettings(AFBaseSettings):
         """
         if not self.applicationinsights_connection_string:
             return False
-        return connection_string not in (
+        return connection_string in (
             self.applicationinsights_connection_string
             if isinstance(self.applicationinsights_connection_string, list)
             else [self.applicationinsights_connection_string]
@@ -601,7 +576,6 @@ def setup_observability(
     otlp_endpoint: str | list[str] | None = None,
     applicationinsights_connection_string: str | list[str] | None = None,
     credential: "TokenCredential | None" = None,
-    enable_live_metrics: bool | None = None,
     exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
     vs_code_extension_port: int | None = None,
 ) -> None:
@@ -654,7 +628,6 @@ def setup_observability(
         enable_sensitive_data=True,
         otlp_endpoint=["http://localhost:7431"],
         applicationinsights_connection_string=["..."],
-        enable_live_metrics=True,
         exporters=[...],  # your custom exporters
         vs_code_extension_port=4317,
     )
@@ -664,7 +637,6 @@ def setup_observability(
 
     When both environment variables and parameters are used, the following settings will get overridden:
     - enable_sensitive_data
-    - enable_live_metrics
     - vs_code_extension_port
 
     The endpoints and connection strings will be combined, excluding duplicates.
@@ -692,9 +664,6 @@ def setup_observability(
             Will be used to create AzureMonitorExporters.
         credential: The credential to use for Azure Monitor Entra ID authentication.
             Default is None.
-        enable_live_metrics: Enable Azure Monitor live metrics.
-            If set, this will override the value set through the environment variable.
-            Default is None.
         exporters: A list of exporters, for logs, metrics or spans, or any combination.
             These will be added directly, and allows you to customize the spans completely.
         vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are
@@ -708,8 +677,6 @@ def setup_observability(
     OBSERVABILITY_SETTINGS.enable_otel = True
     if enable_sensitive_data is not None:
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
-    if enable_live_metrics is not None:
-        OBSERVABILITY_SETTINGS.applicationinsights_live_metrics = enable_live_metrics
     if vs_code_extension_port is not None:
         OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
 

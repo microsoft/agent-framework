@@ -215,7 +215,7 @@ class AzureAIAgentClient(BaseChatClient):
         )
         self._should_close_client = should_close_client
 
-    async def setup_observability(self, enable_live_metrics: bool = False) -> None:
+    async def setup_observability(self) -> None:
         """Use this method to setup tracing in your Azure AI Project.
 
         This will take the connection string from the project project_client.
@@ -226,7 +226,6 @@ class AzureAIAgentClient(BaseChatClient):
 
         setup_observability(
             applicationinsights_connection_string=await self.project_client.telemetry.get_application_insights_connection_string(),  # noqa: E501
-            enable_live_metrics=enable_live_metrics,
         )
 
     async def __aenter__(self) -> "Self":

@@ -74,10 +74,6 @@ The `setup_observability()` function will look for the following environment var
 - OTLP_ENDPOINT="..."
 - APPLICATIONINSIGHTS_CONNECTION_STRING="..."
 
-You can also enable live metrics streaming to Application Insights:
-
-- APPLICATIONINSIGHTS_LIVE_METRICS=true
-
 By providing the above environment variables, the `setup_observability()` function will automatically configure the appropriate exporters and providers for you. If no environment variables are provided, the function will not setup any exporters or providers.
 
 You can also pass in a list of exporters directly to the `setup_observability()` function if you want to customize the exporters or add additional ones besides the ones configured via environment variables.
@@ -125,7 +121,8 @@ You can connect to your Application Insights instance using a connection string.
 ```python
 from azure.identity import DefaultAzureCredential
 
-setup_observability(credential=DefaultAzureCredential())
+# The credential will be for resources specified in the environment variables and the parameters passed in.
+setup_observability(..., credential=DefaultAzureCredential())
 ```
 
 It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.

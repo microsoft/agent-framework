@@ -30,7 +30,6 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
         "ENABLE_SENSITIVE_DATA",
         "OTLP_ENDPOINT",
         "APPLICATIONINSIGHTS_CONNECTION_STRING",
-        "APPLICATIONINSIGHTS_LIVE_METRICS",
     ]
 
     for key in env_vars:
