@@ -15,7 +15,7 @@ internal abstract class TestingExecutor<TIn, TOut> : Executor, IDisposable
     private readonly HashSet<CancellationToken> _linkedTokens = [];
     private CancellationTokenSource _internalCts = new();
 
-    protected TestingExecutor(string? id = null, bool loop = false, params Func<TIn, IWorkflowContext, CancellationToken, ValueTask<TOut>>[] actions) : base(id)
+    protected TestingExecutor(string id, bool loop = false, params Func<TIn, IWorkflowContext, CancellationToken, ValueTask<TOut>>[] actions) : base(id)
     {
         this._loop = loop;
         this._actions = actions;

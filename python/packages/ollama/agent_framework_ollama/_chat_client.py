@@ -25,7 +25,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
-from agent_framework.telemetry import use_telemetry
+from agent_framework.observability import use_observability
 from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
@@ -48,7 +48,7 @@ TOllamaChatClient = TypeVar("TOllamaChatClient", bound="OllamaChatClient")
 
 
 @use_function_invocation
-@use_telemetry
+@use_observability
 class OllamaChatClient(BaseChatClient):
     """Ollama Chat completion class."""
 

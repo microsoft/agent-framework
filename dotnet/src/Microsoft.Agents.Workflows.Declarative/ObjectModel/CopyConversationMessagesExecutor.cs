@@ -17,7 +17,7 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        string conversationId = this.State.Evaluator.GetValue(Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}")).Value;
+        string conversationId = this.Evaluator.GetValue(Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}")).Value;
         DataValue? inputMessages = this.GetInputMessages();
 
         if (inputMessages is not null)
@@ -37,7 +37,7 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
 
         if (this.Model.Messages is not null)
         {
-            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(this.Model.Messages);
+            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Messages);
             messages = expressionResult.Value;
         }
 

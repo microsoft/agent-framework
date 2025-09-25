@@ -36,7 +36,7 @@ internal sealed class Program
         string? workflowFile = ParseWorkflowFile(args);
         if (workflowFile is null)
         {
-            Notify("\nUsage: DeclarativeWorkflow <workflow-file> [<input>]");
+            Notify("\nUsage: DeclarativeWorkflow <workflow-file> [<input>]\n");
             return;
         }
 
@@ -53,7 +53,7 @@ internal sealed class Program
 
         Stopwatch timer = Stopwatch.StartNew();
 
-        Workflow<string> workflow = this.CreateWorkflow();
+        Workflow workflow = this.CreateWorkflow();
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
@@ -100,7 +100,7 @@ internal sealed class Program
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    private Workflow<string> CreateWorkflow()
+    private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         DeclarativeWorkflowOptions options =
@@ -291,7 +291,7 @@ internal sealed class Program
             string? repoFolder = GetRepoFolder();
             if (repoFolder is not null)
             {
-                workflowFile = Path.Combine(repoFolder, "Workflows", workflowFile);
+                workflowFile = Path.Combine(repoFolder, "workflow-samples", workflowFile);
                 workflowFile = Path.ChangeExtension(workflowFile, ".yaml");
             }
         }

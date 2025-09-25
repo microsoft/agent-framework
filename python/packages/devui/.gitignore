@@ -1,0 +1,19 @@
+# Test artifacts
+tests/captured_messages/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local development files
+.env
+*.log
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

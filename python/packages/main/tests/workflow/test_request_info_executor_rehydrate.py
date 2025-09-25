@@ -171,11 +171,10 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
     request = SimpleApproval(prompt="Review draft", draft="Draft text", iteration=3)
     request.request_id = "req-42"
 
-    response = RequestResponse[SimpleApproval, str].handled("approve")
-    response = RequestResponse[SimpleApproval, str].with_correlation(
-        response,
-        request,
-        request.request_id,
+    response = RequestResponse[SimpleApproval, str](
+        data="approve",
+        original_request=request,
+        request_id=request.request_id,
     )
 
     encoded_response = _encode_checkpoint_value(response)

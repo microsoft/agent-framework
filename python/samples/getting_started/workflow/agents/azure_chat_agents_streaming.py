@@ -2,8 +2,8 @@
 
 import asyncio
 
-from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowCompletedEvent
-from agent_framework.azure import AzureChatClient
+from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -18,10 +18,10 @@ Show how to wire chat agents directly into a WorkflowBuilder pipeline where agen
 Demonstrate:
 - Automatic streaming of agent deltas via AgentRunUpdateEvent.
 - A simple console aggregator that groups updates by executor id and prints them as they arrive.
-- A final WorkflowCompletedEvent that contains the reviewer outcome after both agents finish.
+- The workflow completes when idle and outputs are available in events.get_outputs().
 
 Prerequisites:
-- Azure OpenAI configured for AzureChatClient with required environment variables.
+- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming runs.
 """
@@ -30,7 +30,7 @@ Prerequisites:
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Define two domain specific chat agents. The builder will wrap these as executors.
     writer_agent = chat_client.create_agent(
@@ -54,12 +54,10 @@ async def main():
     workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
 
     # Stream events from the workflow. We aggregate partial token updates per executor for readable output.
-    completed_event: WorkflowCompletedEvent | None = None
     last_executor_id = None
 
-    async for event in workflow.run_stream(
-        "Create a slogan for a new electric SUV that is affordable and fun to drive."
-    ):
+    events = workflow.run_stream("Create a slogan for a new electric SUV that is affordable and fun to drive.")
+    async for event in events:
         if isinstance(event, AgentRunUpdateEvent):
             # AgentRunUpdateEvent contains incremental text deltas from the underlying agent.
             # Print a prefix when the executor changes, then append updates on the same line.
@@ -70,14 +68,9 @@ async def main():
                 print(f"{eid}:", end=" ", flush=True)
                 last_executor_id = eid
             print(event.data, end="", flush=True)
-        elif isinstance(event, WorkflowCompletedEvent):
-            # Terminal event with the final reviewer output.
-            completed_event = event
-
-    # Print the final consolidated reviewer result.
-    if completed_event:
-        print("\n===== Final Output =====")
-        print(completed_event.data)
+        elif isinstance(event, WorkflowOutputEvent):
+            print("===== Final Output =====")
+            print(event.data)
 
     """
     Sample Output:

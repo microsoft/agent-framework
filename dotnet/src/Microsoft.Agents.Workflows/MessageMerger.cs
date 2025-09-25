@@ -57,9 +57,7 @@ internal sealed class MessageMerger
 
         public List<ChatMessage> ComputeFlattened()
         {
-            List<ChatMessage> result = this.UpdatesByMessageId.Keys.Select(AggregateUpdatesToMessage)
-                                                                   .ToList();
-
+            List<ChatMessage> result = this.UpdatesByMessageId.Keys.SelectMany(AggregateUpdatesToMessage).ToList();
             if (this.DanglingUpdates.Count > 0)
             {
                 result.AddRange(this.ComputeDangling().Messages);
@@ -67,7 +65,7 @@ internal sealed class MessageMerger
 
             return result;
 
-            ChatMessage AggregateUpdatesToMessage(string messageId)
+            IList<ChatMessage> AggregateUpdatesToMessage(string messageId)
             {
                 List<AgentRunResponseUpdate> updates = this.UpdatesByMessageId[messageId];
                 if (updates.Count == 0)
@@ -75,13 +73,19 @@ internal sealed class MessageMerger
                     throw new InvalidOperationException($"No updates found for message ID '{messageId}' in response '{this.ResponseId}'.");
                 }
 
-                return updates.Aggregate(null,
-                    (ChatMessage? previous, AgentRunResponseUpdate current) =>
+                return updates.Select(oldUpdate =>
+                    oldUpdate.RawRepresentation as ChatResponseUpdate ??
+                    new()
                     {
-                        return previous is null
-                             ? current.ToChatMessage()
-                             : previous.UpdateWith(current);
-                    })!;
+                        AdditionalProperties = oldUpdate.AdditionalProperties,
+                        AuthorName = oldUpdate.AuthorName,
+                        Contents = oldUpdate.Contents,
+                        CreatedAt = oldUpdate.CreatedAt,
+                        MessageId = oldUpdate.MessageId,
+                        RawRepresentation = oldUpdate.RawRepresentation,
+                        Role = oldUpdate.Role,
+                        ResponseId = oldUpdate.ResponseId,
+                    }).ToChatResponse().Messages;
             }
         }
     }
@@ -170,13 +174,28 @@ internal sealed class MessageMerger
         }
 
         messages.AddRange(this._danglingState.ComputeFlattened());
+
+        // Remove any empty text contents or messages that are now empty.
+        foreach (var m in messages)
+        {
+            for (int i = m.Contents.Count - 1; i >= 0; i--)
+            {
+                if (m.Contents[i] is TextContent textContent &&
+                    string.IsNullOrWhiteSpace(textContent.Text))
+                {
+                    m.Contents.RemoveAt(i);
+                }
+            }
+        }
+        messages.RemoveAll(m => m.Contents.Count == 0);
+
         return new AgentRunResponse(messages)
         {
             ResponseId = primaryResponseId,
             AgentId = primaryAgentId
                    ?? primaryAgentName
                    ?? (agentIds.Count == 1 ? agentIds.First() : null),
-            CreatedAt = DateTimeOffset.Now,
+            CreatedAt = DateTimeOffset.UtcNow,
             Usage = usage,
             AdditionalProperties = additionalProperties
         };

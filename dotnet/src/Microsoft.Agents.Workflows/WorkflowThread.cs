@@ -14,7 +14,7 @@ internal sealed class WorkflowThread : AgentThread
 {
     public WorkflowThread(string workflowId, string? workflowName, string runId)
     {
-        base.MessageStore = this.MessageStore = new();
+        this.MessageStore = new();
         this.RunId = Throw.IfNullOrEmpty(runId, nameof(runId));
     }
 
@@ -36,7 +36,7 @@ internal sealed class WorkflowThread : AgentThread
 
         AgentRunResponseUpdate update = new(ChatRole.Assistant, parts)
         {
-            CreatedAt = DateTimeOffset.Now,
+            CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
         };
 
@@ -46,5 +46,5 @@ internal sealed class WorkflowThread : AgentThread
     }
 
     /// <inheritdoc/>
-    public new WorkflowMessageStore MessageStore { get; }
+    public WorkflowMessageStore MessageStore { get; }
 }

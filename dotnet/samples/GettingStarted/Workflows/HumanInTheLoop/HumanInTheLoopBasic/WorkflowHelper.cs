@@ -12,7 +12,7 @@ internal static class WorkflowHelper
     /// Get a workflow that plays a number guessing game with human-in-the-loop interaction.
     /// An input port allows the external world to provide inputs to the workflow upon requests.
     /// </summary>
-    internal static Workflow<NumberSignal> GetWorkflow()
+    internal static ValueTask<Workflow<NumberSignal>> GetWorkflowAsync()
     {
         // Create the executors
         InputPort numberInputPort = InputPort.Create<NumberSignal, int>("GuessNumber");
@@ -22,7 +22,8 @@ internal static class WorkflowHelper
         return new WorkflowBuilder(numberInputPort)
             .AddEdge(numberInputPort, judgeExecutor)
             .AddEdge(judgeExecutor, numberInputPort)
-            .Build<NumberSignal>();
+            .WithOutputFrom(judgeExecutor)
+            .BuildAsync<NumberSignal>();
     }
 }
 
@@ -58,7 +59,7 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"{this._targetNumber} found in {this._tries} tries!"))
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!")
                          .ConfigureAwait(false);
         }
         else if (message < this._targetNumber)

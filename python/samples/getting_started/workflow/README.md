@@ -35,7 +35,7 @@ Once comfortable with these, explore the rest of the samples below.
 |---|---|---|
 | Azure Chat Agents (Streaming) | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py) | Add Azure agents as edges and handle streaming events |
 | Custom Agent Executors | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py) | Create executors to handle agent run methods |
-| Foundry Chat Agents (Streaming) | [agents/foundry_chat_agents_streaming.py](./agents/foundry_chat_agents_streaming.py) | Add Foundry agents as edges and handle streaming events |
+| Azure AI Chat Agents (Streaming) | [agents/azure_ai_chat_agents_streaming.py](./agents/azure_ai_chat_agents_streaming.py) | Add Azure AI agents as edges and handle streaming events |
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py) | Wrap a workflow so it can behave like an agent (reflection pattern) |
 | Workflow as Agent + HITL | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py) | Extend workflow-as-agent with human-in-the-loop capability |
 
@@ -49,8 +49,8 @@ Once comfortable with these, explore the rest of the samples below.
 | Sample | File | Concepts |
 |---|---|---|
 | Sub-Workflow (Basics) | [composition/sub_workflow_basics.py](./composition/sub_workflow_basics.py) | Wrap a workflow as an executor and orchestrate sub-workflows |
-| Sub-Workflow: Request Interception | [composition/sub_workflow_request_interception.py](./composition/sub_workflow_request_interception.py) | Intercept and forward requests with decorators and request handling |
-| Sub-Workflow: Parallel Requests | [composition/sub_workflow_parallel_requests.py](./composition/sub_workflow_parallel_requests.py) | Multi-type interception and external forwarding patterns |
+| Sub-Workflow: Request Interception | [composition/sub_workflow_request_interception.py](./composition/sub_workflow_request_interception.py) | Intercept and forward sub-workflow requests using @handler for RequestInfoMessage subclasses |
+| Sub-Workflow: Parallel Requests | [composition/sub_workflow_parallel_requests.py](./composition/sub_workflow_parallel_requests.py) | Multiple specialized interceptors handling different request types from same sub-workflow |
 
 ### control-flow
 | Sample | File | Concepts |
@@ -87,6 +87,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Sample | File | Concepts |
 |---|---|---|
 | Concurrent (Fan-out/Fan-in) | [parallelism/fan_out_fan_in_edges.py](./parallelism/fan_out_fan_in_edges.py) | Dispatch to multiple executors and aggregate results |
+| Aggregate Results of Different Types | [parallelism/aggregate_results_of_different_types.py](./parallelism/aggregate_results_of_different_types.py) | Handle results of different types from multiple concurrent executors |
 | Map-Reduce with Visualization | [parallelism/map_reduce_and_visualization.py](./parallelism/map_reduce_and_visualization.py) | Fan-out/fan-in pattern with diagram export |
 
 ### state-management
@@ -112,15 +113,15 @@ Notes
 Sequential orchestration uses a few small adapter nodes for plumbing:
 - "input-conversation" normalizes input to `list[ChatMessage]`
 - "to-conversation:<participant>" converts agent responses into the shared conversation
-- "complete" publishes the final `WorkflowCompletedEvent`
+- "complete" publishes the final `WorkflowOutputEvent`
 These may appear in event streams (ExecutorInvoke/Completed). They’re analogous to
 concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 
 ### Environment Variables
 
-- **AzureChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).  
-  These variables are required for samples that construct `AzureChatClient`
+- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).
+  These variables are required for samples that construct `AzureOpenAIChatClient`
 
-- **OpenAI** (used in orchestration samples):  
-  - [OpenAIChatClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_chat_client/README.md)  
+- **OpenAI** (used in orchestration samples):
+  - [OpenAIChatClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_chat_client/README.md)
   - [OpenAIResponsesClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_responses_client/README.md)

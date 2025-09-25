@@ -77,6 +77,11 @@ public record ExternalRequest(InputPortInfo PortInfo, string RequestId, Portable
         return new ExternalResponse(this.PortInfo, this.RequestId, new PortableValue(data));
     }
 
+    internal ExternalResponse RewrapResponse(ExternalResponse response)
+    {
+        return new ExternalResponse(this.PortInfo, this.RequestId, response.Data);
+    }
+
     /// <summary>
     /// Creates a new <see cref="ExternalResponse"/> corresponding to the request, with the speicified data payload.
     /// </summary>

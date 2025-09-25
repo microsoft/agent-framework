@@ -24,22 +24,23 @@ public static class Program
     private static async Task Main()
     {
         // Create the executors
-        GuessNumberExecutor guessNumberExecutor = new(1, 100);
-        JudgeExecutor judgeExecutor = new(42);
+        GuessNumberExecutor guessNumberExecutor = new("GuessNumber", 1, 100);
+        JudgeExecutor judgeExecutor = new("Judge", 42);
 
         // Build the workflow by connecting executors in a loop
-        var workflow = new WorkflowBuilder(guessNumberExecutor)
+        var workflow = await new WorkflowBuilder(guessNumberExecutor)
             .AddEdge(guessNumberExecutor, judgeExecutor)
             .AddEdge(judgeExecutor, guessNumberExecutor)
-            .Build<NumberSignal>();
+            .WithOutputFrom(judgeExecutor)
+            .BuildAsync<NumberSignal>();
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is WorkflowCompletedEvent workflowCompleteEvt)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"Result: {workflowCompleteEvt}");
+                Console.WriteLine($"Result: {outputEvent}");
             }
         }
     }
@@ -73,9 +74,10 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     /// <summary>
     /// Initializes a new instance of the <see cref="GuessNumberExecutor"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="lowerBound">The initial lower bound of the guessing range.</param>
     /// <param name="upperBound">The initial upper bound of the guessing range.</param>
-    public GuessNumberExecutor(int lowerBound, int upperBound)
+    public GuessNumberExecutor(string id, int lowerBound, int upperBound) : base(id)
     {
         this.LowerBound = lowerBound;
         this.UpperBound = upperBound;
@@ -113,8 +115,9 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
     /// <summary>
     /// Initializes a new instance of the <see cref="JudgeExecutor"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="targetNumber">The number to be guessed.</param>
-    public JudgeExecutor(int targetNumber)
+    public JudgeExecutor(string id, int targetNumber) : base(id)
     {
         this._targetNumber = targetNumber;
     }
@@ -124,7 +127,7 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"{this._targetNumber} found in {this._tries} tries!"))
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!")
                          .ConfigureAwait(false);
         }
         else if (message < this._targetNumber)

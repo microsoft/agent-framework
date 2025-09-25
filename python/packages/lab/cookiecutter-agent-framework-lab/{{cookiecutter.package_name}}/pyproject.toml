@@ -36,6 +36,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 packages = ["agent_framework_lab_{{ cookiecutter.package_name }}", "agent_framework.lab.{{ cookiecutter.package_name }}"]
 
 [tool.setuptools.package-data]
@@ -66,7 +67,7 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 implicit_reexport = true
-packages = ["agent_framework_lab_{{ cookiecutter.package_name }}"]
+packages = ["src.agent_framework_lab_{{ cookiecutter.package_name }}"]
 
 {% if cookiecutter.within_microsoft_agent_framework_repo == "y" %}
 [tool.poe]
@@ -86,7 +87,7 @@ mypy = "mypy agent_framework_lab_{{ cookiecutter.package_name }}"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src"]
 addopts = "--strict-markers --strict-config"
 markers = [
   "unit: marks tests as unit tests",

@@ -14,16 +14,18 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.InProc;
 
-internal sealed class InProcessRunnerContext<TExternalInput> : IRunnerContext
+internal sealed class InProcessRunnerContext : IRunnerContext
 {
     private StepContext _nextStep = new();
     private readonly Dictionary<string, ExecutorRegistration> _executorRegistrations;
     private readonly Dictionary<string, Executor> _executors = [];
     private readonly Dictionary<string, ExternalRequest> _externalRequests = [];
+    private readonly OutputFilter _outputFilter;
 
     public InProcessRunnerContext(Workflow workflow, ILogger? logger = null)
     {
         this._executorRegistrations = Throw.IfNull(workflow).Registrations;
+        this._outputFilter = new(workflow);
     }
 
     public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer)
@@ -80,7 +82,7 @@ internal sealed class InProcessRunnerContext<TExternalInput> : IRunnerContext
         return default;
     }
 
-    public IWorkflowContext Bind(string executorId) => new BoundContext(this, executorId);
+    public IWorkflowContext Bind(string executorId) => new BoundContext(this, executorId, this._outputFilter);
 
     public ValueTask PostAsync(ExternalRequest request)
     {
@@ -94,10 +96,28 @@ internal sealed class InProcessRunnerContext<TExternalInput> : IRunnerContext
 
     internal StateManager StateManager { get; } = new();
 
-    private sealed class BoundContext(InProcessRunnerContext<TExternalInput> RunnerContext, string ExecutorId) : IWorkflowContext
+    private sealed class BoundContext(InProcessRunnerContext RunnerContext, string ExecutorId, OutputFilter outputFilter) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
+
+        public async ValueTask YieldOutputAsync(object output)
+        {
+            Throw.IfNull(output);
+
+            Executor sourceExecutor = await RunnerContext.EnsureExecutorAsync(ExecutorId, tracer: null).ConfigureAwait(false);
+            if (!sourceExecutor.CanOutput(output.GetType()))
+            {
+                throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
+            }
+
+            if (outputFilter.CanOutput(ExecutorId, output))
+            {
+                await this.AddEventAsync(new WorkflowOutputEvent(output, ExecutorId)).ConfigureAwait(false);
+            }
+        }
+
+        public ValueTask RequestHaltAsync() => this.AddEventAsync(new RequestHaltEvent());
 
         public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
             => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
