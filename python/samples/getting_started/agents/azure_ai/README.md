@@ -18,8 +18,5 @@ This folder contains examples demonstrating different ways to create and use age
 
 Make sure to set the following environment variables before running the examples:
 
-- `AZURE_AZURE_FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI project endpoint
-- `AZURE_AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
-
-Optionally, you can set:
-- `AZURE_AZURE_FOUNDRY_AGENT_NAME`: The name of your agent, this can also be set programmatically when creating the agent.
+- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint
+- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
