@@ -861,9 +861,153 @@ class Workflow(AFBaseModel):
 
 
 class WorkflowBuilder:
-    """A builder class for constructing workflows.
+    """Fluent graph-construction utility that assembles `Workflow` instances from executors and edge groups.
 
-    This class provides methods to add edges and set the starting executor for the workflow.
+    ## Overview
+    `WorkflowBuilder` translates declarative edge specifications into a validated, executable workflow graph.
+    It normalizes heterogeneous inputs (executors, agents, and identifiers), deduplicates node registrations,
+    enforces type compatibility, and prepares runtime metadata (graph signature, checkpoint configuration,
+    iteration limits) before instantiating a `Workflow`.
+
+    ## Typical Usage
+    ```python
+    from typing import Any
+    from agent_framework import WorkflowBuilder, WorkflowContext, executor
+
+
+    @executor
+    async def upper_case(text: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(text.upper())
+
+
+    @executor
+    async def echo(msg: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.yield_output(msg)
+
+
+    workflow = WorkflowBuilder().add_edge(upper_case, echo).set_start_executor(upper_case).build()
+    ```
+
+    ### Direct Agent Wiring
+    ```python
+    from agent_framework import AgentProtocol, WorkflowBuilder
+
+    writer_agent: AgentProtocol = ...  # Provide concrete AgentProtocol implementation
+    reviewer_agent: AgentProtocol = ...  # Provide concrete AgentProtocol implementation
+
+    workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
+    ```
+
+    ### Conditional Branching
+    ```python
+    from typing import Any
+    from agent_framework import WorkflowBuilder, WorkflowContext, executor
+
+
+    @executor
+    async def spam_detection_agent(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any]]) -> None:
+        await ctx.send_message(email)
+
+
+    def route_non_spam(email: dict[str, Any]) -> bool:
+        return not email.get("is_spam", False)
+
+
+    def route_spam(email: dict[str, Any]) -> bool:
+        return email.get("is_spam", False)
+
+
+    @executor
+    async def email_request_executor(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any]]) -> None:
+        await ctx.send_message({"subject": email["subject"], "body": email["body"]})
+
+
+    @executor
+    async def email_assistant_executor(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any], str]) -> None:
+        await ctx.yield_output(f"Drafting reply to: {email['subject']}")
+
+
+    @executor
+    async def email_response_handler(result: str, ctx: WorkflowContext) -> None:
+        print(result)
+
+
+    @executor
+    async def spam_handler_executor(email: dict[str, Any], ctx: WorkflowContext) -> None:
+        print(f"Spam archived: {email['subject']}")
+
+
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(spam_detection_agent)
+        .add_edge(spam_detection_agent, email_request_executor, condition=route_non_spam)
+        .add_edge(email_request_executor, email_assistant_executor)
+        .add_edge(email_assistant_executor, email_response_handler)
+        .add_edge(spam_detection_agent, spam_handler_executor, condition=route_spam)
+        .build()
+    )
+    ```
+
+    ## Builder Semantics
+    - Executors can be supplied as concrete `Executor` instances, subclasses, `@executor`-decorated callables,
+      or objects implementing `AgentProtocol`; agents are wrapped into streaming `AgentExecutor` instances and
+      reuse the same wrapper when supplied multiple times.
+    - Edge groups track adjacency and dataflow semantics; the builder enforces globally unique executor IDs and
+      records duplicates to surface actionable validation failures.
+    - `build()` validates the full graph (structure, reachability, type compatibility) and binds it to an
+      `InProcRunnerContext` that injects optional checkpoint storage and max-iteration bounds.
+
+    ## Public API
+    - `add_edge(source, target, condition=None)`: register a single directed edge with optional predicate-based
+      dispatch; automatically wraps agents and ensures both endpoints participate in the graph signature.
+    - `add_fan_out_edges(source, targets)`: connect one source to multiple targets; broadcasts each message to
+      every downstream executor in the sequence order.
+    - `add_switch_case_edge_group(source, cases)`: encode a mutually exclusive routing table using `Case` and
+      `Default` descriptors; evaluates predicates in declaration order until one matches.
+    - `add_multi_selection_edge_group(source, targets, selection_func)`: route each message to a subset of
+      targets selected by a user-supplied function operating over target IDs.
+    - `add_fan_in_edges(sources, target)`: synchronize multiple upstream executors and deliver a list of their
+      outputs to the `target` once all have produced for the current superstep.
+    - `add_chain(executors)`: convenience combinator that sequentially links a list of executors via `add_edge`.
+    - `set_start_executor(executor_or_id)`: designate the workflow entry point using an executor instance, agent,
+      or pre-existing executor ID; guarantees the start node is registered even in degenerate graphs.
+    - `set_max_iterations(max_iterations)`: cap the number of supersteps executed before convergence checks fail.
+    - `with_checkpointing(storage)`: attach a `CheckpointStorage` implementation to enable persistence between
+      runs; retained in the runner context used during `build()`.
+    - `build()`: finalize the workflow, emitting OpenTelemetry build spans, running structural validation, and
+      returning a ready-to-run `Workflow`.
+
+    ## Advanced Patterns
+    ```python
+    builder = WorkflowBuilder()
+
+    builder.add_switch_case_edge_group(
+        router_agent,
+        [
+            Case(condition=lambda msg: msg["kind"] == "draft", target=draft_executor),
+            Default(target=fallback_executor),
+        ],
+    )
+
+    builder.add_fan_in_edges(
+        sources=[summarizer_agent, critic_executor],
+        target=aggregator_executor,
+    )
+
+    workflow = (
+        builder.set_start_executor(router_agent)
+        .with_checkpointing(storage=my_checkpoint_store)
+        .set_max_iterations(32)
+        .build()
+    )
+    ```
+
+    ## Notes
+    - All mutator methods return `self`, enabling fluent composition.
+    - The builder maintains an internal graph signature hash that uniquely identifies the topology for caching,
+      provenance, or memoization scenarios.
+    - Validation failures surface as rich exceptions (`TypeCompatibilityError`, `GraphConnectivityError`, etc.)
+      that preserve executor IDs for targeted debugging.
     """
 
     def __init__(self, max_iterations: int = DEFAULT_MAX_ITERATIONS):
