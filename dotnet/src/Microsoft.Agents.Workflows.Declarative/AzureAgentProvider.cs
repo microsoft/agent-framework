@@ -32,11 +32,6 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
             [ChatRole.Tool.Value.ToUpperInvariant()] = new MessageRole(ChatRole.Tool.Value),
         };
 
-    /// <summary>
-    /// The default page limit when querying agents when resolving by name.
-    /// </summary>
-    public const int DefaultAgentQueryLimit = 100;
-
     private PersistentAgentsClient? _agentsClient;
 
     /// <inheritdoc/>
