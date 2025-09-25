@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import logging
 import uuid
 from dataclasses import dataclass
@@ -20,7 +21,6 @@ from ._executor import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
-    SubWorkflowRequestInfo,
     handler,
 )
 from ._typing_utils import is_instance_of
@@ -77,9 +77,9 @@ class WorkflowExecutor(Executor):
     request = MyDataRequest(query="user info")
     # RequestInfoExecutor emits RequestInfoEvent
 
-    # WorkflowExecutor wraps and forwards to parent
-    wrapped = SubWorkflowRequestInfo(request_id="...", sub_workflow_id="child_workflow", data=request)
-    # Parent workflow can handle via @handler for SubWorkflowRequestInfo,
+    # WorkflowExecutor sets source_executor_id and forwards to parent
+    request.source_executor_id = "child_workflow_executor_id"
+    # Parent workflow can handle via @handler for RequestInfoMessage subclasses,
     # or directly forward to external source via a RequestInfoExecutor in the parent
     # workflow.
     ```
@@ -106,8 +106,8 @@ class WorkflowExecutor(Executor):
     Combines sub-workflow outputs with request coordination types:
     ```python
     # Includes all sub-workflow output types
-    # Plus SubWorkflowRequestInfo if sub-workflow can make requests
-    output_types = workflow.output_types + [SubWorkflowRequestInfo]  # if applicable
+    # Plus RequestInfoMessage if sub-workflow can make requests
+    output_types = workflow.output_types + [RequestInfoMessage]  # if applicable
     ```
 
     ## Error Handling
@@ -173,20 +173,18 @@ class WorkflowExecutor(Executor):
     ```python
     class ParentExecutor(Executor):
         @handler
-        async def handle_sub_workflow_request(
+        async def handle_request(
             self,
-            request: SubWorkflowRequestInfo,
-            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | SubWorkflowRequestInfo],
+            request: MyRequestType,  # Subclass of RequestInfoMessage
+            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | RequestInfoMessage],
         ) -> None:
             # Handle request locally or forward to external source
-            if self.can_handle_locally(request.data):
+            if self.can_handle_locally(request):
                 # Send response back to sub-workflow
-                response = RequestResponse(
-                    data="local result", original_request=request.data, request_id=request.request_id
-                )
-                await ctx.send_message(response, target_id=request.sub_workflow_id)
+                response = RequestResponse(data="local result", original_request=request, request_id=request.request_id)
+                await ctx.send_message(response, target_id=request.source_executor_id)
             else:
-                # Forward to external handler (preserve SubWorkflowRequestInfo wrapper)
+                # Forward to external handler
                 await ctx.send_message(request)
     ```
 
@@ -238,17 +236,27 @@ class WorkflowExecutor(Executor):
 
         Returns:
             A list of output types that the underlying workflow can produce.
-            Includes SubWorkflowRequestInfo if the sub-workflow contains RequestInfoExecutor.
+            Includes specific RequestInfoMessage subtypes if the sub-workflow contains RequestInfoExecutor.
         """
         output_types = list(self.workflow.output_types)
 
         # Check if the sub-workflow contains a RequestInfoExecutor
-        # If so, this WorkflowExecutor can also output SubWorkflowRequestInfo messages
-        for executor in self.workflow.executors.values():
-            if isinstance(executor, RequestInfoExecutor):
-                if SubWorkflowRequestInfo not in output_types:
-                    output_types.append(SubWorkflowRequestInfo)
-                break
+        # If so, collect the specific RequestInfoMessage subtypes from all executors
+        has_request_info_executor = any(
+            isinstance(executor, RequestInfoExecutor) for executor in self.workflow.executors.values()
+        )
+
+        if has_request_info_executor:
+            # Collect all RequestInfoMessage subtypes from executor output types
+            for executor in self.workflow.executors.values():
+                for output_type in executor.output_types:
+                    # Check if this is a RequestInfoMessage subclass
+                    if (
+                        inspect.isclass(output_type)
+                        and issubclass(output_type, RequestInfoMessage)
+                        and output_type not in output_types
+                    ):
+                        output_types.append(output_type)
 
         return output_types
 
@@ -276,8 +284,8 @@ class WorkflowExecutor(Executor):
             input_data: The input data to send to the sub-workflow.
             ctx: The workflow context from the parent.
         """
-        # Skip RequestResponse and SubWorkflowRequestInfo - they have specific handlers
-        if isinstance(input_data, (RequestResponse, SubWorkflowRequestInfo)):
+        # Skip RequestResponse - it has a specific handler
+        if isinstance(input_data, RequestResponse):
             logger.debug(f"WorkflowExecutor {self.id} ignoring input of type {type(input_data)}")
             return
 
@@ -348,15 +356,12 @@ class WorkflowExecutor(Executor):
             execution_context.pending_requests[event.request_id] = event.data
             # Map request to execution for response routing
             self._request_to_execution[event.request_id] = execution_context.execution_id
-            # Wrap request with routing context and send to parent
+            # Set source_executor_id for response routing and send to parent
             if not isinstance(event.data, RequestInfoMessage):
                 raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-            wrapped_request = SubWorkflowRequestInfo(
-                request_id=event.request_id,
-                workflow_executor_id=self.id,
-                data=event.data,
-            )
-            await ctx.send_message(wrapped_request)
+            # Set the source_executor_id to this WorkflowExecutor's ID for response routing
+            event.data.source_executor_id = self.id
+            await ctx.send_message(event.data)
 
         # Update expected response count for this execution
         execution_context.expected_response_count = len(request_info_events)

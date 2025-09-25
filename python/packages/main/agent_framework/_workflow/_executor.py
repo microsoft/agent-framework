@@ -121,14 +121,14 @@ class Executor(AFBaseModel):
     ```python
     class ParentExecutor(Executor):
         @handler
-        async def handle_sub_workflow_request(
+        async def handle_domain_request(
             self,
-            request: SubWorkflowRequestInfo[DomainRequest],
-            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | SubWorkflowRequestInfo[DomainRequest]],
+            request: DomainRequest,  # Subclass of RequestInfoMessage
+            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | DomainRequest],
         ) -> None:
-            if self.is_allowed(request.data.domain):
-                response = RequestResponse(data=True, original_request=request.data, request_id=request.request_id)
-                await ctx.send_message(response, target_id=request.workflow_executor_id)
+            if self.is_allowed(request.domain):
+                response = RequestResponse(data=True, original_request=request, request_id=request.request_id)
+                await ctx.send_message(response, target_id=request.source_executor_id)
             else:
                 await ctx.send_message(request)  # Forward to external
     ```
@@ -264,7 +264,6 @@ class Executor(AFBaseModel):
             source_span_ids=source_span_ids,
         ):
             # Find the handler and handler spec that matches the message type.
-            # This includes the self._handle_sub_workflow_request handler for SubWorkflowRequestInfo.
             handler: Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]] | None = None
             ctx_annotation = None
             for message_type in self._handlers:
@@ -543,6 +542,10 @@ class RequestInfoMessage:
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     """Unique identifier for correlating requests and responses."""
 
+    source_executor_id: str | None = None
+    """ID of the executor expecting a response to this request.
+    May differ from the executor that sent the request if intercepted and forwarded."""
+
 
 TRequest = TypeVar("TRequest", bound="RequestInfoMessage")
 TResponse = TypeVar("TResponse")
@@ -564,25 +567,6 @@ class RequestResponse(Generic[TRequest, TResponse]):
 
     request_id: str
     """The ID of the original request."""
-
-
-@dataclass
-class SubWorkflowRequestInfo(Generic[TRequest]):
-    """A message type for delivering RequestInfoMessage from a sub-workflow to its parent workflow.
-
-    This message type wraps requests from sub-workflows to add routing context,
-    allowing parent workflows to intercept and potentially handle the request.
-
-    Type Parameters:
-        TRequest: The type of RequestInfoMessage being wrapped, must be a subclass of RequestInfoMessage.
-    """
-
-    request_id: str
-    """The ID of the original request from the sub-workflow."""
-    workflow_executor_id: str
-    """The ID of the sub-workflow executor that made the request."""
-    data: TRequest
-    """The request info message from the sub-workflow."""
 
 
 # endregion: Request/Response Types
@@ -607,12 +591,12 @@ class RequestInfoExecutor(Executor):
         """
         super().__init__(id=id)
         self._request_events: dict[str, RequestInfoEvent] = {}
-        self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
 
     @handler
     async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
         """Run the RequestInfoExecutor with the given message."""
-        source_executor_id = ctx.get_source_executor_id()
+        # Use source_executor_id from message if available, otherwise fall back to context
+        source_executor_id = message.source_executor_id or ctx.get_source_executor_id()
 
         event = RequestInfoEvent(
             request_id=message.request_id,
@@ -622,34 +606,6 @@ class RequestInfoExecutor(Executor):
         )
         self._request_events[message.request_id] = event
         await self._record_pending_request_snapshot(message, source_executor_id, ctx)
-        await ctx.add_event(event)
-
-    @handler
-    async def handle_sub_workflow_request(
-        self,
-        message: SubWorkflowRequestInfo,  # type: ignore[type-arg]
-        # Ignore the type arg to allow any RequestInfoMessage subtype to be handled
-        # by this method. See _validation.py for validation logic and _typing_utils.py for runtime checks.
-        ctx: WorkflowContext,
-    ) -> None:
-        """Handle forwarded sub-workflow request.
-
-        This method handles requests that were forwarded from parent workflows
-        because they couldn't be handled locally.
-        """
-        # Store context for routing response back
-        self._sub_workflow_contexts[message.request_id] = {
-            "workflow_executor_id": message.workflow_executor_id,
-        }
-
-        # Create event for external handling - preserve the SubWorkflowRequestInfo wrapper
-        event = RequestInfoEvent(
-            request_id=message.request_id,  # Use original request ID
-            source_executor_id=message.workflow_executor_id,  # Source is the sub-workflow
-            request_type=type(message.data),  # Type of the wrapped data # type: ignore
-            request_data=message.data,  # The wrapped request data
-        )
-        self._request_events[message.request_id] = event
         await ctx.add_event(event)
 
     async def handle_response(
@@ -673,28 +629,11 @@ class RequestInfoExecutor(Executor):
 
         self._request_events.pop(request_id, None)
 
-        # Check if this was a forwarded sub-workflow request
-        if request_id in self._sub_workflow_contexts:
-            context = self._sub_workflow_contexts.pop(request_id)
-
-            # Send back to sub-workflow that made the original request
-            if not isinstance(event.data, RequestInfoMessage):
-                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-            response = RequestResponse(
-                data=response_data,
-                original_request=event.data,
-                request_id=request_id,
-            )
-            await ctx.send_message(response, target_id=context["workflow_executor_id"])
-        else:
-            # Regular response - send directly back to source
-            # Create a correlated response that includes both the response data and original request
-            if not isinstance(event.data, RequestInfoMessage):
-                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-            correlated_response = RequestResponse(
-                data=response_data, original_request=event.data, request_id=request_id
-            )
-            await ctx.send_message(correlated_response, target_id=event.source_executor_id)
+        # Create a correlated response that includes both the response data and original request
+        if not isinstance(event.data, RequestInfoMessage):
+            raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+        correlated_response = RequestResponse(data=response_data, original_request=event.data, request_id=request_id)
+        await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 
         await self._clear_pending_request_snapshot(request_id, ctx)
 
@@ -821,7 +760,7 @@ class RequestInfoExecutor(Executor):
         return repr(value)
 
     async def has_pending_request(self, request_id: str, ctx: WorkflowContext[Any]) -> bool:
-        if request_id in self._request_events or request_id in self._sub_workflow_contexts:
+        if request_id in self._request_events:
             return True
         snapshot = await self._get_pending_request_snapshot(request_id, ctx)
         return snapshot is not None

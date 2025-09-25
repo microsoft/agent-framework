@@ -11,7 +11,6 @@ from agent_framework import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
-    SubWorkflowRequestInfo,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
@@ -22,22 +21,22 @@ from agent_framework import (
 Sample: Sub-workflow with parallel request handling by specialized interceptors
 
 This sample demonstrates how different parent executors can handle different types of requests
-from the same sub-workflow using regular @handler methods for SubWorkflowRequestInfo messages.
+from the same sub-workflow using regular @handler methods for RequestInfoMessage subclasses.
 
 Prerequisites:
 - No external services required (external handling simulated via `RequestInfoExecutor`).
 
 Key architectural principles:
 1. Specialized interceptors: Each parent executor handles only specific request types
-2. Type-based routing: ResourceCache handles SubWorkflowRequestInfo[ResourceRequest], PolicyEngine handles SubWorkflowRequestInfo[PolicyCheckRequest]
-3. Automatic type filtering: Each interceptor only receives requests with matching typed data
+2. Type-based routing: ResourceCache handles ResourceRequest, PolicyEngine handles PolicyCheckRequest
+3. Automatic type filtering: Each interceptor only receives requests with matching types
 4. Fallback forwarding: Unhandled requests are forwarded to external services
 
 The example simulates a resource allocation system where:
 - Sub-workflow makes mixed requests for resources (CPU, memory) and policy checks
 - ResourceCache executor intercepts ResourceRequest messages, serves from cache or forwards
 - PolicyEngine executor intercepts PolicyCheckRequest messages, applies rules or forwards
-- Each interceptor uses typed @handler(SubWorkflowRequestInfo[SpecificRequestType]) for automatic filtering
+- Each interceptor uses typed @handler methods for automatic filtering
 
 Flow visualization:
 
@@ -47,18 +46,18 @@ Flow visualization:
       v
     [ Sub-workflow: WorkflowExecutor(ResourceRequester) ]
       |
-      |  Emits SubWorkflowRequestInfo wrapping different inner types:
-      |     - SubWorkflowRequestInfo[ResourceRequest]
-      |     - SubWorkflowRequestInfo[PolicyCheckRequest]
+      |  Emits different RequestInfoMessage types:
+      |     - ResourceRequest
+      |     - PolicyCheckRequest
       v
   Parent workflow routes to specialized handlers:
       |                                    |
-      | ResourceCache.handle_sub_workflow_request | PolicyEngine.handle_sub_workflow_request
-      | (@handler SubWorkflowRequestInfo[ResourceRequest])           | (@handler SubWorkflowRequestInfo[PolicyCheckRequest])
+      | ResourceCache.handle_resource_request | PolicyEngine.handle_policy_request
+      | (@handler ResourceRequest)          | (@handler PolicyCheckRequest)
       v                                    v
   Cache hit/miss decision              Policy allow/deny decision
       |                                    |
-      | SubWorkflowResponse OR forward     | SubWorkflowResponse OR forward
+      | RequestResponse OR forward        | RequestResponse OR forward
       v                                    v
   Back to sub-workflow  <----------> External RequestInfoExecutor
                                            |
@@ -191,7 +190,7 @@ class ResourceRequester(Executor):
         return self._request_count == 0
 
 
-# 3. Implement the Resource Cache - Uses typed handler for SubWorkflowRequestInfo[ResourceRequest]
+# 3. Implement the Resource Cache - Uses typed handler for ResourceRequest
 class ResourceCache(Executor):
     """Interceptor that handles RESOURCE requests from cache using typed routing."""
 
@@ -204,11 +203,11 @@ class ResourceCache(Executor):
         # Instance initialization only; state kept in class attributes as above
 
     @handler
-    async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo[ResourceRequest], ctx: WorkflowContext[RequestResponse[ResourceRequest, Any] | SubWorkflowRequestInfo[ResourceRequest]]
+    async def handle_resource_request(
+        self, request: ResourceRequest, ctx: WorkflowContext[RequestResponse[ResourceRequest, Any] | ResourceRequest]
     ) -> None:
         """Handle RESOURCE requests from sub-workflows and check cache first."""
-        resource_request = request.data
+        resource_request = request
         print(f"🏪 CACHE interceptor checking: {resource_request.amount} {resource_request.resource_type}")
 
         available = self.cache.get(resource_request.resource_type, 0)
@@ -223,10 +222,10 @@ class ResourceCache(Executor):
             self.results.append(response_data)
 
             # Send response back to sub-workflow
-            response = RequestResponse(data=response_data, original_request=request.data, request_id=request.request_id)
-            await ctx.send_message(response, target_id=request.workflow_executor_id)
+            response = RequestResponse(data=response_data, original_request=request, request_id=request.request_id)
+            await ctx.send_message(response, target_id=request.source_executor_id)
         else:
-            # Cache miss - forward to external (preserve SubWorkflowRequestInfo wrapper)
+            # Cache miss - forward to external
             print(f"  ❌ Cache miss: need {resource_request.amount}, have {available} {resource_request.resource_type}")
             await ctx.send_message(request)
 
@@ -243,7 +242,7 @@ class ResourceCache(Executor):
             )
 
 
-# 4. Implement the Policy Engine - Uses typed handler for SubWorkflowRequestInfo[PolicyCheckRequest]
+# 4. Implement the Policy Engine - Uses typed handler for PolicyCheckRequest
 class PolicyEngine(Executor):
     """Interceptor that handles POLICY requests using typed routing."""
 
@@ -260,11 +259,11 @@ class PolicyEngine(Executor):
         # Instance initialization only; state kept in class attributes as above
 
     @handler
-    async def handle_sub_workflow_request(
-        self, request: SubWorkflowRequestInfo[PolicyCheckRequest], ctx: WorkflowContext[RequestResponse[PolicyCheckRequest, Any] | SubWorkflowRequestInfo[PolicyCheckRequest]]
+    async def handle_policy_request(
+        self, request: PolicyCheckRequest, ctx: WorkflowContext[RequestResponse[PolicyCheckRequest, Any] | PolicyCheckRequest]
     ) -> None:
         """Handle POLICY requests from sub-workflows and apply rules."""
-        policy_request = request.data
+        policy_request = request
         print(f"🛡️  POLICY interceptor checking: {policy_request.amount} {policy_request.resource_type}, policy={policy_request.policy_type}")
 
         quota_limit = self.quota.get(policy_request.resource_type, 0)
@@ -276,8 +275,8 @@ class PolicyEngine(Executor):
                 self.results.append(response_data)
 
                 # Send response back to sub-workflow
-                response = RequestResponse(data=response_data, original_request=request.data, request_id=request.request_id)
-                await ctx.send_message(response, target_id=request.workflow_executor_id)
+                response = RequestResponse(data=response_data, original_request=request, request_id=request.request_id)
+                await ctx.send_message(response, target_id=request.source_executor_id)
                 return
 
             # Exceeds quota - forward to external for review
@@ -343,18 +342,18 @@ async def main() -> None:
     # Create a simple coordinator that starts the process
     coordinator = Coordinator()
 
-    # TYPED ROUTING: Each executor handles specific typed SubWorkflowRequestInfo messages
+    # TYPED ROUTING: Each executor handles specific typed RequestInfoMessage messages
     main_workflow = (
         WorkflowBuilder()
         .set_start_executor(coordinator)
         .add_edge(coordinator, workflow_executor)  # Start sub-workflow
         .add_edge(workflow_executor, coordinator)  # Sub-workflow completion back to coordinator
-        .add_edge(workflow_executor, cache)  # WorkflowExecutor sends SubWorkflowRequestInfo to cache
-        .add_edge(workflow_executor, policy)  # WorkflowExecutor sends SubWorkflowRequestInfo to policy
-        .add_edge(cache, workflow_executor)  # Cache sends SubWorkflowResponse back
-        .add_edge(policy, workflow_executor)  # Policy sends SubWorkflowResponse back
-        .add_edge(cache, main_request_info)  # Cache forwards SubWorkflowRequestInfo to external
-        .add_edge(policy, main_request_info)  # Policy forwards SubWorkflowRequestInfo to external
+        .add_edge(workflow_executor, cache)  # WorkflowExecutor sends ResourceRequest to cache
+        .add_edge(workflow_executor, policy)  # WorkflowExecutor sends PolicyCheckRequest to policy
+        .add_edge(cache, workflow_executor)  # Cache sends RequestResponse back
+        .add_edge(policy, workflow_executor)  # Policy sends RequestResponse back
+        .add_edge(cache, main_request_info)  # Cache forwards ResourceRequest to external
+        .add_edge(policy, main_request_info)  # Policy forwards PolicyCheckRequest to external
         .add_edge(main_request_info, workflow_executor)  # External responses back to sub-workflow
         .build()
     )

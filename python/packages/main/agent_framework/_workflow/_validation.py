@@ -481,52 +481,6 @@ class WorkflowGraphValidator:
 
     # region Type Compatibility Utilities
     @staticmethod
-    def _is_sub_workflow_request_info_compatible(
-        source_type: type[Any], target_type: type[Any], source_origin: type[Any] | None, target_origin: type[Any] | None
-    ) -> bool:
-        """Check if SubWorkflowRequestInfo types are compatible.
-
-        Special handling for SubWorkflowRequestInfo compatibility
-        Allow unparameterized SubWorkflowRequestInfo to be compatible with parameterized SubWorkflowRequestInfo[T]
-        and vice versa - runtime type checking will handle the actual filtering.
-
-        Specifically there are two cases:
-
-        Case 1: source_type is SubWorkflowRequestInfo and target_type is SubWorkflowRequestInfo[T].
-        This is when an executor's handler's output type is SubWorkflowRequestInfo without a type parameter.
-        It is the case when the source executor is a WorkflowExecutor, which doesn't know the type of the
-        sub-workflow's request at type-checking time.
-
-        Case 2: source_type is SubWorkflowRequestInfo[T] and target_type is SubWorkflowRequestInfo.
-        This is the case when the target executor is a RequestInfoExecutor, which can handle any
-        SubWorkflowRequestInfo regardless of the type parameter.
-
-        Args:
-            source_type: The source type to check
-            target_type: The target type to check
-            source_origin: The origin type of the source (for generic types)
-            target_origin: The origin type of the target (for generic types)
-
-        Returns:
-            True if the types are compatible, False otherwise
-        """
-        return (
-            (hasattr(source_type, "__name__") and source_type.__name__ == "SubWorkflowRequestInfo")
-            and (
-                target_origin is not None
-                and hasattr(target_origin, "__name__")
-                and target_origin.__name__ == "SubWorkflowRequestInfo"
-            )
-        ) or (
-            (
-                source_origin is not None
-                and hasattr(source_origin, "__name__")
-                and source_origin.__name__ == "SubWorkflowRequestInfo"
-            )
-            and (hasattr(target_type, "__name__") and target_type.__name__ == "SubWorkflowRequestInfo")
-        )
-
-    @staticmethod
     def _is_type_compatible(source_type: type[Any], target_type: type[Any]) -> bool:
         """Check if source_type is compatible with target_type."""
         # Handle Any type
@@ -567,9 +521,8 @@ class WorkflowGraphValidator:
                     for s_arg, t_arg in zip(source_args, target_args, strict=True)
                 )
 
-        return WorkflowGraphValidator._is_sub_workflow_request_info_compatible(
-            source_type, target_type, source_origin, target_origin
-        )
+        # No other special compatibility cases
+        return False
 
     # endregion
 
