@@ -145,7 +145,7 @@ public static partial class AgentWorkflowBuilder
     /// <summary>
     /// Executor that runs the agent and forwards all messages, input and output, to the next executor.
     /// </summary>
-    private sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInputInOutput) : Executor(GetDescriptiveIdFromAgent(agent))
+    private sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInputInOutput) : Executor(GetDescriptiveIdFromAgent(agent)), IResettableExecutor
     {
         private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -185,20 +185,28 @@ public static partial class AgentWorkflowBuilder
                     await context.SendMessageAsync(messages).ConfigureAwait(false);
                     await context.SendMessageAsync(token).ConfigureAwait(false);
                 });
+
+        public ValueTask ResetAsync()
+        {
+            this._pendingMessages.Clear();
+            return default;
+        }
     }
 
     /// <summary>
     /// Provides an executor that batches received chat messages that it then publishes as the final result
     /// when receiving a <see cref="TurnToken"/>.
     /// </summary>
-    private sealed class OutputMessagesExecutor() : ChatProtocolExecutor("OutputMessages")
+    private sealed class OutputMessagesExecutor() : ChatProtocolExecutor("OutputMessages"), IResettableExecutor
     {
         protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
             => context.YieldOutputAsync(messages);
+
+        ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
     }
 
     /// <summary>Executor that forwards all messages.</summary>
-    private sealed class ChatForwardingExecutor(string id) : Executor(id)
+    private sealed class ChatForwardingExecutor(string id) : Executor(id), IResettableExecutor
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder
@@ -206,23 +214,27 @@ public static partial class AgentWorkflowBuilder
                     .AddHandler<ChatMessage>((message, context) => context.SendMessageAsync(message))
                     .AddHandler<List<ChatMessage>>((messages, context) => context.SendMessageAsync(messages))
                     .AddHandler<TurnToken>((turnToken, context) => context.SendMessageAsync(turnToken));
+
+        public ValueTask ResetAsync() => default;
     }
 
     /// <summary>
     /// Provides an executor that batches received chat messages that it then releases when
     /// receiving a <see cref="TurnToken"/>.
     /// </summary>
-    private sealed class BatchChatMessagesToListExecutor(string id) : ChatProtocolExecutor(id)
+    private sealed class BatchChatMessagesToListExecutor(string id) : ChatProtocolExecutor(id), IResettableExecutor
     {
         protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
             => context.SendMessageAsync(messages);
+
+        ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
     }
 
     /// <summary>
     /// Provides an executor that accepts the output messages from each of the concurrent agents
     /// and produces a result list containing the last message from each.
     /// </summary>
-    private sealed class ConcurrentEndExecutor : Executor
+    private sealed class ConcurrentEndExecutor : Executor, IResettableExecutor
     {
         private readonly int _expectedInputs;
         private readonly Func<IList<List<ChatMessage>>, List<ChatMessage>> _aggregator;
@@ -236,6 +248,12 @@ public static partial class AgentWorkflowBuilder
 
             this._allResults = new List<List<ChatMessage>>(expectedInputs);
             this._remaining = expectedInputs;
+        }
+
+        private void Reset()
+        {
+            this._allResults = new List<List<ChatMessage>>(this._expectedInputs);
+            this._remaining = this._expectedInputs;
         }
 
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
@@ -259,6 +277,12 @@ public static partial class AgentWorkflowBuilder
                     await context.YieldOutputAsync(this._aggregator(results)).ConfigureAwait(false);
                 }
             });
+
+        public ValueTask ResetAsync()
+        {
+            this.Reset();
+            return default;
+        }
     }
 
     /// <summary>
@@ -428,7 +452,7 @@ public static partial class AgentWorkflowBuilder
         }
 
         /// <summary>Executor used at the start of a handoffs workflow to accumulate messages and emit them as HandoffState upon receiving a turn token.</summary>
-        private sealed class StartHandoffsExecutor() : Executor("HandoffStart")
+        private sealed class StartHandoffsExecutor() : Executor("HandoffStart"), IResettableExecutor
         {
             private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -445,20 +469,28 @@ public static partial class AgentWorkflowBuilder
                         this._pendingMessages.Clear();
                         await context.SendMessageAsync(new HandoffState(token, null, messages)).ConfigureAwait(false);
                     });
+
+            public ValueTask ResetAsync()
+            {
+                this._pendingMessages.Clear();
+                return default;
+            }
         }
 
         /// <summary>Executor used at the end of a handoff workflow to raise a final completed event.</summary>
-        private sealed class EndHandoffsExecutor() : Executor("HandoffEnd")
+        private sealed class EndHandoffsExecutor() : Executor("HandoffEnd"), IResettableExecutor
         {
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
                 routeBuilder.AddHandler<HandoffState>((handoff, context) =>
                     context.YieldOutputAsync(handoff.Messages));
+
+            public ValueTask ResetAsync() => default;
         }
 
         /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
         private sealed class HandoffAgentExecutor(
             AIAgent agent,
-            string? handoffInstructions) : Executor(GetDescriptiveIdFromAgent(agent))
+            string? handoffInstructions) : Executor(GetDescriptiveIdFromAgent(agent)), IResettableExecutor
         {
             private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
                 ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
@@ -548,6 +580,8 @@ public static partial class AgentWorkflowBuilder
                             }
                         }
                     });
+
+            public ValueTask ResetAsync() => default;
         }
 
         private record class HandoffState(
@@ -746,7 +780,7 @@ public static partial class AgentWorkflowBuilder
             return builder.WithOutputFrom(host).Build();
         }
 
-        private sealed class GroupChatHost(AIAgent[] agents, Dictionary<AIAgent, ExecutorIsh> agentMap, Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) : Executor("GroupChatHost")
+        private sealed class GroupChatHost(AIAgent[] agents, Dictionary<AIAgent, ExecutorIsh> agentMap, Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) : Executor("GroupChatHost"), IResettableExecutor
         {
             private readonly AIAgent[] _agents = agents;
             private readonly Dictionary<AIAgent, ExecutorIsh> _agentMap = agentMap;
@@ -786,6 +820,14 @@ public static partial class AgentWorkflowBuilder
                     this._manager = null;
                     await context.YieldOutputAsync(messages).ConfigureAwait(false);
                 });
+
+            public ValueTask ResetAsync()
+            {
+                this._pendingMessages.Clear();
+                this._manager = null;
+
+                return default;
+            }
         }
     }
 
