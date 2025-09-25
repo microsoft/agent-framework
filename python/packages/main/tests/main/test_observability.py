@@ -263,7 +263,7 @@ async def test_chat_client_streaming_observability(
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    async for update in client.get_streaming_response(messages=messages, ai_model_id="Test"):
+    async for update in client.get_streaming_response(messages=messages, model="Test"):
         updates.append(update)
 
     # Verify we got the expected updates, this shouldn't be dependent on otel
