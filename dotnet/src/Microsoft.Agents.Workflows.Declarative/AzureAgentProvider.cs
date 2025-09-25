@@ -1,5 +1,4 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -48,7 +47,8 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
         // TODO: Switch to asynchronous "CreateMessageAsync", when fix properly applied:
         //  BUG: https://github.com/Azure/azure-sdk-for-net/issues/52571
         //   PR: https://github.com/Azure/azure-sdk-for-net/pull/52653
-        this.GetAgentsClient().Messages.CreateMessage(conversationId,
+        this.GetAgentsClient().Messages.CreateMessage(
+            conversationId,
             role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
             contentBlocks: GetContent(),
             attachments: null,
