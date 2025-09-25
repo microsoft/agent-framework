@@ -13,7 +13,7 @@ internal static class Step1aEntryPoint
     {
         Run run = await InProcessExecution.RunAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
 
-        Assert.Equal(RunStatus.Completed, run.Status);
+        Assert.Equal(RunStatus.Idle, run.Status);
 
         foreach (WorkflowEvent evt in run.NewEvents)
         {

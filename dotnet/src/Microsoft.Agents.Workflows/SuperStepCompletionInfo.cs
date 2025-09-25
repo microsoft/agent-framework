@@ -40,5 +40,5 @@ public sealed class SuperStepCompletionInfo(HashSet<string> activatedExecutors, 
     /// Gets the <see cref="CheckpointInfo"/> corresponding to the checkpoint created at the end of this SuperStep.
     /// <see langword="null"/> if checkpointing was not enabled when the run was started.
     /// </summary>
-    public CheckpointInfo? Checkpoint { get; init; } = null;
+    public CheckpointInfo? Checkpoint { get; init; }
 }

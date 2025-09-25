@@ -3,21 +3,25 @@
 import asyncio
 from dataclasses import dataclass
 
-from agent_framework import AgentProtocol, ChatMessage, Role
-from agent_framework.azure import AzureChatClient
-from agent_framework.workflow import (
-    AgentExecutor,  # Wraps an agent so it can run inside a workflow
+from agent_framework import (
+    AgentExecutor,  # Executor that runs the agent
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
+    ChatMessage,  # Chat message structure
+    Executor,  # Base class for workflow executors
     RequestInfoEvent,  # Event emitted when human input is requested
     RequestInfoExecutor,  # Special executor that collects human input out of band
     RequestInfoMessage,  # Base class for request payloads sent to RequestInfoExecutor
     RequestResponse,  # Correlates a human response with the original request
+    Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for assembling the graph
-    WorkflowCompletedEvent,  # Terminal event used to finish the workflow
     WorkflowContext,  # Per run context and event bus
+    WorkflowOutputEvent,  # Event emitted when workflow yields output
+    WorkflowRunState,  # Enum of workflow run states
+    WorkflowStatusEvent,  # Event emitted on run state changes
     handler,  # Decorator to expose an Executor method as a step
 )
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
@@ -26,8 +30,7 @@ Sample: Human in the loop guessing game
 
 An agent guesses a number, then a human guides it with higher, lower, or
 correct via RequestInfoExecutor. The loop continues until the human confirms
-correct, at which point the workflow
-completes.
+correct, at which point the workflow completes when idle with no pending work.
 
 Purpose:
 Show how to integrate a human step in the middle of an LLM workflow using RequestInfoExecutor and correlated
@@ -39,7 +42,7 @@ Demonstrate:
 - Driving the loop in application code with run_stream and send_responses_streaming.
 
 Prerequisites:
-- Azure OpenAI configured for AzureChatClient with required environment variables.
+- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -73,7 +76,7 @@ class GuessOutput(BaseModel):
     guess: int
 
 
-class TurnManager(AgentExecutor):
+class TurnManager(Executor):
     """Coordinates turns between the agent and the human.
 
     Responsibilities:
@@ -82,8 +85,8 @@ class TurnManager(AgentExecutor):
     - After each human reply, either finish the game or prompt the agent again with feedback.
     """
 
-    def __init__(self, agent: AgentProtocol, id: str | None = None):
-        super().__init__(agent, id=id)
+    def __init__(self, id: str | None = None):
+        super().__init__(id=id or "turn_manager")
 
     @handler
     async def start(self, _: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
@@ -128,7 +131,7 @@ class TurnManager(AgentExecutor):
     async def on_human_feedback(
         self,
         feedback: RequestResponse[HumanFeedbackRequest, str],
-        ctx: WorkflowContext[AgentExecutorRequest | WorkflowCompletedEvent],
+        ctx: WorkflowContext[AgentExecutorRequest, str],
     ) -> None:
         """Continue the game or finish based on human feedback.
 
@@ -140,7 +143,7 @@ class TurnManager(AgentExecutor):
         last_guess = getattr(feedback.original_request, "guess", None)
 
         if reply == "correct":
-            await ctx.add_event(WorkflowCompletedEvent(f"Guessed correctly: {last_guess}"))
+            await ctx.yield_output(f"Guessed correctly: {last_guess}")
             return
 
         # Provide feedback to the agent to try again.
@@ -155,7 +158,7 @@ class TurnManager(AgentExecutor):
 async def main() -> None:
     # Create the chat agent and wrap it in an AgentExecutor.
     # response_format enforces that the model produces JSON compatible with GuessOutput.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     agent = chat_client.create_agent(
         instructions=(
             "You guess a number between 1 and 10. "
@@ -166,9 +169,10 @@ async def main() -> None:
         response_format=GuessOutput,
     )
 
-    # Build a simple loop: TurnManager <-> RequestInfoExecutor.
-    # TurnManager runs the agent, asks the human, processes feedback, and either finishes or repeats.
-    turn_manager = TurnManager(agent=agent, id="turn_manager")
+    # Build a simple loop: TurnManager <-> AgentExecutor <-> RequestInfoExecutor.
+    # TurnManager coordinates, AgentExecutor runs the model, RequestInfoExecutor gathers human replies.
+    turn_manager = TurnManager(id="turn_manager")
+    agent_exec = AgentExecutor(agent=agent, id="agent")
 
     # Naming note:
     # This variable is currently named hitl for historical reasons. The name can feel ambiguous or magical.
@@ -179,9 +183,10 @@ async def main() -> None:
     top_builder = (
         WorkflowBuilder()
         .set_start_executor(turn_manager)
-        .add_edge(turn_manager, turn_manager)  # TurnManager executes its own agent step
+        .add_edge(turn_manager, agent_exec)  # Ask agent to make/adjust a guess
+        .add_edge(agent_exec, turn_manager)  # Agent's response comes back to coordinator
         .add_edge(turn_manager, hitl)  # Ask human for guidance
-        .add_edge(hitl, turn_manager)  # Feed human guidance back to the agent turn manager
+        .add_edge(hitl, turn_manager)  # Feed human guidance back to coordinator
     )
 
     # Build the workflow (no checkpointing in this minimal sample).
@@ -189,7 +194,8 @@ async def main() -> None:
 
     # Human in the loop run: alternate between invoking the workflow and supplying collected responses.
     pending_responses: dict[str, str] | None = None
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
+    workflow_output: str | None = None
 
     # User guidance printing:
     # If you want to instruct users up front, print a short banner before the loop.
@@ -206,18 +212,37 @@ async def main() -> None:
         stream = (
             workflow.send_responses_streaming(pending_responses) if pending_responses else workflow.run_stream("start")
         )
+        # Collect events for this turn. Among these you may see WorkflowStatusEvent
+        # with state IDLE_WITH_PENDING_REQUESTS when the workflow pauses for
+        # human input, preceded by IN_PROGRESS_PENDING_REQUESTS as requests are
+        # emitted.
         events = [event async for event in stream]
         pending_responses = None
 
-        # Collect human requests and the terminal completion if present.
+        # Collect human requests, workflow outputs, and check for completion.
         requests: list[tuple[str, str]] = []  # (request_id, prompt)
         for event in events:
-            if isinstance(event, WorkflowCompletedEvent):
-                completed = event
-            elif isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanFeedbackRequest):
+            if isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanFeedbackRequest):
                 # RequestInfoEvent for our HumanFeedbackRequest.
                 requests.append((event.request_id, event.data.prompt))
-            # Other events are ignored for brevity.
+            elif isinstance(event, WorkflowOutputEvent):
+                # Capture workflow output as they're yielded
+                workflow_output = str(event.data)
+                completed = True  # In this sample, we finish after one output.
+
+        # Detect run state transitions for a better developer experience.
+        pending_status = any(
+            isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+            for e in events
+        )
+        idle_with_requests = any(
+            isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+            for e in events
+        )
+        if pending_status:
+            print("State: IN_PROGRESS_PENDING_REQUESTS (requests outstanding)")
+        if idle_with_requests:
+            print("State: IDLE_WITH_PENDING_REQUESTS (awaiting human input)")
 
         # If we have any human requests, prompt the user and prepare responses.
         if requests and not completed:
@@ -227,16 +252,15 @@ async def main() -> None:
                 print(f"HITL> {prompt}")
                 # Instructional print already appears above. The input line below is the user entry point.
                 # If desired, you can add more guidance here, but keep it concise.
-                answer = input("Enter higher/lower/correct/exit: ").lower()
+                answer = input("Enter higher/lower/correct/exit: ").lower()  # noqa: ASYNC250
                 if answer == "exit":
                     print("Exiting...")
                     return
                 responses[req_id] = answer
             pending_responses = responses
 
-    # Show final result.
-    print(completed)
-
+    # Show final result from workflow output captured during streaming.
+    print(f"Workflow output: {workflow_output}")
     """
     Sample Output:
 
@@ -248,7 +272,7 @@ async def main() -> None:
     Enter higher/lower/correct/exit: lower
     HITL> The agent guessed: 9. Type one of: higher (your number is higher than this guess), lower (your number is lower than this guess), correct, or exit.
     Enter higher/lower/correct/exit: correct
-    WorkflowCompletedEvent(data=Guessed correctly: 9)
+    Workflow output: Guessed correctly: 9
     """  # noqa: E501
 
 

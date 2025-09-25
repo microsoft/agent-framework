@@ -54,11 +54,9 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_WithNullA2AClient_ThrowsArgumentNullException()
-    {
+    public void Constructor_WithNullA2AClient_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new A2AAgent(null!));
-    }
 
     [Fact]
     public void Constructor_WithDefaultParameters_UsesBaseProperties()
@@ -96,10 +94,10 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Hello! How can I help you today?" }
-            }
+            ]
         };
 
         var inputMessages = new List<ChatMessage>
@@ -139,10 +137,10 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Response" }
-            },
+            ],
             ContextId = "new-context-id"
         };
 
@@ -157,7 +155,9 @@ public sealed class A2AAgentTests : IDisposable
         await this._agent.RunAsync(inputMessages, thread);
 
         // Assert
-        Assert.Equal("new-context-id", thread.ConversationId);
+        Assert.IsType<A2AAgentThread>(thread);
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal("new-context-id", a2aThread.ContextId);
     }
 
     [Fact]
@@ -170,7 +170,8 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         // Act
         await this._agent.RunAsync(inputMessages, thread);
@@ -194,15 +195,16 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Response" }
-            },
+            ],
             ContextId = "different-context"
         };
 
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, thread));
@@ -221,7 +223,7 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Hello" } },
+            Parts = [new TextPart { Text = "Hello" }],
             ContextId = "stream-context"
         };
 
@@ -267,20 +269,21 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Response" } },
+            Parts = [new TextPart { Text = "Response" }],
             ContextId = "new-stream-context"
         };
 
         var thread = this._agent.GetNewThread();
 
         // Act
-        await foreach (var update in this._agent.RunStreamingAsync(inputMessages, thread))
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
         {
             // Just iterate through to trigger the logic
         }
 
         // Assert
-        Assert.Equal("new-stream-context", thread.ConversationId);
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal("new-stream-context", a2aThread.ContextId);
     }
 
     [Fact]
@@ -295,10 +298,11 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.StreamingResponseToReturn = new Message();
 
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         // Act
-        await foreach (var update in this._agent.RunStreamingAsync(inputMessages, thread))
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
         {
             // Just iterate through to trigger the logic
         }
@@ -314,7 +318,8 @@ public sealed class A2AAgentTests : IDisposable
     {
         // Arrange
         var thread = this._agent.GetNewThread();
-        thread.ConversationId = "existing-context-id";
+        var a2aThread = (A2AAgentThread)thread;
+        a2aThread.ContextId = "existing-context-id";
 
         var inputMessages = new List<ChatMessage>
         {
@@ -325,7 +330,7 @@ public sealed class A2AAgentTests : IDisposable
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
-            Parts = new List<Part> { new TextPart { Text = "Response" } },
+            Parts = [new TextPart { Text = "Response" }],
             ContextId = "different-context"
         };
 
@@ -362,11 +367,11 @@ public sealed class A2AAgentTests : IDisposable
         // Arrange
         var inputMessages = new List<ChatMessage>
         {
-            new(ChatRole.User, new List<AIContent>
-            {
+            new(ChatRole.User,
+            [
                 new TextContent("Check this file:"),
                 new HostedFileContent("https://example.com/file.pdf")
-            })
+            ])
         };
 
         // Act
@@ -398,7 +403,7 @@ public sealed class A2AAgentTests : IDisposable
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             // Capture the request content
-#pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist on .NET …
+#pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist downlevel
             var content = await request.Content!.ReadAsStringAsync();
 #pragma warning restore CA2016
 
@@ -409,7 +414,7 @@ public sealed class A2AAgentTests : IDisposable
             // Return the pre-configured non-streaming response
             if (this.ResponseToReturn is not null)
             {
-                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", this.ResponseToReturn);
+                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse("response-id", this.ResponseToReturn);
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -424,7 +429,7 @@ public sealed class A2AAgentTests : IDisposable
                 await SseFormatter.WriteAsync(
                     new SseItem<JsonRpcResponse>[]
                     {
-                        new(JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", this.StreamingResponseToReturn!))
+                        new(JsonRpcResponse.CreateJsonRpcResponse("response-id", this.StreamingResponseToReturn!))
                     }.ToAsyncEnumerable(),
                     stream,
                     (item, writer) =>

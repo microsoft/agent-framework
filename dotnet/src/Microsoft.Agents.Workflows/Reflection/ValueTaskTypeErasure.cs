@@ -68,9 +68,7 @@ internal static class ValueTaskTypeErasure
 
             Task task = (Task)asTaskMethod.ReflectionInvoke(maybeGenericVT)!;
             await task.ConfigureAwait(false); // TODO: Could we need to capture the context here?
-            object? result = getResultMethod.ReflectionInvoke(task);
-
-            return result;
+            return getResultMethod.ReflectionInvoke(task);
         }
     }
 }

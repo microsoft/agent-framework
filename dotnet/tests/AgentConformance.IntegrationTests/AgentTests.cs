@@ -13,9 +13,7 @@ namespace AgentConformance.IntegrationTests;
 public abstract class AgentTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : IAsyncLifetime
     where TAgentFixture : IAgentFixture
 {
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    protected TAgentFixture Fixture { get; private set; }
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+    protected TAgentFixture Fixture { get; private set; } = default!;
 
     public Task InitializeAsync()
     {
@@ -23,8 +21,5 @@ public abstract class AgentTests<TAgentFixture>(Func<TAgentFixture> createAgentF
         return this.Fixture.InitializeAsync();
     }
 
-    public Task DisposeAsync()
-    {
-        return this.Fixture.DisposeAsync();
-    }
+    public Task DisposeAsync() => this.Fixture.DisposeAsync();
 }

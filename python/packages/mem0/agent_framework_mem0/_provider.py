@@ -2,10 +2,11 @@
 
 import sys
 from collections.abc import MutableSequence, Sequence
-from typing import Any, Final
+from typing import Any
 
 from agent_framework import ChatMessage, Context, ContextProvider, TextContent
 from agent_framework.exceptions import ServiceInitializationError
+from mem0 import AsyncMemoryClient
 from pydantic import PrivateAttr
 
 if sys.version_info >= (3, 11):
@@ -14,19 +15,15 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 
-DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
-
-
 class Mem0Provider(ContextProvider):
+    mem0_client: AsyncMemoryClient
     api_key: str | None = None
     application_id: str | None = None
     agent_id: str | None = None
     thread_id: str | None = None
     user_id: str | None = None
     scope_to_per_operation_thread_id: bool = False
-    context_prompt: str = DEFAULT_CONTEXT_PROMPT
-    # Use Any to avoid forward reference issues with AsyncMemoryClient
-    mem0_client: Any = None
+    context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT
 
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
 
@@ -38,8 +35,8 @@ class Mem0Provider(ContextProvider):
         thread_id: str | None = None,
         user_id: str | None = None,
         scope_to_per_operation_thread_id: bool = False,
-        context_prompt: str = DEFAULT_CONTEXT_PROMPT,
-        mem0_client: Any = None,
+        context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
+        mem0_client: AsyncMemoryClient | None = None,
     ) -> None:
         """Initializes a new instance of the Mem0Provider class.
 
@@ -56,8 +53,6 @@ class Mem0Provider(ContextProvider):
         """
         should_close_client = False
         if mem0_client is None:
-            from mem0 import AsyncMemoryClient
-
             mem0_client = AsyncMemoryClient(api_key=api_key)
             should_close_client = True
 
@@ -84,7 +79,7 @@ class Mem0Provider(ContextProvider):
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit."""
         if self._should_close_client and self.mem0_client:
-            await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)
+            await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore
 
     async def thread_created(self, thread_id: str | None = None) -> None:
         """Called when a new thread is created.

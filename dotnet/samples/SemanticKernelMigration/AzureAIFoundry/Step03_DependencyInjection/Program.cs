@@ -16,10 +16,10 @@ var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
@@ -61,22 +61,20 @@ async Task SKAgent()
     await agent.Client.Administration.DeleteAgentAsync(agent.Id);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton((sp) => AzureAIAgent.CreateAgentsClient(azureEndpoint, new AzureCliCredential()));
+    serviceCollection.AddSingleton((sp) => new PersistentAgentsClient(azureEndpoint, new AzureCliCredential()));
     serviceCollection.AddTransient<AIAgent>((sp) =>
     {
         var azureAgentClient = sp.GetRequiredService<PersistentAgentsClient>();
 
-        var aiAgent = azureAgentClient.CreateAIAgent(
+        return azureAgentClient.CreateAIAgent(
             deploymentName,
             name: "GenerateStory",
             instructions: "You are good at telling jokes.");
-
-        return aiAgent;
     });
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
@@ -95,6 +93,9 @@ async Task AFAgent()
 
     // Clean up
     var azureAgentClient = serviceProvider.GetRequiredService<PersistentAgentsClient>();
-    await azureAgentClient.Threads.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await azureAgentClient.Threads.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await azureAgentClient.Administration.DeleteAgentAsync(agent.Id);
 }

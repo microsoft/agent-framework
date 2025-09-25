@@ -35,12 +35,12 @@ internal sealed class HttpActorProcessor
             return GetResult(response);
         }
 
-        if (streaming == true)
+        if (streaming is true)
         {
             return new ActorUpdateStreamingResult(responseHandle);
         }
 
-        if (blocking == true)
+        if (blocking is true)
         {
             response = await responseHandle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
             return GetResult(response);
@@ -51,7 +51,7 @@ internal sealed class HttpActorProcessor
             ActorId = actorId,
             MessageId = messageId,
             Status = RequestStatus.Pending,
-            Data = JsonDocument.Parse("{}").RootElement
+            Data = JsonSerializer.Deserialize<JsonElement>("{}"),
         });
     }
 
@@ -73,12 +73,12 @@ internal sealed class HttpActorProcessor
             return GetResult(response);
         }
 
-        if (streaming == true)
+        if (streaming is true)
         {
             return new ActorUpdateStreamingResult(responseHandle);
         }
 
-        if (blocking == true)
+        if (blocking is true)
         {
             response = await responseHandle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
             return GetResult(response);

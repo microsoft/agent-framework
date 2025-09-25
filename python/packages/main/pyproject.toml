@@ -1,10 +1,10 @@
 [project]
 name = "agent-framework"
 description = "Microsoft Agent Framework for building AI Agents with Python."
-authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.1.0b1"
+version = "0.1.0b1" # TODO: decide on initial version and versioning strategy
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,29 +24,56 @@ classifiers = [
 ]
 dependencies = [
     "openai>=1.99.0",
-    "pydantic>=2.11.7",
-    "pydantic-settings>=2.10.1",
-    "typing-extensions>=4.14.0",
-    "opentelemetry-api ~= 1.24",
-    "opentelemetry-sdk ~= 1.24",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+    "typing-extensions",
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
     "mcp[ws]>=1.13",
     "azure-monitor-opentelemetry>=1.7.0",
     "azure-monitor-opentelemetry-exporter>=1.0.0b41",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+    "opentelemetry-semantic-conventions-ai>=0.4.13",
+    "aiofiles>=24.1.0",
+    "azure-identity>=1,<2"
 ]
 
 [project.optional-dependencies]
+azure-ai = [
+    "agent-framework-azure-ai"
+]
 azure = [
-    "agent-framework-azure"
+    "agent-framework-azure-ai"
 ]
-foundry = [
-    "agent-framework-foundry"
+microsoft-copilotstudio = [
+    "agent-framework-copilotstudio"
 ]
-workflow = [
-    "agent-framework-workflow"
+microsoft = [
+    "agent-framework-copilotstudio"
+]
+redis = [
+    "agent-framework-redis"
+]
+viz = [
+    "graphviz>=0.20.0"
 ]
 runtime = [
     "agent-framework-runtime"
+]
+mem0 = [
+    "agent-framework-mem0"
+]
+devui = [
+    "agent-framework-devui"
+]
+all = [
+    "agent_framework_copilotstudio",
+    "agent-framework-azure-ai",
+    "agent-framework-runtime",
+    "agent-framework-mem0",
+    "agent-framework-redis",
+    "agent-framework-devui",
+    "graphviz>=0.20.0"
 ]
 
 [tool.uv]
@@ -61,7 +88,14 @@ environments = [
 fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
-testpaths = 'tests'
+testpaths = [
+    'tests',
+    'packages/main/tests',
+    'packages/azure-ai/tests',
+    'packages/copilotstudio/tests',
+    'packages/mem0/tests',
+    'packages/runtime/tests'
+]
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -93,7 +127,6 @@ show_error_codes = true
 warn_unused_ignores = false
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
-disallow_any_unimported = true
 
 [tool.bandit]
 targets = ["agent_framework"]
@@ -106,10 +139,6 @@ include = "../../shared_tasks.toml"
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
 test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests"
 
-[tool.uv.build-backend]
-module-name = "agent_framework"
-module-root = ""
-
 [build-system]
-requires = ["uv_build>=0.8.2,<0.9.0"]
-build-backend = "uv_build"
+requires = ["flit-core >= 3.9,<4.0"]
+build-backend = "flit_core.buildapi"

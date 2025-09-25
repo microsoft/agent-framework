@@ -27,9 +27,7 @@ internal static class CosmosIdSanitizer
 
 #if NET8_0_OR_GREATER
         return string.Create(input.Length + extraChars, input, (output, state) =>
-        {
-            Encode(state.AsSpan(), output);
-        });
+            Encode(state.AsSpan(), output));
 #else
         var result = new char[input.Length + extraChars];
         Encode(input.AsSpan(), result);
@@ -48,9 +46,7 @@ internal static class CosmosIdSanitizer
 
 #if NET8_0_OR_GREATER
         return string.Create(input.Length - escapeCount, input, (output, state) =>
-        {
-            Decode(state.AsSpan(), output);
-        });
+            Decode(state.AsSpan(), output));
 #else
         var result = new char[input.Length - escapeCount];
         Decode(input.AsSpan(), result);

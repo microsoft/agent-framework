@@ -18,22 +18,14 @@ namespace CopilotStudio.IntegrationTests;
 
 public class CopilotStudioFixture : IAgentFixture
 {
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private AIAgent _agent;
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+    public AIAgent Agent { get; private set; } = null!;
 
-    public AIAgent Agent => this._agent;
-
-    public Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
-    {
+    public Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread) =>
         throw new NotSupportedException("CopilotStudio doesn't allow retrieval of chat history.");
-    }
 
-    public Task DeleteThreadAsync(AgentThread thread)
-    {
+    public Task DeleteThreadAsync(AgentThread thread) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
-        return Task.CompletedTask;
-    }
+        Task.CompletedTask;
 
     public Task InitializeAsync()
     {
@@ -60,13 +52,10 @@ public class CopilotStudioFixture : IAgentFixture
 
         CopilotClient client = new(settings, httpClientFactory, NullLogger.Instance, CopilotStudioHttpClientName);
 
-        this._agent = new CopilotStudioAgent(client);
+        this.Agent = new CopilotStudioAgent(client);
 
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
-    {
-        return Task.CompletedTask;
-    }
+    public Task DisposeAsync() => Task.CompletedTask;
 }

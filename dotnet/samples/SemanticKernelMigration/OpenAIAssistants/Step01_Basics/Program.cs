@@ -3,7 +3,6 @@
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using OpenAI;
@@ -15,14 +14,12 @@ var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
-
-    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
 
     var assistantsClient = new AssistantClient(apiKey);
 
@@ -53,7 +50,7 @@ async Task SKAgent()
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
@@ -74,6 +71,9 @@ async Task AFAgent()
     }
 
     // Clean up
-    await assistantClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantClient.DeleteAssistantAsync(agent.Id);
 }

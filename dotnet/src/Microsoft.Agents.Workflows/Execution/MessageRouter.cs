@@ -2,9 +2,17 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
-
+using CatchAllF =
+    System.Func<
+        Microsoft.Agents.Workflows.PortableValue, // message
+        Microsoft.Agents.Workflows.IWorkflowContext, // context
+        System.Threading.Tasks.ValueTask<Microsoft.Agents.Workflows.Execution.CallResult>
+    >;
 using MessageHandlerF =
     System.Func<
         object, // message
@@ -14,28 +22,39 @@ using MessageHandlerF =
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class MessageRouter
+internal sealed class MessageRouter
 {
     private readonly Dictionary<Type, MessageHandlerF> _typedHandlers;
-    private readonly bool _hasCatchall;
+    private readonly Dictionary<TypeId, Type> _runtimeTypeMap;
 
-    internal MessageRouter(Dictionary<Type, MessageHandlerF> handlers)
+    private readonly CatchAllF? _catchAllFunc;
+
+    internal MessageRouter(Dictionary<Type, MessageHandlerF> handlers, HashSet<Type> outputTypes, CatchAllF? catchAllFunc)
     {
-        this._typedHandlers = Throw.IfNull(handlers);
-        this._hasCatchall = this._typedHandlers.ContainsKey(typeof(object));
+        Throw.IfNull(handlers);
 
-        this.IncomingTypes = [.. this._typedHandlers.Keys];
+        this._typedHandlers = handlers;
+        this._runtimeTypeMap = handlers.Keys.ToDictionary(t => new TypeId(t), t => t);
+        this._catchAllFunc = catchAllFunc;
+
+        this.IncomingTypes = [.. handlers.Keys];
+        this.DefaultOutputTypes = outputTypes;
     }
 
     public HashSet<Type> IncomingTypes { get; }
 
-    public bool CanHandle(object message) => this.CanHandle(Throw.IfNull(message).GetType());
+    [MemberNotNullWhen(true, nameof(_catchAllFunc))]
+    internal bool HasCatchAll => this._catchAllFunc is not null;
 
-    public bool CanHandle(Type candidateType)
+    public bool CanHandle(object message) => this.CanHandle(new TypeId(Throw.IfNull(message).GetType()));
+    public bool CanHandle(Type candidateType) => this.CanHandle(new TypeId(Throw.IfNull(candidateType)));
+
+    public bool CanHandle(TypeId candidateType)
     {
-        // For now we only support routing to handlers registered on the exact type (no base type delegation).
-        return this._hasCatchall || this._typedHandlers.ContainsKey(candidateType);
+        return this.HasCatchAll || this._runtimeTypeMap.ContainsKey(candidateType);
     }
+
+    public HashSet<Type> DefaultOutputTypes { get; }
 
     public async ValueTask<CallResult?> RouteMessageAsync(object message, IWorkflowContext context, bool requireRoute = false)
     {
@@ -43,11 +62,25 @@ internal class MessageRouter
 
         CallResult? result = null;
 
+        PortableValue? portableValue = message as PortableValue;
+        if (portableValue != null &&
+            this._runtimeTypeMap.TryGetValue(portableValue.TypeId, out Type? runtimeType))
+        {
+            // If we found a runtime type, we can use it
+            message = portableValue.AsType(runtimeType) ?? message;
+        }
+
         try
         {
             if (this._typedHandlers.TryGetValue(message.GetType(), out MessageHandlerF? handler))
             {
                 result = await handler(message, context).ConfigureAwait(false);
+            }
+            else if (this.HasCatchAll)
+            {
+                portableValue ??= new PortableValue(message);
+
+                result = await this._catchAllFunc(portableValue, context).ConfigureAwait(false);
             }
         }
         catch (Exception e)

@@ -6,15 +6,17 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class WorkflowElementWalker : BotElementWalker
 {
-    private readonly WorkflowActionVisitor _visitor;
-
-    public WorkflowElementWalker(BotElement rootElement, WorkflowActionVisitor visitor)
+    static WorkflowElementWalker()
     {
-        this._visitor = visitor;
-        this.Visit(rootElement);
+        ProductContext.SetContext(Product.Foundry);
     }
 
-    public Workflow<TInput> GetWorkflow<TInput>() => this._visitor.Complete<TInput>();
+    private readonly DialogActionVisitor _visitor;
+
+    public WorkflowElementWalker(DialogActionVisitor visitor)
+    {
+        this._visitor = visitor;
+    }
 
     public override bool DefaultVisit(BotElement definition)
     {

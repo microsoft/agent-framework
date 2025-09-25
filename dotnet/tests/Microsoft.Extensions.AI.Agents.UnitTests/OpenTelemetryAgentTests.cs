@@ -23,7 +23,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_ExpectedTelemetryData_CollectedAsync(bool withError)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -91,7 +91,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_ExpectedTelemetryData_CollectedAsync(bool withError)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -165,7 +165,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_IncludesInstructionsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -204,7 +204,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_WithMetadata_UsesProviderNameAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -248,7 +248,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNonChatClientAgent_UsesDefaultSystemAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -279,7 +279,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_WithDifferentProviders_UsesCorrectSystemAsync(string providerName)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -321,7 +321,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithChatClientAgent_WithMetadata_UsesProviderNameAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -372,7 +372,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithThreadId_IncludesThreadIdAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -380,6 +380,10 @@ public class OpenTelemetryAgentTests
             .Build();
 
         var mockAgent = CreateMockAgent(false);
+        var mockThread = new Mock<AgentThread>();
+        mockThread.Setup(t => t.GetService(typeof(AgentThreadMetadata), null))
+            .Returns(new AgentThreadMetadata("thread-123"));
+
         using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
 
         var messages = new List<ChatMessage>
@@ -387,10 +391,8 @@ public class OpenTelemetryAgentTests
             new(ChatRole.User, "Hello")
         };
 
-        var thread = new AgentThread { ConversationId = "thread-123" };
-
         // Act
-        await telemetryAgent.RunAsync(messages, thread);
+        await telemetryAgent.RunAsync(messages, mockThread.Object);
 
         // Assert
         var activity = Assert.Single(activities);
@@ -447,14 +449,14 @@ public class OpenTelemetryAgentTests
         var mockLogger = new Mock<ILogger>();
         mockLoggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>()))
             .Returns(mockLogger.Object);
-        var sourceName = "custom-source";
-        var enableSensitiveData = true;
+        const string SourceName = "custom-source";
+        const bool EnableSensitiveData = true;
 
         // Act
         using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(
             loggerFactory: mockLoggerFactory.Object,
-            sourceName: sourceName,
-            enableSensitiveData: enableSensitiveData);
+            sourceName: SourceName,
+            enableSensitiveData: EnableSensitiveData);
 
         // Assert
         Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
@@ -469,7 +471,7 @@ public class OpenTelemetryAgentTests
     public async Task WithOpenTelemetry_EnableSensitiveDataParameter_SetsPropertyCorrectlyAsync(bool enableSensitiveData)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -553,10 +555,10 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
         var mockLogger = new Mock<ILogger>();
-        var sourceName = "test-source";
+        const string SourceName = "test-source";
 
         // Act
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, SourceName);
 
         // Assert
         Assert.Equal("test-id", telemetryAgent.Id);
@@ -573,10 +575,10 @@ public class OpenTelemetryAgentTests
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
-        var sourceName = "test-source";
+        const string SourceName = "test-source";
 
         // Act
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, logger: null, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, logger: null, SourceName);
 
         // Assert
         Assert.Equal("test-id", telemetryAgent.Id);
@@ -590,7 +592,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithILogger_LogsEventsCorrectlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
 
         // Setup the logger to return true for IsEnabled to ensure logging occurs
@@ -633,10 +635,10 @@ public class OpenTelemetryAgentTests
         var mockLogger = new Mock<ILogger>();
         mockLoggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>()))
             .Returns(mockLogger.Object);
-        var sourceName = "test-source";
+        const string SourceName = "test-source";
 
         // Act
-        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(mockLoggerFactory.Object, sourceName);
+        using var telemetryAgent = mockAgent.Object.WithOpenTelemetry(mockLoggerFactory.Object, SourceName);
 
         // Assert
         Assert.IsType<OpenTelemetryAgent>(telemetryAgent);
@@ -656,7 +658,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithOpenTelemetryChatClientAgent_DoesNotDuplicateLogsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -726,7 +728,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithRegularChatClientAgent_LogsCorrectlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -791,7 +793,7 @@ public class OpenTelemetryAgentTests
     public void Constructor_WithOpenTelemetryChatClient_InheritsEnableSensitiveDataSetting()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockChatClient = new Mock<IChatClient>();
 
         // Setup ChatClientMetadata
@@ -835,8 +837,8 @@ public class OpenTelemetryAgentTests
         // Arrange
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
-        var sourceName = "test-source";
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+        const string SourceName = "test-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: SourceName);
 
         // Act
         var result = telemetryAgent.GetService(typeof(ActivitySource));
@@ -845,7 +847,7 @@ public class OpenTelemetryAgentTests
         Assert.NotNull(result);
         Assert.IsType<ActivitySource>(result);
         var activitySource = (ActivitySource)result;
-        Assert.Equal(sourceName, activitySource.Name);
+        Assert.Equal(SourceName, activitySource.Name);
     }
 
     /// <summary>
@@ -900,18 +902,18 @@ public class OpenTelemetryAgentTests
         // Arrange
         var mockAgent = new Mock<AIAgent>();
         var customService = new object();
-        var serviceKey = "test-key";
-        mockAgent.Setup(a => a.GetService(typeof(string), serviceKey))
+        const string ServiceKey = "test-key";
+        mockAgent.Setup(a => a.GetService(typeof(string), ServiceKey))
             .Returns(customService);
 
         using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object);
 
         // Act
-        var result = telemetryAgent.GetService(typeof(string), serviceKey);
+        var result = telemetryAgent.GetService(typeof(string), ServiceKey);
 
         // Assert
         Assert.Same(customService, result);
-        mockAgent.Verify(a => a.GetService(typeof(string), serviceKey), Times.Once);
+        mockAgent.Verify(a => a.GetService(typeof(string), ServiceKey), Times.Once);
     }
 
     /// <summary>
@@ -926,8 +928,8 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.GetService(typeof(ActivitySource), null))
             .Returns(innerActivitySource);
 
-        var sourceName = "telemetry-source";
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+        const string SourceName = "telemetry-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: SourceName);
 
         // Act
         var result = telemetryAgent.GetService(typeof(ActivitySource));
@@ -936,7 +938,7 @@ public class OpenTelemetryAgentTests
         Assert.NotNull(result);
         Assert.IsType<ActivitySource>(result);
         var activitySource = (ActivitySource)result;
-        Assert.Equal(sourceName, activitySource.Name);
+        Assert.Equal(SourceName, activitySource.Name);
         Assert.NotSame(innerActivitySource, result); // Should return OpenTelemetryAgent's ActivitySource, not inner agent's
 
         // Cleanup
@@ -1017,8 +1019,8 @@ public class OpenTelemetryAgentTests
         // Arrange
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-id");
-        var sourceName = "test-source";
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
+        const string SourceName = "test-source";
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: SourceName);
 
         // Act - Request ActivitySource with a service key (base.GetService will return null due to serviceKey)
         var result = telemetryAgent.GetService(typeof(ActivitySource), "some-key");
@@ -1027,7 +1029,7 @@ public class OpenTelemetryAgentTests
         Assert.NotNull(result);
         Assert.IsType<ActivitySource>(result);
         var activitySource = (ActivitySource)result;
-        Assert.Equal(sourceName, activitySource.Name);
+        Assert.Equal(SourceName, activitySource.Name);
         // Verify that the inner agent's GetService was NOT called because ActivitySource is handled by the telemetry agent itself
         mockAgent.Verify(a => a.GetService(typeof(ActivitySource), "some-key"), Times.Never);
     }
@@ -1095,7 +1097,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_ProviderNameReflectedInTelemetryAsync(string providerName)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1144,7 +1146,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_NullMetadata_DefaultsToMEAIAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1193,16 +1195,16 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithCustomAgent_CustomMetadata_ReflectedInTelemetryAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
             .Build();
 
-        var customProviderName = "custom-ai-provider";
+        const string CustomProviderName = "custom-ai-provider";
         var mockAgent = new Mock<AIAgent>();
-        var customMetadata = new AIAgentMetadata(customProviderName);
+        var customMetadata = new AIAgentMetadata(CustomProviderName);
 
         // Setup mock agent to return custom metadata
         mockAgent.Setup(a => a.GetService(typeof(AIAgentMetadata), null))
@@ -1224,12 +1226,12 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
 
         // Verify that the custom provider name appears in telemetry
-        Assert.Equal(customProviderName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        Assert.Equal(CustomProviderName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
 
         // Verify that GetService returns the same custom provider name
         var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
         Assert.NotNull(agentMetadata);
-        Assert.Equal(customProviderName, agentMetadata.ProviderName);
+        Assert.Equal(CustomProviderName, agentMetadata.ProviderName);
     }
 
     /// <summary>
@@ -1240,7 +1242,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithCustomAgent_NoMetadata_DefaultsToMEAIAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1286,7 +1288,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithChatClientAgent_ProviderNameReflectedInTelemetryAsync(string providerName)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1344,16 +1346,16 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_MultipleCallsWithSameAgent_ConsistentProviderNameAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
             .Build();
 
-        var providerName = "consistent-provider";
+        const string ProviderName = "consistent-provider";
         var mockChatClient = new Mock<IChatClient>();
-        var chatClientMetadata = new ChatClientMetadata(providerName);
+        var chatClientMetadata = new ChatClientMetadata(ProviderName);
         mockChatClient.Setup(c => c.GetService(typeof(ChatClientMetadata), null))
             .Returns(chatClientMetadata);
         mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
@@ -1382,7 +1384,7 @@ public class OpenTelemetryAgentTests
         // Verify that all activities have the same provider name
         foreach (var activity in activities)
         {
-            Assert.Equal(providerName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+            Assert.Equal(ProviderName, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
         }
 
         // Verify that GetService consistently returns the same provider name
@@ -1390,8 +1392,8 @@ public class OpenTelemetryAgentTests
         var agentMetadata2 = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
         Assert.NotNull(agentMetadata1);
         Assert.NotNull(agentMetadata2);
-        Assert.Equal(providerName, agentMetadata1.ProviderName);
-        Assert.Equal(providerName, agentMetadata2.ProviderName);
+        Assert.Equal(ProviderName, agentMetadata1.ProviderName);
+        Assert.Equal(ProviderName, agentMetadata2.ProviderName);
         Assert.Same(agentMetadata1, agentMetadata2); // Should be cached
     }
 
@@ -1457,26 +1459,28 @@ public class OpenTelemetryAgentTests
         if (throwError)
         {
             mockAgent.Setup(a => a.RunStreamingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
-                .Returns(ThrowingAsyncEnumerable());
+                .Returns(ThrowingAsyncEnumerableAsync());
         }
         else
         {
             mockAgent.Setup(a => a.RunStreamingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
-                .Returns(CreateStreamingResponse());
+                .Returns(CreateStreamingResponseAsync());
         }
 
         return mockAgent;
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> ThrowingAsyncEnumerable([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> ThrowingAsyncEnumerableAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
-            throw new InvalidOperationException("Streaming error");
-#pragma warning disable CS0162 // Unreachable code detected
+            if (Environment.ProcessorCount > 0) // always true
+            {
+                throw new InvalidOperationException("Streaming error");
+            }
+
             yield break;
-#pragma warning restore CS0162 // Unreachable code detected
         }
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> CreateStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> CreateStreamingResponseAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
@@ -1503,11 +1507,9 @@ public class OpenTelemetryAgentTests
     }
 
     [Fact]
-    public void Constructor_NullAgent_ThrowsArgumentNullException()
-    {
+    public void Constructor_NullAgent_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new OpenTelemetryAgent(null!));
-    }
 
     [Fact]
     public void Constructor_WithParameters_SetsProperties()
@@ -1520,10 +1522,10 @@ public class OpenTelemetryAgentTests
         var mockLogger = new Mock<ILogger>();
 
         var logger = new Mock<ILogger>().Object;
-        var sourceName = "custom-source";
+        const string SourceName = "custom-source";
 
         // Act
-        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, sourceName);
+        using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, mockLogger.Object, SourceName);
 
         // Assert
         Assert.Equal("test-id", telemetryAgent.Id);
@@ -1565,7 +1567,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNullResponseId_HandlesGracefullyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1606,7 +1608,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithEmptyAgentName_UsesOperationNameOnlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1640,7 +1642,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithPartialUpdates_CombinesCorrectlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1652,7 +1654,7 @@ public class OpenTelemetryAgentTests
         mockAgent.Setup(a => a.Name).Returns("TestAgent");
 
         mockAgent.Setup(a => a.RunStreamingAsync(It.IsAny<IReadOnlyCollection<ChatMessage>>(), It.IsAny<AgentThread>(), It.IsAny<AgentRunOptions>(), It.IsAny<CancellationToken>()))
-            .Returns(CreatePartialStreamingResponse());
+            .Returns(CreatePartialStreamingResponseAsync());
 
         using var telemetryAgent = new OpenTelemetryAgent(mockAgent.Object, sourceName: sourceName);
 
@@ -1674,7 +1676,7 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.Equal("partial-response-id", activity.GetTagItem(OpenTelemetryConsts.GenAI.Response.Id));
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> CreatePartialStreamingResponse([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        static async IAsyncEnumerable<AgentRunResponseUpdate> CreatePartialStreamingResponseAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
@@ -1731,7 +1733,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithMetricsEnabled_RecordsMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         var exportedMetrics = new List<Metric>();
 
@@ -1775,7 +1777,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithMetricsEnabledAndError_RecordsErrorMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         var exportedMetrics = new List<Metric>();
 
@@ -1815,7 +1817,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithMetricsEnabled_RecordsMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         var exportedMetrics = new List<Metric>();
 
@@ -1864,7 +1866,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNullUsage_SkipsTokenMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var exportedMetrics = new List<Metric>();
 
         using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
@@ -1912,7 +1914,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithMetricsDisabled_SkipsMetricRecordingAsync()
     {
         // Arrange - No meter provider, so metrics are disabled
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
 
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
@@ -1943,7 +1945,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithPartialTokenUsage_RecordsAvailableTokensAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var exportedMetrics = new List<Metric>();
 
         using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
@@ -1991,7 +1993,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNullDescription_SkipsDescriptionAttributeAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2032,7 +2034,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithAssistantMessage_LogsAssistantEventAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2051,10 +2053,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2085,7 +2084,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithToolMessage_LogsToolEventAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2104,10 +2103,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2138,7 +2134,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithToolMessageAndSensitiveData_LogsToolEventWithContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2157,10 +2153,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2204,7 +2197,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithFunctionCallAndSensitiveDataEnabled_LogsWithSensitiveContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2223,10 +2216,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2295,7 +2285,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithToolMessageAndSensitiveDataDisabled_LogsToolEventWithoutContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2314,10 +2304,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2363,7 +2350,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithFunctionCallAndSensitiveDataDisabled_LogsWithoutSensitiveContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2382,10 +2369,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2447,7 +2431,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_LoggerNotEnabled_DoesNotLogChatResponseAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2466,10 +2450,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2501,7 +2482,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithResponseMessages_LogsChoiceEventsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2520,10 +2501,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2568,7 +2546,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithSingleResponseMessage_LogsChoiceEventAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2587,10 +2565,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");
@@ -2627,7 +2602,7 @@ public class OpenTelemetryAgentTests
     public void JsonSerializerOptions_GetterReturnsSetValue()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
         var mockAgent = new Mock<AIAgent>();
 
@@ -2642,7 +2617,7 @@ public class OpenTelemetryAgentTests
     public void JsonSerializerOptions_SetterUpdatesValue()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
         var mockAgent = new Mock<AIAgent>();
 
@@ -2665,7 +2640,7 @@ public class OpenTelemetryAgentTests
     public void JsonSerializerOptions_SetterThrowsOnNull()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
         var mockAgent = new Mock<AIAgent>();
 
@@ -2679,7 +2654,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithCustomJsonSerializerOptions_UsesCustomOptionsForSerializationAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2698,10 +2673,7 @@ public class OpenTelemetryAgentTests
             It.IsAny<It.IsAnyType>(),
             It.IsAny<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) =>
-            {
-                loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? ""));
-            });
+            .Callback<LogLevel, EventId, object, Exception, Delegate>((level, eventId, state, ex, formatter) => loggedEvents.Add((level, eventId, formatter.DynamicInvoke(state, ex)?.ToString() ?? "")));
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Id).Returns("test-agent");

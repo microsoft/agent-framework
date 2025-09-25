@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -30,7 +31,15 @@ namespace SampleApp
     // Custom agent that parrot's the user input back in upper case.
     internal sealed class UpperCaseParrotAgent : AIAgent
     {
-        public override async Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override string? Name => "UpperCaseParrotAgent";
+
+        public override AgentThread GetNewThread()
+            => new CustomAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => new CustomAgentThread(serializedThread, jsonSerializerOptions);
+
+        public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -39,18 +48,17 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-            await NotifyThreadOfNewMessagesAsync(thread, responseMessages, cancellationToken);
+            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
 
             return new AgentRunResponse
             {
                 AgentId = this.Id,
-                ResponseId = Guid.NewGuid().ToString(),
+                ResponseId = Guid.NewGuid().ToString("N"),
                 Messages = responseMessages
             };
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -59,8 +67,7 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-            await NotifyThreadOfNewMessagesAsync(thread, responseMessages, cancellationToken);
+            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
 
             foreach (var message in responseMessages)
             {
@@ -70,18 +77,18 @@ namespace SampleApp
                     AuthorName = this.DisplayName,
                     Role = ChatRole.Assistant,
                     Contents = message.Contents,
-                    ResponseId = Guid.NewGuid().ToString(),
-                    MessageId = Guid.NewGuid().ToString()
+                    ResponseId = Guid.NewGuid().ToString("N"),
+                    MessageId = Guid.NewGuid().ToString("N")
                 };
             }
         }
 
-        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IReadOnlyCollection<ChatMessage> messages, string agentName) => messages.Select(x =>
+        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IEnumerable<ChatMessage> messages, string agentName) => messages.Select(x =>
             {
                 // Clone the message and update its author to be the agent.
                 var messageClone = x.Clone();
                 messageClone.Role = ChatRole.Assistant;
-                messageClone.MessageId = Guid.NewGuid().ToString();
+                messageClone.MessageId = Guid.NewGuid().ToString("N");
                 messageClone.AuthorName = agentName;
 
                 // Clone and convert any text content to upper case.
@@ -98,5 +105,16 @@ namespace SampleApp
 
                 return messageClone;
             });
+
+        /// <summary>
+        /// A thread type for our custom agent that only supports in memory storage of messages.
+        /// </summary>
+        internal sealed class CustomAgentThread : InMemoryAgentThread
+        {
+            internal CustomAgentThread() { }
+
+            internal CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+                : base(serializedThreadState, jsonSerializerOptions) { }
+        }
     }
 }

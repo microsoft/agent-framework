@@ -21,7 +21,7 @@ public abstract class AIAgent
     /// <value>
     /// The identifier of the agent. The default is a random GUID value, but for service agents, it will match the id of the agent in the service.
     /// </value>
-    public virtual string Id { get; } = Guid.NewGuid().ToString();
+    public virtual string Id { get; } = Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// Gets the name of the agent (optional).
@@ -81,21 +81,15 @@ public abstract class AIAgent
     /// If the thread needs to be created via a service call it would be created on first use.
     /// </para>
     /// </remarks>
-    public virtual AgentThread GetNewThread() => new();
+    public abstract AgentThread GetNewThread();
 
     /// <summary>
     /// Deserialize the thread from JSON.
     /// </summary>
     /// <param name="serializedThread">The <see cref="JsonElement"/> representing the thread state.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
-    public async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        var thread = this.GetNewThread();
-        await thread.DeserializeAsync(serializedThread, jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
-        return thread;
-    }
+    public abstract AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
@@ -110,10 +104,8 @@ public abstract class AIAgent
     public Task<AgentRunResponse> RunAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        return this.RunAsync((IReadOnlyCollection<ChatMessage>)[], thread, options, cancellationToken);
-    }
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync([], thread, options, cancellationToken);
 
     /// <summary>
     /// Run the agent with the provided message and arguments.
@@ -174,7 +166,7 @@ public abstract class AIAgent
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
     public abstract Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
@@ -192,10 +184,8 @@ public abstract class AIAgent
     public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        return this.RunStreamingAsync((IReadOnlyCollection<ChatMessage>)[], thread, options, cancellationToken);
-    }
+        CancellationToken cancellationToken = default) =>
+        this.RunStreamingAsync([], thread, options, cancellationToken);
 
     /// <summary>
     /// Run the agent with the provided message and arguments.
@@ -256,7 +246,7 @@ public abstract class AIAgent
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
     public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
@@ -285,14 +275,11 @@ public abstract class AIAgent
     /// <param name="messages">The messages to pass to the thread.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An async task that completes once the notification is complete.</returns>
-    protected static async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    protected static async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(thread);
         _ = Throw.IfNull(messages);
 
-        if (messages.Count > 0)
-        {
-            await thread.OnNewMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
-        }
+        await thread.MessagesReceivedAsync(messages, cancellationToken).ConfigureAwait(false);
     }
 }

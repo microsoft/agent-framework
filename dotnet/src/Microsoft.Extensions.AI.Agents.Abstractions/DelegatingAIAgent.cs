@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -53,8 +54,12 @@ public class DelegatingAIAgent : AIAgent
     public override AgentThread GetNewThread() => this.InnerAgent.GetNewThread();
 
     /// <inheritdoc />
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        => this.InnerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
+
+    /// <inheritdoc />
     public override Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -62,7 +67,7 @@ public class DelegatingAIAgent : AIAgent
 
     /// <inheritdoc />
     public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)

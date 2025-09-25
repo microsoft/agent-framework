@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI.Agents.A2A;
 /// </summary>
 internal static class ChatMessageExtensions
 {
-    internal static Message ToA2AMessage(this IReadOnlyCollection<ChatMessage> messages)
+    internal static Message ToA2AMessage(this IEnumerable<ChatMessage> messages)
     {
         List<Part> allParts = [];
 
@@ -25,7 +25,7 @@ internal static class ChatMessageExtensions
 
         return new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid().ToString("N"),
             Role = MessageRole.User,
             Parts = allParts,
         };

@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 
@@ -29,10 +28,10 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = WorkflowHelper.GetWorkflow();
+        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
 
         // Create checkpoint manager
-        var checkpointManager = new CheckpointManager();
+        var checkpointManager = CheckpointManager.Default;
         var checkpoints = new List<CheckpointInfo>();
 
         // Execute the workflow and save checkpoints
@@ -51,16 +50,16 @@ public static class Program
                 // Checkpoints are automatically created at the end of each super step when a
                 // checkpoint manager is provided. You can store the checkpoint info for later use.
                 CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
-                if (checkpoint != null)
+                if (checkpoint is not null)
                 {
                     checkpoints.Add(checkpoint);
                     Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
                 }
             }
 
-            if (evt is WorkflowCompletedEvent workflowCompletedEvt)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                Console.WriteLine($"Workflow completed with result: {outputEvent.Data}");
             }
         }
 
@@ -71,15 +70,15 @@ public static class Program
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
         // Rehydrate a new workflow instance from a saved checkpoint and continue execution
-        var newWorkflow = WorkflowHelper.GetWorkflow();
-        var checkpointIndex = 5;
-        Console.WriteLine($"\n\nHydrating a new workflow instance from the {checkpointIndex + 1}th checkpoint.");
-        CheckpointInfo savedCheckpoint = checkpoints[checkpointIndex];
+        var newWorkflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        const int CheckpointIndex = 5;
+        Console.WriteLine($"\n\nHydrating a new workflow instance from the {CheckpointIndex + 1}th checkpoint.");
+        CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
 
-        Checkpointed<StreamingRun> newCheckpointedRun = await InProcessExecution
-            .StreamAsync(newWorkflow, NumberSignal.Init, checkpointManager)
-            .ConfigureAwait(false);
-        await newCheckpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None).ConfigureAwait(false);
+        Checkpointed<StreamingRun> newCheckpointedRun =
+            await InProcessExecution.ResumeStreamAsync(newWorkflow, savedCheckpoint, checkpointManager, checkpointedRun.Run.RunId)
+                                    .ConfigureAwait(false);
+
         await foreach (WorkflowEvent evt in newCheckpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is ExecutorCompletedEvent executorCompletedEvt)
@@ -87,9 +86,9 @@ public static class Program
                 Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
             }
 
-            if (evt is WorkflowCompletedEvent workflowCompletedEvt)
+            if (evt is WorkflowOutputEvent workflowOutputEvt)
             {
-                Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
             }
         }
     }

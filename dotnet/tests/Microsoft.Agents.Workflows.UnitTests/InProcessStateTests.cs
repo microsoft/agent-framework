@@ -33,12 +33,12 @@ public class InProcessStateTests
 
             for (int i = 0; i < stateActions.Length; i++)
             {
-                result[i] = CreateWrapperAsync(stateActions[i]);
+                result[i] = CreateWrapper(stateActions[i]);
             }
 
             return result;
 
-            Func<TurnToken, IWorkflowContext, CancellationToken, ValueTask<TurnToken>> CreateWrapperAsync(Func<TState?, TState?> action)
+            Func<TurnToken, IWorkflowContext, CancellationToken, ValueTask<TurnToken>> CreateWrapper(Func<TState?, TState?> action)
             {
                 return
                     async (turn, context, cancellation) =>
@@ -68,7 +68,7 @@ public class InProcessStateTests
         => currState => currState.HasValue ? currState + 1 : defaultValue;
 
     private static Func<int?, int?> ValidateState(int expectedValue, string? because = null, params object[] becauseArgs)
-        => (int? currState) =>
+        => currState =>
            {
                currState.Should().Be(expectedValue, because, becauseArgs);
 
@@ -76,7 +76,7 @@ public class InProcessStateTests
            };
 
     private static Func<object?, bool> MaxTurns(int maxTurns)
-        => (object? maybeTurn) => maybeTurn is not TurnToken turn || turn.Count < maxTurns;
+        => maybeTurn => maybeTurn is not TurnToken turn || turn.Count < maxTurns;
 
     [Fact]
     public async Task InProcessRun_StateShouldPersist_NotCheckpointedAsync()
@@ -95,12 +95,12 @@ public class InProcessStateTests
                 ValidateState(1)
             );
 
-        Workflow<TurnToken> workflow =
+        Workflow workflow =
             new WorkflowBuilder(writer)
                 .AddEdge(writer, validator, MaxTurns(4))
-                .AddEdge(validator, writer, MaxTurns(4)).Build<TurnToken>();
+                .AddEdge(validator, writer, MaxTurns(4)).Build();
 
-        Run run = await InProcessExecution.RunAsync(workflow, new());
+        Run run = await InProcessExecution.RunAsync<TurnToken>(workflow, new());
 
         run.Status.Should().Be(RunStatus.Idle);
     }
@@ -122,12 +122,12 @@ public class InProcessStateTests
                 ValidateState(1)
             );
 
-        Workflow<TurnToken> workflow =
+        Workflow workflow =
             new WorkflowBuilder(writer)
                 .AddEdge(writer, validator, MaxTurns(4))
-                .AddEdge(validator, writer, MaxTurns(4)).Build<TurnToken>();
+                .AddEdge(validator, writer, MaxTurns(4)).Build();
 
-        Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync(workflow, new(), new CheckpointManager());
+        Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync<TurnToken>(workflow, new(), CheckpointManager.Default);
 
         checkpointed.Checkpoints.Should().HaveCount(6);
         checkpointed.Run.Status.Should().Be(RunStatus.Idle);
@@ -136,7 +136,7 @@ public class InProcessStateTests
     [Fact]
     public async Task InProcessRun_StateShouldError_TwoExecutorsAsync()
     {
-        ForwardMessageExecutor<TurnToken> forward = new();
+        ForwardMessageExecutor<TurnToken> forward = new(nameof(ForwardMessageExecutor<TurnToken>));
         using StateTestExecutor<int?> testExecutor = new(
                 new ScopeKey("StateTestExecutor", "TestScope", "TestKey"),
                 loop: false,
@@ -149,12 +149,12 @@ public class InProcessStateTests
                 CreateOrIncrement()
             );
 
-        Workflow<TurnToken> workflow =
+        Workflow workflow =
             new WorkflowBuilder(forward)
                 .AddFanOutEdge(forward, targets: [testExecutor, testExecutor2])
-                .Build<TurnToken>();
+                .Build();
 
-        var act = async () => await InProcessExecution.RunAsync(workflow, new());
+        var act = async () => await InProcessExecution.RunAsync(workflow, new TurnToken());
 
         var result = await act.Should()
                               .ThrowAsync("multiple writers to the same shared scope key");

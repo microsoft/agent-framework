@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
@@ -9,13 +10,13 @@ namespace Microsoft.Agents.Workflows.UnitTests;
 public class StreamingAggregatorsTests
 {
     private static TResult? ApplyStreamingAggregator<TInput, TResult>(
-        StreamingAggregator<TInput, TResult> aggregator,
+        Func<TResult?, TInput, TResult?> aggregator,
         IEnumerable<TInput> inputs,
         TResult? runningResult = default)
     {
         foreach (TInput input in inputs)
         {
-            runningResult = aggregator(input, runningResult);
+            runningResult = aggregator(runningResult, input);
         }
 
         return runningResult!;
@@ -24,8 +25,8 @@ public class StreamingAggregatorsTests
     [Fact]
     public void Test_StreamingAggregators_First()
     {
-        IEnumerable<int> inputs = [1, 2, 3];
-        StreamingAggregator<int, int> aggregator = StreamingAggregators.First<int>();
+        IEnumerable<int?> inputs = [1, 2, 3];
+        Func<int?, int?, int?> aggregator = StreamingAggregators.First<int?>();
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
         runningResult.Should().Be(1);
@@ -39,8 +40,8 @@ public class StreamingAggregatorsTests
     [Fact]
     public void Test_StreamingAggregators_First_WithConversion()
     {
-        IEnumerable<int> inputs = [2, 4, 6];
-        StreamingAggregator<int, int> aggregator = StreamingAggregators.First<int, int>(input => input / 2);
+        IEnumerable<int?> inputs = [2, 4, 6];
+        Func<int?, int?, int?> aggregator = StreamingAggregators.First<int?, int?>(input => input / 2);
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
         runningResult.Should().Be(1);
@@ -55,7 +56,7 @@ public class StreamingAggregatorsTests
     public void Test_StreamingAggregators_Last()
     {
         IEnumerable<int> inputs = [1, 2, 3];
-        StreamingAggregator<int, int> aggregator = StreamingAggregators.Last<int>();
+        Func<int, int, int> aggregator = StreamingAggregators.Last<int>();
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
         runningResult.Should().Be(3);
@@ -70,7 +71,7 @@ public class StreamingAggregatorsTests
     public void Test_StreamingAggregators_Last_WithConversion()
     {
         IEnumerable<int> inputs = [2, 4, 6];
-        StreamingAggregator<int, int> aggregator = StreamingAggregators.Last<int, int>(input => input / 2);
+        Func<int, int, int> aggregator = StreamingAggregators.Last<int, int>(input => input / 2);
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
         runningResult.Should().Be(3);
@@ -85,7 +86,7 @@ public class StreamingAggregatorsTests
     public void Test_StreamingAggregators_Union()
     {
         IEnumerable<int> inputs = [1, 2, 3];
-        StreamingAggregator<int, IEnumerable<int>> aggregator = StreamingAggregators.Union<int>();
+        Func<IEnumerable<int>?, int, IEnumerable<int>?> aggregator = StreamingAggregators.Union<int>();
 
         IEnumerable<int>? runningResult = ApplyStreamingAggregator(aggregator, inputs);
         runningResult.Should().BeEquivalentTo([1, 2, 3], "Union should accumulate all inputs in order");
@@ -102,7 +103,7 @@ public class StreamingAggregatorsTests
     public void Test_StreamingAggregators_Union_WithConversion()
     {
         IEnumerable<int> inputs = [2, 4, 6];
-        StreamingAggregator<int, IEnumerable<int>> aggregator = StreamingAggregators.Union<int, int>(input => input / 2);
+        Func<IEnumerable<int>?, int, IEnumerable<int>?> aggregator = StreamingAggregators.Union<int, int>(input => input / 2);
 
         IEnumerable<int>? runningResult = ApplyStreamingAggregator(aggregator, inputs);
         runningResult.Should().BeEquivalentTo([1, 2, 3],

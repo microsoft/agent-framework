@@ -13,19 +13,18 @@ internal static class WorkflowHelper
     /// Get a workflow that plays a number guessing game with human-in-the-loop interaction.
     /// An input port allows the external world to provide inputs to the workflow upon requests.
     /// </summary>
-    internal static Workflow<SignalWithNumber> GetWorkflow()
+    internal static ValueTask<Workflow<NumberSignal>> GetWorkflowAsync()
     {
         // Create the executors
         InputPort numberInputPort = InputPort.Create<SignalWithNumber, int>("GuessNumber");
         JudgeExecutor judgeExecutor = new(42);
 
         // Build the workflow by connecting executors in a loop
-        var workflow = new WorkflowBuilder(numberInputPort)
+        return new WorkflowBuilder(numberInputPort)
             .AddEdge(numberInputPort, judgeExecutor)
             .AddEdge(judgeExecutor, numberInputPort)
-            .Build<SignalWithNumber>();
-
-        return workflow;
+            .WithOutputFrom(judgeExecutor)
+            .BuildAsync<NumberSignal>();
     }
 }
 
@@ -60,7 +59,7 @@ internal sealed class SignalWithNumber
 internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge"), IMessageHandler<int>
 {
     private readonly int _targetNumber;
-    private int _tries = 0;
+    private int _tries;
     private const string StateKey = "JudgeExecutorState";
 
     /// <summary>
@@ -77,7 +76,7 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"{this._targetNumber} found in {this._tries} tries!"))
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!")
                          .ConfigureAwait(false);
         }
         else if (message < this._targetNumber)
@@ -94,17 +93,13 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
     /// Checkpoint the current state of the executor.
     /// This must be overridden to save any state that is needed to resume the executor.
     /// </summary>
-    protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
-    {
-        return context.QueueStateUpdateAsync(StateKey, this._tries);
-    }
+    protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
+        context.QueueStateUpdateAsync(StateKey, this._tries);
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
-    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
-    {
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
         this._tries = await context.ReadStateAsync<int>(StateKey).ConfigureAwait(false);
-    }
 }

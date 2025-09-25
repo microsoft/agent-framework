@@ -209,9 +209,7 @@ public class AgentRunResponse
             structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
             return failureReason is null;
         }
-#pragma warning disable CA1031 // Do not catch general exception types
         catch
-#pragma warning restore CA1031
         {
             structuredOutput = default;
             return false;
@@ -250,11 +248,9 @@ public class AgentRunResponse
             return default;
         }
 
-        T? deserialized = default;
-
         // If there's an exception here, we want it to propagate, since the Result property is meant to throw directly
 
-        deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)serializerOptions.GetTypeInfo(typeof(T)));
+        T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)serializerOptions.GetTypeInfo(typeof(T)));
 
         if (deserialized is null)
         {

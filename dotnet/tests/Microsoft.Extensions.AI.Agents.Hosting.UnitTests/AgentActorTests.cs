@@ -40,10 +40,10 @@ public class AgentActorTests
     [Fact]
     public async Task RunAsync_WithNoExistingThreadState_CallsGetNewThreadAsync()
     {
-        var expectedThread = new AgentThread { ConversationId = "new-thread-id" };
+        var mockExpectedThread = new Mock<AgentThread>();
 
         var mockAgent = new Mock<AIAgent>();
-        mockAgent.Setup(a => a.GetNewThread()).Returns(expectedThread);
+        mockAgent.Setup(a => a.GetNewThread()).Returns(mockExpectedThread.Object);
 
         var mockContext = new Mock<IActorRuntimeContext>();
         var actorId = new ActorId("TestAgent", "test-instance");
@@ -102,8 +102,12 @@ public class AgentActorTests
     public async Task HandleAgentRequest_UsesCorrectThreadAsync()
     {
         var threadJson = JsonSerializer.SerializeToElement(new { conversationId = "expected-thread-id" });
+        var mockThread = new Mock<AgentThread>();
 
-        var testAgent = new TestAgent();
+        TestAgent testAgent = new()
+        {
+            ThreadForCreate = mockThread.Object
+        };
 
         var mockContext = new Mock<IActorRuntimeContext>();
         var actorId = new ActorId("TestAgent", "test-instance");
@@ -144,7 +148,8 @@ public class AgentActorTests
 
         // Verify the thread was used in RunStreamingAsync and has the expected ID
         Assert.NotNull(testAgent.ThreadUsedInRunStreamingAsync);
-        Assert.Equal("expected-thread-id", testAgent.ThreadUsedInRunStreamingAsync.ConversationId);
+        Assert.Same(mockThread.Object, testAgent.ThreadUsedInRunStreamingAsync);
+        Assert.Equal(threadJson, testAgent.ElementUsedInDeserializeThread);
     }
 
     /// <summary>
@@ -172,10 +177,23 @@ public class AgentActorTests
     /// </summary>
     private sealed class TestAgent : AIAgent
     {
+        public AgentThread? ThreadForCreate { get; set; }
+        public JsonElement? ElementUsedInDeserializeThread { get; set; }
         public bool RunStreamingAsyncCalled { get; private set; }
         public AgentThread? ThreadUsedInRunStreamingAsync { get; private set; }
 
-        public override Task<AgentRunResponse> RunAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override AgentThread GetNewThread()
+        {
+            return this.ThreadForCreate!;
+        }
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            this.ElementUsedInDeserializeThread = serializedThread;
+            return this.ThreadForCreate!;
+        }
+
+        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             this.ThreadUsedInRunStreamingAsync = thread;
             return Task.FromResult(new AgentRunResponse
@@ -184,7 +202,7 @@ public class AgentActorTests
             });
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IReadOnlyCollection<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             this.RunStreamingAsyncCalled = true;
             this.ThreadUsedInRunStreamingAsync = thread;

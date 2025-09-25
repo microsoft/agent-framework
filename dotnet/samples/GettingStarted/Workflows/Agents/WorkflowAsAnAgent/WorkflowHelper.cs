@@ -17,7 +17,7 @@ internal static class WorkflowHelper
     /// </summary>
     /// <param name="chatClient">The chat client to use for the agents</param>
     /// <returns>A workflow that processes input using two language agents</returns>
-    internal static Workflow<List<ChatMessage>> GetWorkflow(IChatClient chatClient)
+    internal static ValueTask<Workflow<List<ChatMessage>>> GetWorkflowAsync(IChatClient chatClient)
     {
         // Create executors
         var startExecutor = new ConcurrentStartExecutor();
@@ -26,11 +26,11 @@ internal static class WorkflowHelper
         AIAgent englishAgent = GetLanguageAgent("English", chatClient);
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(startExecutor);
-        builder.AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent]);
-        builder.AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent]);
-
-        return builder.Build<List<ChatMessage>>();
+        return new WorkflowBuilder(startExecutor)
+            .AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent])
+            .AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent])
+            .WithOutputFrom(aggregationExecutor)
+            .BuildAsync<List<ChatMessage>>();
     }
 
     /// <summary>
@@ -39,11 +39,8 @@ internal static class WorkflowHelper
     /// <param name="targetLanguage">The target language for translation</param>
     /// <param name="chatClient">The chat client to use for the agent</param>
     /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static ChatClientAgent GetLanguageAgent(string targetLanguage, IChatClient chatClient)
-    {
-        string instructions = $"You're a helpful assistant who always responds in {targetLanguage}.";
-        return new ChatClientAgent(chatClient, instructions, name: $"{targetLanguage}Agent");
-    }
+    private static ChatClientAgent GetLanguageAgent(string targetLanguage, IChatClient chatClient) =>
+        new(chatClient, instructions: $"You're a helpful assistant who always responds in {targetLanguage}.", name: $"{targetLanguage}Agent");
 
     /// <summary>
     /// Executor that starts the concurrent processing by sending messages to the agents.
@@ -88,7 +85,7 @@ internal static class WorkflowHelper
             if (this._messages.Count == 2)
             {
                 var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.Text}"));
-                await context.AddEventAsync(new WorkflowCompletedEvent(formattedMessages));
+                await context.YieldOutputAsync(formattedMessages);
             }
         }
     }

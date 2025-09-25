@@ -22,10 +22,10 @@ static string GetWeather([Description("The location to get the weather for.")] s
 
 Console.WriteLine($"User Input: {userInput}");
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
@@ -67,7 +67,7 @@ async Task SKAgent()
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
@@ -90,6 +90,9 @@ async Task AFAgent()
     }
 
     // Clean up
-    await assistantClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantClient.DeleteAssistantAsync(agent.Id);
 }

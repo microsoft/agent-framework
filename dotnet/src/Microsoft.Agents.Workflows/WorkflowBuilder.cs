@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,16 +19,18 @@ namespace Microsoft.Agents.Workflows;
 /// <see cref="ExecutorIsh.Type.Unbound"/>.</remarks>
 public class WorkflowBuilder
 {
-    private record struct EdgeId(string SourceId, string TargetId)
+    private readonly record struct EdgeConnection(string SourceId, string TargetId)
     {
         public override string ToString() => $"{this.SourceId} -> {this.TargetId}";
     }
 
-    private readonly Dictionary<string, ExecutorRegistration> _executors = new();
-    private readonly Dictionary<string, HashSet<Edge>> _edges = new();
-    private readonly HashSet<string> _unboundExecutors = new();
-    private readonly HashSet<EdgeId> _conditionlessEdges = new();
-    private readonly Dictionary<string, InputPort> _inputPorts = new();
+    private int _edgeCount;
+    private readonly Dictionary<string, ExecutorRegistration> _executors = [];
+    private readonly Dictionary<string, HashSet<Edge>> _edges = [];
+    private readonly HashSet<string> _unboundExecutors = [];
+    private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
+    private readonly Dictionary<string, InputPort> _inputPorts = [];
+    private readonly HashSet<string> _outputExecutors = [];
 
     private readonly string _startExecutorId;
 
@@ -64,8 +65,8 @@ public class WorkflowBuilder
                         $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {incoming.ExecutorType.Name}) is already bound.");
                 }
 
-                if (existing.RawExecutorishData != null &&
-                    !object.ReferenceEquals(existing.RawExecutorishData, incoming.RawExecutorishData))
+                if (existing.RawExecutorishData is not null &&
+                    !ReferenceEquals(existing.RawExecutorishData, incoming.RawExecutorishData))
                 {
                     throw new InvalidOperationException(
                         $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but different instance is already bound.");
@@ -88,6 +89,23 @@ public class WorkflowBuilder
         }
 
         return executorish;
+    }
+
+    /// <summary>
+    /// Register executors as an output source. Executors can use <see cref="IWorkflowContext.YieldOutputAsync"/> to yield output values.
+    /// By default, message handlers with a non-void return type will also be yielded, unless <see cref="ExecutorOptions.AutoYieldOutputHandlerResultObject"/>
+    /// is set to <see langword="false"/>.
+    /// </summary>
+    /// <param name="executors"></param>
+    /// <returns></returns>
+    public WorkflowBuilder WithOutputFrom(params ExecutorIsh[] executors)
+    {
+        foreach (ExecutorIsh executor in executors)
+        {
+            this._outputExecutors.Add(this.Track(executor).Id);
+        }
+
+        return this;
     }
 
     /// <summary>
@@ -115,11 +133,57 @@ public class WorkflowBuilder
         // If it does not exist, create a new one.
         if (!this._edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
         {
-            this._edges[sourceId] = edges = new HashSet<Edge>();
+            this._edges[sourceId] = edges = [];
         }
 
         return edges;
     }
+
+    /// <summary>
+    /// Adds a directed edge from the specified source executor to the target executor, optionally guarded by a
+    /// condition.
+    /// </summary>
+    /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
+    /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
+    /// executors already exists.</exception>
+    public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target)
+        => this.AddEdge<object>(source, target, null);
+
+    internal static Func<object?, bool>? CreateConditionFunc<T>(Func<T?, bool>? condition)
+    {
+        if (condition is null)
+        {
+            return null;
+        }
+        return maybeObj =>
+        {
+            if (typeof(T) != typeof(object) && maybeObj is PortableValue portableValue)
+            {
+                maybeObj = portableValue.AsType(typeof(T));
+            }
+            return condition(maybeObj is T typed ? typed : default);
+        };
+    }
+
+    internal static Func<object?, bool>? CreateConditionFunc<T>(Func<object?, bool>? condition)
+    {
+        if (condition is null)
+        {
+            return null;
+        }
+        return maybeObj =>
+        {
+            if (typeof(T) != typeof(object) && maybeObj is PortableValue portableValue)
+            {
+                maybeObj = portableValue.AsType(typeof(T));
+            }
+            return condition(maybeObj);
+        };
+    }
+
+    private EdgeId TakeEdgeId() => new(Interlocked.Increment(ref this._edgeCount));
 
     /// <summary>
     /// Adds a directed edge from the specified source executor to the target executor, optionally guarded by a
@@ -132,7 +196,7 @@ public class WorkflowBuilder
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
-    public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target, Func<object?, bool>? condition = null)
+    public WorkflowBuilder AddEdge<T>(ExecutorIsh source, ExecutorIsh target, Func<T?, bool>? condition = null)
     {
         // Add an edge from source to target with an optional condition.
         // This is a low-level builder method that does not enforce any specific executor type.
@@ -140,15 +204,15 @@ public class WorkflowBuilder
         Throw.IfNull(source);
         Throw.IfNull(target);
 
-        EdgeId id = new(source.Id, target.Id);
-        if (condition == null && this._conditionlessEdges.Contains(id))
+        EdgeConnection connection = new(source.Id, target.Id);
+        if (condition is null && this._conditionlessConnections.Contains(connection))
         {
             throw new InvalidOperationException(
                 $"An edge from '{source.Id}' to '{target.Id}' already exists without a condition. " +
                 "You cannot add another edge without a condition for the same source and target.");
         }
 
-        DirectEdgeData directEdge = new(this.Track(source).Id, this.Track(target).Id, condition);
+        DirectEdgeData directEdge = new(this.Track(source).Id, this.Track(target).Id, this.TakeEdgeId(), CreateConditionFunc(condition));
 
         this.EnsureEdgesFor(source.Id).Add(new(directEdge));
 
@@ -162,19 +226,58 @@ public class WorkflowBuilder
     /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
     /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
+    /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params IEnumerable<ExecutorIsh> targets)
+        => this.AddFanOutEdge<object>(source, null, targets);
+
+    internal static Func<object?, int, IEnumerable<int>>? CreateEdgeAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? partitioner)
+    {
+        if (partitioner is null)
+        {
+            return null;
+        }
+
+        return (maybeObj, count) =>
+        {
+            if (typeof(T) != typeof(object) && maybeObj is PortableValue portableValue)
+            {
+                maybeObj = portableValue.AsType(typeof(T));
+            }
+
+            return partitioner(maybeObj is T typed ? typed : default, count);
+        };
+    }
+
+    /// <summary>
+    /// Adds a fan-out edge from the specified source executor to one or more target executors, optionally using a
+    /// custom partitioning function.
+    /// </summary>
+    /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
+    /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
+    /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
     /// <param name="partitioner">An optional function that determines how input is partitioned among the target executors.
     /// If null, messages will route to all targets.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, Func<object?, int, IEnumerable<int>>? partitioner = null, params ExecutorIsh[] targets)
+    public WorkflowBuilder AddFanOutEdge<T>(ExecutorIsh source, Func<T?, int, IEnumerable<int>>? partitioner = null, params IEnumerable<ExecutorIsh> targets)
     {
         Throw.IfNull(source);
-        Throw.IfNullOrEmpty(targets);
+        Throw.IfNull(targets);
+
+        List<string> sinkIds = targets.Select(target =>
+        {
+            Throw.IfNull(target, nameof(targets));
+            return this.Track(target).Id;
+        }).ToList();
+
+        Throw.IfNullOrEmpty(sinkIds, nameof(targets));
 
         FanOutEdgeData fanOutEdge = new(
-                this.Track(source).Id,
-                targets.Select(target => this.Track(target).Id).ToList(),
-                partitioner);
+            this.Track(source).Id,
+            sinkIds,
+            this.TakeEdgeId(),
+            CreateEdgeAssignerFunc(partitioner));
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
@@ -191,14 +294,23 @@ public class WorkflowBuilder
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params ExecutorIsh[] sources)
+    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params IEnumerable<ExecutorIsh> sources)
     {
         Throw.IfNull(target);
-        Throw.IfNullOrEmpty(sources);
+        Throw.IfNull(sources);
+
+        List<string> sourceIds = sources.Select(source =>
+        {
+            Throw.IfNull(source, nameof(sources));
+            return this.Track(source).Id;
+        }).ToList();
+
+        Throw.IfNullOrEmpty(sourceIds, nameof(sources));
 
         FanInEdgeData edgeData = new(
-            sources.Select(source => this.Track(source).Id).ToList(),
-                this.Track(target).Id);
+            sourceIds,
+            this.Track(target).Id,
+            this.TakeEdgeId());
 
         foreach (string sourceId in edgeData.SourceIds)
         {
@@ -208,41 +320,7 @@ public class WorkflowBuilder
         return this;
     }
 
-    [SuppressMessage("Reliability", "CA2008:Do not create tasks without passing a TaskScheduler",
-     Justification = "We explicitly set the TaskScheduler when we create the TaskFactory")]
-    [SuppressMessage("Usage", "VSTHRD002:Avoid problematic synchronous waits",
-     Justification = "This runs the thread on the thread pool")]
-    private static TResult RunSync<TResult>(Func<ValueTask<TResult>> funcAsync)
-    {
-        TaskFactory factory = new(CancellationToken.None, TaskCreationOptions.None, TaskContinuationOptions.None, TaskScheduler.Default);
-
-        // See ASP.Net.Identity's implementation of AsyncHelper
-        // https://github.com/aspnet/AspNetIdentity/blob/main/src/Microsoft.AspNet.Identity.Core/AsyncHelper.cs
-
-        // Capture the current culture and UI culture
-        var culture = System.Globalization.CultureInfo.CurrentCulture;
-        var uiCulture = System.Globalization.CultureInfo.CurrentUICulture;
-
-        return factory.StartNew(PropagateCultureAndInvoke).Unwrap().GetAwaiter().GetResult();
-
-        Task<TResult> PropagateCultureAndInvoke()
-        {
-            // Set the culture and UI culture to the captured values
-            System.Globalization.CultureInfo.CurrentCulture = culture;
-            System.Globalization.CultureInfo.CurrentUICulture = uiCulture;
-            return funcAsync().AsTask();
-        }
-    }
-
-    /// <summary>
-    /// Builds and returns a workflow instance configured to process messages of the specified input type.
-    /// </summary>
-    /// <typeparam name="T">The type of input messages that the workflow will accept and process.</typeparam>
-    /// <returns>A new instance of <see cref="Workflow{T}"/>.</returns>
-    /// <exception cref="InvalidOperationException">Thrown if there are unbound executors in the workflow definition,
-    /// if the start executor is not bound, or if the start executor does not contain a handler for the specified input
-    /// type <typeparamref name="T"/>.</exception>
-    public Workflow<T> Build<T>()
+    private void Validate()
     {
         if (this._unboundExecutors.Count > 0)
         {
@@ -250,27 +328,44 @@ public class WorkflowBuilder
                 $"Workflow cannot be built because there are unbound executors: {string.Join(", ", this._unboundExecutors)}.");
         }
 
-        // Grab the start node, and make sure it has the right type?
-        if (!this._executors.TryGetValue(this._startExecutorId, out ExecutorRegistration? startRegistration))
-        {
-            // TODO: This should never be able to be hit
-            throw new InvalidOperationException($"Start executor with ID '{this._startExecutorId}' is not bound.");
-        }
+        // TODO: This is likely a pipe-dream, but can we do any type-checking on the edges? (Not without instantiating the executors...)
+    }
 
-        Executor startExecutor = RunSync(startRegistration.CreateInstanceAsync);
-        if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(T))))
-        {
-            // We have no handlers for the input type T, which means the built workflow will not be able to
-            // process messages of the desired type
-            throw new InvalidOperationException(
-                $"Workflow cannot be built because the starting executor {this._startExecutorId} does not contain a handler for the desired input type {typeof(T).Name}");
-        }
+    /// <summary>
+    /// Builds and returns a workflow instance.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if there are unbound executors in the workflow definition,
+    /// or if the start executor is not bound.</exception>
+    public Workflow Build()
+    {
+        this.Validate();
 
-        return new Workflow<T>(this._startExecutorId) // Why does it not see the default ctor?
+        return new Workflow(this._startExecutorId)
         {
             Registrations = this._executors,
             Edges = this._edges,
-            Ports = this._inputPorts
+            Ports = this._inputPorts,
+            OutputExecutors = this._outputExecutors
         };
+    }
+
+    /// <summary>
+    /// Attempts to build a workflow instance configured to process messages of the specified input type.
+    /// </summary>
+    /// <typeparam name="TInput">The desired input type for the workflow.</typeparam>
+    /// <exception cref="InvalidOperationException">Thrown if the built workflow cannot process messages of the specified input type,</exception>
+    public async ValueTask<Workflow<TInput>> BuildAsync<TInput>() where TInput : notnull
+    {
+        Workflow<TInput>? maybeWorkflow = await this.Build()
+                                                    .TryPromoteAsync<TInput>()
+                                                    .ConfigureAwait(false);
+
+        if (maybeWorkflow is null)
+        {
+            throw new InvalidOperationException(
+                $"The built workflow cannot process input of type '{typeof(TInput).FullName}'.");
+        }
+
+        return maybeWorkflow;
     }
 }

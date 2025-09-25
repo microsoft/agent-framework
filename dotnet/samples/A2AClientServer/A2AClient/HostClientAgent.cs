@@ -12,7 +12,6 @@ internal sealed class HostClientAgent
 {
     internal HostClientAgent(ILoggerFactory loggerFactory)
     {
-        this._loggerFactory = loggerFactory;
         this._logger = loggerFactory.CreateLogger("HostClientAgent");
     }
 
@@ -23,9 +22,9 @@ internal sealed class HostClientAgent
             this._logger.LogInformation("Initializing Agent Framework agent with model: {ModelId}", modelId);
 
             // Connect to the remote agents via A2A
-            var createAgentTasks = agentUrls.Select(agentUrl => this.CreateAgentAsync(agentUrl));
+            var createAgentTasks = agentUrls.Select(CreateAgentAsync);
             var agents = await Task.WhenAll(createAgentTasks);
-            var tools = agents.Select(agent => (AITool)AgentAIFunctionFactory.CreateFromAgent(agent)).ToList();
+            var tools = agents.Select(agent => (AITool)agent.AsAIFunction()).ToList();
 
             // Create the agent that uses the remote agents as tools
             this.Agent = new OpenAIClient(new ApiKeyCredential(apiKey))
@@ -45,10 +44,9 @@ internal sealed class HostClientAgent
     public AIAgent? Agent { get; private set; }
 
     #region private
-    private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
 
-    private async Task<AIAgent> CreateAgentAsync(string agentUri)
+    private static async Task<AIAgent> CreateAgentAsync(string agentUri)
     {
         var url = new Uri(agentUri);
         var httpClient = new HttpClient

@@ -1,0 +1,88 @@
+#
+# This workflow demonstrates conversation between two agents: a student and a teacher.
+# The student attempts to solve the input problem and the teacher provides guidance.
+#
+# For this workflow, two agents are used, each with a prompt specific to their role.
+#
+# Student:
+# See: ./setup/StudentAgent.yaml
+#
+# With instructions: 
+#    
+# Your job is help a math teacher practice teaching by making intentional mistakes.  
+# You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
+# Always incorporate the teacher's advice to fix your next response.
+# You have the math-skills of a 6th grader.    
+
+# Teacher:
+# See: ./setup/TeacherAgent.yaml
+#
+# With instructions: 
+#    
+# Review and coach the student's approach to solving the given math problem.  
+# Don't repeat the solution or try and solve it.  
+# If the student has demonstrated comprehension and responded to all of your feedback, 
+# give the student your congratulations by using the word "congratulations".    
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    - kind: SetVariable
+      id: set_project
+      variable: Topic.Project
+      value: =System.LastMessage.Text
+
+    - kind: InvokeAzureAgent
+      id: question_student
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_STUDENT
+      input:
+        messages: =[UserMessage(Topic.Project)]
+
+    - kind: ResetVariable
+      id: reset_project
+      variable: Topic.Project
+
+    - kind: InvokeAzureAgent
+      id: question_teacher
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_TEACHER
+      output:
+        messages: Topic.TeacherResponse
+
+    - kind: SetVariable
+      id: set_count_increment
+      variable: Topic.TurnCount
+      value: =Topic.TurnCount + 1
+
+    - kind: ConditionGroup
+      id: check_completion
+      conditions:
+
+        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Topic.TeacherResponse.Text)))
+          id: check_turn_done
+          actions:
+
+            - kind: SendActivity
+              id: sendActivity_done
+              activity: GOLD STAR!
+    
+        - condition: =Topic.TurnCount < 4
+          id: check_turn_count
+          actions:
+    
+            - kind: GotoAction
+              id: goto_student_agent
+              actionId: question_student
+
+      elseActions:
+    
+        - kind: SendActivity
+          id: sendActivity_tired
+          activity: Let's try again later...

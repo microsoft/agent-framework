@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Immutable;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,33 +19,33 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
 /// </summary>
 public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
-    private ImmutableList<WorkflowEvent> WorkflowEvents { get; set; } = ImmutableList<WorkflowEvent>.Empty;
+    private List<WorkflowEvent> WorkflowEvents { get; set; } = [];
 
-    private ImmutableDictionary<Type, int> WorkflowEventCounts { get; set; } = ImmutableDictionary<Type, int>.Empty;
+    private Dictionary<Type, int> WorkflowEventCounts { get; set; } = [];
 
     [Theory]
     [InlineData("BadEmpty.yaml")]
     [InlineData("BadId.yaml")]
     [InlineData("BadKind.yaml")]
-    public async Task InvalidWorkflow(string workflowFile)
+    public async Task InvalidWorkflowAsync(string workflowFile)
     {
-        await Assert.ThrowsAsync<DeclarativeModelException>(() => this.RunWorkflow(workflowFile));
+        await Assert.ThrowsAsync<DeclarativeModelException>(() => this.RunWorkflowAsync(workflowFile));
         this.AssertNotExecuted("end_all");
     }
 
     [Fact]
-    public async Task LoopEachAction()
+    public async Task LoopEachActionAsync()
     {
-        await this.RunWorkflow("LoopEach.yaml");
+        await this.RunWorkflowAsync("LoopEach.yaml");
         this.AssertExecutionCount(expectedCount: 35);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("end_all");
     }
 
     [Fact]
-    public async Task LoopBreakAction()
+    public async Task LoopBreakActionAsync()
     {
-        await this.RunWorkflow("LoopBreak.yaml");
+        await this.RunWorkflowAsync("LoopBreak.yaml");
         this.AssertExecutionCount(expectedCount: 7);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("breakLoop_now");
@@ -55,9 +55,9 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
-    public async Task LoopContinueAction()
+    public async Task LoopContinueActionAsync()
     {
-        await this.RunWorkflow("LoopContinue.yaml");
+        await this.RunWorkflowAsync("LoopContinue.yaml");
         this.AssertExecutionCount(expectedCount: 23);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("continueLoop_now");
@@ -67,9 +67,18 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
-    public async Task GotoAction()
+    public async Task EndConversationActionAsync()
     {
-        await this.RunWorkflow("Goto.yaml");
+        await this.RunWorkflowAsync("EndConversation.yaml");
+        this.AssertExecutionCount(expectedCount: 1);
+        this.AssertExecuted("end_all");
+        this.AssertNotExecuted("sendActivity_1");
+    }
+
+    [Fact]
+    public async Task GotoActionAsync()
+    {
+        await this.RunWorkflowAsync("Goto.yaml");
         this.AssertExecutionCount(expectedCount: 2);
         this.AssertExecuted("goto_end");
         this.AssertExecuted("end_all");
@@ -81,15 +90,15 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [Theory]
     [InlineData(12)]
     [InlineData(37)]
-    public async Task ConditionAction(int input)
+    public async Task ConditionActionAsync(int input)
     {
-        await this.RunWorkflow("Condition.yaml", input);
+        await this.RunWorkflowAsync("Condition.yaml", input);
         this.AssertExecutionCount(expectedCount: 9);
         this.AssertExecuted("setVariable_test");
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("conditionItem_even");
+            this.AssertExecuted("conditionItem_even", isScope: true);
             this.AssertExecuted("sendActivity_even");
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
@@ -97,7 +106,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd");
+            this.AssertExecuted("conditionItem_odd", isScope: true);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("conditionItem_even");
             this.AssertNotExecuted("sendActivity_even");
@@ -109,21 +118,21 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [Theory]
     [InlineData(12, 7)]
     [InlineData(37, 9)]
-    public async Task ConditionActionWithElse(int input, int expectedActions)
+    public async Task ConditionActionWithElseAsync(int input, int expectedActions)
     {
-        await this.RunWorkflow("ConditionElse.yaml", input);
+        await this.RunWorkflowAsync("ConditionElse.yaml", input);
         this.AssertExecutionCount(expectedActions);
         this.AssertExecuted("setVariable_test");
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("sendActivity_else");
+            this.AssertExecuted("sendActivity_else", isScope: true);
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd");
+            this.AssertExecuted("conditionItem_odd", isScope: true);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("sendActivity_else");
         }
@@ -135,12 +144,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 1, "parse_var")]
+    [InlineData("SendActivity.yaml", 2, "activity_input")]
+    [InlineData("SetVariable.yaml", 1, "set_var")]
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
-    public async Task ExecuteAction(string workflowFile, int expectedCount, string expectedId)
+    public async Task ExecuteActionAsync(string workflowFile, int expectedCount, string expectedId)
     {
-        await this.RunWorkflow(workflowFile);
+        await this.RunWorkflowAsync(workflowFile);
         this.AssertExecutionCount(expectedCount);
         this.AssertExecuted(expectedId);
     }
@@ -168,7 +179,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(InvokeSkillAction.Builder))]
     [InlineData(typeof(LogCustomTelemetryEvent.Builder))]
     [InlineData(typeof(OAuthInput.Builder))]
-    [InlineData(typeof(Question.Builder))]
     [InlineData(typeof(RecognizeIntent.Builder))]
     [InlineData(typeof(RepeatDialog.Builder))]
     [InlineData(typeof(ReplaceDialog.Builder))]
@@ -192,17 +202,18 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 BeginDialog =
                     new OnActivity.Builder()
                     {
-                        Id = "workflow",
+                        Id = "anything",
                         Actions = [unsupportedAction]
                     }
             };
         AdaptiveDialog dialog = dialogBuilder.Build();
 
-        WorkflowScopes scopes = new();
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new RootExecutor(), new DeclarativeWorkflowState(RecalcEngineFactory.Create()), options);
-        WorkflowElementWalker walker = new(dialog, visitor);
+        WorkflowActionVisitor visitor = new(new RootExecutor(), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
     }
 
@@ -218,52 +229,62 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
     }
 
-    private void AssertExecuted(string executorId)
+    private void AssertExecuted(string executorId, bool isScope = false)
     {
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
+        if (!isScope)
+        {
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == executorId);
+            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == executorId);
+        }
     }
 
-    private void AssertMessage(string message)
-    {
-        Assert.Contains(this.WorkflowEvents.OfType<AgentRunResponseEvent>(), e => string.Equals(e.Response.Messages[0].Text.Trim(), message, StringComparison.Ordinal));
-    }
+    private void AssertMessage(string message) =>
+        Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
 
-    private Task RunWorkflow(string workflowPath) => this.RunWorkflow<string>(workflowPath, string.Empty);
+    private Task RunWorkflowAsync(string workflowPath) =>
+        this.RunWorkflowAsync(workflowPath, string.Empty);
 
-    private async Task RunWorkflow<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
+    private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
 
-        Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
-        this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToImmutableList();
+        this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToList();
         foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
         {
             if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
-                DeclarativeExecutorResult? message = invokeEvent.Data as DeclarativeExecutorResult;
+                ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
+            }
+            else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)
+            {
+                this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
+            }
+            else if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
+            {
+                this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
             }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {
                 this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
             }
         }
-        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToImmutableDictionary(e => e.Key, e => e.Count());
+        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
     }
 
     private sealed class RootExecutor() :
-        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.RootId("workflow")),
+        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.Steps.Root("anything")),
         IMessageHandler<string>
     {
-        public async ValueTask HandleAsync(string message, IWorkflowContext context)
-        {
-            await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}").ConfigureAwait(false);
-        }
+        public async ValueTask HandleAsync(string message, IWorkflowContext context) =>
+            await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow:t}").ConfigureAwait(false);
     }
 }

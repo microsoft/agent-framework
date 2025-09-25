@@ -17,10 +17,8 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 {
     private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
 
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private ChatClientAgent _agent;
-    private PersistentAgentsClient _persistentAgentsClient;
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+    private ChatClientAgent _agent = null!;
+    private PersistentAgentsClient _persistentAgentsClient = null!;
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
@@ -29,10 +27,10 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
         List<ChatMessage> messages = [];
+        var typedThread = (ChatClientAgentThread)thread;
 
-        AsyncPageable<PersistentThreadMessage> threadMessages = this._persistentAgentsClient.Messages.GetMessagesAsync(threadId: thread.ConversationId, order: ListSortOrder.Ascending);
-
-        await foreach (var threadMessage in threadMessages)
+        await foreach (var threadMessage in (AsyncPageable<PersistentThreadMessage>)this._persistentAgentsClient.Messages.GetMessagesAsync(
+            threadId: typedThread.ConversationId, order: ListSortOrder.Ascending))
         {
             var message = new ChatMessage
             {
@@ -74,16 +72,15 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
             });
     }
 
-    public Task DeleteAgentAsync(ChatClientAgent agent)
-    {
-        return this._persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
-    }
+    public Task DeleteAgentAsync(ChatClientAgent agent) =>
+        this._persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
     public Task DeleteThreadAsync(AgentThread thread)
     {
-        if (thread?.ConversationId is not null)
+        var typedThread = (ChatClientAgentThread)thread;
+        if (typedThread?.ConversationId is not null)
         {
-            return this._persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId);
+            return this._persistentAgentsClient.Threads.DeleteThreadAsync(typedThread.ConversationId);
         }
 
         return Task.CompletedTask;

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, ContextProvider
+from ._middleware import Middleware
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import ToolProtocol
@@ -344,7 +345,14 @@ class BaseChatClient(AFBaseModel, ABC):
             )
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
-        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
+
+        # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
+        if "_function_middleware_pipeline" in kwargs:
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+        else:
+            filtered_kwargs = kwargs
+
+        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **filtered_kwargs)
 
     async def get_streaming_response(
         self,
@@ -420,12 +428,18 @@ class BaseChatClient(AFBaseModel, ABC):
                 tools=self._normalize_tools(tools),  # type: ignore
                 user=user,
                 additional_properties=additional_properties or {},
-                **kwargs,
             )
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
+
+        # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
+        if "_function_middleware_pipeline" in kwargs:
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
+        else:
+            filtered_kwargs = kwargs
+
         async for update in self._inner_get_streaming_response(
-            messages=prepped_messages, chat_options=chat_options, **kwargs
+            messages=prepped_messages, chat_options=chat_options, **filtered_kwargs
         ):
             yield update
 
@@ -465,6 +479,7 @@ class BaseChatClient(AFBaseModel, ABC):
         | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
+        middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> "ChatAgent":
         """Create an agent with the given name and instructions.
@@ -476,6 +491,7 @@ class BaseChatClient(AFBaseModel, ABC):
             chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
                 the default in-memory store will be used.
             context_providers: Context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
             **kwargs: Additional keyword arguments to pass to the agent.
                 See ChatAgent for all the available options.
 
@@ -491,6 +507,7 @@ class BaseChatClient(AFBaseModel, ABC):
             tools=tools,
             chat_message_store_factory=chat_message_store_factory,
             context_providers=context_providers,
+            middleware=middleware,
             **kwargs,
         )
 

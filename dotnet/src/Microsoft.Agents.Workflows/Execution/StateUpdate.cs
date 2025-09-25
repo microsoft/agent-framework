@@ -17,10 +17,7 @@ internal sealed class StateUpdate
         this.IsDelete = isDelete;
     }
 
-    public static StateUpdate Update<T>(string key, T? value)
-    {
-        return new StateUpdate(key, value, value is null);
-    }
+    public static StateUpdate Update<T>(string key, T? value) => new(key, value, value is null);
 
     public static StateUpdate Delete(string key)
     {

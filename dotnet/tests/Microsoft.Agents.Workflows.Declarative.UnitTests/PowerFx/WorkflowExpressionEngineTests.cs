@@ -7,7 +7,6 @@ using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Bot.ObjectModel.Exceptions;
-using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
@@ -34,157 +33,111 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     public WorkflowExpressionEngineTests(ITestOutputHelper output)
         : base(output)
     {
-        this.Scopes.Set(Variables.GlobalValue, FormulaValue.New(255), VariableScopeNames.Global);
-        this.Scopes.Set(Variables.BoolValue, FormulaValue.New(true), VariableScopeNames.Topic);
-        this.Scopes.Set(Variables.StringValue, FormulaValue.New("Hello World"), VariableScopeNames.Topic);
-        this.Scopes.Set(Variables.IntValue, FormulaValue.New(long.MaxValue), VariableScopeNames.Topic);
-        this.Scopes.Set(Variables.NumberValue, FormulaValue.New(33.3), VariableScopeNames.Topic);
-        this.Scopes.Set(Variables.EnumValue, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)), VariableScopeNames.Topic);
-        this.Scopes.Set(Variables.ObjectValue, ObjectData, VariableScopeNames.Topic);
-        this.Scopes.Set(Variables.ArrayValue, TableData, VariableScopeNames.Topic);
-        this.Scopes.Set(Variables.BlankValue, FormulaValue.NewBlank(), VariableScopeNames.Topic);
+        this.State.Set(Variables.GlobalValue, FormulaValue.New(255), VariableScopeNames.Global);
+        this.State.Set(Variables.BoolValue, FormulaValue.New(true), VariableScopeNames.Topic);
+        this.State.Set(Variables.StringValue, FormulaValue.New("Hello World"), VariableScopeNames.Topic);
+        this.State.Set(Variables.IntValue, FormulaValue.New(long.MaxValue), VariableScopeNames.Topic);
+        this.State.Set(Variables.NumberValue, FormulaValue.New(33.3), VariableScopeNames.Topic);
+        this.State.Set(Variables.EnumValue, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)), VariableScopeNames.Topic);
+        this.State.Set(Variables.ObjectValue, ObjectData, VariableScopeNames.Topic);
+        this.State.Set(Variables.ArrayValue, TableData, VariableScopeNames.Topic);
+        this.State.Set(Variables.BlankValue, FormulaValue.NewBlank(), VariableScopeNames.Topic);
+        this.State.Bind();
     }
-
-    #region Unsupported Expression Tests
-
-    [Fact]
-    public void AdaptiveCardExpressionGetValueUnsupported()
-    {
-        this.EvaluateUnsupportedExpression(expressionEngine => expressionEngine.GetValue(AdaptiveCardExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)), this.Scopes.BuildState()));
-    }
-
-    [Fact]
-    public void DialogExpressionGetValueUnsupported()
-    {
-        this.EvaluateUnsupportedExpression(expressionEngine => expressionEngine.GetValue(DialogExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)), this.Scopes.BuildState()));
-    }
-
-    [Fact]
-    public void FileExpressionGetValueUnsupported()
-    {
-        this.EvaluateUnsupportedExpression(expressionEngine => expressionEngine.GetValue(FileExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)), this.Scopes.BuildState()));
-    }
-
-    #endregion
 
     #region BoolExpression Tests
 
     [Fact]
-    public void BoolExpressionGetValueForNull()
-    {
+    public void BoolExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<ArgumentNullException>((BoolExpression)null!);
-    }
 
     [Fact]
-    public void BoolExpressionGetValueForInvalid()
-    {
+    public void BoolExpressionGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<InvalidExpressionOutputTypeException>(BoolExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)));
-    }
 
     [Fact]
-    public void BoolExpressionGetValueForLiteral()
-    {
+    public void BoolExpressionGetValueForLiteral() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             BoolExpression.Literal(true),
             expectedValue: true);
-    }
 
     [Fact]
-    public void BoolExpressionGetValueForBlank()
-    {
+    public void BoolExpressionGetValueForBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             BoolExpression.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: false);
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void BoolExpressionGetValueForVariable(bool useState)
+    [Fact]
+    public void BoolExpressionGetValueForVariable()
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
             BoolExpression.Variable(PropertyPath.TopicVariable(Variables.BoolValue)),
-            expectedValue: true,
-            useState);
+            expectedValue: true);
     }
 
     [Fact]
-    public void BoolExpressionGetValueForFormula()
-    {
+    public void BoolExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             BoolExpression.Expression("true || false"),
             expectedValue: true);
-    }
 
     #endregion
 
     #region StringExpression Tests
 
     [Fact]
-    public void StringExpressionGetValueForNull()
-    {
+    public void StringExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<ArgumentNullException>((StringExpression)null!);
-    }
 
     [Fact]
-    public void StringExpressionGetValueForInvalid()
-    {
+    public void StringExpressionGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<InvalidExpressionOutputTypeException>(StringExpression.Variable(PropertyPath.TopicVariable(Variables.BoolValue)));
-    }
 
     [Fact]
-    public void StringExpressionGetValueForStringExpressionBlank()
-    {
+    public void StringExpressionGetValueForStringExpressionBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             StringExpression.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: string.Empty);
-    }
 
     [Fact]
-    public void StringExpressionGetValueForLiteral()
-    {
+    public void StringExpressionGetValueForLiteral() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             StringExpression.Literal("test"),
             expectedValue: "test");
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void StringExpressionGetValueForVariable(bool useState)
+    [Fact]
+    public void StringExpressionGetValueForVariable()
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
             StringExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)),
-            expectedValue: "Hello World",
-            useState);
+            expectedValue: "Hello World");
     }
 
     [Fact]
-    public void StringExpressionGetValueForFormula()
-    {
+    public void StringExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             StringExpression.Expression(@"""A"" & ""B"""),
             expectedValue: "AB");
-    }
 
     [Fact]
     public void StringExpressionGetValueForRecord()
     {
         // Arrange
         RecordValue state = FormulaValue.NewRecordFromFields([new NamedValue("test", FormulaValue.New("value"))]);
-        this.Scopes.Set("TestRecord", state, VariableScopeNames.Global);
+        this.State.Set("TestRecord", state, VariableScopeNames.Global);
+        this.State.Bind();
 
         // Arrange, Act & Assert
         this.EvaluateExpression(
@@ -202,236 +155,183 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     #region IntExpression Tests
 
     [Fact]
-    public void IntExpressionGetValueForNull()
-    {
+    public void IntExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<ArgumentNullException>((IntExpression)null!);
-    }
 
     [Fact]
-    public void IntExpressionGetValueForInvalid()
-    {
+    public void IntExpressionGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<InvalidExpressionOutputTypeException>(IntExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)));
-    }
 
     [Fact]
-    public void IntExpressionGetValueForIntExpressionBlank()
-    {
+    public void IntExpressionGetValueForIntExpressionBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             IntExpression.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: 0);
-    }
 
     [Fact]
-    public void IntExpressionGetValueForLiteral()
-    {
+    public void IntExpressionGetValueForLiteral() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             IntExpression.Literal(7),
             expectedValue: 7);
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void IntExpressionGetValueForVariable(bool useState)
+    [Fact]
+    public void IntExpressionGetValueForVariable()
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
             IntExpression.Variable(PropertyPath.TopicVariable(Variables.IntValue)),
-            expectedValue: long.MaxValue,
-            useState);
+            expectedValue: long.MaxValue);
     }
 
     [Fact]
-    public void IntExpressionGetValueForFormula()
-    {
+    public void IntExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             IntExpression.Expression("1 + 6"),
             expectedValue: 7);
-    }
 
     #endregion
 
     #region NumberExpression Tests
 
     [Fact]
-    public void NumberExpressionGetValueForNull()
-    {
+    public void NumberExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<ArgumentNullException>((NumberExpression)null!);
-    }
 
     [Fact]
-    public void NumberExpressionGetValueForInvalid()
-    {
+    public void NumberExpressionGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<InvalidExpressionOutputTypeException>(NumberExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)));
-    }
 
     [Fact]
-    public void NumberExpressionGetValueForBlank()
-    {
+    public void NumberExpressionGetValueForBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             NumberExpression.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: 0);
-    }
 
     [Fact]
-    public void NumberExpressionGetValueForLiteral()
-    {
+    public void NumberExpressionGetValueForLiteral() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             NumberExpression.Literal(3.14),
             expectedValue: 3.14);
-    }
 
     [Fact]
-    public void NumberExpressionGetValueForVariable()
-    {
+    public void NumberExpressionGetValueForVariable() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             NumberExpression.Variable(PropertyPath.TopicVariable(Variables.NumberValue)),
             expectedValue: 33.3);
-    }
 
     [Fact]
-    public void NumberExpressionGetValueForFormula()
-    {
+    public void NumberExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             NumberExpression.Expression("31.1 + 2.2"),
             expectedValue: 33.3);
-    }
 
     #endregion
 
     #region DataValueExpression Tests
 
     [Fact]
-    public void DataValueExpressionGetValueForNull()
-    {
+    public void DataValueExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<ArgumentNullException>((ValueExpression)null!);
-    }
 
     [Fact]
-    public void DataValueExpressionGetValueForDataValueExpressionBlank()
-    {
+    public void DataValueExpressionGetValueForDataValueExpressionBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ValueExpression.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: DataValue.Blank());
-    }
 
     [Fact]
-    public void DataValueExpressionGetValueForLiteral()
-    {
+    public void DataValueExpressionGetValueForLiteral() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ValueExpression.Literal(DataValue.Create("test")),
             expectedValue: DataValue.Create("test"));
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void DataValueExpressionGetValueForVariable(bool useState)
+    [Fact]
+    public void DataValueExpressionGetValueForVariable()
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ValueExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)),
-            expectedValue: DataValue.Create("Hello World"),
-            useState);
+            expectedValue: DataValue.Create("Hello World"));
     }
 
     [Fact]
-    public void DataValueExpressionGetValueForFormula()
-    {
+    public void DataValueExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ValueExpression.Expression(@"""A"" & ""B"""),
             expectedValue: DataValue.Create("AB"));
-    }
 
     #endregion
 
     #region EnumExpression Tests
 
     [Fact]
-    public void EnumExpressionGetValueForNull()
-    {
+    public void EnumExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<VariablesToClearWrapper, ArgumentNullException>((EnumExpression<VariablesToClearWrapper>)null!);
-    }
 
     [Fact]
-    public void EnumExpressionGetValueForInvalid()
-    {
+    public void EnumExpressionGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<VariablesToClearWrapper, InvalidExpressionOutputTypeException>(EnumExpression<VariablesToClearWrapper>.Variable(PropertyPath.TopicVariable(Variables.BoolValue)));
-    }
 
     [Fact]
-    public void EnumExpressionGetValueForLiteral()
-    {
+    public void EnumExpressionGetValueForLiteral() =>
         // Arrange, Act & Assert
-        this.EvaluateExpression<VariablesToClearWrapper>(
+        this.EvaluateExpression(
             EnumExpression<VariablesToClearWrapper>.Literal(VariablesToClearWrapper.Get(VariablesToClear.ConversationScopedVariables)),
             expectedValue: VariablesToClear.ConversationScopedVariables);
-    }
 
     [Fact]
-    public void EnumExpressionGetValueForBlank()
-    {
+    public void EnumExpressionGetValueForBlank() =>
         // Arrange, Act & Assert
-        this.EvaluateExpression<VariablesToClearWrapper>(
+        this.EvaluateExpression(
             EnumExpression<VariablesToClearWrapper>.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: VariablesToClear.ConversationScopedVariables);
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void EnumExpressionGetValueForVariable(bool useState)
+    [Fact]
+    public void EnumExpressionGetValueForVariable()
     {
         // Arrange, Act & Assert
-        this.EvaluateExpression<VariablesToClearWrapper>(
+        this.EvaluateExpression(
             EnumExpression<VariablesToClearWrapper>.Variable(PropertyPath.TopicVariable(Variables.EnumValue)),
-            expectedValue: VariablesToClear.ConversationScopedVariables,
-            useState);
+            expectedValue: VariablesToClear.ConversationScopedVariables);
     }
 
     [Fact]
-    public void EnumExpressionGetValueForFormula()
-    {
+    public void EnumExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
-        this.EvaluateExpression<VariablesToClearWrapper>(
+        this.EvaluateExpression(
             EnumExpression<VariablesToClearWrapper>.Expression(@"""ConversationScoped"" & ""Variables"""),
             expectedValue: VariablesToClear.ConversationScopedVariables);
-    }
 
     #endregion
 
     #region ObjectExpression Tests
 
     [Fact]
-    public void ObjectExpressionGetValueForNull()
-    {
+    public void ObjectExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<RecordDataValue, ArgumentNullException>((ObjectExpression<RecordDataValue>)null!);
-    }
 
     [Fact]
-    public void ObjectExpressionGetValueForInvalid()
-    {
+    public void ObjectExpressionGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<RecordDataValue, InvalidExpressionOutputTypeException>(ObjectExpression<RecordDataValue>.Variable(PropertyPath.TopicVariable(Variables.BoolValue)));
-    }
 
     [Fact]
     public void ObjectExpressionGetValueForLiteral()
@@ -440,31 +340,26 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         RecordDataValue.Builder recordBuilder = new();
         recordBuilder.Properties.Add(nameof(EnvironmentVariableReference.SchemaName), new StringDataValue("test"));
         RecordDataValue objectRecord = recordBuilder.Build();
-        EnvironmentVariableReference element = new EnvironmentVariableReference.Builder() { SchemaName = "test" }.Build();
+        _ = new EnvironmentVariableReference.Builder() { SchemaName = "test" }.Build();
         this.EvaluateExpression(
             ObjectExpression<RecordDataValue>.Literal(objectRecord),
             expectedValue: objectRecord);
     }
 
     [Fact]
-    public void ObjectExpressionGetValueForBlank()
-    {
+    public void ObjectExpressionGetValueForBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ObjectExpression<RecordDataValue>.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: null);
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ObjectExpressionGetValueForVariable(bool useState)
+    [Fact]
+    public void ObjectExpressionGetValueForVariable()
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ObjectExpression<RecordDataValue>.Variable(PropertyPath.TopicVariable(Variables.ObjectValue)),
-            expectedValue: ObjectData.ToRecord(),
-            useState);
+            expectedValue: ObjectData.ToRecord());
     }
 
     #endregion
@@ -472,18 +367,14 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     #region ArrayExpression Tests
 
     [Fact]
-    public void ArrayExpressionGetValueForNull()
-    {
+    public void ArrayExpressionGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<string, ArgumentNullException>((ArrayExpression<string>)null!);
-    }
 
     [Fact]
-    public void ArrayExpressionGetValueForInvalid()
-    {
+    public void ArrayExpressionGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<string, InvalidExpressionOutputTypeException>(ArrayExpression<string>.Variable(PropertyPath.TopicVariable(Variables.BoolValue)));
-    }
 
     [Fact]
     public void ArrayExpressionGetValueForLiteral()
@@ -496,164 +387,141 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
-    public void ArrayExpressionGetValueForBlank()
-    {
+    public void ArrayExpressionGetValueForBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ArrayExpression<string>.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: []);
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ArrayExpressionGetValueForVariable(bool useState)
+    [Fact]
+    public void ArrayExpressionGetValueForVariable()
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ArrayExpression<string>.Variable(PropertyPath.TopicVariable(Variables.ArrayValue)),
-            expectedValue: ["a", "b"],
-            useState);
+            expectedValue: ["a", "b"]);
     }
 
     [Fact]
-    public void ArrayExpressionGetValueForFormula()
-    {
+    public void ArrayExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ArrayExpression<string>.Expression(@"[""a"", ""b""]"),
             expectedValue: ["a", "b"]);
-    }
 
     #endregion
 
     #region ArrayExpressionOnly Tests
 
     [Fact]
-    public void ArrayExpressionOnlyGetValueForNull()
-    {
+    public void ArrayExpressionOnlyGetValueForNull() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<string, ArgumentNullException>((ArrayExpressionOnly<string>)null!);
-    }
 
     [Fact]
-    public void ArrayExpressionOnlyGetValueForInvalid()
-    {
+    public void ArrayExpressionOnlyGetValueForInvalid() =>
         // Arrange, Act & Assert
         this.EvaluateInvalidExpression<string, InvalidExpressionOutputTypeException>(ArrayExpressionOnly<string>.Variable(PropertyPath.TopicVariable(Variables.BoolValue)));
-    }
 
     [Fact]
-    public void ArrayExpressionOnlyGetValueForBlank()
-    {
+    public void ArrayExpressionOnlyGetValueForBlank() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ArrayExpressionOnly<string>.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: []);
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ArrayExpressionOnlyGetValueForVariable(bool useState)
+    [Fact]
+    public void ArrayExpressionOnlyGetValueForVariable()
     {
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ArrayExpressionOnly<string>.Variable(PropertyPath.TopicVariable(Variables.ArrayValue)),
-            expectedValue: ["a", "b"],
-            useState);
+            expectedValue: ["a", "b"]);
     }
 
     [Fact]
-    public void ArrayExpressionOnlyGetValueForFormula()
-    {
+    public void ArrayExpressionOnlyGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
             ArrayExpressionOnly<string>.Expression(@"[""a"", ""b""]"),
             expectedValue: ["a", "b"]);
-    }
 
     #endregion
 
-    private EvaluationResult<bool> EvaluateExpression(BoolExpression expression, bool expectedValue, bool useState = false, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
-        => this.EvaluateExpression((evaluator) => useState ? evaluator.GetValue(expression, this.Scopes) : evaluator.GetValue(expression, this.Scopes.BuildState()), expectedValue, expectedSensitivity);
+    private EvaluationResult<bool> EvaluateExpression(BoolExpression expression, bool expectedValue, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
+        => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TException>(BoolExpression expression)
         where TException : Exception
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression, this.Scopes));
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private EvaluationResult<string> EvaluateExpression(StringExpression expression, string expectedValue, bool useState = false, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
-        => this.EvaluateExpression((evaluator) => useState ? evaluator.GetValue(expression, this.Scopes) : evaluator.GetValue(expression, this.Scopes.BuildState()), expectedValue, expectedSensitivity);
+    private EvaluationResult<string> EvaluateExpression(StringExpression expression, string expectedValue, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
+        => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TException>(StringExpression expression)
         where TException : Exception
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression, this.Scopes));
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private EvaluationResult<long> EvaluateExpression(IntExpression expression, long expectedValue, bool useState = false, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
-        => this.EvaluateExpression((evaluator) => useState ? evaluator.GetValue(expression, this.Scopes) : evaluator.GetValue(expression, this.Scopes.BuildState()), expectedValue, expectedSensitivity);
+    private EvaluationResult<long> EvaluateExpression(IntExpression expression, long expectedValue, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
+        => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TException>(IntExpression expression)
         where TException : Exception
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression, this.Scopes));
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private EvaluationResult<double> EvaluateExpression(NumberExpression expression, double expectedValue, bool useState = false, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
-        => this.EvaluateExpression((evaluator) => useState ? evaluator.GetValue(expression, this.Scopes) : evaluator.GetValue(expression, this.Scopes.BuildState()), expectedValue, expectedSensitivity);
+    private EvaluationResult<double> EvaluateExpression(NumberExpression expression, double expectedValue, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
+        => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TException>(NumberExpression expression)
         where TException : Exception
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression, this.Scopes));
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private EvaluationResult<DataValue> EvaluateExpression(ValueExpression expression, DataValue expectedValue, bool useState = false, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
-        => this.EvaluateExpression((evaluator) => useState ? evaluator.GetValue(expression, this.Scopes) : evaluator.GetValue(expression, this.Scopes.BuildState()), expectedValue, expectedSensitivity);
+    private EvaluationResult<DataValue> EvaluateExpression(ValueExpression expression, DataValue expectedValue, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
+        => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TException>(ValueExpression expression)
         where TException : Exception
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression, this.Scopes));
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private EvaluationResult<TEnum> EvaluateExpression<TEnum>(EnumExpression<TEnum> expression, TEnum expectedValue, bool useState = false, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
+    private EvaluationResult<TEnum> EvaluateExpression<TEnum>(EnumExpression<TEnum> expression, TEnum expectedValue, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
         where TEnum : EnumWrapper
-        => this.EvaluateExpression((evaluator) => useState ? evaluator.GetValue<TEnum>(expression, this.Scopes) : evaluator.GetValue<TEnum>(expression, this.Scopes.BuildState()), expectedValue, expectedSensitivity);
+        => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TEnum, TException>(EnumExpression<TEnum> expression)
-        where TException : Exception
         where TEnum : EnumWrapper
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue<TEnum>(expression, this.Scopes));
+        where TException : Exception
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private EvaluationResult<TValue?> EvaluateExpression<TValue>(ObjectExpression<TValue> expression, TValue? expectedValue, bool useState = false, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
+    private EvaluationResult<TValue?> EvaluateExpression<TValue>(ObjectExpression<TValue> expression, TValue? expectedValue, SensitivityLevel expectedSensitivity = SensitivityLevel.None)
         where TValue : BotElement
-        => this.EvaluateExpression((evaluator) => useState ? evaluator.GetValue<TValue>(expression, this.Scopes) : evaluator.GetValue<TValue>(expression, this.Scopes.BuildState()), expectedValue, expectedSensitivity);
+        => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TValue, TException>(ObjectExpression<TValue> expression)
-        where TException : Exception
         where TValue : BotElement
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue<TValue>(expression, this.Scopes));
+        where TException : Exception
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private ImmutableArray<TValue> EvaluateExpression<TValue>(ArrayExpression<TValue> expression, TValue[] expectedValue, bool useState = false)
-        => this.EvaluateArrayExpression((evaluator) => useState ? evaluator.GetValue<TValue>(expression, this.Scopes) : evaluator.GetValue<TValue>(expression, this.Scopes.BuildState()), expectedValue);
+    private ImmutableArray<TValue> EvaluateExpression<TValue>(ArrayExpression<TValue> expression, TValue[] expectedValue)
+        => this.EvaluateArrayExpression((evaluator) => evaluator.GetValue(expression), expectedValue);
 
     private void EvaluateInvalidExpression<TValue, TException>(ArrayExpression<TValue> expression)
         where TException : Exception
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue<TValue>(expression, this.Scopes));
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
-    private ImmutableArray<TValue> EvaluateExpression<TValue>(ArrayExpressionOnly<TValue> expression, TValue[] expectedValue, bool useState = false)
-        => this.EvaluateArrayExpression((evaluator) => useState ? evaluator.GetValue<TValue>(expression, this.Scopes) : evaluator.GetValue<TValue>(expression, this.Scopes.BuildState()), expectedValue);
+    private ImmutableArray<TValue> EvaluateExpression<TValue>(ArrayExpressionOnly<TValue> expression, TValue[] expectedValue)
+        => this.EvaluateArrayExpression((evaluator) => evaluator.GetValue(expression), expectedValue);
 
     private void EvaluateInvalidExpression<TValue, TException>(ArrayExpressionOnly<TValue> expression)
         where TException : Exception
-        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue<TValue>(expression, this.Scopes));
+        => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
     private EvaluationResult<TValue> EvaluateExpression<TValue>(
         Func<WorkflowExpressionEngine, EvaluationResult<TValue>> evaluator,
         TValue? expectedValue,
         SensitivityLevel expectedSensitivity = SensitivityLevel.None)
     {
-        // Arrange
-        RecalcEngine engine = this.CreateEngine();
-        this.Scopes.Bind(engine);
-        WorkflowExpressionEngine expressionEngine = new(engine);
-
         // Act
-        EvaluationResult<TValue> result = evaluator.Invoke(expressionEngine);
+        EvaluationResult<TValue> result = evaluator.Invoke(this.State.Evaluator);
 
         // Assert
         Assert.Equal(expectedValue, result.Value);
@@ -666,13 +534,8 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         Func<WorkflowExpressionEngine, ImmutableArray<TValue>> evaluator,
         TValue[] expectedValue)
     {
-        // Arrange
-        RecalcEngine engine = this.CreateEngine();
-        this.Scopes.Bind(engine);
-        WorkflowExpressionEngine expressionEngine = new(engine);
-
         // Act
-        ImmutableArray<TValue> result = evaluator.Invoke(expressionEngine);
+        ImmutableArray<TValue> result = evaluator.Invoke(this.State.Evaluator);
 
         // Assert
         Assert.Equal(expectedValue.Length, result.Length);
@@ -683,23 +546,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
 
     private void EvaluateInvalidExpression<TException>(Action<WorkflowExpressionEngine> evaluator) where TException : Exception
     {
-        // Arrange
-        RecalcEngine engine = this.CreateEngine();
-        this.Scopes.Bind(engine);
-        WorkflowExpressionEngine expressionEngine = new(engine);
-
-        // Act
-        Assert.Throws<TException>(() => evaluator.Invoke(expressionEngine));
-    }
-
-    private void EvaluateUnsupportedExpression(Action<WorkflowExpressionEngine> evaluator)
-    {
-        // Arrange
-        RecalcEngine engine = this.CreateEngine();
-        this.Scopes.Bind(engine);
-        WorkflowExpressionEngine expressionEngine = new(engine);
-
-        // Act
-        Assert.Throws<NotSupportedException>(() => evaluator.Invoke(expressionEngine));
+        // Act & Assert
+        Assert.Throws<TException>(() => evaluator.Invoke(this.State.Evaluator));
     }
 }

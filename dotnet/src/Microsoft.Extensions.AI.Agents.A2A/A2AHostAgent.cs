@@ -38,12 +38,12 @@ public sealed class A2AHostAgent
     /// <summary>
     /// The associated <see cref="AIAgent"/>
     /// </summary>
-    public AIAgent? Agent { get; private set; }
+    public AIAgent? Agent { get; }
 
     /// <summary>
     /// The associated <see cref="ITaskManager"/>
     /// </summary>
-    public TaskManager? TaskManager => this._taskManager;
+    public TaskManager? TaskManager { get; private set; }
 
     /// <summary>
     /// Attach the <see cref="A2AAgent"/> to the provided <see cref="ITaskManager"/>
@@ -53,7 +53,7 @@ public sealed class A2AHostAgent
     {
         Throw.IfNull(taskManager);
 
-        this._taskManager = taskManager;
+        this.TaskManager = taskManager;
         taskManager.OnMessageReceived = this.OnMessageReceivedAsync;
         taskManager.OnAgentCardQuery = this.GetAgentCardAsync;
     }
@@ -68,7 +68,7 @@ public sealed class A2AHostAgent
         Throw.IfNull(messageSend);
         Throw.IfNull(this.Agent);
 
-        if (this._taskManager is null)
+        if (this.TaskManager is null)
         {
             throw new InvalidOperationException("TaskManager must be attached before handling an agent message.");
         }
@@ -93,7 +93,6 @@ public sealed class A2AHostAgent
     /// </summary>
     /// <param name="agentUrl">Current URL for the agent</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to cancel the operation</param>
-#pragma warning disable CA1054 // URI-like parameters should not be strings
     public Task<AgentCard> GetAgentCardAsync(string agentUrl, CancellationToken cancellationToken)
     {
         // Ensure the URL is in the correct format
@@ -103,10 +102,8 @@ public sealed class A2AHostAgent
         this._agentCard.Url = agentUrl;
         return Task.FromResult(this._agentCard);
     }
-#pragma warning restore CA1054 // URI-like parameters should not be strings
 
     #region private
     private readonly AgentCard _agentCard;
-    private TaskManager? _taskManager;
     #endregion
 }

@@ -40,29 +40,29 @@ public static class Program
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the executors
-        var sloganWriter = new SloganWriterExecutor(chatClient);
-        var feedbackProvider = new FeedbackExecutor(chatClient);
+        var sloganWriter = new SloganWriterExecutor("SloganWriter", chatClient);
+        var feedbackProvider = new FeedbackExecutor("FeedbackProvider", chatClient);
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(sloganWriter);
-        builder.AddEdge(sloganWriter, feedbackProvider);
-        builder.AddEdge(feedbackProvider, sloganWriter);
-        var workflow = builder.Build<string>();
+        var workflow = new WorkflowBuilder(sloganWriter)
+            .AddEdge(sloganWriter, feedbackProvider)
+            .AddEdge(feedbackProvider, sloganWriter)
+            .WithOutputFrom(feedbackProvider)
+            .Build();
 
         // Execute the workflow
-        var ask = "Create a slogan for a new electric SUV that is affordable and fun to drive.";
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, ask);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Create a slogan for a new electric SUV that is affordable and fun to drive.");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is SloganGeneratedEvent || evt is FeedbackEvent)
+            if (evt is SloganGeneratedEvent or FeedbackEvent)
             {
                 // Custom events to allow us to monitor the progress of the workflow.
                 Console.WriteLine($"{evt}");
             }
 
-            if (evt is WorkflowCompletedEvent completedEvent)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"{completedEvent}");
+                Console.WriteLine($"{outputEvent}");
             }
         }
     }
@@ -114,26 +114,21 @@ internal sealed class SloganWriterExecutor
       IMessageHandler<string, SloganResult>,
       IMessageHandler<FeedbackResult, SloganResult>
 {
-    private const string Instruction = """
-        You are a professional slogan writer. You will be given a task to create a slogan.
-        """;
-
     private readonly AIAgent _agent;
     private readonly AgentThread _thread;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SloganWriterExecutor"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
-    public SloganWriterExecutor(IChatClient chatClient)
+    public SloganWriterExecutor(string id, IChatClient chatClient) : base(id)
     {
-        var agentOptions = new ChatClientAgentOptions(instructions: Instruction)
+        ChatClientAgentOptions agentOptions = new(instructions: "You are a professional slogan writer. You will be given a task to create a slogan.")
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
-                    schema: AIJsonUtilities.CreateJsonSchema(typeof(SloganResult))
-                )
+                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(SloganResult)))
             }
         };
 
@@ -184,10 +179,6 @@ internal sealed class FeedbackEvent(FeedbackResult feedbackResult) : WorkflowEve
 /// </summary>
 internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, IMessageHandler<SloganResult>
 {
-    private const string Instruction = """
-        You are a professional editor. You will be given a slogan and the task it is meant to accomplish.
-        """;
-
     private readonly AIAgent _agent;
     private readonly AgentThread _thread;
 
@@ -195,21 +186,20 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
 
     public int MaxAttempts { get; init; } = 3;
 
-    private int _attempts = 0;
+    private int _attempts;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FeedbackExecutor"/> class.
     /// </summary>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
-    public FeedbackExecutor(IChatClient chatClient)
+    public FeedbackExecutor(string id, IChatClient chatClient) : base(id)
     {
-        var agentOptions = new ChatClientAgentOptions(instructions: Instruction)
+        ChatClientAgentOptions agentOptions = new(instructions: "You are a professional editor. You will be given a slogan and the task it is meant to accomplish.")
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
-                    schema: AIJsonUtilities.CreateJsonSchema(typeof(FeedbackResult))
-                )
+                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(FeedbackResult)))
             }
         };
 
@@ -229,14 +219,16 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
         var feedback = JsonSerializer.Deserialize<FeedbackResult>(response.Text) ?? throw new InvalidOperationException("Failed to deserialize feedback.");
 
         await context.AddEventAsync(new FeedbackEvent(feedback));
+
         if (feedback.Rating >= this.MinimumRating)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"The following slogan was accepted:\n\n{message.Slogan}"));
+            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}");
             return;
         }
+
         if (this._attempts >= this.MaxAttempts)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}"));
+            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}");
             return;
         }
 

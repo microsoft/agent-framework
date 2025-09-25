@@ -7,28 +7,18 @@ namespace Microsoft.Agents.Workflows.UnitTests;
 
 public partial class WorkflowBuilderSmokeTests
 {
-    private sealed class NoOpExecutor(string? id = null) : Executor(id)
+    private sealed class NoOpExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-        {
-            return routeBuilder.AddHandler<object>(
-                (msg, ctx) =>
-                {
-                    return ctx.SendMessageAsync(msg);
-                });
-        }
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+            routeBuilder.AddHandler<object>(
+                (msg, ctx) => ctx.SendMessageAsync(msg));
     }
 
-    private sealed class SomeOtherNoOpExecutor(string? id = null) : Executor(id)
+    private sealed class SomeOtherNoOpExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-        {
-            return routeBuilder.AddHandler<object>(
-                (msg, ctx) =>
-                {
-                    return ctx.SendMessageAsync(msg);
-                });
-        }
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+            routeBuilder.AddHandler<object>(
+                (msg, ctx) => ctx.SendMessageAsync(msg));
     }
 
     [Fact]
@@ -36,13 +26,13 @@ public partial class WorkflowBuilderSmokeTests
     {
         Workflow workflow = new WorkflowBuilder("start")
                                 .BindExecutor(new NoOpExecutor("start"))
-                                .Build<object>();
+                                .Build();
 
         workflow.StartExecutorId.Should().Be("start");
 
         workflow.Registrations.Should().HaveCount(1);
         workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be(typeof(NoOpExecutor));
+        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -51,13 +41,13 @@ public partial class WorkflowBuilderSmokeTests
         NoOpExecutor start = new("start");
         Workflow workflow = new WorkflowBuilder("start")
                                 .AddEdge(start, start)
-                                .Build<object>();
+                                .Build();
 
         workflow.StartExecutorId.Should().Be("start");
 
         workflow.Registrations.Should().HaveCount(1);
         workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be(typeof(NoOpExecutor));
+        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -70,7 +60,7 @@ public partial class WorkflowBuilderSmokeTests
         {
             return new WorkflowBuilder("start")
                        .AddEdge(executor1, executor2)
-                       .Build<object>();
+                       .Build();
         };
 
         act.Should().Throw<InvalidOperationException>();
@@ -83,12 +73,12 @@ public partial class WorkflowBuilderSmokeTests
 
         Workflow workflow = new WorkflowBuilder("start")
                                 .AddEdge(executor1, executor1)
-                                .Build<object>();
+                                .Build();
 
         workflow.StartExecutorId.Should().Be("start");
 
         workflow.Registrations.Should().HaveCount(1);
         workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be(typeof(NoOpExecutor));
+        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 }

@@ -123,23 +123,23 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
-        this.LogChatMessages(messages);
+        this.LogChatMessages(inputMessages);
 
         AgentRunResponse? response = null;
         Exception? error = null;
         try
         {
-            response = await base.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            response = await base.RunAsync(inputMessages, thread, options, cancellationToken).ConfigureAwait(false);
             return response;
         }
         catch (Exception ex)
@@ -149,30 +149,30 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, response, error, stopwatch, messages.Count, isStreaming: false);
+            this.TraceResponse(activity, response, error, stopwatch);
         }
     }
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IReadOnlyCollection<ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, messages, thread);
+        using Activity? activity = this.CreateAndConfigureActivity(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, thread);
         Stopwatch? stopwatch = this._operationDurationHistogram.Enabled ? Stopwatch.StartNew() : null;
 
         IAsyncEnumerable<AgentRunResponseUpdate> updates;
         try
         {
-            updates = base.RunStreamingAsync(messages, thread, options, cancellationToken);
+            updates = base.RunStreamingAsync(inputMessages, thread, options, cancellationToken);
         }
         catch (Exception ex)
         {
-            this.TraceResponse(activity, response: null, ex, stopwatch, messages.Count, isStreaming: true);
+            this.TraceResponse(activity, response: null, ex, stopwatch);
             throw;
         }
 
@@ -206,7 +206,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
         finally
         {
-            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch, messages.Count, isStreaming: true);
+            this.TraceResponse(activity, trackedUpdates.ToAgentRunResponse(), error, stopwatch);
             await responseEnumerator.DisposeAsync().ConfigureAwait(false);
         }
     }
@@ -214,7 +214,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>
     /// Creates an activity for an agent request, or returns null if not enabled.
     /// </summary>
-    private Activity? CreateAndConfigureActivity(string operationName, IReadOnlyCollection<ChatMessage> messages, AgentThread? thread)
+    private Activity? CreateAndConfigureActivity(string operationName, AgentThread? thread)
     {
         // Get the GenAI system name for telemetry
         var chatClientAgent = this.InnerAgent as ChatClientAgent;
@@ -246,9 +246,10 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 }
 
                 // Add conversation ID if thread is available (following gen_ai.conversation.id convention)
-                if (!string.IsNullOrWhiteSpace(thread?.ConversationId))
+                var metadata = thread?.GetService<AgentThreadMetadata>();
+                if (!string.IsNullOrWhiteSpace(metadata?.ConversationId))
                 {
-                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Conversation.Id, thread.ConversationId);
+                    _ = activity.AddTag(OpenTelemetryConsts.GenAI.Conversation.Id, metadata.ConversationId);
                 }
 
                 // Add instructions if available (for ChatClientAgent)
@@ -280,9 +281,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         Activity? activity,
         AgentRunResponse? response,
         Exception? error,
-        Stopwatch? stopwatch,
-        int inputMessageCount,
-        bool isStreaming)
+        Stopwatch? stopwatch)
     {
         // Record operation duration metric
         if (this._operationDurationHistogram.Enabled && stopwatch is not null)
@@ -411,22 +410,6 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                     }, OtelContext.Default.SystemOrUserEvent));
             }
         }
-    }
-
-    private void LogChatResponse(ChatResponse response)
-    {
-        if (!this._logger.IsEnabled(EventLogLevel))
-        {
-            return;
-        }
-
-        EventId id = new(1, OpenTelemetryConsts.GenAI.Choice);
-        this.Log(id, JsonSerializer.Serialize(new ChoiceEvent()
-        {
-            FinishReason = response.FinishReason?.Value ?? "error",
-            Index = 0,
-            Message = this.CreateAssistantEvent(response.Messages is { Count: 1 } ? response.Messages[0].Contents : response.Messages.SelectMany(m => m.Contents)),
-        }, OtelContext.Default.ChoiceEvent));
     }
 
     private void LogAgentResponse(AgentRunResponse response)

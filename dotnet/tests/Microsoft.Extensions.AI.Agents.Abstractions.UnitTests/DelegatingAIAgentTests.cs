@@ -27,7 +27,7 @@ public class DelegatingAIAgentTests
         this._innerAgentMock = new Mock<AIAgent>();
         this._testResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         this._testStreamingResponses = [new AgentRunResponseUpdate(ChatRole.Assistant, "Test streaming response")];
-        this._testThread = new AgentThread();
+        this._testThread = new TestAgentThread();
 
         // Setup inner agent mock
         this._innerAgentMock.Setup(x => x.Id).Returns("test-agent-id");
@@ -60,11 +60,9 @@ public class DelegatingAIAgentTests
     /// Verify that constructor throws ArgumentNullException when innerAgent is null.
     /// </summary>
     [Fact]
-    public void RequiresInnerAgent()
-    {
+    public void RequiresInnerAgent() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>("innerAgent", () => new TestDelegatingAIAgent(null!));
-    }
 
     /// <summary>
     /// Verify that constructor sets the inner agent correctly.
@@ -151,7 +149,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new AgentThread();
+        var expectedThread = new TestAgentThread();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         var expectedResult = new TaskCompletionSource<AgentRunResponse>();
@@ -182,7 +180,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new AgentThread();
+        var expectedThread = new TestAgentThread();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         AgentRunResponseUpdate[] expectedResults =
@@ -218,11 +216,9 @@ public class DelegatingAIAgentTests
     /// Verify that GetService throws ArgumentNullException when serviceType is null.
     /// </summary>
     [Fact]
-    public void GetServiceThrowsForNullType()
-    {
+    public void GetServiceThrowsForNullType() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>("serviceType", () => this._delegatingAgent.GetService(null!));
-    }
 
     /// <summary>
     /// Verify that GetService returns the delegating agent itself when requesting compatible type and key is null.
@@ -303,6 +299,8 @@ public class DelegatingAIAgentTests
     {
         public new AIAgent InnerAgent => base.InnerAgent;
     }
+
+    private sealed class TestAgentThread : AgentThread;
 
     #endregion
 }
