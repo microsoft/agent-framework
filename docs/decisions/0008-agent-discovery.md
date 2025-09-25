@@ -118,7 +118,7 @@ Questions:
 }
 ```
 
-## Communication endpoints `/actors/v1/{actorType}/{actorKey}/{messageId}`
+## Communication endpoints `/actors/v1/{actorType}/{actorKey}/messages/{messageId}`
 
 Agent Discovery is only good if there is an established way to communicate to the agents. Without an implemented in-place endpoint for sending/retrieving messages (for actor and conversation) users can build too different schemas, and make the client-side work unbearable for multiple different apps.
 
