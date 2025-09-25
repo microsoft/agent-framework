@@ -8,6 +8,7 @@ dependencies = [
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
     "agent-framework-mem0",
+    "agent-framework-ollama",
     "agent-framework-redis",
     "agent-framework-devui",
     "agent-framework-lab-gaia",
@@ -60,6 +61,7 @@ agent-framework-lab-gaia = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-runtime = { workspace = true }
+agent-framework-ollama = { workspace = true }
 agent-framework-devui = { workspace = true }
 
 [tool.ruff]

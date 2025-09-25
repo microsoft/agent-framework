@@ -54,6 +54,9 @@ microsoft = [
 redis = [
     "agent-framework-redis"
 ]
+ollama = [
+    "agent-framework-ollama"
+]
 viz = [
     "graphviz>=0.20.0"
 ]
