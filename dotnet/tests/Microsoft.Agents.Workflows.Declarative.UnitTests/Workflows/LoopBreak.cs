@@ -18,7 +18,7 @@ using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
-namespace Test.Workflow;
+namespace Test.WorkflowProviders;
 
 /// <summary>
 /// This class provides a factory method to create a <see cref="Workflow" /> instance.
@@ -63,7 +63,7 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             this._index = 0;
-            object? evaluatedValue = await context.EvaluateExpressionAsync("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
     
             if (evaluatedValue == null)
             {
@@ -113,7 +113,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync("Topic.Count + 1").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Topic.Count + 1").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
     
             return default;
@@ -141,7 +141,7 @@ public static class WorkflowProvider
         }
     }
     
-    public static Workflow<TInput> CreateWorkflow<TInput>(
+    public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
         where TInput : notnull
@@ -179,6 +179,6 @@ public static class WorkflowProvider
         builder.AddEdge(foreachLoopEnd, foreachLoopNext);
 
         // Build the workflow
-        return builder.Build<TInput>();
+        return builder.Build();
     }
 }

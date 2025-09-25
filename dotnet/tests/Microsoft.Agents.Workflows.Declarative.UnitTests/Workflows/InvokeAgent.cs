@@ -18,7 +18,7 @@ using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
-namespace Test.Workflow;
+namespace Test.WorkflowProviders;
 
 /// <summary>
 /// This class provides a factory method to create a <see cref="Workflow" /> instance.
@@ -63,7 +63,7 @@ public static class WorkflowProvider
             }
     
             string? conversationId = await context.ReadStateAsync<string?>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
-            bool autoSend = false;
+            bool autoSend = true;
             string? additionalInstructions = null;
             ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
     
@@ -86,7 +86,7 @@ public static class WorkflowProvider
         }
     }
     
-    public static Workflow<TInput> CreateWorkflow<TInput>(
+    public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
         where TInput : notnull
@@ -105,6 +105,6 @@ public static class WorkflowProvider
         builder.AddEdge(myWorkflow, invokeAgent);
 
         // Build the workflow
-        return builder.Build<TInput>();
+        return builder.Build();
     }
 }

@@ -115,7 +115,7 @@ foreach (string executor in ByLine(this.Executors, formatGroup: true))
             #line default
             #line hidden
             this.Write(@"
-    public static Workflow<TInput> CreateWorkflow<TInput>(
+    public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
         where TInput : notnull
@@ -192,7 +192,7 @@ foreach (string edge in ByLine(this.Edges))
             
             #line default
             #line hidden
-            this.Write("\n\n        // Build the workflow\n        return builder.Build<TInput>();\n    }\n}\n");
+            this.Write("\n\n        // Build the workflow\n        return builder.Build();\n    }\n}\n");
             return this.GenerationEnvironment.ToString();
         }
     }

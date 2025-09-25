@@ -18,7 +18,7 @@ using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
 
-namespace Test.Workflow;
+namespace Test.WorkflowProviders;
 
 /// <summary>
 /// This class provides a factory method to create a <see cref="Workflow" /> instance.
@@ -55,7 +55,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync("Value(System.LastMessageText)").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Value(System.LastMessageText)").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
     
             return default;
@@ -122,7 +122,7 @@ public static class WorkflowProvider
         }
     }
     
-    public static Workflow<TInput> CreateWorkflow<TInput>(
+    public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
         where TInput : notnull
@@ -166,6 +166,6 @@ public static class WorkflowProvider
         builder.AddEdge(conditionGroupTestelseactionsPost, conditionGroupTestPost);
 
         // Build the workflow
-        return builder.Build<TInput>();
+        return builder.Build();
     }
 }

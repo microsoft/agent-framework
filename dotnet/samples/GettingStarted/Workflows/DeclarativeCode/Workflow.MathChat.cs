@@ -249,7 +249,7 @@ public static class MathChatWorkflowProvider
         }
     }
 
-    public static Workflow<TInput> CreateWorkflow<TInput>(
+    public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
@@ -312,6 +312,6 @@ public static class MathChatWorkflowProvider
         builder.AddEdge(checkCompletionelseactionsPost, checkCompletionPost);
 
         // Build the workflow
-        return builder.Build<TInput>();
+        return builder.Build();
     }
 }

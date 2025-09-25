@@ -223,7 +223,7 @@ public static class SampleWorkflowProvider
         }
     }
 
-    public static Workflow<TInput> CreateWorkflow<TInput>(
+    public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
@@ -249,6 +249,6 @@ public static class SampleWorkflowProvider
         builder.AddEdge(invokeWriter, invokeEditor);
 
         // Build the workflow
-        return builder.Build<TInput>();
+        return builder.Build();
     }
 }
