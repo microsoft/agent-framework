@@ -29,6 +29,7 @@ public static class AIAgentExtensions
         ILoggerFactory? loggerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(agent, nameof(agent));
+        ArgumentNullException.ThrowIfNull(agent.Name, nameof(agent.Name));
         ArgumentNullException.ThrowIfNull(actorClient, nameof(actorClient));
 
         taskManager ??= new();
