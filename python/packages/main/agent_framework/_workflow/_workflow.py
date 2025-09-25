@@ -876,12 +876,12 @@ class WorkflowBuilder:
 
 
     @executor
-    async def upper_case(text: str, ctx: WorkflowContext[str, None]) -> None:
+    async def upper_case(text: str, ctx: WorkflowContext[str]) -> None:
         await ctx.send_message(text.upper())
 
 
     @executor
-    async def echo(msg: str, ctx: WorkflowContext[str, None]) -> None:
+    async def echo(msg: str, ctx: WorkflowContext[Never, str]) -> None:
         await ctx.yield_output(msg)
 
 
@@ -905,7 +905,7 @@ class WorkflowBuilder:
 
 
     @executor
-    async def spam_detection_agent(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any], None]) -> None:
+    async def spam_detection_agent(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any]]) -> None:
         await ctx.send_message(email)
 
 
@@ -918,7 +918,7 @@ class WorkflowBuilder:
 
 
     @executor
-    async def email_request_executor(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any], None]) -> None:
+    async def email_request_executor(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any]]) -> None:
         await ctx.send_message({"subject": email["subject"], "body": email["body"]})
 
 
@@ -928,12 +928,12 @@ class WorkflowBuilder:
 
 
     @executor
-    async def email_response_handler(result: str, ctx: WorkflowContext[str, None]) -> None:
+    async def email_response_handler(result: str, ctx: WorkflowContext) -> None:
         print(result)
 
 
     @executor
-    async def spam_handler_executor(email: dict[str, Any], ctx: WorkflowContext[dict[str, Any], None]) -> None:
+    async def spam_handler_executor(email: dict[str, Any], ctx: WorkflowContext) -> None:
         print(f"Spam archived: {email['subject']}")
 
 
