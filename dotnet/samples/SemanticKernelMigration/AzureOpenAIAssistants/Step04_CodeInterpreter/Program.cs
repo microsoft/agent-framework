@@ -27,8 +27,8 @@ await AFAgent();
 async Task SKAgent()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
-
-    var builder = Kernel.CreateBuilder().AddAzureOpenAIChatClient(deploymentName, endpoint, new AzureCliCredential());
+    IKernelBuilder? builder;
+    var _ = Kernel.CreateBuilder().AddAzureOpenAIChatClient(deploymentName, endpoint, new AzureCliCredential());
 
     // Define the assistant
     Assistant assistant = await assistantsClient.CreateAssistantAsync(deploymentName, enableCodeInterpreter: true);

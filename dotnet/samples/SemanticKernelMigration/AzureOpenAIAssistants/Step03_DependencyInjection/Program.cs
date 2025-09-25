@@ -72,9 +72,7 @@ async Task AFAgent()
     {
         var assistantClient = sp.GetRequiredService<AssistantClient>();
 
-        var agent = assistantClient.CreateAIAgent(deploymentName, name: "Joker", instructions: "You are good at telling jokes.");
-
-        return agent;
+        return assistantClient.CreateAIAgent(deploymentName, name: "Joker", instructions: "You are good at telling jokes.");
     });
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
