@@ -119,7 +119,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             )
 
         super().__init__(
-            ai_model_id=openai_settings.chat_model_id,
+            model_id=openai_settings.chat_model_id,
             assistant_id=assistant_id,  # type: ignore[reportCallIssue]
             assistant_name=assistant_name,  # type: ignore[reportCallIssue]
             thread_id=thread_id,  # type: ignore[reportCallIssue]
