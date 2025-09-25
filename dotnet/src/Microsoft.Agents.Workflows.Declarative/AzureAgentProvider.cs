@@ -132,24 +132,30 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
         {
             if (this._agentCache.Count == 0)
             {
-                int count;
-                string? startId = null;
-                do
+                lock (this._agentCache)
                 {
-                    count = 0;
-                    string? lastId = null;
-                    await foreach (PersistentAgent knownAgent in client.Administration.GetAgentsAsync(limit: this.AgentQueryLimit, ListSortOrder.Descending, after: startId, before: null, cancellationToken).ConfigureAwait(false))
+                    if (this._agentCache.Count == 0)
                     {
-                        ++count;
-                        if (!string.IsNullOrWhiteSpace(knownAgent.Name))
+                        int count;
+                        string? startId = null;
+                        do
                         {
-                            this._agentCache[knownAgent.Name] = knownAgent;
+                            count = 0;
+                            string? lastId = null;
+                            foreach (PersistentAgent knownAgent in client.Administration.GetAgentsAsync(limit: this.AgentQueryLimit, ListSortOrder.Descending, after: startId, before: null, cancellationToken).ToEnumerable())
+                            {
+                                ++count;
+                                if (!string.IsNullOrWhiteSpace(knownAgent.Name))
+                                {
+                                    this._agentCache[knownAgent.Name] = knownAgent;
+                                }
+                                lastId = knownAgent.Id;
+                            }
+                            startId = lastId;
                         }
-                        lastId = knownAgent.Id;
+                        while (count == this.AgentQueryLimit && startId is not null);
                     }
-                    startId = lastId;
                 }
-                while (count == this.AgentQueryLimit && startId is not null);
             }
 
             this._agentCache.TryGetValue(agentId, out agent);
