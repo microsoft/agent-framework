@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from agent_framework._workflow._checkpoint import WorkflowCheckpoint
+from agent_framework._workflow._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from agent_framework._workflow._events import RequestInfoEvent, WorkflowEvent
 from agent_framework._workflow._executor import (
     PendingRequestDetails,
@@ -67,7 +67,11 @@ class _StubRunnerContext:
     async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:  # pragma: no cover - unused
         raise RuntimeError("Checkpointing not supported in stub context")
 
-    async def restore_from_checkpoint(self, checkpoint_id: str) -> bool:  # pragma: no cover - unused
+    async def restore_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> bool:  # pragma: no cover - unused
         return False
 
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pragma: no cover - unused

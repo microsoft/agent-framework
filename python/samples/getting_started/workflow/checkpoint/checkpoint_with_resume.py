@@ -249,7 +249,7 @@ async def main():
         line += f" messages={msg_count}"
         print(line)
 
-    user_input = input(
+    user_input = input(  # noqa: ASYNC250
         "\nEnter checkpoint index (or paste checkpoint id) to resume from, or press Enter to skip resume: "
     ).strip()
 
