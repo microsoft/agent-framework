@@ -127,19 +127,19 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
         ValueTask QueueDataValueStateAsync(DataValue dataValue)
         {
-            FormulaValue formulaValue = dataValue.ToFormula();
             if (isManagedScope)
             {
+                FormulaValue formulaValue = dataValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
+            return this.Source.QueueStateUpdateAsync(key, dataValue.ToObject(), scopeName);
         }
 
         ValueTask QueueNativeStateAsync(object? rawValue)
         {
-            FormulaValue formulaValue = rawValue.ToFormula();
             if (isManagedScope)
             {
+                FormulaValue formulaValue = rawValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
             return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName);

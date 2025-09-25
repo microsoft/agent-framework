@@ -13,6 +13,7 @@ using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using Test.WorkflowProviders;
 
 namespace Demo.DeclarativeCode;
 
@@ -42,7 +43,7 @@ internal sealed class Program
             };
 
         // Use the generated provider to create a workflow instance.
-        Workflow workflow = SampleWorkflowProvider.CreateWorkflow<string>(options);
+        Workflow workflow = TestWorkflowProvider.CreateWorkflow<string>(options);
 
         Notify("\nWORKFLOW: Starting...");
 

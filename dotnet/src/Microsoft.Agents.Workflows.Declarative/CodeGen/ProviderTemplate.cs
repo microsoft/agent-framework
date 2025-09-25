@@ -44,11 +44,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ProviderTemplate.tt"

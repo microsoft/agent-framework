@@ -13,13 +13,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Declarative;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
-namespace Demo.DeclarativeCode;
+namespace Test.WorkflowProviders;
 
 /// <summary>
 /// This class provides a factory method to create a <see cref="Workflow" /> instance.
@@ -30,37 +30,90 @@ namespace Demo.DeclarativeCode;
 /// To learn more about Power FX, see:
 /// https://learn.microsoft.com/power-platform/power-fx/formula-reference-copilot-studio
 /// </remarks>
-public static class SampleWorkflowProvider
+public static class TestWorkflowProvider
 {
     /// <summary>
     /// The root executor for a declarative workflow.
     /// </summary>
-    internal sealed class WorkflowDemoRootExecutor<TInput>(
+    internal sealed class WorkflowTestRootExecutor<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage> inputTransform) :
-        RootExecutor<TInput>("workflow_demo_Root", options, inputTransform)
+        RootExecutor<TInput>("workflow_test_Root", options, inputTransform)
         where TInput : notnull
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            // Set environment variables
-            await context.QueueStateUpdateAsync("FOUNDRY_AGENT_ANSWER", this.GetEnvironmentVariable("FOUNDRY_AGENT_ANSWER"), "Env").ConfigureAwait(false);
+            // Initialize variables
+            await context.QueueStateUpdateAsync("FirstConversationId", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("MyMessage1", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("SecondConversationId", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Creates a new conversation and stores the identifier value to the "Topic.FirstConversationId" variable.
+    /// </summary>
+    internal sealed class ConversationCreate1Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "conversation_create1", session)
+    {
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "FirstConversationId", value: conversationId, scopeName: "Topic").ConfigureAwait(false);
+
+            return default;
+        }
+    }
+
+    /// <summary>
+    /// Creates a new conversation and stores the identifier value to the "Topic.SecondConversationId" variable.
+    /// </summary>
+    internal sealed class ConversationCreate2Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "conversation_create2", session)
+    {
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "SecondConversationId", value: conversationId, scopeName: "Topic").ConfigureAwait(false);
+
+            return default;
+        }
+    }
+
+    /// <summary>
+    /// Formats a message template and sends an activity event.
+    /// </summary>
+    internal sealed class SendactivityConversationExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_conversation", session)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            string activityText =
+                await context.FormatTemplateAsync(
+                    """
+                    Conversation 1: {Topic.FirstConversationId}
+                    Conversation 2: {Topic.SecondConversationId}
+                    """
+                );
+            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+
+            return default;
         }
     }
 
     /// <summary>
     /// Adds a new message to the specified agent conversation
     /// </summary>
-    internal sealed class AddInputMessageExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "add_input_message", session)
+    internal sealed class AddMessageExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "add_message", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false); // %%% HAXX: NULLABLE
+            string? conversationId = await context.ReadStateAsync<string?>(key: "FirstConversationId", scopeName: "Topic").ConfigureAwait(false);
             ArgumentNullException.ThrowIfNull(conversationId, nameof(conversationId));
-
             ChatMessage newMessage = new(ChatRole.User, [.. GetContentAsync().ToEnumerable()]) { AdditionalProperties = this.GetMetadata() };
             await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "MyMessage1", value: newMessage, scopeName: "Topic").ConfigureAwait(false);
+
             return default;
 
             async IAsyncEnumerable<AIContent> GetContentAsync()
@@ -68,13 +121,11 @@ public static class SampleWorkflowProvider
                 string contentValue1 =
                     await context.FormatTemplateAsync(
                         """
-                        {System.LastMessage.Text}
-                        """).ConfigureAwait(false);
+                    {System.LastMessage.Text}
+                    """);
                 yield return new TextContent(contentValue1);
             }
         }
-
-
         private AdditionalPropertiesDictionary? GetMetadata()
         {
             Dictionary<string, object?>? metadata = null;
@@ -89,135 +140,64 @@ public static class SampleWorkflowProvider
     }
 
     /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
+    /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class InvokeAnalystExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "invoke_analyst", session, agentProvider)
+    internal sealed class SendactivityMessageExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_message", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string?>(key: "FOUNDRY_AGENT_ANSWER", scopeName: "Env").ConfigureAwait(false);
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string?>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
-            bool autoSend = true;
-            string additionalInstructions =
+            string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    You are a marketing analyst. Given a product description, identify:
-                    - Key features
-                    - Target audience
-                    - Unique selling points
-                    """);
-            ChatMessage[]? inputMessages = null;
-
-            AgentRunResponse agentResponse =
-                InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
-            }
+                    Messsage 1: {Topic.MyMessage1}
+                    """
+                );
+            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
+    /// Copies one or more messages into the specified agent conversation.
     /// </summary>
-    internal sealed class InvokeWriterExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "invoke_writer", session, agentProvider)
+    internal sealed class CopyMessagesExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "copy_messages", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string?>(key: "FOUNDRY_AGENT_ANSWER", scopeName: "Env").ConfigureAwait(false);
-
-            if (string.IsNullOrWhiteSpace(agentName))
+            string? conversationId = await context.ReadStateAsync<string?>(key: "SecondConversationId", scopeName: "Topic").ConfigureAwait(false);
+            ArgumentNullException.ThrowIfNull(conversationId, nameof(conversationId));
+            ChatMessage[]? messages = await context.EvaluateExpressionAsync<ChatMessage[]>("[Topic.MyMessage1]").ConfigureAwait(false);
+            if (messages is not null)
             {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
+                foreach (ChatMessage message in messages)
+                {
+                    await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
+                }
             }
-
-            string? conversationId = await context.ReadStateAsync<string?>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
-            bool autoSend = true;
-            string additionalInstructions =
-                await context.FormatTemplateAsync(
-                    """
-                    You are a marketing copywriter. Given a block of text describing features, audience, and USPs,
-                    compose a compelling marketing copy (like a newsletter section) that highlights these points.
-                    Output should be short (around 150 words), output just the copy as a single text block.
-                    """);
-            ChatMessage[]? inputMessages = null;
-
-            AgentRunResponse agentResponse =
-                InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
-            }
-
             return default;
         }
     }
 
     /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
+    /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class InvokeEditorExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "invoke_editor", session, agentProvider)
+    internal sealed class SendactivityCopyExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_copy", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string?>(key: "FOUNDRY_AGENT_ANSWER", scopeName: "Env").ConfigureAwait(false);
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string?>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
-            bool autoSend = true;
-            string additionalInstructions =
+            string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    You are an editor. Given the draft copy, correct grammar, improve clarity, ensure consistent tone,
-                    give format and make it polished. Output the final improved copy as a single text block.
-                    """);
-            ChatMessage[]? inputMessages = null;
-
-            AgentRunResponse agentResponse =
-                InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
-            }
+                    Done!
+                    """
+                );
+            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }
@@ -230,23 +210,28 @@ public static class SampleWorkflowProvider
     {
         // Create root executor to initialize the workflow.
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
-        WorkflowDemoRootExecutor<TInput> workflowDemoRoot = new(options, inputTransform);
-        // %%% PRUNE DelegateExecutor workflowDemo = new(id: "workflow_demo", workflowDemoRoot.Session);
-        AddInputMessageExecutor addInputMessage = new(workflowDemoRoot.Session, options.AgentProvider);
-        InvokeAnalystExecutor invokeAnalyst = new(workflowDemoRoot.Session, options.AgentProvider);
-        InvokeWriterExecutor invokeWriter = new(workflowDemoRoot.Session, options.AgentProvider);
-        InvokeEditorExecutor invokeEditor = new(workflowDemoRoot.Session, options.AgentProvider);
+        WorkflowTestRootExecutor<TInput> workflowTestRoot = new(options, inputTransform);
+        DelegateExecutor workflowTest = new(id: "workflow_test", workflowTestRoot.Session);
+        ConversationCreate1Executor conversationCreate1 = new(workflowTestRoot.Session, options.AgentProvider);
+        ConversationCreate2Executor conversationCreate2 = new(workflowTestRoot.Session, options.AgentProvider);
+        SendactivityConversationExecutor sendActivityConversation = new(workflowTestRoot.Session);
+        AddMessageExecutor addMessage = new(workflowTestRoot.Session, options.AgentProvider);
+        SendactivityMessageExecutor sendActivityMessage = new(workflowTestRoot.Session);
+        CopyMessagesExecutor copyMessages = new(workflowTestRoot.Session, options.AgentProvider);
+        SendactivityCopyExecutor sendActivityCopy = new(workflowTestRoot.Session);
 
         // Define the workflow builder
-        WorkflowBuilder builder = new(workflowDemoRoot);
+        WorkflowBuilder builder = new(workflowTestRoot);
 
         // Connect executors
-        // %%% PRUNE builder.AddEdge(workflowDemoRoot, workflowDemo);
-        // %%% PRUNE builder.AddEdge(workflowDemo, invokeAnalyst);
-        builder.AddEdge(workflowDemoRoot, invokeAnalyst);
-        builder.AddEdge(addInputMessage, invokeAnalyst);
-        builder.AddEdge(invokeAnalyst, invokeWriter);
-        builder.AddEdge(invokeWriter, invokeEditor);
+        builder.AddEdge(workflowTestRoot, workflowTest);
+        builder.AddEdge(workflowTest, conversationCreate1);
+        builder.AddEdge(conversationCreate1, conversationCreate2);
+        builder.AddEdge(conversationCreate2, sendActivityConversation);
+        builder.AddEdge(sendActivityConversation, addMessage);
+        builder.AddEdge(addMessage, sendActivityMessage);
+        builder.AddEdge(sendActivityMessage, copyMessages);
+        builder.AddEdge(copyMessages, sendActivityCopy);
 
         // Build the workflow
         return builder.Build();
