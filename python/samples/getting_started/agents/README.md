@@ -8,7 +8,7 @@ This folder contains examples demonstrating how to create and use agents with di
 
 | Folder | Description |
 |--------|-------------|
-| **[`foundry/`](foundry/)** | Create agents using Azure AI Foundry |
+| **[`azure_ai/`](azure_ai/)** | Create agents using Azure AI Foundry Agent Service |
 
 ### Microsoft Copilot Studio Examples
 
@@ -20,14 +20,17 @@ This folder contains examples demonstrating how to create and use agents with di
 
 | Folder | Description |
 |--------|-------------|
-| **[`azure_assistants_client/`](azure_assistants_client/)** | Create agents using Azure OpenAI Assistants API |
-| **[`azure_chat_client/`](azure_chat_client/)** | Create agents using Azure OpenAI Chat Completions API |
-| **[`azure_responses_client/`](azure_responses_client/)** | Create agents using Azure OpenAI Responses API |
+| **[`azure_openai/`](azure_openai/)** | Create agents using Azure OpenAI APIs |
 
 ### OpenAI Examples
 
 | Folder | Description |
 |--------|-------------|
-| **[`openai_assistants_client/`](openai_assistants_client/)** | Create agents using OpenAI Assistants API |
-| **[`openai_chat_client/`](openai_chat_client/)** | Create agents using OpenAI Chat Completions API |
-| **[`openai_responses_client/`](openai_responses_client/)** | Create agents using OpenAI Responses API |
+| **[`openai/`](openai/)** | Create agents using OpenAI APIs |
+
+### Custom Client Examples
+
+| Folder | Description |
+|--------|-------------|
+| **[`custom_client/`](custom_client/)** | Create agents using a custom chat client or a custom agent |
+| **[`anthropic/`](anthropic/)** | Create agents using Anthropic APIs |

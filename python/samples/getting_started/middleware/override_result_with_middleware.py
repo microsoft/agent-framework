@@ -5,8 +5,15 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentRunContext, AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role, TextContent
-from agent_framework.foundry import FoundryChatClient
+from agent_framework import (
+    AgentRunContext,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    ChatMessage,
+    Role,
+    TextContent,
+)
+from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
@@ -76,7 +83,7 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        FoundryChatClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(async_credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant. Use the weather tool to get current conditions.",
             tools=get_weather,

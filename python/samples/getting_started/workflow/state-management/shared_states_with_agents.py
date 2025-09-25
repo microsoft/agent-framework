@@ -17,7 +17,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
@@ -35,7 +35,7 @@ Show how to:
 - Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
-- Azure OpenAI configured for AzureChatClient with required environment variables.
+- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
@@ -157,7 +157,7 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 
 async def main() -> None:
     # Create chat client and agents. response_format enforces structured JSON from each agent.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     spam_detection_agent = chat_client.create_agent(
         instructions=(
