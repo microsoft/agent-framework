@@ -52,7 +52,7 @@ TOllamaChatClient = TypeVar("TOllamaChatClient", bound="OllamaChatClient")
 class OllamaChatClient(BaseChatClient):
     """Ollama Chat completion class."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"  # pyright: ignore[reportIncompatibleVariableOverride]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"  # type: ignore[reportIncompatibleVariableOverride, misc]
     client: AsyncClient
     chat_model_id: str
 
