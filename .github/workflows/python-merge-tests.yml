@@ -128,8 +128,8 @@ jobs:
         environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      AZURE_FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      AZURE_FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       PACKAGE_NAME: "azure-ai"
     defaults:
       run:
