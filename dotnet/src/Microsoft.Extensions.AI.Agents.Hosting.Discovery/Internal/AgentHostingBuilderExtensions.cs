@@ -17,12 +17,9 @@ internal static class AgentHostingBuilderExtensions
     }
 
     private static AgentMetadata ResolveChatClientAgentMetadata(ChatClientAgentHostingBuilder builder)
-    {
-        var metadata = new AgentMetadata(builder.ActorType)
+        => new(builder.ActorType)
         {
             Description = builder.Description,
             Instructions = builder.Instructions
         };
-        return metadata;
-    }
 }

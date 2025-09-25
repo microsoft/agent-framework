@@ -26,7 +26,7 @@ public static class WebApplicationExtensions
     /// <summary>
     /// Enables the agent discovery endpoint at the specified path.
     /// </summary>
-    public static void EnableDiscovery(this IEndpointRouteBuilder endpoints, [StringSyntax("Route")] string? agentsPath = default, [StringSyntax("Route")] string? actorsPath = default)
+    public static void MapDiscovery(this IEndpointRouteBuilder endpoints, [StringSyntax("Route")] string? agentsPath = default, [StringSyntax("Route")] string? actorsPath = default)
     {
         agentsPath ??= AgentsBasePath;
         var agentRouteGroup = endpoints.MapGroup(agentsPath);
@@ -66,9 +66,9 @@ public static class WebApplicationExtensions
     {
         var httpActorProcessor = endpoints.ServiceProvider.GetRequiredService<HttpActorProcessor>();
 
-        // GET /actors/v1/{actorType}/{actorKey}/{messageId}
+        // GET /actors/v1/{actorType}/{actorKey}/messages/{messageId}
         endpoints.MapGet(
-            "/{actorType}/{actorKey}/{messageId}", (
+            "/{actorType}/{actorKey}/messages/{messageId}", (
             string actorType,
             string actorKey,
             string messageId,
@@ -80,7 +80,7 @@ public static class WebApplicationExtensions
             )
             .WithName("GetActorResponse");
 
-        // POST /actors/v1/{actorType}/{actorKey}/{messageId}
+        // POST /actors/v1/{actorType}/{actorKey}/messages/{messageId}
         endpoints.MapPost(
             "/{actorType}/{actorKey}/{messageId}", (
             string actorType,
@@ -95,7 +95,7 @@ public static class WebApplicationExtensions
             )
             .WithName("SendActorRequest");
 
-        // POST /actors/v1/{actorType}/{actorKey}/{messageId}:cancel
+        // POST /actors/v1/{actorType}/{actorKey}/messages/{messageId}:cancel
         endpoints.MapPost(
             "/{actorType}/{actorKey}/{messageId}:cancel", (
             string actorType,

@@ -116,7 +116,7 @@ app.AttachA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", 
 });
 
 // Map the agents HTTP discovery endpoint
-app.EnableDiscovery();
+app.MapDiscovery();
 
 app.MapDefaultEndpoints();
 app.Run();
