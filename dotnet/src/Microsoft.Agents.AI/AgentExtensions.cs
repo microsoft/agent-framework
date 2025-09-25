@@ -3,9 +3,9 @@
 using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 

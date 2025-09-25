@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.Logging;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.A2A;
+using Microsoft.Extensions.Logging;
 
 namespace A2A;
 

@@ -11,8 +11,8 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using SampleApp;
 
 AIAgent agent = new UpperCaseParrotAgent();

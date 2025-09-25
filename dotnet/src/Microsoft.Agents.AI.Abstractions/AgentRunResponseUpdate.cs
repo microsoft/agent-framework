@@ -6,8 +6,8 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json.Serialization;
-using Microsoft.Shared.Diagnostics;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 

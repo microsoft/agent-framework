@@ -7,10 +7,10 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
-using Microsoft.Extensions.AI;
 
 #pragma warning disable S3358 // Ternary operators should not be nested
 

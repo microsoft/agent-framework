@@ -3,10 +3,10 @@
 using A2A;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
-using OpenAI;
 using Microsoft.Agents.AI.A2A;
+using Microsoft.Extensions.AI;
+using OpenAI;
 
 namespace A2AServer;
 

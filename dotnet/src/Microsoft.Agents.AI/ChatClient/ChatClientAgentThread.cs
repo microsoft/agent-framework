@@ -6,8 +6,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.Diagnostics;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 

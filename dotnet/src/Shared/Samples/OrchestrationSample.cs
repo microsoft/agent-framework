@@ -2,8 +2,8 @@
 
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Samples;
 using OpenAIClient = OpenAI.OpenAIClient;
 

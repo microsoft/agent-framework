@@ -2,8 +2,8 @@
 
 using System;
 using FluentAssertions;
-using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 

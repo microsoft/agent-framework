@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Shared.Diagnostics;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 

@@ -4,9 +4,9 @@ using System;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.A2A;
+using Microsoft.Extensions.Logging;
 
 namespace A2A;
 

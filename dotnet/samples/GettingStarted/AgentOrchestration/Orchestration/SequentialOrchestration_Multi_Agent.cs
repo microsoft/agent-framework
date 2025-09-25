@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.Orchestration;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.Orchestration;
 using Microsoft.Shared.Samples;
 using OpenAI;
 
