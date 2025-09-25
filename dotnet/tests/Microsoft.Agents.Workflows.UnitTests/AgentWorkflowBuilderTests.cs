@@ -8,8 +8,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
 #pragma warning disable RCS1186 // Use Regex instance instead of static method

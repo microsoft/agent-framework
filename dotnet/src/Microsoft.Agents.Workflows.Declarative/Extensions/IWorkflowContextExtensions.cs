@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -35,6 +36,35 @@ internal static class IWorkflowContextExtensions
 
     public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
         DeclarativeContext(context).State.Get(key, scopeName);
+
+    public static async ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId)
+    {
+        RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
+        conversation.UpdateField("Id", FormulaValue.New(conversationId));
+        await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation).ConfigureAwait(false);
+        await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
+
+        await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
+    }
+
+    // Ensure "System.Conversation.Id" and "System.ConversationId" are properly initialized when referenced.
+    public static async ValueTask EnsureWorkflowConversationAsync(this IWorkflowContext context, WorkflowAgentProvider agentProvider, StringExpression expression, CancellationToken cancellationToken)
+    {
+        if (expression.IsVariableReference &&
+            expression.VariableReference.IsVariableReferenceWithScope(VariableScopeNames.System, out string? variableName))
+        {
+            if (string.Equals(variableName, SystemScope.Names.Conversation, StringComparison.Ordinal) ||
+                string.Equals(variableName, SystemScope.Names.ConversationId, StringComparison.Ordinal))
+            {
+                FormulaValue variableValue = context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
+                if (variableValue is BlankValue)
+                {
+                    string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+                    await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+                }
+            }
+        }
+    }
 
     private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)
     {

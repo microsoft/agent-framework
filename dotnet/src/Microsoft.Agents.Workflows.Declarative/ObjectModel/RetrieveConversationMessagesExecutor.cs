@@ -18,7 +18,9 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        string conversationId = this.Evaluator.GetValue(Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}")).Value;
+        Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
+        await context.EnsureWorkflowConversationAsync(agentProvider, this.Model.ConversationId, cancellationToken).ConfigureAwait(false);
+        string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
 
         ChatMessage[] messages = await agentProvider.GetMessagesAsync(
             conversationId,
