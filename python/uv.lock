@@ -24,10 +24,9 @@ supported-markers = [
 [manifest]
 members = [
     "agent-framework",
-    "agent-framework-azure",
+    "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
     "agent-framework-devui",
-    "agent-framework-foundry",
     "agent-framework-lab-gaia",
     "agent-framework-lab-lightning",
     "agent-framework-lab-tau2",
@@ -52,6 +51,7 @@ version = "0.1.0b1"
 source = { editable = "packages/main" }
 dependencies = [
     { name = "aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-monitor-opentelemetry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-monitor-opentelemetry-exporter", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -67,24 +67,31 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
-    { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-runtime", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "graphviz", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 azure = [
-    { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+azure-ai = [
+    { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 devui = [
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-foundry = [
-    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
 mem0 = [
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+microsoft = [
+    { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+microsoft-copilotstudio = [
+    { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 redis = [
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -98,12 +105,14 @@ viz = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework-azure", marker = "extra == 'all'", editable = "packages/azure" },
-    { name = "agent-framework-azure", marker = "extra == 'azure'", editable = "packages/azure" },
+    { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
+    { name = "agent-framework-azure-ai", marker = "extra == 'azure'", editable = "packages/azure-ai" },
+    { name = "agent-framework-azure-ai", marker = "extra == 'azure-ai'", editable = "packages/azure-ai" },
+    { name = "agent-framework-copilotstudio", marker = "extra == 'all'", editable = "packages/copilotstudio" },
+    { name = "agent-framework-copilotstudio", marker = "extra == 'microsoft'", editable = "packages/copilotstudio" },
+    { name = "agent-framework-copilotstudio", marker = "extra == 'microsoft-copilotstudio'", editable = "packages/copilotstudio" },
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
     { name = "agent-framework-devui", marker = "extra == 'devui'", editable = "packages/devui" },
-    { name = "agent-framework-foundry", marker = "extra == 'all'", editable = "packages/foundry" },
-    { name = "agent-framework-foundry", marker = "extra == 'foundry'", editable = "packages/foundry" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-mem0", marker = "extra == 'mem0'", editable = "packages/mem0" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
@@ -111,34 +120,40 @@ requires-dist = [
     { name = "agent-framework-runtime", marker = "extra == 'all'", editable = "packages/runtime" },
     { name = "agent-framework-runtime", marker = "extra == 'runtime'", editable = "packages/runtime" },
     { name = "aiofiles", specifier = ">=24.1.0" },
+    { name = "azure-identity", specifier = ">=1,<2" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.7.0" },
     { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0b41" },
+    { name = "graphviz", marker = "extra == 'all'", specifier = ">=0.20.0" },
     { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.20.0" },
     { name = "mcp", extras = ["ws"], specifier = ">=1.13" },
     { name = "openai", specifier = ">=1.99.0" },
-    { name = "opentelemetry-api", specifier = "~=1.24" },
+    { name = "opentelemetry-api", specifier = ">=1.24" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.36.0" },
-    { name = "opentelemetry-sdk", specifier = "~=1.24" },
+    { name = "opentelemetry-sdk", specifier = ">=1.24" },
     { name = "opentelemetry-semantic-conventions-ai", specifier = ">=0.4.13" },
-    { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "typing-extensions", specifier = ">=4.14.0" },
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "pydantic-settings", specifier = ">=2,<3" },
+    { name = "typing-extensions" },
 ]
-provides-extras = ["azure", "foundry", "redis", "viz", "runtime", "mem0", "devui", "all"]
+provides-extras = ["azure-ai", "azure", "microsoft-copilotstudio", "microsoft", "redis", "viz", "runtime", "mem0", "devui", "all"]
 
 [[package]]
-name = "agent-framework-azure"
+name = "agent-framework-azure-ai"
 version = "0.1.0b1"
-source = { editable = "packages/azure" }
+source = { editable = "packages/azure-ai" }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-agents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
-    { name = "azure-identity", specifier = ">=1.13" },
+    { name = "aiohttp", specifier = "~=3.8" },
+    { name = "azure-ai-agents", specifier = ">=1.2.0b4" },
+    { name = "azure-ai-projects", specifier = ">=1.0.0b11" },
 ]
 
 [[package]]
@@ -189,25 +204,6 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
 ]
 provides-extras = ["dev", "all"]
-
-[[package]]
-name = "agent-framework-foundry"
-version = "0.1.0b1"
-source = { editable = "packages/foundry" }
-dependencies = [
-    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-ai-agents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework", editable = "packages/main" },
-    { name = "aiohttp", specifier = "~=3.8" },
-    { name = "azure-ai-agents", specifier = ">=1.2.0b4" },
-    { name = "azure-ai-projects", specifier = ">=1.0.0b11" },
-]
 
 [[package]]
 name = "agent-framework-lab-gaia"
@@ -289,10 +285,9 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-azure", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-lab-gaia", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -325,10 +320,9 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
-    { name = "agent-framework-azure", editable = "packages/azure" },
+    { name = "agent-framework-azure-ai", editable = "packages/azure-ai" },
     { name = "agent-framework-copilotstudio", editable = "packages/copilotstudio" },
     { name = "agent-framework-devui", editable = "packages/devui" },
-    { name = "agent-framework-foundry", editable = "packages/foundry" },
     { name = "agent-framework-lab-gaia", editable = "packages/lab/gaia" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-redis", editable = "packages/redis" },
@@ -526,7 +520,7 @@ wheels = [
 
 [[package]]
 name = "anyio"
-version = "4.10.0"
+version = "4.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exceptiongroup", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
@@ -534,9 +528,9 @@ dependencies = [
     { name = "sniffio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/b4/636b3b65173d3ce9a38ef5f0522789614e590dab6a8d505340a4efe4c567/anyio-4.10.0.tar.gz", hash = "sha256:3f3fae35c96039744587aa5b8371e7e8e603c0702999535961dd336026973ba6", size = 213252, upload-time = "2025-08-04T08:54:26.451Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/78/7d432127c41b50bccba979505f272c16cbcadcc33645d5fa3a738110ae75/anyio-4.11.0.tar.gz", hash = "sha256:82a8d0b81e318cc5ce71a5f1f8b5c4e63619620b63141ef8c995fa0db95a57c4", size = 219094, upload-time = "2025-09-23T09:19:12.58Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/12/e5e0282d673bb9746bacfb6e2dba8719989d3660cdb2ea79aee9a9651afb/anyio-4.10.0-py3-none-any.whl", hash = "sha256:60e474ac86736bbfd6f210f7a61218939c318f43f9972497381f1c5e930ed3d1", size = 107213, upload-time = "2025-08-04T08:54:24.882Z" },
+    { url = "https://files.pythonhosted.org/packages/15/b3/9b1a8074496371342ec1e796a96f99c82c945a339cd81a8e73de28b4cf9e/anyio-4.11.0-py3-none-any.whl", hash = "sha256:0287e96f4d26d4149305414d4e3bc32f0dcd0862365a4bddea19d7a1ec38c4fc", size = 109097, upload-time = "2025-09-23T09:19:10.601Z" },
 ]
 
 [[package]]
@@ -1839,7 +1833,7 @@ wheels = [
 
 [[package]]
 name = "huggingface-hub"
-version = "0.35.0"
+version = "0.35.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1851,9 +1845,9 @@ dependencies = [
     { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/37/79/d71d40efa058e8c4a075158f8855bc2998037b5ff1c84f249f34435c1df7/huggingface_hub-0.35.0.tar.gz", hash = "sha256:ccadd2a78eef75effff184ad89401413629fabc52cefd76f6bbacb9b1c0676ac", size = 461486, upload-time = "2025-09-16T13:49:33.282Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/42/0e7be334a6851cd7d51cc11717cb95e89333ebf0064431c0255c56957526/huggingface_hub-0.35.1.tar.gz", hash = "sha256:3585b88c5169c64b7e4214d0e88163d4a709de6d1a502e0cd0459e9ee2c9c572", size = 461374, upload-time = "2025-09-23T13:43:47.074Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/85/a18508becfa01f1e4351b5e18651b06d210dbd96debccd48a452acccb901/huggingface_hub-0.35.0-py3-none-any.whl", hash = "sha256:f2e2f693bca9a26530b1c0b9bcd4c1495644dad698e6a0060f90e22e772c31e9", size = 563436, upload-time = "2025-09-16T13:49:30.627Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/60/4acf0c8a3925d9ff491dc08fe84d37e09cfca9c3b885e0db3d4dedb98cea/huggingface_hub-0.35.1-py3-none-any.whl", hash = "sha256:2f0e2709c711e3040e31d3e0418341f7092910f1462dd00350c4e97af47280a8", size = 563340, upload-time = "2025-09-23T13:43:45.343Z" },
 ]
 
 [[package]]
@@ -2509,16 +2503,16 @@ wheels = [
 
 [[package]]
 name = "msal"
-version = "1.33.0"
+version = "1.34.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyjwt", extra = ["crypto"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/da/81acbe0c1fd7e9e4ec35f55dadeba9833a847b9a6ba2e2d1e4432da901dd/msal-1.33.0.tar.gz", hash = "sha256:836ad80faa3e25a7d71015c990ce61f704a87328b1e73bcbb0623a18cbf17510", size = 153801, upload-time = "2025-07-22T19:36:33.693Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/0e/c857c46d653e104019a84f22d4494f2119b4fe9f896c92b4b864b3b045cc/msal-1.34.0.tar.gz", hash = "sha256:76ba83b716ea5a6d75b0279c0ac353a0e05b820ca1f6682c0eb7f45190c43c2f", size = 153961, upload-time = "2025-09-22T23:05:48.989Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/5b/fbc73e91f7727ae1e79b21ed833308e99dc11cc1cd3d4717f579775de5e9/msal-1.33.0-py3-none-any.whl", hash = "sha256:c0cd41cecf8eaed733ee7e3be9e040291eba53b0f262d3ae9c58f38b04244273", size = 116853, upload-time = "2025-07-22T19:36:32.403Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/dc/18d48843499e278538890dc709e9ee3dea8375f8be8e82682851df1b48b5/msal-1.34.0-py3-none-any.whl", hash = "sha256:f669b1644e4950115da7a176441b0e13ec2975c29528d8b9e81316023676d6e1", size = 116987, upload-time = "2025-09-22T23:05:47.294Z" },
 ]
 
 [[package]]
@@ -3064,21 +3058,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/df/68aa2dea7e04401f9ce669e6a7a46cc25eb4bb7a14004bf7d535bb27c122/opentelemetry_instrumentation_flask-0.58b0.tar.gz", hash = "sha256:ea2e06f448cef263c21f86401984906f68a5c766c7359000afb5621ae528d9c5", size = 19420, upload-time = "2025-09-11T11:42:36.212Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/7f/88079bc3e4aa188d78692328453f906dca35fa9f286623af13df0b0a1ead/opentelemetry_instrumentation_flask-0.58b0-py3-none-any.whl", hash = "sha256:b0d57ad4db7bd0177ddf8c7ae3adf8bd90e2ebfa2dd30884c6a97c97197e4ac5", size = 14685, upload-time = "2025-09-11T11:41:30.02Z" },
-]
-
-[[package]]
-name = "opentelemetry-instrumentation-openai"
-version = "0.47.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "opentelemetry-instrumentation", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "opentelemetry-semantic-conventions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "opentelemetry-semantic-conventions-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/76/46/3e59891b433869c731131b5ececdaa3ee1d4a45d19169299b52d1397c8e5/opentelemetry_instrumentation_openai-0.47.1.tar.gz", hash = "sha256:a9ad8d898f8f03581fff1764b605d2c277381ced3083a66e7bddb951b95afb2a", size = 25411, upload-time = "2025-09-14T12:09:19.202Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/af/4e/ee98a8e9b9d58425ff84aff63d06fdf004727cdac2cfe3a2916a1869a2e2/opentelemetry_instrumentation_openai-0.47.1-py3-none-any.whl", hash = "sha256:2bc426c1324f7e9babee8d2a02d7966562ec993da5d280c597bd29a92997e2ed", size = 35274, upload-time = "2025-09-14T12:08:48.987Z" },
 ]
 
 [[package]]
@@ -3730,7 +3709,7 @@ wheels = [
 
 [[package]]
 name = "py2docfx"
-version = "0.1.20"
+version = "0.1.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3738,7 +3717,7 @@ dependencies = [
     { name = "wheel", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/c3/77b954fb853ddd3857a814e2a723b5ce2e8c0e59fbed7b83a962db714e66/py2docfx-0.1.20-py3-none-any.whl", hash = "sha256:d450e62591e8b96c5c8be2001f909ca5a1bb2e4dde8c0c8dc7ffb1aec45e4369", size = 11400026, upload-time = "2025-08-08T02:57:00.075Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/bc/056b4751229c92b58296f8eccd262a448f799b3044510f2357742eeeae98/py2docfx-0.1.21-py3-none-any.whl", hash = "sha256:ce782d503593c79fc49324d3b102fe38b1cf5de9e13dfe582abe6d1387a67999", size = 11410660, upload-time = "2025-09-23T03:44:18.458Z" },
 ]
 
 [[package]]
@@ -5121,42 +5100,42 @@ wheels = [
 
 [[package]]
 name = "uv"
-version = "0.8.19"
+version = "0.8.20"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/bc/97/fe818d33597b69746da89c7fecf1d5047f44eaadc464ad35157a546a4a77/uv-0.8.19.tar.gz", hash = "sha256:8250d61be8ad7da952dff476d9855b2d0b3b5737819cc12ecd94ae6665aab322", size = 3658322, upload-time = "2025-09-19T20:08:10.118Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/5c/285626e2fa4f89d3111aba48dd1a3b940a7fc21b3e0b0595c90fd15bc216/uv-0.8.20.tar.gz", hash = "sha256:9560b87a25b05a2487a2a97ba944df22e565d7c0c8586f78152b867970fa1329", size = 3659652, upload-time = "2025-09-22T23:02:24.601Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/ca/2b295412fe26d54745ffbd67b01c7c8edae753b38e188a99726a8cadb9a4/uv-0.8.19-py3-none-linux_armv6l.whl", hash = "sha256:d2c19109b13245094222adac41665d6a785c7d495981e5c41ffc7814bb5c9e0a", size = 20250724, upload-time = "2025-09-19T20:07:13.705Z" },
-    { url = "https://files.pythonhosted.org/packages/b0/a2/b524d7dd5fc7a81b98005805c3daa9512477b29fe37759c90ecfd4c8e65f/uv-0.8.19-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:c9c4aeb322faa28d8d97339b0ed75f29e470dcaed08300de049b8f03a8074386", size = 19260875, upload-time = "2025-09-19T20:07:18.187Z" },
-    { url = "https://files.pythonhosted.org/packages/01/53/3a965df32ba40377850b8fd22a8e7a0bdbb2df12d4881d7ca43ba38729d3/uv-0.8.19-py3-none-macosx_11_0_arm64.whl", hash = "sha256:78aeab7fd2b398c517bbff02096d79df71f4b0ec1fca65af8627f10a95eaa393", size = 17881146, upload-time = "2025-09-19T20:07:21.161Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/3d/bd58b35c831163519dfdbedfd61685fa5e666db422436097af8c8fa1b094/uv-0.8.19-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:4d8abd84fec2f4e476da1a5b59d246e63cabcb5c92432ea126cc3096cd87d43b", size = 19670532, upload-time = "2025-09-19T20:07:23.867Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/43/9c2b3b812acfee547b88467765353a504a3742f0b826c417587aa7a22a6d/uv-0.8.19-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:9dad4d57496b827742388fba09861bec731b859c911c24e0c0b70e47bd168bd9", size = 19832944, upload-time = "2025-09-19T20:07:26.719Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/9d/5a5c1911ef45393b0116f9d9050fa6293814a8174f0faa22b3a0f323c60f/uv-0.8.19-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:7c151785f8f158767279204d2e08b4f8a1b0efdee8d336c933887700208cc6ae", size = 20795887, upload-time = "2025-09-19T20:07:29.664Z" },
-    { url = "https://files.pythonhosted.org/packages/74/b3/a2a419733df18084e993db5f4e159b4af53948260b6b22941f4680be049d/uv-0.8.19-py3-none-manylinux_2_17_ppc64.manylinux2014_ppc64.whl", hash = "sha256:474d62c59258462c7e88cdc2bae2914476643156d80a21cb2abc4b19646e4520", size = 22250360, upload-time = "2025-09-19T20:07:32.49Z" },
-    { url = "https://files.pythonhosted.org/packages/0b/90/84d9afcf9a2e88a191d58d7cb4d9d78204e0fc3baac51905a27e7dd03034/uv-0.8.19-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:29f6e9e137edad619e3e1b39b5acbd2ebe85e55529187ec4426cbd187fe6a0e9", size = 21872749, upload-time = "2025-09-19T20:07:35.471Z" },
-    { url = "https://files.pythonhosted.org/packages/75/10/50a809dba72a300eb1b75f8101195686fbecbc479345571fcd0ee2835fc7/uv-0.8.19-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:64de980f2e8802e0e9937e037d0c890c5eb3f033beeb83ca46710ccf253df4db", size = 21046237, upload-time = "2025-09-19T20:07:38.277Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/f9/1c95510b46d94ea6a580ed923b1a06cff454c3bf2e6d9eababcea8d7f70d/uv-0.8.19-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0097b67a8eddf3ed48a66b86a04754350a21a9c025eca5311732775da4d2e2b2", size = 20924288, upload-time = "2025-09-19T20:07:41.168Z" },
-    { url = "https://files.pythonhosted.org/packages/53/0e/9244460c17692805f55a7d490ecc13b7e877601e1504d29771604850b9cf/uv-0.8.19-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:698ca5bc205456bd933b56332283621c8f3c93a315f3dcc20500c21ead951c07", size = 19805261, upload-time = "2025-09-19T20:07:43.899Z" },
-    { url = "https://files.pythonhosted.org/packages/4b/44/3afa5f2cc136b30884f570d638239bea1c3242acaa9a0c83d9f1f982badb/uv-0.8.19-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:497f674ea7ee5c442c7c75c49e543770f1505b5a1c1749fc271671983d2a1fc5", size = 20916088, upload-time = "2025-09-19T20:07:46.911Z" },
-    { url = "https://files.pythonhosted.org/packages/61/7d/7f61affd0bcba863326926a4ea983ecf08179c284d8251b1e05fbb2bab25/uv-0.8.19-py3-none-musllinux_1_1_armv7l.whl", hash = "sha256:bd65e706cb30e8d006caf42a91326cb9f96b49a332771766dd3f5992d7ecca9f", size = 19835747, upload-time = "2025-09-19T20:07:49.674Z" },
-    { url = "https://files.pythonhosted.org/packages/79/d6/d3419ac38fb7817fb2bf61b3c712f8a9b1433875d730008f26a42fffa282/uv-0.8.19-py3-none-musllinux_1_1_i686.whl", hash = "sha256:8222edcc388fc9ff41bc095dfcc0cfd861f3133b0118cc67347f15daf5fc96e9", size = 20239438, upload-time = "2025-09-19T20:07:53.834Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/30/efd06512b13f05d41c253ce4f5c7941cc02e99b22500b25de80c898218c9/uv-0.8.19-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:d1fe68ad66e46106c987e7647e863d06d5e052b08b2da6e30664f5f630b90fc0", size = 21135323, upload-time = "2025-09-19T20:07:56.743Z" },
-    { url = "https://files.pythonhosted.org/packages/68/84/094c2bcd65f873041949b1c58978005f0ae43ceb1adc222ba1ecc46d35de/uv-0.8.19-py3-none-win32.whl", hash = "sha256:2d63c86fc027769bd904d5a3ce8814ab5cfaf66f633ced552dbd9fe83fffbff0", size = 19023637, upload-time = "2025-09-19T20:07:59.547Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/75/1808130fec1298d1be68f0f66f0deb3f201246236957eb014db2888a03b9/uv-0.8.19-py3-none-win_amd64.whl", hash = "sha256:6d7304c5485ef091740460118840e660c2aa24edbb8267684c3380a5a40a209c", size = 21083463, upload-time = "2025-09-19T20:08:02.436Z" },
-    { url = "https://files.pythonhosted.org/packages/1a/29/8bbe90380f94f8eaadedf62030316341770faf27d8713b00507970cdc552/uv-0.8.19-py3-none-win_arm64.whl", hash = "sha256:3029aadc6d19cae617f7d7b1f69a7fd2d5444ad4845e3018a736759043ef23cb", size = 19548735, upload-time = "2025-09-19T20:08:05.552Z" },
+    { url = "https://files.pythonhosted.org/packages/31/19/061b2f23ad3ac4a2bebd1c934623821c62ccfb454385a052c2f8889a3592/uv-0.8.20-py3-none-linux_armv6l.whl", hash = "sha256:46798fad22dfcc1ba66c4e98faddbf15e3878255345049f5b599879caf52b01a", size = 20270849, upload-time = "2025-09-22T23:01:12.315Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/c5/80b0c091c56da5a709c01bebf9fd2f8d1fd553289e5ec0ba1783cd2a7d94/uv-0.8.20-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:4f9941c625c12abaeb619c693b37007082e975455d149f32bb12068535af043e", size = 19282587, upload-time = "2025-09-22T23:01:18.162Z" },
+    { url = "https://files.pythonhosted.org/packages/04/5f/5f5407a0bdd9309ad9abb96633055c721c5faa1cb11d21a2568b8dc79626/uv-0.8.20-py3-none-macosx_11_0_arm64.whl", hash = "sha256:94f30a025cbdd82f6212b0297c47e63e56cc57a5fb6f4e74853554f19ac9f6fa", size = 17908187, upload-time = "2025-09-22T23:01:21.907Z" },
+    { url = "https://files.pythonhosted.org/packages/65/5b/40b874db599c016586a5becee6064b6502aeb07f7150a685ea2b4f0e1cac/uv-0.8.20-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:be6a69919241d4e953cfd7f601a64012649cd69cf66d499474bc10fc4f4dabb0", size = 19697193, upload-time = "2025-09-22T23:01:25.91Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/ca/b8ff6f97d649f5b74183b6a0ca9d59744086ee8f873034969110da4c4cbf/uv-0.8.20-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:342ff059c4866c2dcefa829acf75b47cf0a03201769941afab5c774424a902ab", size = 19840725, upload-time = "2025-09-22T23:01:29.703Z" },
+    { url = "https://files.pythonhosted.org/packages/07/0d/7fc078cead61c472ede432f931b6010be70daf8682b04f0c86911f76908b/uv-0.8.20-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:edb79a6948712285220f21120dc740648e9ee640f7782be811b620895a4af7fc", size = 20820489, upload-time = "2025-09-22T23:01:33.446Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/df/572035306469de778365f25ae6926fa55ebfb87bc93144c6635877fda2e8/uv-0.8.20-py3-none-manylinux_2_17_ppc64.manylinux2014_ppc64.whl", hash = "sha256:d3a872a87fdd69b46f865f9743dfdc51850f7b5d64cda48b4eb8a9ebb792df26", size = 22250316, upload-time = "2025-09-22T23:01:37.183Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/c8/9b475b7fe01f2ef0375ce94e0643ed9606fde63a621b96bddca22a4eabff/uv-0.8.20-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:0024e6c5fdc633ee2659a3bcd01db4bb5e828c87322af2f96a6cd9dbd8fbb202", size = 21896353, upload-time = "2025-09-22T23:01:41.085Z" },
+    { url = "https://files.pythonhosted.org/packages/04/f4/6165da453076a18caa2d2f892e661071225566248df6c5a20428273d2282/uv-0.8.20-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:2eab535373ef1d81cd5181e267b14bfc53ad28e39de6d222dcb118c163386902", size = 21073526, upload-time = "2025-09-22T23:01:44.663Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/74/5a4996aa94346ffa4930af06e8c36117880d1e19c8695f820f279f3280eb/uv-0.8.20-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8f70877df868b56e408883bad8e5bfa68ffc27865af181e5ee499074b364f571", size = 20967130, upload-time = "2025-09-22T23:01:48.337Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/7f/199a1a9f41eb0dba2f34f2f69008f3939d591747c90ad23406a551d61a1d/uv-0.8.20-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:59d70332b42a7c8dd5b8ecce54c05ffa126bd4eafebd7ededf347b915f2e4263", size = 19813405, upload-time = "2025-09-22T23:01:52.454Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/da/20e559b743f961590319435874e32267280795e112657b7edbfaf9ed3662/uv-0.8.20-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:40d749a856867bc7e0fa9314c06cc8e91584122e33e90c594f298d777c9acd51", size = 20887613, upload-time = "2025-09-22T23:01:56.688Z" },
+    { url = "https://files.pythonhosted.org/packages/47/dc/52b4ad48e812cade9122e742e8a4249ccf0c9071f1b5ea26e3ad5d0bb7b6/uv-0.8.20-py3-none-musllinux_1_1_armv7l.whl", hash = "sha256:a39a90083cd7d5639affe77f969f80d93153ba7b82962f62ea30a944634f90dc", size = 19848883, upload-time = "2025-09-22T23:02:00.395Z" },
+    { url = "https://files.pythonhosted.org/packages/db/fd/b61612e4bb87a3b583dfd7906dcebb9f3b3f3ca27a4b462301774d0dd503/uv-0.8.20-py3-none-musllinux_1_1_i686.whl", hash = "sha256:d5994d5cb4a6b327de657511825cb9e14d8fc1c7518d2cb01eeec70000f575ed", size = 20234284, upload-time = "2025-09-22T23:02:03.886Z" },
+    { url = "https://files.pythonhosted.org/packages/68/55/e011ede284e0a1f1e38e27549c0a80f2bf44b1321003c1ddffc2d76110b3/uv-0.8.20-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:7d01cbe0a856f72a2505c6ac3ca4b9fafc304df664a00f27c9d3e4ddb085a844", size = 21139219, upload-time = "2025-09-22T23:02:09.099Z" },
+    { url = "https://files.pythonhosted.org/packages/21/ab/aba7b572bf4066f3046f9143c28c58a833fafd3b0a16951da11739e3c6c2/uv-0.8.20-py3-none-win32.whl", hash = "sha256:86ce315cce8be58e24a88448f42649760aa29cc429691638f281337b68fe20b3", size = 19033345, upload-time = "2025-09-22T23:02:12.67Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/9c/50ad29d3697bb85ba09e47d2d3ebf7ef694320c8054c2513f641782da96e/uv-0.8.20-py3-none-win_amd64.whl", hash = "sha256:e356e987b14779c957bc402abf5d917b0ff6c53b4153ad0271a00eef46a9b65a", size = 21082152, upload-time = "2025-09-22T23:02:17.534Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/01/4d44aacb9b02561fdbd53948ffc278b78c80e929debba4945809c4cf1295/uv-0.8.20-py3-none-win_arm64.whl", hash = "sha256:23222fd90d843d8c5650f2b3e297dbed4d05a4d28a5e99d017d73aebaa98bea4", size = 19560961, upload-time = "2025-09-22T23:02:21.791Z" },
 ]
 
 [[package]]
 name = "uvicorn"
-version = "0.36.0"
+version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "h11", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ef/5e/f0cd46063a02fd8515f0e880c37d2657845b7306c16ce6c4ffc44afd9036/uvicorn-0.36.0.tar.gz", hash = "sha256:527dc68d77819919d90a6b267be55f0e76704dca829d34aea9480be831a9b9d9", size = 80032, upload-time = "2025-09-20T01:07:14.418Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/57/1616c8274c3442d802621abf5deb230771c7a0fec9414cb6763900eb3868/uvicorn-0.37.0.tar.gz", hash = "sha256:4115c8add6d3fd536c8ee77f0e14a7fd2ebba939fed9b02583a97f80648f9e13", size = 80367, upload-time = "2025-09-23T13:33:47.486Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/06/5cc0542b47c0338c1cb676b348e24a1c29acabc81000bced518231dded6f/uvicorn-0.36.0-py3-none-any.whl", hash = "sha256:6bb4ba67f16024883af8adf13aba3a9919e415358604ce46780d3f9bdc36d731", size = 67675, upload-time = "2025-09-20T01:07:12.984Z" },
+    { url = "https://files.pythonhosted.org/packages/85/cd/584a2ceb5532af99dd09e50919e3615ba99aa127e9850eafe5f31ddfdb9a/uvicorn-0.37.0-py3-none-any.whl", hash = "sha256:913b2b88672343739927ce381ff9e2ad62541f9f8289664fa1d1d3803fa2ce6c", size = 67976, upload-time = "2025-09-23T13:33:45.842Z" },
 ]
 
 [package.optional-dependencies]

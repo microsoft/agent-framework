@@ -33,15 +33,16 @@ public static class Program
         var workflow = new WorkflowBuilder(fileRead)
             .AddFanOutEdge(fileRead, targets: [wordCount, paragraphCount])
             .AddFanInEdge(aggregate, sources: [wordCount, paragraphCount])
-            .Build<string>();
+            .WithOutputFrom(aggregate)
+            .Build();
 
         // Execute the workflow with input data
         Run run = await InProcessExecution.RunAsync(workflow, "Lorem_Ipsum.txt");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
-            if (evt is WorkflowCompletedEvent workflowCompleted)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine(workflowCompleted.Data);
+                Console.WriteLine(outputEvent.Data);
             }
         }
     }
@@ -116,7 +117,7 @@ internal sealed class AggregationExecutor() : ReflectingExecutor<AggregationExec
             // Aggregate the results from both executors
             var totalParagraphCount = this._messages.Sum(m => m.ParagraphCount);
             var totalWordCount = this._messages.Sum(m => m.WordCount);
-            await context.AddEventAsync(new WorkflowCompletedEvent($"Total Paragraphs: {totalParagraphCount}, Total Words: {totalWordCount}"));
+            await context.YieldOutputAsync($"Total Paragraphs: {totalParagraphCount}, Total Words: {totalWordCount}");
         }
     }
 }

@@ -61,6 +61,9 @@ jobs:
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       PACKAGE_NAME: "main"
     defaults:
       run:
@@ -76,6 +79,13 @@ jobs:
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 10
         run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
@@ -104,8 +114,8 @@ jobs:
           fail-on-empty: true
           title: Test results
 
-  python-tests-azure:
-    name: Python Tests - Azure
+  python-tests-azure-ai:
+    name: Python Tests - AzureAI
     needs: paths-filter
     if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
@@ -118,10 +128,9 @@ jobs:
         environment: ["integration"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      PACKAGE_NAME: "azure"
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      PACKAGE_NAME: "azure-ai"
     defaults:
       run:
         working-directory: python
@@ -150,77 +159,11 @@ jobs:
       - name: Test azure samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure"
+        run: uv run pytest tests/samples/ -m "azure-ai"
         working-directory: ./python
       - name: Move coverage file
         run: |
           mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml ./coverage_${{ env.PACKAGE_NAME }}.xml
-        working-directory: ./python
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ env.PACKAGE_NAME }}
-          path: ./python/coverage_${{ env.PACKAGE_NAME }}.xml
-      - name: Surface failing tests
-        if: always()
-        uses: pmeier/pytest-results-action@v0.7.2
-        with:
-          path: ./python/**.xml
-          summary: true
-          display-options: fEX
-          fail-on-empty: true
-          title: Test results
-
-  python-tests-foundry:
-    name: Python Tests - Foundry
-    needs: paths-filter
-    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
-    runs-on: ${{ matrix.os }}
-    environment: ${{ matrix.environment }}
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ["3.10"]
-        os: [ubuntu-latest]
-        environment: ["integration"]
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      PACKAGE_NAME: "foundry"
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v5
-      - name: Set up python and install the project
-        id: python-setup
-        uses: ./.github/actions/python-setup
-        with:
-          python-version: ${{ matrix.python-version }}
-          os: ${{ runner.os }}
-        env:
-          # Configure a constant location for the uv cache
-          UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Azure CLI Login
-        if: github.event_name != 'pull_request'
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Test with pytest
-        timeout-minutes: 10
-        run: uv run poe --directory ./packages/${{ env.PACKAGE_NAME }} test -n logical --dist loadfile --dist worksteal --junitxml=coverage.xml
-        working-directory: ./python
-      - name: Test foundry samples
-        timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "foundry"
-        working-directory: ./python
-      - name: Move coverage file
-        run: |
-          mv ./packages/${{ env.PACKAGE_NAME }}/coverage.xml coverage_${{ env.PACKAGE_NAME }}.xml
         working-directory: ./python
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -245,8 +188,7 @@ jobs:
     needs:
       [
         python-tests-main,
-        python-tests-azure,
-        python-tests-foundry
+        python-tests-azure-ai
       ]
     steps:
 

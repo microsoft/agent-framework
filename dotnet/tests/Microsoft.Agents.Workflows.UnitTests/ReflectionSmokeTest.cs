@@ -8,7 +8,7 @@ using Moq;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
-public class BaseTestExecutor<TActual> : ReflectingExecutor<TActual> where TActual : ReflectingExecutor<TActual>
+public class BaseTestExecutor<TActual>(string id) : ReflectingExecutor<TActual>(id) where TActual : ReflectingExecutor<TActual>
 {
     protected void OnInvokedHandler() => this.InvokedHandler = true;
 
@@ -19,7 +19,7 @@ public class BaseTestExecutor<TActual> : ReflectingExecutor<TActual> where TActu
     }
 }
 
-public class DefaultHandler : BaseTestExecutor<DefaultHandler>, IMessageHandler<object>
+public class DefaultHandler() : BaseTestExecutor<DefaultHandler>(nameof(DefaultHandler)), IMessageHandler<object>
 {
     public ValueTask HandleAsync(object message, IWorkflowContext context)
     {
@@ -34,7 +34,7 @@ public class DefaultHandler : BaseTestExecutor<DefaultHandler>, IMessageHandler<
     } = (message, context) => default;
 }
 
-public class TypedHandler<TInput> : BaseTestExecutor<TypedHandler<TInput>>, IMessageHandler<TInput>
+public class TypedHandler<TInput>() : BaseTestExecutor<TypedHandler<TInput>>(nameof(TypedHandler<TInput>)), IMessageHandler<TInput>
 {
     public ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
@@ -49,7 +49,7 @@ public class TypedHandler<TInput> : BaseTestExecutor<TypedHandler<TInput>>, IMes
     } = (message, context) => default;
 }
 
-public class TypedHandlerWithOutput<TInput, TResult> : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>, IMessageHandler<TInput, TResult>
+public class TypedHandlerWithOutput<TInput, TResult>() : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>(nameof(TypedHandlerWithOutput<TInput, TResult>)), IMessageHandler<TInput, TResult>
 {
     public ValueTask<TResult> HandleAsync(TInput message, IWorkflowContext context)
     {

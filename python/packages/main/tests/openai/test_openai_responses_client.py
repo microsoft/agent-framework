@@ -1560,7 +1560,7 @@ async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with OpenAI Response Agent using Microsoft Learn MCP."""
-    # Use the same MCP server as the Foundry example
+
     mcp_tool = HostedMCPTool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
@@ -1573,7 +1573,6 @@ async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
-        # Use the same query as the Foundry example
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
             max_tokens=200,

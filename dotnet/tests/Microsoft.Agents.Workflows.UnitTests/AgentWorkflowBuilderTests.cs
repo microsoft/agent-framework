@@ -382,28 +382,28 @@ public class AgentWorkflowBuilderTests
     }
 
     private static async Task<(string UpdateText, List<ChatMessage>? Result)> RunWorkflowAsync(
-        Workflow<List<ChatMessage>> workflow, List<ChatMessage> input)
+        Workflow workflow, List<ChatMessage> input)
     {
         StringBuilder sb = new();
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
-        WorkflowCompletedEvent? completed = null;
+        WorkflowOutputEvent? output = null;
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is AgentRunUpdateEvent executorComplete)
             {
                 sb.Append(executorComplete.Data);
             }
-            else if (evt is WorkflowCompletedEvent e)
+            else if (evt is WorkflowOutputEvent e)
             {
-                completed = e;
+                output = e;
                 break;
             }
         }
 
-        return (sb.ToString(), completed?.Data as List<ChatMessage>);
+        return (sb.ToString(), output?.As<List<ChatMessage>>());
     }
 
     private sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)

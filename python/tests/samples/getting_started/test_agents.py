@@ -8,142 +8,142 @@ from typing import Any
 import pytest
 from pytest import MonkeyPatch, mark, param
 
-from samples.getting_started.agents.azure_assistants_client.azure_assistants_basic import (
+from samples.getting_started.agents.azure_ai.azure_ai_basic import (
+    main as azure_ai_basic,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_code_interpreter import (
+    main as azure_ai_with_code_interpreter,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_existing_agent import (
+    main as azure_ai_with_existing_agent,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_explicit_settings import (
+    main as azure_ai_with_explicit_settings,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (
+    mixed_tools_example as azure_ai_with_function_tools_mixed,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (
+    tools_on_agent_level as azure_ai_with_function_tools_agent,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (
+    tools_on_run_level as azure_ai_with_function_tools_run,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_local_mcp import (
+    main as azure_ai_with_local_mcp,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_thread import (
+    main as azure_ai_with_thread,
+)
+from samples.getting_started.agents.azure_openai.azure_assistants_basic import (
     main as azure_assistants_basic,
 )
-from samples.getting_started.agents.azure_assistants_client.azure_assistants_with_code_interpreter import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_code_interpreter import (
     main as azure_assistants_with_code_interpreter,
 )
-from samples.getting_started.agents.azure_assistants_client.azure_assistants_with_existing_assistant import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_existing_assistant import (
     main as azure_assistants_with_existing_assistant,
 )
-from samples.getting_started.agents.azure_assistants_client.azure_assistants_with_explicit_settings import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_explicit_settings import (
     main as azure_assistants_with_explicit_settings,
 )
-from samples.getting_started.agents.azure_assistants_client.azure_assistants_with_function_tools import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_function_tools import (
     main as azure_assistants_with_function_tools,
 )
-from samples.getting_started.agents.azure_assistants_client.azure_assistants_with_thread import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_thread import (
     main as azure_assistants_with_thread,
 )
-from samples.getting_started.agents.azure_chat_client.azure_chat_client_basic import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_basic import (
     main as azure_chat_client_basic,
 )
-from samples.getting_started.agents.azure_chat_client.azure_chat_client_with_explicit_settings import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_with_explicit_settings import (
     main as azure_chat_client_with_explicit_settings,
 )
-from samples.getting_started.agents.azure_chat_client.azure_chat_client_with_function_tools import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_with_function_tools import (
     main as azure_chat_client_with_function_tools,
 )
-from samples.getting_started.agents.azure_chat_client.azure_chat_client_with_thread import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_with_thread import (
     main as azure_chat_client_with_thread,
 )
-from samples.getting_started.agents.azure_responses_client.azure_responses_client_basic import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_basic import (
     main as azure_responses_client_basic,
 )
-from samples.getting_started.agents.azure_responses_client.azure_responses_client_with_code_interpreter import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_code_interpreter import (
     main as azure_responses_client_with_code_interpreter,
 )
-from samples.getting_started.agents.azure_responses_client.azure_responses_client_with_explicit_settings import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_explicit_settings import (
     main as azure_responses_client_with_explicit_settings,
 )
-from samples.getting_started.agents.azure_responses_client.azure_responses_client_with_function_tools import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_function_tools import (
     main as azure_responses_client_with_function_tools,
 )
-from samples.getting_started.agents.azure_responses_client.azure_responses_client_with_thread import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_thread import (
     main as azure_responses_client_with_thread,
 )
-from samples.getting_started.agents.foundry.foundry_basic import (
-    main as foundry_basic,
-)
-from samples.getting_started.agents.foundry.foundry_with_code_interpreter import (
-    main as foundry_with_code_interpreter,
-)
-from samples.getting_started.agents.foundry.foundry_with_existing_agent import (
-    main as foundry_with_existing_agent,
-)
-from samples.getting_started.agents.foundry.foundry_with_explicit_settings import (
-    main as foundry_with_explicit_settings,
-)
-from samples.getting_started.agents.foundry.foundry_with_function_tools import (
-    mixed_tools_example as foundry_with_function_tools_mixed,
-)
-from samples.getting_started.agents.foundry.foundry_with_function_tools import (
-    tools_on_agent_level as foundry_with_function_tools_agent,
-)
-from samples.getting_started.agents.foundry.foundry_with_function_tools import (
-    tools_on_run_level as foundry_with_function_tools_run,
-)
-from samples.getting_started.agents.foundry.foundry_with_local_mcp import (
-    main as foundry_with_local_mcp,
-)
-from samples.getting_started.agents.foundry.foundry_with_thread import (
-    main as foundry_with_thread,
-)
-from samples.getting_started.agents.openai_assistants_client.openai_assistants_basic import (
+from samples.getting_started.agents.openai.openai_assistants_basic import (
     main as openai_assistants_basic,
 )
-from samples.getting_started.agents.openai_assistants_client.openai_assistants_with_code_interpreter import (
+from samples.getting_started.agents.openai.openai_assistants_with_code_interpreter import (
     main as openai_assistants_with_code_interpreter,
 )
-from samples.getting_started.agents.openai_assistants_client.openai_assistants_with_existing_assistant import (
+from samples.getting_started.agents.openai.openai_assistants_with_existing_assistant import (
     main as openai_assistants_with_existing_assistant,
 )
-from samples.getting_started.agents.openai_assistants_client.openai_assistants_with_explicit_settings import (
+from samples.getting_started.agents.openai.openai_assistants_with_explicit_settings import (
     main as openai_assistants_with_explicit_settings,
 )
-from samples.getting_started.agents.openai_assistants_client.openai_assistants_with_file_search import (
+from samples.getting_started.agents.openai.openai_assistants_with_file_search import (
     main as openai_assistants_with_file_search,
 )
-from samples.getting_started.agents.openai_assistants_client.openai_assistants_with_function_tools import (
+from samples.getting_started.agents.openai.openai_assistants_with_function_tools import (
     main as openai_assistants_with_function_tools,
 )
-from samples.getting_started.agents.openai_assistants_client.openai_assistants_with_thread import (
+from samples.getting_started.agents.openai.openai_assistants_with_thread import (
     main as openai_assistants_with_thread,
 )
-from samples.getting_started.agents.openai_chat_client.openai_chat_client_basic import (
+from samples.getting_started.agents.openai.openai_chat_client_basic import (
     main as openai_chat_client_basic,
 )
-from samples.getting_started.agents.openai_chat_client.openai_chat_client_with_explicit_settings import (
+from samples.getting_started.agents.openai.openai_chat_client_with_explicit_settings import (
     main as openai_chat_client_with_explicit_settings,
 )
-from samples.getting_started.agents.openai_chat_client.openai_chat_client_with_function_tools import (
+from samples.getting_started.agents.openai.openai_chat_client_with_function_tools import (
     main as openai_chat_client_with_function_tools,
 )
-from samples.getting_started.agents.openai_chat_client.openai_chat_client_with_local_mcp import (
+from samples.getting_started.agents.openai.openai_chat_client_with_local_mcp import (
     main as openai_chat_client_with_local_mcp,
 )
-from samples.getting_started.agents.openai_chat_client.openai_chat_client_with_thread import (
+from samples.getting_started.agents.openai.openai_chat_client_with_thread import (
     main as openai_chat_client_with_thread,
 )
-from samples.getting_started.agents.openai_chat_client.openai_chat_client_with_web_search import (
+from samples.getting_started.agents.openai.openai_chat_client_with_web_search import (
     main as openai_chat_client_with_web_search,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_basic import (
+from samples.getting_started.agents.openai.openai_responses_client_basic import (
     main as openai_responses_client_basic,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_reasoning import (
+from samples.getting_started.agents.openai.openai_responses_client_reasoning import (
     main as openai_responses_client_reasoning,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_with_code_interpreter import (
+from samples.getting_started.agents.openai.openai_responses_client_with_code_interpreter import (
     main as openai_responses_client_with_code_interpreter,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_with_explicit_settings import (
+from samples.getting_started.agents.openai.openai_responses_client_with_explicit_settings import (
     main as openai_responses_client_with_explicit_settings,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_with_file_search import (
+from samples.getting_started.agents.openai.openai_responses_client_with_file_search import (
     main as openai_responses_client_with_file_search,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_with_function_tools import (
+from samples.getting_started.agents.openai.openai_responses_client_with_function_tools import (
     main as openai_responses_client_with_function_tools,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_with_local_mcp import (
+from samples.getting_started.agents.openai.openai_responses_client_with_local_mcp import (
     main as openai_responses_client_with_local_mcp,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_with_thread import (
+from samples.getting_started.agents.openai.openai_responses_client_with_thread import (
     main as openai_responses_client_with_thread,
 )
-from samples.getting_started.agents.openai_responses_client.openai_responses_client_with_web_search import (
+from samples.getting_started.agents.openai.openai_responses_client_with_web_search import (
     main as openai_responses_client_with_web_search,
 )
 from tests.sample_utils import retry
@@ -291,85 +291,85 @@ agent_samples = [
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
-    # Foundry Agent samples
+    # Azure AI Agent samples
     param(
-        foundry_basic,
+        azure_ai_basic,
         [],  # Non-interactive sample
-        id="foundry_basic",
+        id="azure_ai_basic",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_code_interpreter,
+        azure_ai_with_code_interpreter,
         [],  # Non-interactive sample
-        id="foundry_with_code_interpreter",
+        id="azure_ai_with_code_interpreter",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_existing_agent,
+        azure_ai_with_existing_agent,
         [],  # Non-interactive sample
-        id="foundry_with_existing_agent",
+        id="azure_ai_with_existing_agent",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_explicit_settings,
+        azure_ai_with_explicit_settings,
         [],  # Non-interactive sample
-        id="foundry_with_explicit_settings",
+        id="azure_ai_with_explicit_settings",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_function_tools_agent,
+        azure_ai_with_function_tools_agent,
         [],  # Non-interactive sample
-        id="foundry_with_function_tools",
+        id="azure_ai_with_function_tools",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_function_tools_run,
+        azure_ai_with_function_tools_run,
         [],  # Non-interactive sample
-        id="foundry_with_function_tools",
+        id="azure_ai_with_function_tools",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_function_tools_mixed,
+        azure_ai_with_function_tools_mixed,
         [],  # Non-interactive sample
-        id="foundry_with_function_tools",
+        id="azure_ai_with_function_tools",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_thread,
+        azure_ai_with_thread,
         [],  # Non-interactive sample
-        id="foundry_with_thread",
+        id="azure_ai_with_thread",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
     param(
-        foundry_with_local_mcp,
+        azure_ai_with_local_mcp,
         [],  # Non-interactive sample
-        id="foundry_with_local_mcp",
+        id="azure_ai_with_local_mcp",
         marks=[
-            pytest.mark.foundry,
+            pytest.mark.azure_ai,
             pytest.mark.skipif(os.getenv(RUN_SAMPLES_TESTS, None) is None, reason="Not running sample tests."),
         ],
     ),
