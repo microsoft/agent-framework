@@ -1530,7 +1530,6 @@ def test_chat_response_complex_serialization():
     assert isinstance(response_dict["finish_reason"], dict)
     assert isinstance(response_dict["usage_details"], dict)
     assert response_dict["model_id"] == "gpt-4"  # Should serialize as model_id
-    assert "model_id" not in response_dict  # Should not appear separately
 
 
 def test_chat_response_update_all_content_types():
