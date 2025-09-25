@@ -36,7 +36,7 @@ OR just
 
 ```csharp
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 ```
 
 ### 2. Agent Creation Simplification

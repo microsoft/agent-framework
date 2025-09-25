@@ -8,9 +8,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 

@@ -3,6 +3,7 @@
 using System.Text;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
@@ -27,8 +28,7 @@ await AFAgent();
 async Task SKAgent()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
-
-    var builder = Kernel.CreateBuilder().AddAzureOpenAIChatClient(deploymentName, endpoint, new AzureCliCredential());
+    var _ = Kernel.CreateBuilder().AddAzureOpenAIChatClient(deploymentName, endpoint, new AzureCliCredential());
 
     // Define the assistant
     Assistant assistant = await assistantsClient.CreateAssistantAsync(deploymentName, enableCodeInterpreter: true);
@@ -124,6 +124,9 @@ async Task AFAgent()
     }
 
     // Clean up
-    await assistantsClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantsClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }
