@@ -33,6 +33,12 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => this.Source.AddEventAsync(workflowEvent);
 
     /// <inheritdoc/>
+    public ValueTask YieldOutputAsync(object output) => this.Source.YieldOutputAsync(output);
+
+    /// <inheritdoc/>
+    public ValueTask RequestHaltAsync() => this.Source.RequestHaltAsync();
+
+    /// <inheritdoc/>
     public async ValueTask QueueClearScopeAsync(string? scopeName = null)
     {
         if (scopeName is not null)

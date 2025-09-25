@@ -2,7 +2,7 @@
 
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.AzureAI;
 

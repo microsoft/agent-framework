@@ -14,6 +14,12 @@ public class TestRunContext : IRunnerContext
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent)
             => runnerContext.AddEventAsync(workflowEvent);
 
+        public ValueTask YieldOutputAsync(object output)
+            => this.AddEventAsync(new WorkflowOutputEvent(output, executorId));
+
+        public ValueTask RequestHaltAsync()
+            => this.AddEventAsync(new RequestHaltEvent());
+
         public ValueTask QueueClearScopeAsync(string? scopeName = null)
             => default;
 

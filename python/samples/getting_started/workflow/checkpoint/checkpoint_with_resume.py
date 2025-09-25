@@ -18,7 +18,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ What you learn:
 - How workflows complete by yielding outputs when idle, not via explicit completion events.
 
 Prerequisites:
-- Azure AI or Azure OpenAI available for AzureChatClient.
+- Azure AI or Azure OpenAI available for AzureOpenAIChatClient.
 - Authentication with azure-identity via AzureCliCredential. Run az login locally.
 - Filesystem access for writing JSON checkpoint files in a temp directory.
 """
@@ -161,7 +161,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> "Workflow":
     reverse_text_executor = ReverseTextExecutor(id="reverse-text")
 
     # Configure the agent stage that lowercases the text.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     lower_agent = AgentExecutor(
         chat_client.create_agent(
             instructions=("You transform text to lowercase. Reply with ONLY the transformed text.")

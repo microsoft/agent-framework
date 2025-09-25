@@ -356,8 +356,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             target_id: The ID of the target executor to send the message to.
                        If None, the message will be sent to all target executors.
         """
-        global OTEL_SETTINGS
-        from ..observability import OTEL_SETTINGS
+        global OBSERVABILITY_SETTINGS
+        from ..observability import OBSERVABILITY_SETTINGS
 
         # Create publishing span (inherits current trace context automatically)
         attributes: dict[str, str] = {OtelAttr.MESSAGE_TYPE: type(message).__name__}
@@ -368,7 +368,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
 
             # Inject current trace context if tracing enabled
-            if OTEL_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
+            if OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
                 trace_context: dict[str, str] = {}
                 inject(trace_context)  # Inject current trace context for message propagation
 
