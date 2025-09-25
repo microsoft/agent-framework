@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-# type: ignore
+
 import asyncio
 from random import randint
 from typing import Annotated
@@ -8,12 +8,12 @@ from agent_framework import ChatAgent
 from agent_framework.observability import get_tracer, setup_observability
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry.trace import SpanKind
+from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 """
-This sample shows you can can setup telemetry with a agent.
-The agent invoke is a additional Semantic Convention that now
-will wrap the calls made by the underlying chat client and tools.
+This sample shows how you can observe an agent in Agent Framework by using the
+same observability setup function.
 """
 
 
@@ -27,13 +27,15 @@ async def get_weather(
 
 
 async def main():
-    # Set up the telemetry
+    # This will enable tracing and create the necessary tracing, logging and metrics providers
+    # based on environment variables. See the .env.example file for the available configuration options.
+    setup_observability()
 
     questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
-    setup_observability()
-    with get_tracer().start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT):
-        print("Running scenario: Agent Chat")
-        print("Welcome to the chat, type 'exit' to quit.")
+
+    with get_tracer().start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT) as current_span:
+        print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
+
         agent = ChatAgent(
             chat_client=OpenAIChatClient(),
             tools=get_weather,

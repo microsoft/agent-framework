@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
-# type: ignore
+
 import asyncio
 import os
 from random import randint
 from typing import Annotated
 
+import dotenv
 from agent_framework import HostedCodeInterpreterTool
 from agent_framework.azure import AzureAIAgentClient
-from agent_framework.observability import get_tracer, setup_observability
+from agent_framework.observability import get_tracer
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
@@ -16,13 +17,16 @@ from pydantic import Field
 
 """
 This sample, shows you can leverage the built-in telemetry in Azure AI.
-It uses the Azure AI client to setup the telemetry, this calls
-out to Azure AI for a telemetry connection strings,
-and then call the setup_observability function in the agent framework.
-If you want to compare with the trace sent to a generic OTLP endpoint,
-switch the `use_azure_ai_telemetry` variable to False.
+It uses the Azure AI client to setup the telemetry, this calls out to
+Azure AI for the connection string of the attached Application Insights
+instance.
+
+You must add an Application Insights instance to your Azure AI project
+for this sample to work.
 """
 
+# For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
+dotenv.load_dotenv()
 
 # ANSI color codes for printing in blue and resetting after each print
 BLUE = "\x1b[34m"
@@ -50,7 +54,6 @@ async def main() -> None:
     In azure_ai you will also see specific operations happening that are called by the Azure AI implementation,
     such as `create_agent`.
     """
-    use_azure_ai_obs = True
     questions = [
         "What's the weather in Amsterdam and in Paris?",
         "Why is the sky blue?",
@@ -60,16 +63,18 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
-        AzureAIAgentClient(client=project, setup_tracing=False) as client,
+        AzureAIAgentClient(project_client=project) as client,
     ):
-        if use_azure_ai_obs:
-            await client.setup_observability(enable_live_metrics=True)
-        else:
-            setup_observability()
+        # This will enable tracing and configure the application to send telemetry data to the
+        # Application Insights instance attached to the Azure AI project.
+        # This will override any existing configuration.
+        await client.setup_observability()
 
         with get_tracer().start_as_current_span(
-            name="Azure AI Telemetry from Agent Framework", kind=SpanKind.CLIENT
-        ) as span:
+            name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT
+        ) as current_span:
+            print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
+
             for question in questions:
                 print(f"{BLUE}User: {question}{RESET}")
                 print(f"{BLUE}Assistant: {RESET}", end="")
@@ -81,7 +86,6 @@ async def main() -> None:
                 print(f"{BLUE}{RESET}")
 
             print(f"{BLUE}Done{RESET}")
-            print(f"{BLUE}Operation ID: {format_trace_id(span.get_span_context().trace_id)}{RESET}")
 
 
 if __name__ == "__main__":
