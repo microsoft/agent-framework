@@ -545,6 +545,53 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         }
 
 
+def _tools_to_dict(
+    tools: (
+        ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None
+    ),
+) -> list[str | dict[str, Any]] | None:
+    """Parse the tools to a dict."""
+    if not tools:
+        return None
+    if not isinstance(tools, list):
+        if isinstance(tools, AIFunction):
+            return [tools.to_json_schema_spec()]
+        if isinstance(tools, BaseTool):
+            return [tools.model_dump()]
+        if isinstance(tools, dict):
+            return [tools]
+        if callable(tools):
+            return [ai_function(tools).to_json_schema_spec()]
+        try:
+            return [json.dumps(tools)]
+        except (TypeError, OverflowError):
+            logger.warning("Can't parse tool.")
+            return None
+    results: list[str | dict[str, Any]] = []
+    for tool in tools:
+        if isinstance(tool, AIFunction):
+            results.append(tool.to_json_schema_spec())
+            continue
+        if isinstance(tool, BaseTool):
+            results.append(tool.model_dump())
+            continue
+        if isinstance(tool, dict):
+            results.append(tool)
+            continue
+        if callable(tool):
+            results.append(ai_function(tool).to_json_schema_spec())
+            continue
+        try:
+            results.append(json.dumps(tool))
+        except (TypeError, OverflowError):
+            logger.warning("Can't parse tool.")
+    return results
+
+
 # region AI Function Decorator
 
 
