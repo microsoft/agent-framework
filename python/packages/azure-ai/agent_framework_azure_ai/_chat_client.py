@@ -313,7 +313,7 @@ class AzureAIAgentClient(BaseChatClient):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name: str = self.agent_name or "UnnamedAgent"
-            args = {"model": self.ai_model_id, "name": agent_name}
+            args: dict[str, Any] = {"model": self.ai_model_id, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
@@ -321,8 +321,8 @@ class AzureAIAgentClient(BaseChatClient):
                     args["instructions"] = run_options["instructions"]
                 if "response_format" in run_options:
                     args["response_format"] = run_options["response_format"]
-            created_agent = await self.project_client.agents.create_agent(**args)  # type: ignore[arg-type]
-            self.agent_id = str(created_agent.id)  # type: ignore
+            created_agent = await self.project_client.agents.create_agent(**args)
+            self.agent_id = str(created_agent.id)
             self._should_delete_agent = True
 
         return self.agent_id
