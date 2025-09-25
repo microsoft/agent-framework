@@ -823,7 +823,7 @@ class RequestInfoExecutor(Executor):
 
         if kind == "dataclass" and isinstance(value, dict):
             with contextlib.suppress(TypeError):
-                return target_cls(**value)  # type: ignore[arg-type]
+                return target_cls(**value)
 
         if kind == "pydantic" and isinstance(value, dict):
             model_validate = getattr(target_cls, "model_validate", None)
@@ -832,9 +832,9 @@ class RequestInfoExecutor(Executor):
 
         if isinstance(value, dict):
             with contextlib.suppress(TypeError):
-                return target_cls(**value)  # type: ignore[arg-type]
+                return target_cls(**value)
             instance = object.__new__(target_cls)
-            instance.__dict__.update(value)  # type: ignore[arg-type]
+            instance.__dict__.update(value)
             return instance
 
         with contextlib.suppress(Exception):
@@ -900,11 +900,11 @@ class RequestInfoExecutor(Executor):
             return value
         if isinstance(value, Mapping):
             safe_dict: dict[str, Any] = {}
-            for key, val in value.items():  # type: ignore[misc]
-                safe_dict[str(key)] = self._make_json_safe(val)  # type: ignore[arg-type]
+            for key, val in value.items():
+                safe_dict[str(key)] = self._make_json_safe(val)
             return safe_dict
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            return [self._make_json_safe(item) for item in value]  # type: ignore[misc]
+            return [self._make_json_safe(item) for item in value]
         return repr(value)
 
     async def has_pending_request(self, request_id: str, ctx: WorkflowContext[Any]) -> bool:
@@ -958,7 +958,7 @@ class RequestInfoExecutor(Executor):
             shared_pending = None
 
         if isinstance(shared_pending, dict):
-            for key, value in shared_pending.items():  # type: ignore[misc]
+            for key, value in shared_pending.items():
                 if isinstance(key, str) and isinstance(value, dict):
                     combined[key] = cast(dict[str, Any], value)
 
@@ -971,7 +971,7 @@ class RequestInfoExecutor(Executor):
         if isinstance(state, dict):
             state_pending = state.get("pending_requests")
             if isinstance(state_pending, dict):
-                for key, value in state_pending.items():  # type: ignore[misc]
+                for key, value in state_pending.items():
                     if isinstance(key, str) and isinstance(value, dict) and key not in combined:
                         combined[key] = cast(dict[str, Any], value)
 
@@ -1052,7 +1052,7 @@ class RequestInfoExecutor(Executor):
             try:
                 field_names = {f.name for f in fields(request_cls)}
                 ctor_kwargs = {name: details[name] for name in field_names if name in details}
-                return request_cls(**ctor_kwargs)  # type: ignore[call-arg]
+                return request_cls(**ctor_kwargs)
             except (TypeError, ValueError) as exc:
                 logger.debug(
                     f"RequestInfoExecutor {self.id} could not instantiate dataclass "
@@ -1065,7 +1065,7 @@ class RequestInfoExecutor(Executor):
                 )
 
         try:
-            instance = request_cls()  # type: ignore[call-arg]
+            instance = request_cls()
         except Exception as exc:
             logger.warning(
                 f"RequestInfoExecutor {self.id} could not instantiate {request_cls.__name__} without arguments: {exc}"
@@ -1100,16 +1100,16 @@ class RequestInfoExecutor(Executor):
 
         shared_map = checkpoint.shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)
         if isinstance(shared_map, Mapping):
-            for request_id, snapshot in shared_map.items():  # type: ignore[misc]
-                RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)  # type: ignore[arg-type]
+            for request_id, snapshot in shared_map.items():
+                RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
 
         for state in checkpoint.executor_states.values():
             if not isinstance(state, Mapping):
                 continue
             inner = state.get("pending_requests")
             if isinstance(inner, Mapping):
-                for request_id, snapshot in inner.items():  # type: ignore[misc]
-                    RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)  # type: ignore[arg-type]
+                for request_id, snapshot in inner.items():
+                    RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
 
         for source_id, message_list in checkpoint.messages.items():
             if executor_filter is not None and source_id not in executor_filter:
@@ -1176,19 +1176,19 @@ class RequestInfoExecutor(Executor):
 
         RequestInfoExecutor._apply_update(
             details,
-            prompt=snapshot.get("prompt"),  # type: ignore[misc]
-            draft=snapshot.get("draft"),  # type: ignore[misc]
-            iteration=snapshot.get("iteration"),  # type: ignore[misc]
-            source_executor_id=snapshot.get("source_executor_id"),  # type: ignore[misc]
+            prompt=snapshot.get("prompt"),
+            draft=snapshot.get("draft"),
+            iteration=snapshot.get("iteration"),
+            source_executor_id=snapshot.get("source_executor_id"),
         )
 
-        extra = snapshot.get("details")  # type: ignore[misc]
+        extra = snapshot.get("details")
         if isinstance(extra, Mapping):
             RequestInfoExecutor._apply_update(
                 details,
-                prompt=extra.get("prompt"),  # type: ignore[misc]
-                draft=extra.get("draft"),  # type: ignore[misc]
-                iteration=extra.get("iteration"),  # type: ignore[misc]
+                prompt=extra.get("prompt"),
+                draft=extra.get("draft"),
+                iteration=extra.get("iteration"),
             )
 
     @staticmethod
@@ -1198,17 +1198,17 @@ class RequestInfoExecutor(Executor):
         raw_message: Mapping[str, Any],
     ) -> None:
         if isinstance(payload, RequestResponse):
-            request_id = payload.request_id or RequestInfoExecutor._get_field(payload.original_request, "request_id")  # type: ignore[arg-type]
+            request_id = payload.request_id or RequestInfoExecutor._get_field(payload.original_request, "request_id")
             if not request_id:
                 return
             details = pending.setdefault(request_id, PendingRequestDetails(request_id=request_id))
             RequestInfoExecutor._apply_update(
                 details,
-                prompt=RequestInfoExecutor._get_field(payload.original_request, "prompt"),  # type: ignore[arg-type]
-                draft=RequestInfoExecutor._get_field(payload.original_request, "draft"),  # type: ignore[arg-type]
-                iteration=RequestInfoExecutor._get_field(payload.original_request, "iteration"),  # type: ignore[arg-type]
+                prompt=RequestInfoExecutor._get_field(payload.original_request, "prompt"),
+                draft=RequestInfoExecutor._get_field(payload.original_request, "draft"),
+                iteration=RequestInfoExecutor._get_field(payload.original_request, "iteration"),
                 source_executor_id=raw_message.get("source_id"),
-                original_request=payload.original_request,  # type: ignore[arg-type]
+                original_request=payload.original_request,
             )
         elif isinstance(payload, RequestInfoMessage):
             request_id = getattr(payload, "request_id", None)
@@ -1252,7 +1252,7 @@ class RequestInfoExecutor(Executor):
         if obj is None:
             return None
         if isinstance(obj, Mapping):
-            return obj.get(key)  # type: ignore[misc,return-value]
+            return obj.get(key)
         return getattr(obj, key, None)
 
     @staticmethod
