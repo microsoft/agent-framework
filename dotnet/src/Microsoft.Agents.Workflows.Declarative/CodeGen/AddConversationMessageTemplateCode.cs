@@ -4,7 +4,6 @@ using System.Collections.Frozen;
 using System.Collections.Generic;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
 
@@ -13,13 +12,13 @@ internal partial class AddConversationMessageTemplate
     public AddConversationMessageTemplate(AddConversationMessage model)
     {
         this.Model = this.Initialize(model);
-        this.Message = Throw.IfNull(this.Model.Message?.Path);
+        this.Message = this.Model.Message?.Path;
         this.UseAgentProvider = true;
     }
 
     public AddConversationMessage Model { get; }
 
-    public PropertyPath Message { get; }
+    public PropertyPath? Message { get; }
 
     public const string DefaultRole = nameof(ChatRole.User);
 

@@ -9,6 +9,7 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,6 +49,46 @@ public static class SampleWorkflowProvider
     }
 
     /// <summary>
+    /// Adds a new message to the specified agent conversation
+    /// </summary>
+    internal sealed class AddInputMessageExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "add_input_message", session)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false); // %%% HAXX: NULLABLE
+            ArgumentNullException.ThrowIfNull(conversationId, nameof(conversationId));
+
+            ChatMessage newMessage = new(ChatRole.User, [.. GetContentAsync().ToEnumerable()]) { AdditionalProperties = this.GetMetadata() };
+            await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
+            return default;
+
+            async IAsyncEnumerable<AIContent> GetContentAsync()
+            {
+                string contentValue1 =
+                    await context.FormatTemplateAsync(
+                        """
+                        {System.LastMessage.Text}
+                        """).ConfigureAwait(false);
+                yield return new TextContent(contentValue1);
+            }
+        }
+
+
+        private AdditionalPropertiesDictionary? GetMetadata()
+        {
+            Dictionary<string, object?>? metadata = null;
+
+            if (metadata is null)
+            {
+                return null;
+            }
+
+            return new AdditionalPropertiesDictionary(metadata);
+        }
+    }
+
+    /// <summary>
     /// Invokes an agent to process messages and return a response within a conversation context.
     /// </summary>
     internal sealed class InvokeAnalystExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "invoke_analyst", session, agentProvider)
@@ -72,7 +113,7 @@ public static class SampleWorkflowProvider
                     - Target audience
                     - Unique selling points
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
+            ChatMessage[]? inputMessages = null;
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -191,6 +232,7 @@ public static class SampleWorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         WorkflowDemoRootExecutor<TInput> workflowDemoRoot = new(options, inputTransform);
         // %%% PRUNE DelegateExecutor workflowDemo = new(id: "workflow_demo", workflowDemoRoot.Session);
+        AddInputMessageExecutor addInputMessage = new(workflowDemoRoot.Session, options.AgentProvider);
         InvokeAnalystExecutor invokeAnalyst = new(workflowDemoRoot.Session, options.AgentProvider);
         InvokeWriterExecutor invokeWriter = new(workflowDemoRoot.Session, options.AgentProvider);
         InvokeEditorExecutor invokeEditor = new(workflowDemoRoot.Session, options.AgentProvider);
@@ -202,6 +244,7 @@ public static class SampleWorkflowProvider
         // %%% PRUNE builder.AddEdge(workflowDemoRoot, workflowDemo);
         // %%% PRUNE builder.AddEdge(workflowDemo, invokeAnalyst);
         builder.AddEdge(workflowDemoRoot, invokeAnalyst);
+        builder.AddEdge(addInputMessage, invokeAnalyst);
         builder.AddEdge(invokeAnalyst, invokeWriter);
         builder.AddEdge(invokeWriter, invokeEditor);
 

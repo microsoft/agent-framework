@@ -172,7 +172,7 @@ this.Write("\n        ");
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 
-void EvaluateBoolExpression(BoolExpression expression, string targetVariable)
+void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bool defaultValue = false)
 {
     if (expression is null)
     {
@@ -195,7 +195,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write(" = false;");
+this.Write(" = ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatBoolValue(defaultValue)));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+this.Write(";");
 
         
         #line default
@@ -232,7 +246,7 @@ this.Write(" = ");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
+this.Write(this.ToStringHelper.ToStringWithCulture(FormatBoolValue(expression.LiteralValue)));
 
         
         #line default
@@ -1612,8 +1626,48 @@ void EvaluateValueExpression(ValueExpression expression, string targetVariable) 
 void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVariable)
 {
     if (expression is null)
-    { 
-        throw new DeclarativeModelException($"Undefined expression for action '{this.Id}'.");
+    {
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write("\n        ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write("? ");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(" = null;");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+ 
     }
     else if (expression.IsLiteral)
     {
@@ -1794,7 +1848,21 @@ this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write(" = await context.EvaluateExpressionAsync(");
+this.Write(" = await context.EvaluateExpressionAsync<");
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
+
+        
+        #line default
+        #line hidden
+        
+        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+this.Write(">(");
 
         
         #line default
