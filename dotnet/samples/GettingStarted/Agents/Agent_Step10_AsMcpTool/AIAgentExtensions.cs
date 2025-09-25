@@ -23,8 +23,8 @@ internal static class AIAgentExtensions
         return McpServerTool.Create(agent.AsAIFunction(), new McpServerToolCreateOptions()
         {
             Title = title ?? name ?? agent.Name,
-            Name = name ?? agent.Name,
-            Description = description ?? agent.Description
+            Name = name,
+            Description = description
         });
     }
 }

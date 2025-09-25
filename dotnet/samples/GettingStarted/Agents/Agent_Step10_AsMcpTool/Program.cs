@@ -14,6 +14,7 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOIN
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string JokerName = "Joker";
+const string JokerDescription = "An agent that tells jokes.";
 const string JokerInstructions = "You are good at telling jokes, and you always start each joke with 'Aye aye, captain!'.";
 
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
@@ -22,12 +23,14 @@ var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCr
 var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
     model: deploymentName,
     name: JokerName,
+    description: JokerDescription,
     instructions: JokerInstructions);
 
 // Retrieve the server side persistent agent as an AIAgent.
 AIAgent agent = await persistentAgentsClient.GetAIAgentAsync(agentMetadata.Value.Id);
 
 // Register the MCP server with StdIO transport and expose the agent as an MCP tool.
+// The agent name and description will be used as the mcp tool name and description.
 HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(settings: null);
 builder.Services
     .AddMcpServer()
