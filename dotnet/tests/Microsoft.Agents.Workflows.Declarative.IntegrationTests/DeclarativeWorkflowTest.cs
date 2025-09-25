@@ -25,6 +25,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [Theory]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
+    [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
     public Task ValidateAsync(string workflowFileName, string testcaseFileName) =>
         this.RunWorkflowAsync(workflowFileName, testcaseFileName);
 

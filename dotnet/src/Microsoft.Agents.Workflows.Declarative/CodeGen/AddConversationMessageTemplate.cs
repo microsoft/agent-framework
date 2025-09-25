@@ -68,20 +68,21 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
  
-        EvaluateStringExpression(this.Model.ConversationId, "conversationId"); 
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); 
             
             #line default
             #line hidden
-            this.Write("\n        ChatMessage newMessage = new(ChatRole.");
+            this.Write("\n        ArgumentNullException.ThrowIfNull(conversationId, nameof(conversationId)" +
+                    ");\n        ChatMessage newMessage = new(ChatRole.");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(FormatEnum(this.Model.Role, RoleMap)));
             
             #line default
             #line hidden
-            this.Write(", [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };\n        " +
-                    "await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationT" +
-                    "oken).ConfigureAwait(false);");
+            this.Write(", [.. this.GetContentAsync(context).ToEnumerable()]) { AdditionalProperties = thi" +
+                    "s.GetMetadata() };\n        await agentProvider.CreateMessageAsync(conversationId" +
+                    ", newMessage, cancellationToken).ConfigureAwait(false);");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
 
@@ -90,8 +91,8 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write("\n        return default;\n    }\n\n    private IEnumerable<AIContent> GetContent()\n " +
-                    "   {");
+            this.Write("\n        return default;\n    }\n\n    private async IAsyncEnumerable<AIContent> Get" +
+                    "ContentAsync(IWorkflowContext context)\n    {");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\AddConversationMessageTemplate.tt"
 

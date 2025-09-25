@@ -68,7 +68,15 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\CopyConversationMessagesTemplate.tt"
 
-        EvaluateStringExpression(this.Model.ConversationId, "converationId");
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); 
+            
+            #line default
+            #line hidden
+            this.Write("\n        ArgumentNullException.ThrowIfNull(conversationId, nameof(conversationId)" +
+                    ");");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\CopyConversationMessagesTemplate.tt"
+
         EvaluateValueExpression<ChatMessage[]>(this.Model.Messages, "messages");
         
             
@@ -79,7 +87,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
         {
             foreach (ChatMessage message in messages)
             {
-                await agentProvider.CreateMessageAsysnc(conversationId, message, cancellationToken).ConfigureAwait(false);
+                await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
         }
         return default;

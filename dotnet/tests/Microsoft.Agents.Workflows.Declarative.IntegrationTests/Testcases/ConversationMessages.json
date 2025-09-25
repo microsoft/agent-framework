@@ -1,5 +1,5 @@
 ﻿{
-  "description": "Send an activity message.",
+  "description": "Create conversation and manipulate messages.",
   "setup": {
     "input": {
       "type": "String",
@@ -7,6 +7,6 @@
     }
   },
   "validation": {
-    "action_count": 3
+    "action_count": 7
   }
 }

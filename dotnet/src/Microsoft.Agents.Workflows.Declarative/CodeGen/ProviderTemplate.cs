@@ -40,6 +40,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
