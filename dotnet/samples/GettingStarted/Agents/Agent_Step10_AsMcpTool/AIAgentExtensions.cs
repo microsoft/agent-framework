@@ -1,8 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.ComponentModel;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.AI.Agents;
 using ModelContextProtocol.Server;
 
@@ -23,16 +20,7 @@ internal static class AIAgentExtensions
     /// <returns>The <see cref="McpServerTool"/> that wraps the agent.</returns>
     public static McpServerTool AsMcpTool(this AIAgent agent, string? title = null, string? name = null, string? description = null)
     {
-        async Task<string> RunAgentAsync(
-            [Description("Available information that will guide in performing this operation.")] string query,
-            CancellationToken cancellationToken = default)
-        {
-            AgentRunResponse response = await agent.RunAsync(query, cancellationToken: cancellationToken);
-
-            return response.ToString();
-        }
-
-        return McpServerTool.Create(RunAgentAsync, new McpServerToolCreateOptions()
+        return McpServerTool.Create(agent.AsAIFunction(), new McpServerToolCreateOptions()
         {
             Title = title ?? name ?? agent.Name,
             Name = name ?? agent.Name,
