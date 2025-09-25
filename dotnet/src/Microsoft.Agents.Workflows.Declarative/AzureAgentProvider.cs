@@ -8,8 +8,8 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Core.Pipeline;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Declarative;
 
