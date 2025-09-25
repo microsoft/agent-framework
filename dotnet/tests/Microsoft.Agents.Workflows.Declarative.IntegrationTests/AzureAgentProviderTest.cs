@@ -3,6 +3,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
@@ -69,7 +70,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : WorkflowT
         Assert.Equal(agent2Id, agent2.Id);
 
         // Act & Assert
-        await Assert.ThrowsAsync<DeclarativeActionException>(() => provider.GetAgentAsync(agentName));
+        await Assert.ThrowsAsync<RequestFailedException>(() => provider.GetAgentAsync(agentName));
     }
 
     private async ValueTask<string> CreateAgentAsync(string? name = null)
