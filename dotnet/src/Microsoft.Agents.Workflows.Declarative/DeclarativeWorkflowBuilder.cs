@@ -24,7 +24,7 @@ public static class DeclarativeWorkflowBuilder
     /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns></returns>
-    public static Workflow<TInput> Build<TInput>(
+    public static Workflow Build<TInput>(
         string workflowFile,
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null)
@@ -42,7 +42,7 @@ public static class DeclarativeWorkflowBuilder
     /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
-    public static Workflow<TInput> Build<TInput>(
+    public static Workflow Build<TInput>(
         TextReader yamlReader,
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null)
@@ -68,7 +68,7 @@ public static class DeclarativeWorkflowBuilder
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(rootElement);
 
-        return visitor.Complete<TInput>();
+        return visitor.Complete();
     }
 
     private static ChatMessage DefaultTransform(object message) =>

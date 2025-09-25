@@ -57,7 +57,8 @@ public static class Program
             .AddEdge(spamDetectionExecutor, emailAssistantExecutor, condition: GetCondition(expectedResult: false))
             .AddEdge(emailAssistantExecutor, sendEmailExecutor)
             .AddEdge(spamDetectionExecutor, handleSpamExecutor, condition: GetCondition(expectedResult: true))
-            .Build<ChatMessage>();
+            .WithOutputFrom(handleSpamExecutor, sendEmailExecutor)
+            .Build();
 
         // Read a email from a text file
         string email = Resources.Read("spam.txt");
@@ -67,9 +68,9 @@ public static class Program
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is WorkflowCompletedEvent completedEvent)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"{completedEvent}");
+                Console.WriteLine($"{outputEvent}");
             }
         }
     }
@@ -234,7 +235,7 @@ internal sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor
     /// Simulate the sending of an email.
     /// </summary>
     public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context) =>
-        await context.AddEventAsync(new WorkflowCompletedEvent($"Email sent: {message.Response}"));
+        await context.YieldOutputAsync($"Email sent: {message.Response}");
 }
 
 /// <summary>
@@ -249,7 +250,7 @@ internal sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecut
     {
         if (message.IsSpam)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as spam: {message.Reason}"));
+            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}");
         }
         else
         {

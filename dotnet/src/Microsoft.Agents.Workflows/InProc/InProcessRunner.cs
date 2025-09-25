@@ -16,47 +16,53 @@ namespace Microsoft.Agents.Workflows.InProc;
 /// <summary>
 /// Provides a local, in-process runner for executing a workflow using the specified input type.
 /// </summary>
-/// <remarks><para> <see cref="InProcessRunner{TInput}"/> enables step-by-step execution of a workflow graph entirely
+/// <remarks><para> <see cref="InProcessRunner"/> enables step-by-step execution of a workflow graph entirely
 /// within the current process, without distributed coordination. It is primarily intended for testing, debugging, or
 /// scenarios where workflow execution does not require executor distribution. </para></remarks>
-/// <typeparam name="TInput">The type of input accepted by the workflow. Must be non-nullable.</typeparam>
-internal sealed class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointingRunner where TInput : notnull
+internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 {
-    public InProcessRunner(Workflow<TInput> workflow, ICheckpointManager? checkpointManager, string? runId = null)
+    public InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, params Type[] knownValidInputTypes)
     {
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext<TInput>(workflow);
+        this.RunContext = new InProcessRunnerContext(workflow);
         this.CheckpointManager = checkpointManager;
         this.RunId = runId ?? Guid.NewGuid().ToString("N");
+
+        this._knownValidInputTypes = [.. knownValidInputTypes];
 
         // Initialize the runners for each of the edges, along with the state for edges that
         // need it.
         this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId, this.StepTracer);
     }
 
+    /// <inheritdoc cref="ISuperStepRunner.RunId"/>
     public string RunId { get; }
 
-    public async ValueTask<bool> IsValidInputAsync<TMessage>(TMessage message)
+    private readonly HashSet<Type> _knownValidInputTypes;
+    public async ValueTask<bool> IsValidInputTypeAsync(Type messageType)
     {
-        Throw.IfNull(message);
-
-        Type type = typeof(TMessage);
-
-        // Short circuit the logic if the type is the input type
-        if (type == typeof(TInput))
+        if (this._knownValidInputTypes.Contains(messageType))
         {
             return true;
         }
 
         Executor startingExecutor = await this.RunContext.EnsureExecutorAsync(this.Workflow.StartExecutorId, tracer: null).ConfigureAwait(false);
-        return startingExecutor.CanHandle(type);
+        if (startingExecutor.CanHandle(messageType))
+        {
+            this._knownValidInputTypes.Add(messageType);
+            return true;
+        }
+
+        return false;
     }
 
-    async ValueTask<bool> ISuperStepRunner.EnqueueMessageAsync<T>(T message)
+    public async ValueTask<bool> EnqueueMessageAsync<T>(T message)
     {
+        Throw.IfNull(message);
+
         // Check that the type of the incoming message is compatible with the starting executor's
         // input type.
-        if (!await this.IsValidInputAsync(message).ConfigureAwait(false))
+        if (!await this.IsValidInputTypeAsync(typeof(T)).ConfigureAwait(false))
         {
             return false;
         }
@@ -65,14 +71,30 @@ internal sealed class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointing
         return true;
     }
 
+    public async ValueTask<bool> EnqueueMessageAsync(object message)
+    {
+        Throw.IfNull(message);
+
+        // Check that the type of the incoming message is compatible with the starting executor's
+        // input type.
+        if (!await this.IsValidInputTypeAsync(message.GetType()).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        await this.RunContext.AddExternalMessageUntypedAsync(message).ConfigureAwait(false);
+        return true;
+    }
+
     ValueTask ISuperStepRunner.EnqueueResponseAsync(ExternalResponse response)
     {
+        // TODO: Check that there exists a corresponding input port?
         return this.RunContext.AddExternalMessageAsync(response);
     }
 
     private InProcStepTracer StepTracer { get; } = new();
-    private Workflow<TInput> Workflow { get; init; }
-    private InProcessRunnerContext<TInput> RunContext { get; init; }
+    private Workflow Workflow { get; init; }
+    private InProcessRunnerContext RunContext { get; init; }
     private ICheckpointManager? CheckpointManager { get; }
     private EdgeMap EdgeMap { get; init; }
 
@@ -122,9 +144,16 @@ internal sealed class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointing
         return new StreamingRun(this);
     }
 
-    public async ValueTask<StreamingRun> StreamAsync(TInput input, CancellationToken cancellation = default)
+    public async ValueTask<StreamingRun> StreamAsync(object input, CancellationToken cancellation = default)
     {
-        await this.RunContext.AddExternalMessageAsync(input).ConfigureAwait(false);
+        await this.EnqueueMessageAsync(input).ConfigureAwait(false);
+
+        return new StreamingRun(this);
+    }
+
+    public async ValueTask<StreamingRun> StreamAsync<TInput>(TInput input, CancellationToken cancellation = default)
+    {
+        await this.EnqueueMessageAsync(input).ConfigureAwait(false);
 
         return new StreamingRun(this);
     }
@@ -137,7 +166,15 @@ internal sealed class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointing
         return await Run.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
     }
 
-    public async ValueTask<Run> RunAsync(TInput input, CancellationToken cancellation = default)
+    public async ValueTask<Run> RunAsync(object input, CancellationToken cancellation = default)
+    {
+        StreamingRun streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
+        cancellation.ThrowIfCancellationRequested();
+
+        return await Run.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
+    }
+
+    public async ValueTask<Run> RunAsync<TInput>(TInput input, CancellationToken cancellation = default)
     {
         StreamingRun streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
         cancellation.ThrowIfCancellationRequested();
@@ -152,7 +189,10 @@ internal sealed class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointing
 
     async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellation)
     {
-        cancellation.ThrowIfCancellationRequested();
+        if (cancellation.IsCancellationRequested)
+        {
+            return false;
+        }
 
         StepContext currentStep = this.RunContext.Advance();
 
@@ -276,59 +316,4 @@ internal sealed class InProcessRunner<TInput> : ISuperStepRunner, ICheckpointing
 
     private bool CheckWorkflowMatch(Checkpoint checkpoint) =>
         checkpoint.Workflow.IsMatch(this.Workflow);
-}
-
-internal sealed class InProcessRunner<TInput, TResult> : IRunnerWithOutput<TResult>, ICheckpointingRunner where TInput : notnull
-{
-    private readonly Workflow<TInput, TResult> _workflow;
-    private readonly InProcessRunner<TInput> _innerRunner;
-
-    public InProcessRunner(Workflow<TInput, TResult> workflow, CheckpointManager? checkpointManager, string? runId = null)
-    {
-        this._workflow = Throw.IfNull(workflow);
-
-        this._innerRunner = new(workflow, checkpointManager, runId);
-    }
-
-    internal async ValueTask<StreamingRun<TResult>> ResumeStreamAsync(CheckpointInfo checkpoint, CancellationToken cancellation = default)
-    {
-        await this._innerRunner.ResumeStreamAsync(checkpoint, cancellation).ConfigureAwait(false);
-
-        return new StreamingRun<TResult>(this);
-    }
-
-    public async ValueTask<StreamingRun<TResult>> StreamAsync(TInput input, CancellationToken cancellation = default)
-    {
-        await ((ISuperStepRunner)this._innerRunner).EnqueueMessageAsync(input).ConfigureAwait(false);
-
-        return new StreamingRun<TResult>(this);
-    }
-
-    public async ValueTask<Run<TResult>> ResumeAsync(CheckpointInfo checkpoint, CancellationToken cancellation = default)
-    {
-        StreamingRun<TResult> streamingRun = await this.ResumeStreamAsync(checkpoint, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
-
-        return await Run<TResult>.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
-    }
-
-    public async ValueTask<Run<TResult>> RunAsync(TInput input, CancellationToken cancellation = default)
-    {
-        StreamingRun<TResult> streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
-
-        return await Run<TResult>.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
-    }
-
-    public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default)
-        => this._innerRunner.RestoreCheckpointAsync(checkpointInfo, cancellation);
-
-    internal ValueTask CheckpointAsync() => this._innerRunner.CheckpointAsync();
-
-    /// <inheritdoc cref="Workflow{TInput, TResult}.RunningOutput"/>
-    public TResult? RunningOutput => this._workflow.RunningOutput;
-
-    ISuperStepRunner IRunnerWithOutput<TResult>.StepRunner => this._innerRunner;
-
-    public IReadOnlyList<CheckpointInfo> Checkpoints => this._innerRunner.Checkpoints;
 }

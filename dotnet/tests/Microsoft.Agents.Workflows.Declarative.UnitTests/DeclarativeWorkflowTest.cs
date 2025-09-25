@@ -252,7 +252,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
 
-        Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 

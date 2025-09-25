@@ -15,7 +15,12 @@ public class ExecutorOptions
     internal ExecutorOptions() { }
 
     /// <summary>
-    /// If <see langword="true"/>, the result of a message handler that returns a value will be sent as a message to the workflow.
+    /// If <see langword="true"/>, the result of a message handler that returns a value will be sent as a message from the executor.
     /// </summary>
     public bool AutoSendMessageHandlerResultObject { get; set; } = true;
+
+    /// <summary>
+    /// If <see langword="true"/>, the result of a message handler that returns a value will be yielded as an output of the executor.
+    /// </summary>
+    public bool AutoYieldOutputHandlerResultObject { get; set; } = true;
 }

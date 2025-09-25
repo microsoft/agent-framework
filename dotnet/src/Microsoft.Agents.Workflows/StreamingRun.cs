@@ -32,6 +32,11 @@ public class StreamingRun
     }
 
     /// <summary>
+    /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
+    /// </summary>
+    public string RunId => this._stepRunner.RunId;
+
+    /// <summary>
     /// Asynchronously sends the specified response to the external system and signals completion of the current
     /// response wait operation.
     /// </summary>
@@ -72,7 +77,7 @@ public class StreamingRun
     /// Asynchronously streams workflow events as they occur during workflow execution.
     /// </summary>
     /// <remarks>This method yields <see cref="WorkflowEvent"/> instances in real time as the workflow
-    /// progresses. The stream completes when a <see cref="WorkflowCompletedEvent"/> is encountered. Events are
+    /// progresses. The stream completes when a <see cref="RequestHaltEvent"/> is encountered. Events are
     /// delivered in the order they are raised.</remarks>
     /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation. If cancellation is
     /// requested, the stream will end and no further events will be yielded.</param>
@@ -104,17 +109,19 @@ public class StreamingRun
                 bool hadCompletionEvent = false;
                 foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
                 {
-                    yield return raisedEvent;
-
                     if (cancellation.IsCancellationRequested)
                     {
                         yield break; // Exit if cancellation is requested
                     }
 
                     // TODO: Do we actually want to interpret this as a termination request?
-                    if (raisedEvent is WorkflowCompletedEvent)
+                    if (raisedEvent is RequestHaltEvent)
                     {
                         hadCompletionEvent = true;
+                    }
+                    else
+                    {
+                        yield return raisedEvent;
                     }
                 }
 
@@ -153,25 +160,6 @@ public class StreamingRun
 }
 
 /// <summary>
-/// A <see cref="Workflow"/> run instance supporting a streaming form of receiving workflow events, providing
-/// a mechanism to send responses back to the workflow, and retrieving the result of workflow execution.
-/// </summary>
-/// <typeparam name="TResult">The type of the workflow output.</typeparam>
-public class StreamingRun<TResult> : StreamingRun
-{
-    private readonly IRunnerWithOutput<TResult> _resultSource;
-
-    internal StreamingRun(IRunnerWithOutput<TResult> runner)
-        : base(Throw.IfNull(runner.StepRunner))
-    {
-        this._resultSource = runner;
-    }
-
-    /// <inheritdoc cref="IRunnerWithOutput{TResult}.RunningOutput"/>
-    public TResult? RunningOutput => this._resultSource.RunningOutput;
-}
-
-/// <summary>
 /// Provides extension methods for processing and executing workflows using streaming runs.
 /// </summary>
 public static class StreamingRunExtensions
@@ -201,28 +189,5 @@ public static class StreamingRunExtensions
                 await handle.SendResponseAsync(maybeResponse).ConfigureAwait(false);
             }
         }
-    }
-
-    /// <summary>
-    /// Executes the workflow associated with the specified <see cref="StreamingRun{TResult}"/>  until it
-    /// completes and returns the final result.
-    /// </summary>
-    /// <remarks>This method ensures that the workflow runs to completion before returning the result.  If an
-    /// <paramref name="eventCallback"/> is provided, it will be invoked for each event emitted  during the workflow's
-    /// execution, allowing for custom event handling.</remarks>
-    /// <typeparam name="TResult">The type of the result produced by the workflow.</typeparam>
-    /// <param name="handle">The <see cref="StreamingRun{TResult}"/> representing the workflow to execute.</param>
-    /// <param name="eventCallback">An optional callback function that is invoked for each <see cref="WorkflowEvent"/>
-    /// emitted during execution. The callback can process the event and return an object, or <see langword="null"/>
-    /// if no response is required.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the workflow execution.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> that represents the asynchronous operation. The task's result is the final
-    /// result of the workflow execution.</returns>
-    public static async ValueTask<TResult> RunToCompletionAsync<TResult>(this StreamingRun<TResult> handle, Func<WorkflowEvent, object?>? eventCallback = null, CancellationToken cancellation = default)
-    {
-        Throw.IfNull(handle);
-
-        await handle.RunToCompletionAsync(eventCallback, cancellation).ConfigureAwait(false);
-        return handle.RunningOutput!;
     }
 }
