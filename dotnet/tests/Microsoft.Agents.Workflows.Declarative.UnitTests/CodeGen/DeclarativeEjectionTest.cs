@@ -78,14 +78,14 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
         ProcessStartInfo startInfo =
             new()
             {
-                FileName = "dotnet.exe",
+                FileName = "dotnet",
                 Arguments = "build",
                 UseShellExecute = true,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
                 WorkingDirectory = projectDirectory.FullName,
             };
-        this.Output.WriteLine($"\nBUILDING PROJECT AT: {projectDirectory.FullName}\n");
+        this.Output.WriteLine($"BUILDING PROJECT AT: {projectDirectory.FullName}\n");
         using Process? buildProcess = Process.Start(startInfo);
         Assert.NotNull(buildProcess);
         buildProcess.WaitForExit();

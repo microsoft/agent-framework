@@ -55,7 +55,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             // No completion for root scope
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                //string? action = null; // %%% NEEDED ???
+                //string? action = null; // %%% NEEDED - DoneAsync ???
                 //ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
                 //if (conditionGroup is not null)
                 //{
