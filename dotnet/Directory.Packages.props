@@ -52,9 +52,9 @@
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.9" />
     <PackageVersion Include="OpenAI" Version="2.4.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.9.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.9.0-preview.1.25458.4" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.1" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.9" />
