@@ -1,8 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System.ClientModel;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.A2A;
 using Microsoft.Extensions.Logging;
 using OpenAI;
 

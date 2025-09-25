@@ -3,7 +3,7 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Reflection;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 

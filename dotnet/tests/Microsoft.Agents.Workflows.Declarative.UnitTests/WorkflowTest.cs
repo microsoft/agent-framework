@@ -2,7 +2,6 @@
 
 using System;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
