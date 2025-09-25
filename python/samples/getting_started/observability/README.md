@@ -25,7 +25,7 @@ The Agent Framework Python SDK is designed to efficiently generate comprehensive
 ### Required resources
 
 1. OpenAI or [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/create-resource?pivots=web-portal)
-2. A [Foundry project](https://ai.azure.com/doc/azure/ai-foundry/what-is-azure-ai-foundry)
+2. An [Azure AI project](https://ai.azure.com/doc/azure/ai-foundry/what-is-azure-ai-foundry)
 
 ### Optional resources
 
@@ -101,8 +101,8 @@ This folder contains different samples demonstrating how to use telemetry in var
 | [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. |
 | [setup_observability_with_env_vars.py](./setup_observability_with_env_vars.py) | A simple example showing how to setup telemetry with the `setup_observability()` function using environment variables. |
 | [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
-| [foundry_agent_observability.py](./foundry_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with a Foundry project. |
-| [foundry_chat_client_with_observability.py](./foundry_chat_client_with_observability.py) | A simple example showing how to setup telemetry for a chat client with a Foundry project. |
+| [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |
+| [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | A simple example showing how to setup telemetry for a chat client with an Azure AI project. |
 | [workflow_observability.py](./workflow_observability.py) | A simple example showing how to setup telemetry for a workflow. |
 | [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | A comprehensive example showing how to manually setup exporters and providers for traces, logs, and metrics that will get sent to the console. |
 | [advanced_zero_code.py](./advanced_zero_code.py) | A comprehensive example showing how to setup telemetry using the `opentelemetry-instrument` lib without modifying any code. |

@@ -13,7 +13,7 @@ namespace Microsoft.Agents.Workflows;
 public enum RunStatus
 {
     /// <summary>
-    /// The run has halted, has no outstanding requets, but has not received a <see cref="WorkflowCompletedEvent"/>.
+    /// The run has halted, has no outstanding requets, but has not received a <see cref="RequestHaltEvent"/>.
     /// </summary>
     Idle,
 
@@ -22,10 +22,11 @@ public enum RunStatus
     /// </summary>
     PendingRequests,
 
-    /// <summary>
-    /// The run has halted after receiving a <see cref="WorkflowCompletedEvent"/>.
-    /// </summary>
-    Completed,
+    // TODO: Figure out if we want to have some way to have a true "converged" state
+    ///// <summary>
+    ///// The run has halted after converging.
+    ///// </summary>
+    //Completed,
 
     /// <summary>
     /// The workflow is currently running, and may receive events or requests.
@@ -56,30 +57,27 @@ public class Run
     internal async ValueTask<bool> RunToNextHaltAsync(CancellationToken cancellation = default)
     {
         bool hadEvents = false;
-        bool hadCompletion = false;
         this.Status = RunStatus.Running;
         await foreach (WorkflowEvent evt in this._streamingRun.WatchStreamAsync(blockOnPendingRequest: false, cancellation).ConfigureAwait(false))
         {
             hadEvents = true;
-            if (evt is WorkflowCompletedEvent)
-            {
-                hadCompletion = true;
-            }
-
             this._eventSink.Add(evt);
         }
 
         // TODO: bookmark every halt for history visualization?
 
         this.Status =
-            hadCompletion
-            ? RunStatus.Completed
-            : this._streamingRun.HasUnservicedRequests
+            this._streamingRun.HasUnservicedRequests
               ? RunStatus.PendingRequests
               : RunStatus.Idle;
 
         return hadEvents;
     }
+
+    /// <summary>
+    /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
+    /// </summary>
+    public string RunId => this._streamingRun.RunId;
 
     /// <summary>
     /// Gets the current execution status of the workflow run.
@@ -149,28 +147,4 @@ public class Run
 
         return await this.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
     }
-}
-
-/// <summary>
-/// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
-/// with responses to <see cref="RequestInfoEvent"/>, and retrieval of the running output of the workflow.
-/// </summary>
-/// <typeparam name="TResult">The type of the workflow output.</typeparam>
-public sealed class Run<TResult> : Run
-{
-    internal static async ValueTask<Run<TResult>> CaptureStreamAsync(StreamingRun<TResult> run, CancellationToken cancellation = default)
-    {
-        Run<TResult> result = new(run);
-        await result.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
-        return result;
-    }
-
-    private readonly StreamingRun<TResult> _streamingRun;
-    private Run(StreamingRun<TResult> streamingRun) : base(streamingRun)
-    {
-        this._streamingRun = streamingRun;
-    }
-
-    /// <inheritdoc cref="StreamingRun{TOutput}.RunningOutput"/>
-    public TResult? RunningOutput => this._streamingRun.RunningOutput;
 }

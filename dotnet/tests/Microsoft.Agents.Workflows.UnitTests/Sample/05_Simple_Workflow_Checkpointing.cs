@@ -13,18 +13,23 @@ internal static class Step5EntryPoint
 {
     public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
     {
+        Dictionary<CheckpointInfo, (NumberSignal signal, string? prompt)> checkpointedOutputs = new();
+
+        NumberSignal signal = NumberSignal.Init;
+        string? prompt = Step4EntryPoint.UpdatePrompt(null, signal);
+
         checkpointManager ??= CheckpointManager.Default;
 
-        Workflow<NumberSignal, string> workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
-        Checkpointed<StreamingRun<string>> checkpointed =
+        Workflow workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
+        Checkpointed<StreamingRun> checkpointed =
             await InProcessExecution.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
                                     .ConfigureAwait(false);
 
         List<CheckpointInfo> checkpoints = [];
         CancellationTokenSource cancellationSource = new();
 
-        StreamingRun<string> handle = checkpointed.Run;
-        string? result = await RunStreamToHaltOrMaxStepAsync(6).ConfigureAwait(false);
+        StreamingRun handle = checkpointed.Run;
+        string? result = await RunStreamToHaltOrMaxStepAsync(maxStep: 6).ConfigureAwait(false);
 
         result.Should().BeNull();
         checkpoints.Should().HaveCount(6, "we should have two checkpoints, one for each step");
@@ -34,7 +39,7 @@ internal static class Step5EntryPoint
 
         if (rehydrateToRestore)
         {
-            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, CancellationToken.None)
+            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellation: CancellationToken.None)
                                                    .ConfigureAwait(false);
             handle = checkpointed.Run;
         }
@@ -42,6 +47,8 @@ internal static class Step5EntryPoint
         {
             await checkpointed.RestoreCheckpointAsync(checkpoints[2], CancellationToken.None).ConfigureAwait(false);
         }
+
+        (signal, prompt) = checkpointedOutputs[targetCheckpoint];
 
         judge.Tries.Should().Be(1);
 
@@ -52,7 +59,7 @@ internal static class Step5EntryPoint
         result = await RunStreamToHaltOrMaxStepAsync().ConfigureAwait(false);
 
         result.Should().NotBeNull();
-        checkpoints.Should().HaveCount(6);
+        checkpoints.Should().HaveCount(7);
 
         cancellationSource.Dispose();
 
@@ -60,31 +67,56 @@ internal static class Step5EntryPoint
 
         async ValueTask<string?> RunStreamToHaltOrMaxStepAsync(int? maxStep = null)
         {
+            List<ExternalRequest> requests = [];
             await foreach (WorkflowEvent evt in handle.WatchStreamAsync(cancellationSource.Token).ConfigureAwait(false))
             {
                 switch (evt)
                 {
+                    case WorkflowOutputEvent outputEvent:
+                        switch (outputEvent.SourceId)
+                        {
+                            case Step4EntryPoint.JudgeId:
+                                if (!outputEvent.Is<NumberSignal>())
+                                {
+                                    throw new InvalidOperationException($"Unexpected output type {outputEvent.Data!.GetType()}");
+                                }
+
+                                signal = outputEvent.As<NumberSignal?>()!.Value;
+                                prompt = Step4EntryPoint.UpdatePrompt(null, signal);
+                                break;
+                        }
+
+                        break;
+
+                    case RequestInfoEvent requestInputEvt:
+                        requests.Add(requestInputEvt.Request);
+                        break;
+
                     case SuperStepCompletedEvent stepCompletedEvt:
                         CheckpointInfo? checkpoint = stepCompletedEvt.CompletionInfo!.Checkpoint;
                         if (checkpoint is not null)
                         {
                             checkpoints.Add(checkpoint);
+
+                            checkpointedOutputs[checkpoint] = (signal, prompt);
                         }
 
                         if (maxStep.HasValue && stepCompletedEvt.StepNumber >= maxStep.Value - 1)
                         {
                             cancellationSource.Cancel();
                         }
+                        else
+                        {
+                            foreach (ExternalRequest request in requests)
+                            {
+                                ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
+                                await handle.SendResponseAsync(response).ConfigureAwait(false);
+                            }
+
+                            requests.Clear();
+                        }
                         break;
-                    case RequestInfoEvent requestInputEvt:
-                        ExternalResponse response = ExecuteExternalRequest(requestInputEvt.Request, userGuessCallback, workflow.RunningOutput);
-                        await handle.SendResponseAsync(response).ConfigureAwait(false);
-                        break;
-                    case WorkflowCompletedEvent workflowCompleteEvt:
-                        // The workflow has completed successfully, return the result
-                        string workflowResult = workflowCompleteEvt.Data!.ToString()!;
-                        writer.WriteLine($"Result: {workflowResult}");
-                        return workflowResult;
+
                     case ExecutorCompletedEvent executorCompleteEvt:
                         writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
                         break;
@@ -96,7 +128,8 @@ internal static class Step5EntryPoint
                 return null;
             }
 
-            throw new InvalidOperationException("Workflow failed to yield the completion event.");
+            writer.WriteLine($"Result: {prompt}");
+            return prompt!;
         }
     }
 

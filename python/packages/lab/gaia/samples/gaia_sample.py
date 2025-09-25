@@ -10,7 +10,7 @@ To run this sample, execute it from the root directory of the agent-framework re
 This avoids namespace package conflicts that occur when running from within the gaia package directory.
 """
 
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 from agent_framework.lab.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
@@ -39,7 +39,7 @@ async def main() -> None:
     # Create a single agent once and reuse it for all tasks
     async with (
         AzureCliCredential() as credential,
-        FoundryChatClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(async_credential=credential).create_agent(
             name="GaiaAgent",
             instructions="Solve tasks to your best ability.",
         ) as agent,

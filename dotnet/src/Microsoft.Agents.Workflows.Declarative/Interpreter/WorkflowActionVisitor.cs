@@ -40,13 +40,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     public bool HasUnsupportedActions { get; private set; }
 
-    public Workflow<TInput> Complete<TInput>()
+    public Workflow Complete()
     {
         // Process the cached links
         this._workflowModel.ConnectNodes(this._workflowBuilder);
 
         // Build final workflow
-        return this._workflowBuilder.Build<TInput>();
+        return this._workflowBuilder.Build();
     }
 
     protected override void Visit(ActionScope item)

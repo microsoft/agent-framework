@@ -91,7 +91,7 @@ internal static class RouteBuilderExtensions
 
         foreach (MessageHandlerInfo handlerInfo in executorType.GetHandlerInfos())
         {
-            builder = builder.AddHandler(handlerInfo.InType, handlerInfo.Bind(executor, checkType: true));
+            builder = builder.AddHandlerInternal(handlerInfo.InType, handlerInfo.Bind(executor, checkType: true), handlerInfo.OutType);
         }
 
         return builder;

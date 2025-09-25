@@ -80,8 +80,10 @@ public static class Program
             databaseAccessExecutor,
             condition: analysisResult => analysisResult?.EmailLength <= LongEmailThreshold)
         // Save the analysis result to the database with summary
-        .AddEdge(emailSummaryExecutor, databaseAccessExecutor);
-        var workflow = builder.Build<ChatMessage>();
+        .AddEdge(emailSummaryExecutor, databaseAccessExecutor)
+        .WithOutputFrom(handleUncertainExecutor, handleSpamExecutor, sendEmailExecutor);
+
+        var workflow = builder.Build();
 
         // Read a email from a text file
         string email = Resources.Read("email.txt");
@@ -91,9 +93,9 @@ public static class Program
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is WorkflowCompletedEvent completedEvent)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"{completedEvent}");
+                Console.WriteLine($"{outputEvent}");
             }
 
             if (evt is DatabaseEvent databaseEvent)
@@ -315,7 +317,7 @@ internal sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor
     /// Simulate the sending of an email.
     /// </summary>
     public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context) =>
-        await context.AddEventAsync(new WorkflowCompletedEvent($"Email sent: {message.Response}"));
+        await context.YieldOutputAsync($"Email sent: {message.Response}");
 }
 
 /// <summary>
@@ -330,7 +332,7 @@ internal sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecut
     {
         if (message.spamDecision == SpamDecision.Spam)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as spam: {message.Reason}"));
+            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}");
         }
         else
         {
@@ -352,7 +354,7 @@ internal sealed class HandleUncertainExecutor() : ReflectingExecutor<HandleUncer
         if (message.spamDecision == SpamDecision.Uncertain)
         {
             var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope);
-            await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}"));
+            await context.YieldOutputAsync($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}");
         }
         else
         {
