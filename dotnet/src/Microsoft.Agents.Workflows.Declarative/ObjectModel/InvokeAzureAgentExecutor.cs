@@ -11,7 +11,6 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents;
-using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
@@ -79,12 +78,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             {
                 conversationId = assignValue;
 
-                RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
-                conversation.UpdateField("Id", FormulaValue.New(conversationId));
-                await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation).ConfigureAwait(false);
-                await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
-
-                await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
+                await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
             }
         }
     }
