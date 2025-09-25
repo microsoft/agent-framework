@@ -25,7 +25,7 @@ internal static class ChatMessageExtensions
 
         return new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid().ToString("N"),
             Role = MessageRole.User,
             Parts = allParts,
         };

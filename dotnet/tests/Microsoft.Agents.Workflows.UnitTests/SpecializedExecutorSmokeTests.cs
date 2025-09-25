@@ -43,7 +43,7 @@ public class SpecializedExecutorSmokeTests
                 {
                     MessageId = Guid.NewGuid().ToString("N"),
                     RawRepresentation = text,
-                    CreatedAt = DateTime.Now,
+                    CreatedAt = DateTime.UtcNow,
                 };
             }
 
@@ -117,6 +117,12 @@ public class SpecializedExecutorSmokeTests
         public List<List<ChatMessage>> Updates { get; } = [];
 
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) =>
+            default;
+
+        public ValueTask YieldOutputAsync(object output) =>
+            default;
+
+        public ValueTask RequestHaltAsync() =>
             default;
 
         public ValueTask QueueClearScopeAsync(string? scopeName = null) =>

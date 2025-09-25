@@ -23,7 +23,6 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflow._executor import SubWorkflowRequestInfo
 
 CHECKPOINT_DIR = Path(__file__).with_suffix("").parent / "tmp" / "sub_workflow_checkpoints"
 
@@ -201,7 +200,7 @@ class LaunchCoordinator(Executor):
         await ctx.send_message(task, target_id="launch_subworkflow")
 
     @handler
-    async def collect_final(self, draft: FinalDraft, ctx: WorkflowContext[None]) -> None:
+    async def collect_final(self, draft: FinalDraft, ctx: WorkflowContext[None, FinalDraft]) -> None:
         approved_at = draft.approved_at
         normalised = draft
         if isinstance(approved_at, str):
@@ -219,6 +218,8 @@ class LaunchCoordinator(Executor):
         print(f"- Iterations: {normalised.iterations}")
         print(f"- Approved at: {approved_display}")
         print(f"- Content: {normalised.content}\n")
+
+        await ctx.yield_output(normalised)
 
     @property
     def final_result(self) -> FinalDraft | None:
@@ -264,7 +265,7 @@ def build_parent_workflow(storage: FileCheckpointStorage) -> tuple[LaunchCoordin
         .add_edge(
             sub_executor,
             parent_request_info,
-            condition=lambda msg: isinstance(msg, SubWorkflowRequestInfo),
+            condition=lambda msg: isinstance(msg, RequestInfoMessage),
         )
         .add_edge(parent_request_info, sub_executor)
         .with_checkpointing(storage)
@@ -344,23 +345,23 @@ async def main() -> None:
     Sample Output:
 
     === Stage 1: run until sub-workflow requests human review ===
-    Captured review request id: 72970260-dd85-4fe6-9895-b4b691ad76ad
-    Using checkpoint 9651d886-2188-4102-902f-1d7316f765b5 at iteration 2
+    Captured review request id: 032c9f3a-ad1b-4a52-89be-a168d6663011
+    Using checkpoint 54f376c2-f849-44e4-9d8d-e627fd27ab96 at iteration 2
     Pending review requests (sub executor snapshot): []
-    Pending review requests (parent executor snapshot): ['72970260-dd85-4fe6-9895-b4b691ad76ad']
+    Pending review requests (parent executor snapshot): ['032c9f3a-ad1b-4a52-89be-a168d6663011']
 
     === Stage 2: resume from checkpoint and approve draft ===
 
     >>> Parent workflow received approved draft:
     - Topic: Contoso Gadget Launch
     - Iterations: 1
-    - Approved at: 2025-09-23T12:11:19.756081
+    - Approved at: 2025-09-25T14:29:34.479164
     - Content: Approved launch narrative for Contoso Gadget Launch (iteration 1).
 
 
     === Final Draft (from resumed run) ===
-    FinalDraft(topic='Contoso Gadget Launch', content='Approved launch narrative for Contoso Gadget
-    Launch (iteration 1).', iterations=1, approved_at=datetime.datetime(2025, 9, 23, 12, 11, 19, 756081))
+    FinalDraft(topic='Contoso Gadget Launch', content='Approved launch narrative for Contoso
+    Gadget Launch (iteration 1).', iterations=1, approved_at=datetime.datetime(2025, 9, 25, 14, 29, 34, 479164))
     Coordinator stored final draft successfully.
     """
 

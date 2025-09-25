@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
+import inspect
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -21,10 +23,10 @@ from ._executor import (
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,
-    SubWorkflowRequestInfo,
-    SubWorkflowResponse,
+    RequestResponse,
     handler,
 )
+from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -78,9 +80,11 @@ class WorkflowExecutor(Executor):
     request = MyDataRequest(query="user info")
     # RequestInfoExecutor emits RequestInfoEvent
 
-    # WorkflowExecutor wraps and forwards to parent
-    wrapped = SubWorkflowRequestInfo(request_id="...", sub_workflow_id="child_workflow", data=request)
-    # Parent workflow can intercept via @intercepts_request
+    # WorkflowExecutor sets source_executor_id and forwards to parent
+    request.source_executor_id = "child_workflow_executor_id"
+    # Parent workflow can handle via @handler for RequestInfoMessage subclasses,
+    # or directly forward to external source via a RequestInfoExecutor in the parent
+    # workflow.
     ```
 
     ### State Management
@@ -105,8 +109,8 @@ class WorkflowExecutor(Executor):
     Combines sub-workflow outputs with request coordination types:
     ```python
     # Includes all sub-workflow output types
-    # Plus SubWorkflowRequestInfo if sub-workflow can make requests
-    output_types = workflow.output_types + [SubWorkflowRequestInfo]  # if applicable
+    # Plus RequestInfoMessage if sub-workflow can make requests
+    output_types = workflow.output_types + [RequestInfoMessage]  # if applicable
     ```
 
     ## Error Handling
@@ -171,14 +175,20 @@ class WorkflowExecutor(Executor):
     Parent workflows can intercept sub-workflow requests:
     ```python
     class ParentExecutor(Executor):
-        @intercepts_request
-        async def handle_child_request(
-            self, request: MyDataRequest, ctx: WorkflowContext[Any]
-        ) -> RequestResponse[MyDataRequest, str]:
+        @handler
+        async def handle_request(
+            self,
+            request: MyRequestType,  # Subclass of RequestInfoMessage
+            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | RequestInfoMessage],
+        ) -> None:
             # Handle request locally or forward to external source
             if self.can_handle_locally(request):
-                return RequestResponse.handled("local result")
-            return RequestResponse.forward()  # Send to external handler
+                # Send response back to sub-workflow
+                response = RequestResponse(data="local result", original_request=request, request_id=request.request_id)
+                await ctx.send_message(response, target_id=request.source_executor_id)
+            else:
+                # Forward to external handler
+                await ctx.send_message(request)
     ```
 
     ## Implementation Notes
@@ -207,18 +217,22 @@ class WorkflowExecutor(Executor):
         # Map request_id to execution_id for response routing
         self._request_to_execution: dict[str, str] = {}  # request_id -> execution_id
         self._active_executions: int = 0  # Count of active sub-workflow executions
-        self._execute_contexts: dict[str, RequestInfoMessage | None] = {}
-        self._collected_responses: dict[str, Any] = {}
         self._state_loaded: bool = False
 
     @property
     def input_types(self) -> list[type[Any]]:
-        """Get the input types based on the underlying workflow's input types.
+        """Get the input types based on the underlying workflow's input types plus WorkflowExecutor-specific types.
 
         Returns:
-            A list of input types that the underlying workflow can accept.
+            A list of input types that the WorkflowExecutor can accept.
         """
-        return self.workflow.input_types
+        input_types = list(self.workflow.input_types)
+
+        # WorkflowExecutor can also handle RequestResponse for sub-workflow responses
+        if RequestResponse not in input_types:
+            input_types.append(RequestResponse)
+
+        return input_types
 
     @property
     def output_types(self) -> list[type[Any]]:
@@ -226,19 +240,42 @@ class WorkflowExecutor(Executor):
 
         Returns:
             A list of output types that the underlying workflow can produce.
-            Includes SubWorkflowRequestInfo if the sub-workflow contains RequestInfoExecutor.
+            Includes specific RequestInfoMessage subtypes if the sub-workflow contains RequestInfoExecutor.
         """
         output_types = list(self.workflow.output_types)
 
         # Check if the sub-workflow contains a RequestInfoExecutor
-        # If so, this WorkflowExecutor can also output SubWorkflowRequestInfo messages
-        for executor in self.workflow.executors.values():
-            if isinstance(executor, RequestInfoExecutor):
-                if SubWorkflowRequestInfo not in output_types:
-                    output_types.append(SubWorkflowRequestInfo)
-                break
+        # If so, collect the specific RequestInfoMessage subtypes from all executors
+        has_request_info_executor = any(
+            isinstance(executor, RequestInfoExecutor) for executor in self.workflow.executors.values()
+        )
+
+        if has_request_info_executor:
+            # Collect all RequestInfoMessage subtypes from executor output types
+            for executor in self.workflow.executors.values():
+                for output_type in executor.output_types:
+                    # Check if this is a RequestInfoMessage subclass
+                    if (
+                        inspect.isclass(output_type)
+                        and issubclass(output_type, RequestInfoMessage)
+                        and output_type not in output_types
+                    ):
+                        output_types.append(output_type)
 
         return output_types
+
+    def can_handle(self, message: Any) -> bool:
+        """Override can_handle to only accept messages that the wrapped workflow can handle.
+
+        This prevents the WorkflowExecutor from accepting messages that should go to other
+        executors (like RequestInfoExecutor).
+        """
+        # Always handle RequestResponse (for the handle_response handler)
+        if isinstance(message, RequestResponse):
+            return True
+
+        # For other messages, only handle if the wrapped workflow can accept them as input
+        return any(is_instance_of(message, input_type) for input_type in self.workflow.input_types)
 
     @handler  # No output_types - can send any completion data type
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
@@ -251,10 +288,12 @@ class WorkflowExecutor(Executor):
             input_data: The input data to send to the sub-workflow.
             ctx: The workflow context from the parent.
         """
-        # Skip SubWorkflowResponse and SubWorkflowRequestInfo - they have specific handlers
-        if isinstance(input_data, (SubWorkflowResponse, SubWorkflowRequestInfo)):
+        # Skip RequestResponse - it has a specific handler
+        if isinstance(input_data, RequestResponse):
             logger.debug(f"WorkflowExecutor {self.id} ignoring input of type {type(input_data)}")
             return
+
+        await self._ensure_state_loaded(ctx)
 
         # Create execution context for this sub-workflow run
         execution_id = str(uuid.uuid4())
@@ -323,15 +362,12 @@ class WorkflowExecutor(Executor):
             execution_context.pending_requests[event.request_id] = event.data
             # Map request to execution for response routing
             self._request_to_execution[event.request_id] = execution_context.execution_id
-            # Wrap request with routing context and send to parent
+            # Set source_executor_id for response routing and send to parent
             if not isinstance(event.data, RequestInfoMessage):
                 raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-            wrapped_request = SubWorkflowRequestInfo(
-                request_id=event.request_id,
-                sub_workflow_id=self.id,
-                data=event.data,
-            )
-            await ctx.send_message(wrapped_request)
+            # Set the source_executor_id to this WorkflowExecutor's ID for response routing
+            event.data.source_executor_id = self.id
+            await ctx.send_message(event.data)
 
         # Update expected response count for this execution
         execution_context.expected_response_count = len(request_info_events)
@@ -377,10 +413,12 @@ class WorkflowExecutor(Executor):
         else:
             raise RuntimeError(f"Unexpected final state: {final_state}")
 
+        await self._persist_execution_state(ctx)
+
     @handler
     async def handle_response(
         self,
-        response: SubWorkflowResponse,
+        response: RequestResponse[RequestInfoMessage, Any],
         ctx: WorkflowContext[Any],
     ) -> None:
         """Handle response from parent for a forwarded request.
@@ -392,6 +430,8 @@ class WorkflowExecutor(Executor):
             response: The response to a previous request.
             ctx: The workflow context.
         """
+        await self._ensure_state_loaded(ctx)
+
         # Find the execution context for this request
         execution_id = self._request_to_execution.get(response.request_id)
         if not execution_id or execution_id not in self._execution_contexts:
@@ -416,6 +456,8 @@ class WorkflowExecutor(Executor):
 
         # Accumulate the response in this execution's context
         execution_context.collected_responses[response.request_id] = response.data
+
+        await self._persist_execution_state(ctx)
 
         # Check if we have all expected responses for this execution
         if len(execution_context.collected_responses) < execution_context.expected_response_count:
@@ -460,31 +502,79 @@ class WorkflowExecutor(Executor):
 
     def restore_state(self, state: dict[str, Any]) -> None:
         """Restore pending request bookkeeping from a checkpoint snapshot."""
-        pending_ids = state.get("pending_request_ids", [])
-        pending: dict[str, RequestInfoMessage | None] = {}
-        if isinstance(pending_ids, list):
-            pending = {rid: cast(RequestInfoMessage | None, None) for rid in pending_ids if isinstance(rid, str)}
-        self._execute_contexts = pending
+        self._execution_contexts = {}
+        self._request_to_execution = {}
+
+        executions_payload = state.get("executions")
+        if isinstance(executions_payload, Mapping) and executions_payload:
+            for execution_id, payload in executions_payload.items():
+                if not isinstance(execution_id, str) or not isinstance(payload, Mapping):
+                    continue
+
+                pending_ids_raw = payload.get("pending_request_ids", [])
+                if not isinstance(pending_ids_raw, list):
+                    continue
+                pending_ids = [rid for rid in pending_ids_raw if isinstance(rid, str)]
+
+                expected = payload.get("expected_response_count", len(pending_ids))
+                try:
+                    expected_count = int(expected)
+                except (TypeError, ValueError):
+                    expected_count = len(pending_ids)
+
+                collected_ids_raw = payload.get("collected_response_ids", [])
+                collected: dict[str, Any] = {}
+                if isinstance(collected_ids_raw, list):
+                    for rid in collected_ids_raw:
+                        if isinstance(rid, str):
+                            collected[rid] = None
+
+                exec_ctx = ExecutionContext(
+                    execution_id=execution_id,
+                    collected_responses=collected,
+                    expected_response_count=expected_count,
+                    pending_requests={rid: None for rid in pending_ids},
+                )
+
+                if exec_ctx.pending_requests or exec_ctx.collected_responses:
+                    self._execution_contexts[execution_id] = exec_ctx
+                    for rid in exec_ctx.pending_requests:
+                        self._request_to_execution[rid] = execution_id
+        else:
+            pending_ids = state.get("pending_request_ids", [])
+            if isinstance(pending_ids, list):
+                pending = [rid for rid in pending_ids if isinstance(rid, str)]
+                if pending:
+                    try:
+                        expected = int(state.get("expected_response_count", len(pending)))
+                    except (TypeError, ValueError):
+                        expected = len(pending)
+
+                    execution_id = str(uuid.uuid4())
+                    exec_ctx = ExecutionContext(
+                        execution_id=execution_id,
+                        collected_responses={},
+                        expected_response_count=expected,
+                        pending_requests={rid: None for rid in pending},
+                    )
+                    self._execution_contexts[execution_id] = exec_ctx
+                    for rid in pending:
+                        self._request_to_execution[rid] = execution_id
 
         try:
-            self._expected_response_count = int(state.get("expected_response_count", 0))
+            self._active_executions = int(state.get("active_executions", len(self._execution_contexts)))
         except (TypeError, ValueError):
-            self._expected_response_count = 0
-
-        try:
-            self._active_executions = int(state.get("active_executions", 0))
-        except (TypeError, ValueError):
-            self._active_executions = 0
+            self._active_executions = len(self._execution_contexts)
 
         helper_states = state.get("request_info_executor_states", {})
         restored_request_data: dict[str, RequestInfoMessage] = {}
-        if isinstance(helper_states, dict):
+        if isinstance(helper_states, Mapping):
             for exec_id, helper_state in helper_states.items():
                 helper_executor = self.workflow.executors.get(exec_id)
-                if not isinstance(helper_executor, RequestInfoExecutor) or not isinstance(helper_state, dict):
+                if not isinstance(helper_executor, RequestInfoExecutor) or not isinstance(helper_state, Mapping):
                     continue
                 with contextlib.suppress(Exception):
-                    helper_executor.restore_state(helper_state)
+                    helper_executor.restore_state(dict(helper_state))
                     for req_id, event in getattr(helper_executor, "_request_events", {}).items():  # type: ignore[attr-defined]
                         if (
                             isinstance(req_id, str)
@@ -495,9 +585,74 @@ class WorkflowExecutor(Executor):
 
         if restored_request_data:
             for req_id, data in restored_request_data.items():
-                if req_id in self._execute_contexts:
-                    self._execute_contexts[req_id] = data
+                execution_id = self._request_to_execution.get(req_id)
+                if execution_id and execution_id in self._execution_contexts:
+                    self._execution_contexts[execution_id].pending_requests[req_id] = data
 
-        # Responses are accumulated per batch; start clean whenever we restore.
-        self._collected_responses = {}
+        for execution_id, exec_ctx in self._execution_contexts.items():
+            for req_id in exec_ctx.pending_requests:
+                self._request_to_execution.setdefault(req_id, execution_id)
+
+        request_map = state.get("request_to_execution")
+        if isinstance(request_map, Mapping):
+            for req_id, execution_id in request_map.items():
+                if (
+                    isinstance(req_id, str)
+                    and isinstance(execution_id, str)
+                    and execution_id in self._execution_contexts
+                ):
+                    self._request_to_execution.setdefault(req_id, execution_id)
+
         self._state_loaded = True
+
+    def _build_state_snapshot(self) -> dict[str, Any]:
+        executions: dict[str, Any] = {}
+        pending_request_ids: list[str] = []
+
+        for execution_id, exec_ctx in self._execution_contexts.items():
+            if not exec_ctx.pending_requests and not exec_ctx.collected_responses:
+                continue
+
+            request_ids = list(exec_ctx.pending_requests.keys())
+            pending_request_ids.extend(request_ids)
+
+            summary: dict[str, Any] = {
+                "pending_request_ids": request_ids,
+                "expected_response_count": exec_ctx.expected_response_count,
+            }
+
+            if exec_ctx.collected_responses:
+                summary["collected_response_ids"] = list(exec_ctx.collected_responses.keys())
+
+            executions[execution_id] = summary
+
+        helper_states: dict[str, Any] = {}
+        for exec_id, executor in self.workflow.executors.items():
+            if isinstance(executor, RequestInfoExecutor):
+                with contextlib.suppress(Exception):
+                    snapshot = executor.snapshot_state()
+                    if snapshot:
+                        helper_states[exec_id] = snapshot
+
+        has_state = bool(executions or helper_states or self._request_to_execution)
+        if not has_state:
+            return {}
+
+        state: dict[str, Any] = {
+            "executions": executions,
+            "request_to_execution": dict(self._request_to_execution),
+            "pending_request_ids": pending_request_ids,
+            "active_executions": self._active_executions,
+        }
+
+        if helper_states:
+            state["request_info_executor_states"] = helper_states
+
+        return state
+
+    async def _persist_execution_state(self, ctx: WorkflowContext[Any]) -> None:
+        snapshot = self._build_state_snapshot()
+        try:
+            await ctx.set_state(snapshot)
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"WorkflowExecutor {self.id} failed to persist state: {exc}")

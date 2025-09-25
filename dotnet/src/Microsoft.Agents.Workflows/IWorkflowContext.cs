@@ -29,6 +29,24 @@ public interface IWorkflowContext
     ValueTask SendMessageAsync(object message, string? targetId = null);
 
     /// <summary>
+    /// Adds an output value to the workflow's output queue. These outputs will be bubbled out of the workflow using the
+    /// <see cref="WorkflowOutputEvent"/>
+    /// </summary>
+    /// <remarks>
+    /// The type of the output message must match one of the output types declared by the Executor. By default, the return
+    /// types of registered message handlers are considered output types, unless otherwise specified using <see cref="ExecutorOptions"/>.
+    /// </remarks>
+    /// <param name="output">The output value to be returned.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    ValueTask YieldOutputAsync(object output);
+
+    /// <summary>
+    /// Adds a request to "halt" workflow execution at the end of the current SuperStep.
+    /// </summary>
+    /// <returns></returns>
+    ValueTask RequestHaltAsync();
+
+    /// <summary>
     /// Reads a state value from the workflow's state store. If no scope is provided, the executor's
     /// default scope is used.
     /// </summary>

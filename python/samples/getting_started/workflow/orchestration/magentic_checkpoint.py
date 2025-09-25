@@ -12,6 +12,7 @@ from agent_framework import (
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
     RequestInfoEvent,
+    WorkflowCheckpoint,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -161,6 +162,74 @@ async def main() -> None:
     print("\n=== Final Answer ===")
     print(text)
 
+    # ------------------------------------------------------------------
+    # Stage 3: demonstrate resuming from a later checkpoint (post-plan)
+    # ------------------------------------------------------------------
+
+    def _pending_message_count(cp: WorkflowCheckpoint) -> int:
+        return sum(len(msg_list) for msg_list in cp.messages.values() if isinstance(msg_list, list))
+
+    all_checkpoints = await checkpoint_storage.list_checkpoints(resume_checkpoint.workflow_id)
+    later_checkpoints_with_messages = [
+        cp
+        for cp in all_checkpoints
+        if cp.iteration_count > resume_checkpoint.iteration_count and _pending_message_count(cp) > 0
+    ]
+
+    if later_checkpoints_with_messages:
+        post_plan_checkpoint = max(
+            later_checkpoints_with_messages,
+            key=lambda cp: (cp.iteration_count, cp.timestamp),
+        )
+    else:
+        later_checkpoints = [cp for cp in all_checkpoints if cp.iteration_count > resume_checkpoint.iteration_count]
+
+        if not later_checkpoints:
+            print("\nNo additional checkpoints recorded beyond plan approval; sample complete.")
+            return
+
+        post_plan_checkpoint = max(
+            later_checkpoints,
+            key=lambda cp: (cp.iteration_count, cp.timestamp),
+        )
+    print("\n=== Stage 3: resume from post-plan checkpoint ===")
+    pending_messages = _pending_message_count(post_plan_checkpoint)
+    print(
+        f"Resuming from checkpoint {post_plan_checkpoint.checkpoint_id} at iteration "
+        f"{post_plan_checkpoint.iteration_count} (pending messages: {pending_messages})"
+    )
+    if pending_messages == 0:
+        print("Checkpoint has no pending messages; no additional work expected on resume.")
+
+    final_event_post: WorkflowOutputEvent | None = None
+    post_emitted_events = False
+    post_plan_workflow = build_workflow(checkpoint_storage)
+    async for event in post_plan_workflow.workflow.run_stream_from_checkpoint(
+        post_plan_checkpoint.checkpoint_id,
+        responses={},
+    ):
+        post_emitted_events = True
+        if isinstance(event, WorkflowOutputEvent):
+            final_event_post = event
+
+    if final_event_post is None:
+        if not post_emitted_events:
+            print("No new events were emitted; checkpoint already captured a completed run.")
+            print("\n=== Final Answer (post-plan resume) ===")
+            print(text)
+            return
+        print("Workflow did not complete after post-plan resume.")
+        return
+
+    post_result = final_event_post.data
+    if not post_result:
+        print("No result data from post-plan resume.")
+        return
+
+    post_text = getattr(post_result, "text", None) or str(post_result)
+    print("\n=== Final Answer (post-plan resume) ===")
+    print(post_text)
+
     """
     Sample Output:
 
@@ -172,7 +241,7 @@ async def main() -> None:
     === Stage 2: resume from checkpoint and approve plan ===
 
     === Final Answer ===
-    Certainly! Here's your concise internal brief on how the research and implementation teams should collaborate for 
+    Certainly! Here's your concise internal brief on how the research and implementation teams should collaborate for
     the beta launch of the data-driven email summarization feature:
 
     ---
@@ -216,6 +285,13 @@ async def main() -> None:
     Clear alignment, consistent communication, and iterative feedback are key to a successful beta. All team members are
         expected to surface issues quickly and keep documentation current as we drive toward launch.
     ---
+
+    === Stage 3: resume from post-plan checkpoint ===
+    Resuming from checkpoint 9a3b... at iteration 3 (pending messages: 0)
+    No new events were emitted; checkpoint already captured a completed run.
+
+    === Final Answer (post-plan resume) ===
+    (same brief as above)
     """
 
 

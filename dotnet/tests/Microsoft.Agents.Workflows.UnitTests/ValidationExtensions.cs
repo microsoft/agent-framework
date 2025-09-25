@@ -20,10 +20,12 @@ internal static partial class ValidationExtensions
                          prototype.SinkIds.SequenceEqual(actual.SinkIds);
     }
 
-    public static Expression<Func<TypeId, bool>> CreateValidator(this TypeId prototype)
+    public static Expression<Func<TypeId, bool>> CreateValidator(this TypeId? prototype)
     {
-        return actual => actual.AssemblyName == prototype.AssemblyName &&
-                         actual.TypeName == prototype.TypeName;
+        return actual => (prototype == null && actual == null)
+                         || (prototype != null && actual != null
+                             && actual.AssemblyName == prototype.AssemblyName
+                             && actual.TypeName == prototype.TypeName);
     }
 
     public static Expression<Func<ExecutorInfo, bool>> CreateValidator(this ExecutorInfo prototype)

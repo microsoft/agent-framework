@@ -23,7 +23,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_ExpectedTelemetryData_CollectedAsync(bool withError)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -91,7 +91,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_ExpectedTelemetryData_CollectedAsync(bool withError)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -165,7 +165,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_IncludesInstructionsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -204,7 +204,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_WithMetadata_UsesProviderNameAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -248,7 +248,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNonChatClientAgent_UsesDefaultSystemAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -279,7 +279,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_WithDifferentProviders_UsesCorrectSystemAsync(string providerName)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -321,7 +321,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithChatClientAgent_WithMetadata_UsesProviderNameAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -372,7 +372,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithThreadId_IncludesThreadIdAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -471,7 +471,7 @@ public class OpenTelemetryAgentTests
     public async Task WithOpenTelemetry_EnableSensitiveDataParameter_SetsPropertyCorrectlyAsync(bool enableSensitiveData)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -592,7 +592,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithILogger_LogsEventsCorrectlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
 
         // Setup the logger to return true for IsEnabled to ensure logging occurs
@@ -658,7 +658,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithOpenTelemetryChatClientAgent_DoesNotDuplicateLogsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -728,7 +728,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithRegularChatClientAgent_LogsCorrectlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -793,7 +793,7 @@ public class OpenTelemetryAgentTests
     public void Constructor_WithOpenTelemetryChatClient_InheritsEnableSensitiveDataSetting()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockChatClient = new Mock<IChatClient>();
 
         // Setup ChatClientMetadata
@@ -1097,7 +1097,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_ProviderNameReflectedInTelemetryAsync(string providerName)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1146,7 +1146,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithChatClientAgent_NullMetadata_DefaultsToMEAIAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1195,7 +1195,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithCustomAgent_CustomMetadata_ReflectedInTelemetryAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1242,7 +1242,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithCustomAgent_NoMetadata_DefaultsToMEAIAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1288,7 +1288,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithChatClientAgent_ProviderNameReflectedInTelemetryAsync(string providerName)
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1346,7 +1346,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_MultipleCallsWithSameAgent_ConsistentProviderNameAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1567,7 +1567,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNullResponseId_HandlesGracefullyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1608,7 +1608,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithEmptyAgentName_UsesOperationNameOnlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1642,7 +1642,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithPartialUpdates_CombinesCorrectlyAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -1733,7 +1733,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithMetricsEnabled_RecordsMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         var exportedMetrics = new List<Metric>();
 
@@ -1777,7 +1777,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithMetricsEnabledAndError_RecordsErrorMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         var exportedMetrics = new List<Metric>();
 
@@ -1817,7 +1817,7 @@ public class OpenTelemetryAgentTests
     public async Task RunStreamingAsync_WithMetricsEnabled_RecordsMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         var exportedMetrics = new List<Metric>();
 
@@ -1866,7 +1866,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNullUsage_SkipsTokenMetricsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var exportedMetrics = new List<Metric>();
 
         using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
@@ -1914,7 +1914,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithMetricsDisabled_SkipsMetricRecordingAsync()
     {
         // Arrange - No meter provider, so metrics are disabled
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
 
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
@@ -1945,7 +1945,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithPartialTokenUsage_RecordsAvailableTokensAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var exportedMetrics = new List<Metric>();
 
         using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
@@ -1993,7 +1993,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithNullDescription_SkipsDescriptionAttributeAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2034,7 +2034,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithAssistantMessage_LogsAssistantEventAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2084,7 +2084,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithToolMessage_LogsToolEventAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2134,7 +2134,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithToolMessageAndSensitiveData_LogsToolEventWithContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2197,7 +2197,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithFunctionCallAndSensitiveDataEnabled_LogsWithSensitiveContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2285,7 +2285,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithToolMessageAndSensitiveDataDisabled_LogsToolEventWithoutContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2350,7 +2350,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithFunctionCallAndSensitiveDataDisabled_LogsWithoutSensitiveContentAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2431,7 +2431,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_LoggerNotEnabled_DoesNotLogChatResponseAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2482,7 +2482,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithResponseMessages_LogsChoiceEventsAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2546,7 +2546,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithSingleResponseMessage_LogsChoiceEventAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
@@ -2602,7 +2602,7 @@ public class OpenTelemetryAgentTests
     public void JsonSerializerOptions_GetterReturnsSetValue()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
         var mockAgent = new Mock<AIAgent>();
 
@@ -2617,7 +2617,7 @@ public class OpenTelemetryAgentTests
     public void JsonSerializerOptions_SetterUpdatesValue()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
         var mockAgent = new Mock<AIAgent>();
 
@@ -2640,7 +2640,7 @@ public class OpenTelemetryAgentTests
     public void JsonSerializerOptions_SetterThrowsOnNull()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var mockLogger = new Mock<ILogger>();
         var mockAgent = new Mock<AIAgent>();
 
@@ -2654,7 +2654,7 @@ public class OpenTelemetryAgentTests
     public async Task RunAsync_WithCustomJsonSerializerOptions_UsesCustomOptionsForSerializationAsync()
     {
         // Arrange
-        var sourceName = Guid.NewGuid().ToString();
+        var sourceName = Guid.NewGuid().ToString("N");
         var activities = new List<Activity>();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
