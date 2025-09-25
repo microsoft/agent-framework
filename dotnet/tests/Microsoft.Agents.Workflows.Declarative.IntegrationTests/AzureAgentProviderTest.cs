@@ -22,7 +22,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : WorkflowT
     public async Task ConversationTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = this.CreateProvider();
+        AzureAgentProvider provider = new(this.Configuration.Endpoint, new AzureCliCredential());
         // Act
         string conversationId = await provider.CreateConversationAsync();
         // Assert
@@ -49,10 +49,10 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : WorkflowT
     }
 
     [Fact]
-    public async Task GetAgentWithoutNameResolutionTestAsync()
+    public async Task GetAgentTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = this.CreateProvider();
+        AzureAgentProvider provider = new(this.Configuration.Endpoint, new AzureCliCredential());
         string agentName = $"TestAgent-{DateTime.UtcNow:yyMMdd-HHmmss-fff}";
 
         string agent1Id = await this.CreateAgentAsync();
@@ -70,40 +70,6 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : WorkflowT
 
         // Act & Assert
         await Assert.ThrowsAsync<DeclarativeActionException>(() => provider.GetAgentAsync(agentName));
-    }
-
-    [Fact]
-    public async Task GetAgentWithNameResolutionTestAsync()
-    {
-        // Arrange
-        AzureAgentProvider provider = this.CreateProvider(resolveByName: true);
-        string agentName = $"TestAgent-{DateTime.UtcNow:yyMMdd-HHmmss-fff}";
-        string agent1Id = await this.CreateAgentAsync();
-        string agent2Id = await this.CreateAgentAsync(agentName);
-
-        // Act
-        AIAgent agent1 = await provider.GetAgentAsync(agent1Id);
-        // Assert
-        Assert.Equal(agent1Id, agent1.Id);
-
-        // Act
-        AIAgent agent2 = await provider.GetAgentAsync(agent2Id);
-        // Assert
-        Assert.Equal(agent2Id, agent2.Id);
-
-        // Act
-        AIAgent agent2b = await provider.GetAgentAsync(agentName);
-        // Assert
-        Assert.Equal(agent2Id, agent2b.Id);
-    }
-
-    private AzureAgentProvider CreateProvider(bool resolveByName = false)
-    {
-        return
-            new AzureAgentProvider(this.Configuration.Endpoint, new AzureCliCredential())
-            {
-                AllowResolveByName = resolveByName,
-            };
     }
 
     private async ValueTask<string> CreateAgentAsync(string? name = null)

@@ -1,5 +1,4 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -39,22 +38,6 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     public const int DefaultAgentQueryLimit = 100;
 
     private PersistentAgentsClient? _agentsClient;
-    private readonly Dictionary<string, PersistentAgent> _agentCache = [];
-
-    /// <summary>
-    /// Set to true to allow resolving agents by name.  If set, the identifier provided when
-    /// invoking an agent may be either the agents unique identifier or its name.  Defaults to false.
-    /// </summary>
-    /// <remarks>
-    /// Agent resolution will fail if multiple agents exist with the same name.
-    /// </remarks>
-    public bool AllowResolveByName { get; init; }
-
-    /// <summary>
-    /// The maximum number of agents to retrieved in each page when querying to resolve by name.
-    /// Defaults to <see cref="DefaultAgentQueryLimit"/>.
-    /// </summary>
-    public int AgentQueryLimit { get; init; } = DefaultAgentQueryLimit;
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
@@ -111,63 +94,8 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
-    {
-        PersistentAgent? agent = null;
-        PersistentAgentsClient client = this.GetAgentsClient();
-
-        try
-        {
-            agent = await client.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            if (!this.AllowResolveByName)
-            {
-                throw new DeclarativeActionException($"Agent with identifier or name '{agentId}' could not be found.", exception);
-            }
-        }
-
-        if (agent is null)
-        {
-            if (this._agentCache.Count == 0)
-            {
-                lock (this._agentCache)
-                {
-                    if (this._agentCache.Count == 0)
-                    {
-                        int count;
-                        string? startId = null;
-                        do
-                        {
-                            count = 0;
-                            string? lastId = null;
-                            foreach (PersistentAgent knownAgent in client.Administration.GetAgentsAsync(limit: this.AgentQueryLimit, ListSortOrder.Descending, after: startId, before: null, cancellationToken).ToEnumerable())
-                            {
-                                ++count;
-                                if (!string.IsNullOrWhiteSpace(knownAgent.Name))
-                                {
-                                    this._agentCache[knownAgent.Name] = knownAgent;
-                                }
-                                lastId = knownAgent.Id;
-                            }
-                            startId = lastId;
-                        }
-                        while (count == this.AgentQueryLimit && startId is not null);
-                    }
-                }
-            }
-
-            this._agentCache.TryGetValue(agentId, out agent);
-        }
-
-        if (agent is null)
-        {
-            throw new DeclarativeActionException($"Agent with identifier or name '{agentId}' could not be found.");
-        }
-
-        return agent.AsAIAgent(client);
-    }
+    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default) =>
+        await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
