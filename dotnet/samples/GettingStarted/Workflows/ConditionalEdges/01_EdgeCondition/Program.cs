@@ -53,11 +53,12 @@ public static class Program
         var handleSpamExecutor = new HandleSpamExecutor();
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(spamDetectionExecutor);
-        builder.AddEdge(spamDetectionExecutor, emailAssistantExecutor, condition: GetCondition(expectedResult: false));
-        builder.AddEdge(emailAssistantExecutor, sendEmailExecutor);
-        builder.AddEdge(spamDetectionExecutor, handleSpamExecutor, condition: GetCondition(expectedResult: true));
-        var workflow = builder.Build<ChatMessage>();
+        var workflow = new WorkflowBuilder(spamDetectionExecutor)
+            .AddEdge(spamDetectionExecutor, emailAssistantExecutor, condition: GetCondition(expectedResult: false))
+            .AddEdge(emailAssistantExecutor, sendEmailExecutor)
+            .AddEdge(spamDetectionExecutor, handleSpamExecutor, condition: GetCondition(expectedResult: true))
+            .WithOutputFrom(handleSpamExecutor, sendEmailExecutor)
+            .Build();
 
         // Read a email from a text file
         string email = Resources.Read("spam.txt");
@@ -67,9 +68,9 @@ public static class Program
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is WorkflowCompletedEvent completedEvent)
+            if (evt is WorkflowOutputEvent outputEvent)
             {
-                Console.WriteLine($"{completedEvent}");
+                Console.WriteLine($"{outputEvent}");
             }
         }
     }
@@ -79,53 +80,34 @@ public static class Program
     /// </summary>
     /// <param name="expectedResult">The expected spam detection result</param>
     /// <returns>A function that evaluates whether a message meets the expected result</returns>
-    private static Func<object?, bool> GetCondition(bool expectedResult)
-    {
-        return detectionResult =>
-        {
-            return detectionResult is DetectionResult result && result.IsSpam == expectedResult;
-        };
-    }
+    private static Func<object?, bool> GetCondition(bool expectedResult) =>
+        detectionResult => detectionResult is DetectionResult result && result.IsSpam == expectedResult;
 
     /// <summary>
     /// Creates a spam detection agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for spam detection</returns>
-    private static ChatClientAgent GetSpamDetectionAgent(IChatClient chatClient)
-    {
-        string instructions = "You are a spam detection assistant that identifies spam emails.";
-        var agentOptions = new ChatClientAgentOptions(instructions: instructions)
+    private static ChatClientAgent GetSpamDetectionAgent(IChatClient chatClient) =>
+        new(chatClient, new ChatClientAgentOptions(instructions: "You are a spam detection assistant that identifies spam emails.")
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
-                    schema: AIJsonUtilities.CreateJsonSchema(typeof(DetectionResult))
-                )
+                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(DetectionResult)))
             }
-        };
-
-        return new ChatClientAgent(chatClient, agentOptions);
-    }
+        });
 
     /// <summary>
     /// Creates an email assistant agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email assistance</returns>
-    private static ChatClientAgent GetEmailAssistantAgent(IChatClient chatClient)
-    {
-        string instructions = "You are an email assistant that helps users draft responses to emails with professionalism.";
-        var agentOptions = new ChatClientAgentOptions(instructions: instructions)
+    private static ChatClientAgent GetEmailAssistantAgent(IChatClient chatClient) =>
+        new(chatClient, new ChatClientAgentOptions(instructions: "You are an email assistant that helps users draft responses to emails with professionalism.")
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormatJson.ForJsonSchema(
-                    schema: AIJsonUtilities.CreateJsonSchema(typeof(EmailResponse))
-                )
+                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(EmailResponse)))
             }
-        };
-
-        return new ChatClientAgent(chatClient, agentOptions);
-    }
+        });
 }
 
 /// <summary>
@@ -185,10 +167,10 @@ internal sealed class SpamDetectionExecutor : ReflectingExecutor<SpamDetectionEx
         // Generate a random email ID and store the email content to the shared state
         var newEmail = new Email
         {
-            EmailId = Guid.NewGuid().ToString(),
+            EmailId = Guid.NewGuid().ToString("N"),
             EmailContent = message.Text
         };
-        await context.QueueStateUpdateAsync<Email>(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope);
+        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope);
 
         // Invoke the agent
         var response = await this._spamDetectionAgent.RunAsync(message);
@@ -252,10 +234,8 @@ internal sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor
     /// <summary>
     /// Simulate the sending of an email.
     /// </summary>
-    public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context)
-    {
-        await context.AddEventAsync(new WorkflowCompletedEvent($"Email sent: {message.Response}"));
-    }
+    public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context) =>
+        await context.YieldOutputAsync($"Email sent: {message.Response}");
 }
 
 /// <summary>
@@ -270,7 +250,7 @@ internal sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecut
     {
         if (message.IsSpam)
         {
-            await context.AddEventAsync(new WorkflowCompletedEvent($"Email marked as spam: {message.Reason}"));
+            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}");
         }
         else
         {

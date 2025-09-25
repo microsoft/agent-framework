@@ -20,7 +20,7 @@ public static class ExecutorIshConfigurationExtensions
     /// </summary>
     /// <remarks>
     /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
-    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="WorkflowBuilder.Build{T}"/>,
+    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="Workflow.TryPromoteAsync{TInput}"/>,
     /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
     /// demanded <c>TInput</c>.
     /// </remarks>
@@ -39,21 +39,15 @@ public static class ExecutorIshConfigurationExtensions
         return new ExecutorIsh(configured.Super<TExecutor, Executor, TOptions>(), typeof(TExecutor), ExecutorIsh.Type.Executor);
     }
 
-    private static ExecutorIsh ToExecutorIsh<TInput>(this FunctionExecutor<TInput> executor, Delegate raw)
-    {
-        return new ExecutorIsh(Configured.FromInstance(executor, raw: raw)
+    private static ExecutorIsh ToExecutorIsh<TInput>(this FunctionExecutor<TInput> executor, Delegate raw) => new(Configured.FromInstance(executor, raw: raw)
                                          .Super<FunctionExecutor<TInput>, Executor>(),
                                typeof(FunctionExecutor<TInput>),
                                ExecutorIsh.Type.Function);
-    }
 
-    private static ExecutorIsh ToExecutorIsh<TInput, TOutput>(this FunctionExecutor<TInput, TOutput> executor, Delegate raw)
-    {
-        return new ExecutorIsh(Configured.FromInstance(executor, raw: raw)
+    private static ExecutorIsh ToExecutorIsh<TInput, TOutput>(this FunctionExecutor<TInput, TOutput> executor, Delegate raw) => new(Configured.FromInstance(executor, raw: raw)
                                          .Super<FunctionExecutor<TInput, TOutput>, Executor>(),
                                typeof(FunctionExecutor<TInput, TOutput>),
                                ExecutorIsh.Type.Function);
-    }
 
     /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
@@ -61,11 +55,11 @@ public static class ExecutorIshConfigurationExtensions
     /// </summary>
     /// <typeparam name="TInput">The type of input message.</typeparam>
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
-    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorIsh AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
+        => new FunctionExecutor<TInput>(id, messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
@@ -74,11 +68,23 @@ public static class ExecutorIshConfigurationExtensions
     /// <typeparam name="TInput">The type of input message.</typeparam>
     /// <typeparam name="TOutput">The type of output message.</typeparam>
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
-    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, a type-tagged UUID will be generated.</param>
+    /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorIsh AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput, TOutput>(messageHandlerAsync, id, options).ToExecutorIsh(messageHandlerAsync);
+        => new FunctionExecutor<TInput, TOutput>(Throw.IfNull(id), messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
+
+    /// <summary>
+    /// Configures a function-based aggregating executor with the specified identifier and options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TAccumulate">The type of the accumulating object.</typeparam>
+    /// <param name="aggregatorFunc">A delegate the defines the aggregation procedure</param>
+    /// <param name="id">A unique identifier for the executor.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorIsh AsExecutor<TInput, TAccumulate>(this Func<TAccumulate?, TInput, TAccumulate?> aggregatorFunc, string id, ExecutorOptions? options = null)
+        => new AggregatingExecutor<TInput, TAccumulate>(id, aggregatorFunc, options);
 }
 
 /// <summary>
@@ -141,7 +147,7 @@ public sealed class ExecutorIsh :
         this._idValue = Throw.IfNull(id);
     }
 
-    internal ExecutorIsh(Configured<Executor> configured, System.Type configuredExecutorType, ExecutorIsh.Type type)
+    internal ExecutorIsh(Configured<Executor> configured, System.Type configuredExecutorType, Type type)
     {
         this.ExecutorType = type;
         this._configuredExecutor = configured;
@@ -256,73 +262,42 @@ public sealed class ExecutorIsh :
     /// Defines an implicit conversion from a string to an <see cref="ExecutorIsh"/> instance.
     /// </summary>
     /// <param name="id">The string ID to convert to an <see cref="ExecutorIsh"/>.</param>
-    public static implicit operator ExecutorIsh(string id)
-    {
-        return new ExecutorIsh(id);
-    }
+    public static implicit operator ExecutorIsh(string id) => new(id);
 
     /// <inheritdoc/>
-    public bool Equals(ExecutorIsh? other)
-    {
-        return other is not null &&
-               other.Id == this.Id;
-    }
+    public bool Equals(ExecutorIsh? other) =>
+        other is not null && other.Id == this.Id;
 
     /// <inheritdoc/>
-    public bool Equals(IIdentified? other)
-    {
-        return other is not null &&
-               other.Id == this.Id;
-    }
+    public bool Equals(IIdentified? other) =>
+        other is not null && other.Id == this.Id;
 
     /// <inheritdoc/>
-    public bool Equals(string? other)
-    {
-        return other is not null &&
-               other == this.Id;
-    }
+    public bool Equals(string? other) =>
+        other is not null && other == this.Id;
 
     /// <inheritdoc/>
-    public override bool Equals(object? obj)
-    {
-        if (obj is null)
+    public override bool Equals(object? obj) =>
+        obj switch
         {
-            return false;
-        }
-
-        if (obj is ExecutorIsh ish)
-        {
-            return this.Equals(ish);
-        }
-        else if (obj is IIdentified identified)
-        {
-            return this.Equals(identified);
-        }
-        else if (obj is string str)
-        {
-            return this.Equals(str);
-        }
-
-        return false;
-    }
-
-    /// <inheritdoc/>
-    public override int GetHashCode()
-    {
-        return this.Id.GetHashCode();
-    }
-
-    /// <inheritdoc/>
-    public override string ToString()
-    {
-        return this.ExecutorType switch
-        {
-            Type.Unbound => $"'{this.Id}':<unbound>",
-            Type.Executor => $"'{this.Id}':{this._configuredExecutorType!.Name}",
-            Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
-            Type.Agent => $"{this.Id}':AIAgent(@{this._aiAgentValue!.GetType().Name})",
-            Type.Function => $"'{this.Id}':{this._configuredExecutorType!.Name}",
-            _ => $"'{this.Id}':<unknown[{this.ExecutorType}]>"
+            null => false,
+            ExecutorIsh ish => this.Equals(ish),
+            IIdentified identified => this.Equals(identified),
+            string str => this.Equals(str),
+            _ => false
         };
-    }
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => this.Id.GetHashCode();
+
+    /// <inheritdoc/>
+    public override string ToString() => this.ExecutorType switch
+    {
+        Type.Unbound => $"'{this.Id}':<unbound>",
+        Type.Executor => $"'{this.Id}':{this._configuredExecutorType!.Name}",
+        Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
+        Type.Agent => $"{this.Id}':AIAgent(@{this._aiAgentValue!.GetType().Name})",
+        Type.Function => $"'{this.Id}':{this._configuredExecutorType!.Name}",
+        _ => $"'{this.Id}':<unknown[{this.ExecutorType}]>"
+    };
 }

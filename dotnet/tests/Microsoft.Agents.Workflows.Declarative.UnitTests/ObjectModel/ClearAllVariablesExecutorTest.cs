@@ -14,41 +14,46 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public async Task ClearWorkflowScope()
+    public async Task ClearWorkflowScopeAsync()
     {
         // Arrange
         this.State.Set("NoVar", FormulaValue.New("Old value"));
+        this.State.Bind();
 
         ClearAllVariables model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ClearWorkflowScope)),
+                this.FormatDisplayName(nameof(ClearWorkflowScopeAsync)),
                 VariablesToClear.ConversationScopedVariables);
 
         // Act
         ClearAllVariablesExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyUndefined("NoVar");
     }
 
     [Fact]
-    public async Task ClearUndefinedScope()
+    public async Task ClearUndefinedScopeAsync()
     {
+        // Arrange
+        this.State.Set("NoVar", FormulaValue.New("Old value"));
+        this.State.Bind();
+
         // Arrange
         ClearAllVariables model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(ClearUndefinedScope)),
+                this.FormatDisplayName(nameof(ClearUndefinedScopeAsync)),
                 VariablesToClear.UserScopedVariables);
 
         // Act
         ClearAllVariablesExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
-        this.VerifyUndefined("NoVar");
+        VerifyModel(model, action);
+        this.VerifyState("NoVar", FormulaValue.New("Old value"));
     }
 
     private ClearAllVariables CreateModel(string displayName, VariablesToClear variableTarget)
@@ -61,8 +66,6 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
                 Variables = EnumExpression<VariablesToClearWrapper>.Literal(VariablesToClearWrapper.Get(variableTarget)),
             };
 
-        ClearAllVariables model = this.AssignParent<ClearAllVariables>(actionBuilder);
-
-        return model;
+        return AssignParent<ClearAllVariables>(actionBuilder);
     }
 }

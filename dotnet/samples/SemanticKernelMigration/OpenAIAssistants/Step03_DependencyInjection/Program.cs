@@ -16,10 +16,10 @@ var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
@@ -60,7 +60,7 @@ async Task SKAgent()
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
@@ -70,9 +70,7 @@ async Task AFAgent()
     {
         var assistantClient = sp.GetRequiredService<AssistantClient>();
 
-        var agent = assistantClient.CreateAIAgent(modelId, name: "Joker", instructions: "You are good at telling jokes.");
-
-        return agent;
+        return assistantClient.CreateAIAgent(modelId, name: "Joker", instructions: "You are good at telling jokes.");
     });
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
@@ -92,6 +90,9 @@ async Task AFAgent()
 
     // Clean up
     var assistantClient = serviceProvider.GetRequiredService<AssistantClient>();
-    await assistantClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantClient.DeleteAssistantAsync(agent.Id);
 }

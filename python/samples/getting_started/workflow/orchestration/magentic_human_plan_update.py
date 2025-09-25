@@ -18,7 +18,7 @@ from agent_framework import (
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
     RequestInfoEvent,
-    WorkflowCompletedEvent,
+    WorkflowOutputEvent,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
@@ -41,6 +41,7 @@ Key behaviors demonstrated:
     replies with PlanReviewReply (here we auto-approve, but you can edit/collect input)
 - Callbacks: on_agent_stream (incremental chunks), on_agent_response (final messages),
     on_result (final answer), and on_exception
+- Workflow completion when idle
 
 Prerequisites:
 - OpenAI credentials configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
@@ -72,6 +73,9 @@ async def main() -> None:
     def on_exception(exception: Exception) -> None:
         print(f"Exception occurred: {exception}")
         logger.exception("Workflow exception", exc_info=exception)
+
+    last_stream_agent_id: str | None = None
+    stream_line_open: bool = False
 
     # Unified callback
     async def on_event(event: MagenticCallbackEvent) -> None:
@@ -105,9 +109,6 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow...")
 
-    last_stream_agent_id: str | None = None
-    stream_line_open: bool = False
-
     workflow = (
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
@@ -136,51 +137,61 @@ async def main() -> None:
     print("\nStarting workflow execution...")
 
     try:
-        completion_event: WorkflowCompletedEvent | None = None
         pending_request: RequestInfoEvent | None = None
+        pending_responses: dict[str, MagenticPlanReviewReply] | None = None
+        completed = False
+        workflow_output: str | None = None
 
-        while True:
-            # Phase 1: run until either completion or a HIL request
-            if pending_request is None:
-                async for event in workflow.run_stream(task):
-                    print(f"Event: {event}")
+        while not completed:
+            # Use streaming for both initial run and response sending
+            if pending_responses is not None:
+                stream = workflow.send_responses_streaming(pending_responses)
+            else:
+                stream = workflow.run_stream(task)
 
-                    if isinstance(event, WorkflowCompletedEvent):
-                        completion_event = event
+            # Collect events from the stream
+            events = [event async for event in stream]
+            pending_responses = None
 
-                    if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
-                        pending_request = event
-                        review_req = cast(MagenticPlanReviewRequest, event.data)
-                        if review_req.plan_text:
-                            print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
+            # Process events to find request info events, outputs, and completion status
+            for event in events:
+                if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+                    pending_request = event
+                    review_req = cast(MagenticPlanReviewRequest, event.data)
+                    if review_req.plan_text:
+                        print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
+                elif isinstance(event, WorkflowOutputEvent):
+                    # Capture workflow output during streaming
+                    workflow_output = str(event.data)
+                    completed = True
 
-            # Break if completed
-            if completion_event is not None:
-                data = getattr(completion_event, "data", None)
-                preview = getattr(data, "text", None) or (str(data) if data is not None else "")
-                print(f"Workflow completed with result:\n\n{preview}")
-
-            # Phase 2: respond to the pending plan review (HIL) request
+            # Handle pending plan review request
             if pending_request is not None:
-                # For demo purposes we approve as-is. Replace this with UI input
-                # to collect a human decision/comments/edited plan.
-                reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+                # Get human input for plan review decision
+                print("Plan review options:")
+                print("1. approve - Approve the plan as-is")
+                print("2. revise - Request revision of the plan")
+                print("3. exit - Exit the workflow")
 
-                async for event in workflow.send_responses_streaming({pending_request.request_id: reply}):
-                    print(f"Event: {event}")
+                while True:
+                    choice = input("Enter your choice (approve/revise/exit): ").strip().lower()  # noqa: ASYNC250
+                    if choice in ["approve", "1"]:
+                        reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+                        break
+                    if choice in ["revise", "2"]:
+                        reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE)
+                        break
+                    if choice in ["exit", "3"]:
+                        print("Exiting workflow...")
+                        return
+                    print("Invalid choice. Please enter 'approve', 'revise', or 'exit'.")
 
-                    if isinstance(event, WorkflowCompletedEvent):
-                        completion_event = event
+                pending_responses = {pending_request.request_id: reply}
+                pending_request = None
 
-                    if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
-                        # Another review cycle requested; keep pending
-                        pending_request = event
-                        review_req = cast(MagenticPlanReviewRequest, event.data)
-                        if review_req.plan_text:
-                            print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
-                    else:
-                        # Clear pending if no immediate new request
-                        pending_request = None
+        # Show final result from captured workflow output
+        if workflow_output:
+            print(f"Workflow completed with result:\n\n{workflow_output}")
 
     except Exception as e:
         print(f"Workflow execution failed: {e}")

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -37,7 +38,6 @@ public class AgentExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Assert.True(result is AIFunction);
         Assert.Equal("TestAgent", result.Name);
         Assert.Equal("Test agent description", result.Description);
     }
@@ -298,10 +298,16 @@ public class AgentExtensionsTests
             this._exceptionToThrow = exceptionToThrow;
         }
 
+        public override AgentThread GetNewThread()
+            => throw new NotImplementedException();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
+
         public override string? Name { get; }
         public override string? Description { get; }
 
-        public List<ChatMessage> ReceivedMessages { get; } = new();
+        public List<ChatMessage> ReceivedMessages { get; } = [];
         public CancellationToken LastCancellationToken { get; private set; }
         public int RunAsyncCallCount { get; private set; }
 
@@ -315,7 +321,7 @@ public class AgentExtensionsTests
             this.LastCancellationToken = cancellationToken;
             this.ReceivedMessages.AddRange(messages);
 
-            if (this._exceptionToThrow != null)
+            if (this._exceptionToThrow is not null)
             {
                 throw this._exceptionToThrow;
             }

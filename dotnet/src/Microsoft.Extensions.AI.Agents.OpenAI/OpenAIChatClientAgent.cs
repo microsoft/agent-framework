@@ -76,8 +76,7 @@ public class OpenAIChatClientAgent : AIAgent
     {
         var response = await this.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
 
-        var chatCompletion = response.AsChatCompletion();
-        return chatCompletion;
+        return response.AsChatCompletion();
     }
 
     /// <inheritdoc/>
@@ -85,8 +84,8 @@ public class OpenAIChatClientAgent : AIAgent
         => this._chatClientAgent.GetNewThread();
 
     /// <inheritdoc/>
-    public sealed override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => this._chatClientAgent.DeserializeThread(serializedThread, jsonSerializerOptions, cancellationToken);
+    public sealed override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        => this._chatClientAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>
     public sealed override Task<AgentRunResponse> RunAsync(

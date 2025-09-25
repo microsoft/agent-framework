@@ -12,8 +12,10 @@ from agent_framework import (
     ConcurrentBuilder,
     Executor,
     Role,
-    WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
 )
 
@@ -57,15 +59,19 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
 
     wf = ConcurrentBuilder().participants([e1, e2, e3]).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
+    output: list[ChatMessage] | None = None
     async for ev in wf.run_stream("prompt: hello world"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = cast(list[ChatMessage], ev.data)
+        if completed and output is not None:
             break
 
-    assert completed is not None
-    assert isinstance(completed.data, list)
-    messages: list[ChatMessage] = cast(list[ChatMessage], completed.data)  # type: ignore
+    assert completed
+    assert output is not None
+    messages: list[ChatMessage] = output
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3
@@ -91,16 +97,21 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
 
     wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
+    output: str | None = None
     async for ev in wf.run_stream("prompt: custom"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = cast(str, ev.data)
+        if completed and output is not None:
             break
 
-    assert completed is not None
+    assert completed
+    assert output is not None
     # Custom aggregator returns a string payload
-    assert isinstance(completed.data, str)
-    assert completed.data == "One | Two"
+    assert isinstance(output, str)
+    assert output == "One | Two"
 
 
 async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
@@ -108,7 +119,7 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
     e2 = _FakeAgentExec("agentB", "Two")
 
     # Sync callback with ctx parameter (should run via asyncio.to_thread)
-    def summarize_sync(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
+    def summarize_sync(results: list[AgentExecutorResponse], _ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
         texts: list[str] = []
         for r in results:
             msgs: list[ChatMessage] = r.agent_run_response.messages
@@ -117,12 +128,31 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
 
     wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize_sync).build()
 
-    completed: WorkflowCompletedEvent | None = None
+    completed = False
+    output: str | None = None
     async for ev in wf.run_stream("prompt: custom sync"):
-        if isinstance(ev, WorkflowCompletedEvent):
-            completed = ev
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = cast(str, ev.data)
+        if completed and output is not None:
             break
 
-    assert completed is not None
-    assert isinstance(completed.data, str)
-    assert completed.data == "One | Two"
+    assert completed
+    assert output is not None
+    assert isinstance(output, str)
+    assert output == "One | Two"
+
+
+def test_concurrent_custom_aggregator_uses_callback_name_for_id() -> None:
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    def summarize(results: list[AgentExecutorResponse]) -> str:  # type: ignore[override]
+        return str(len(results))
+
+    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize).build()
+
+    assert "summarize" in wf.executors
+    aggregator = wf.executors["summarize"]
+    assert aggregator.id == "summarize"

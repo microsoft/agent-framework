@@ -8,15 +8,16 @@ from agent_framework import (
     Executor,
     ExecutorFailedEvent,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowFailedEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework._workflow._events import WorkflowOutputEvent
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from typing_extensions import Never
 
 """
 Step 3: Agents in a workflow with streaming
@@ -26,13 +27,14 @@ then passes the conversation to a Reviewer agent that finalizes the result.
 The workflow is invoked with run_stream so you can observe events as they occur.
 
 Purpose:
-Show how to wrap chat agents created by AzureChatClient inside workflow executors, wire them with WorkflowBuilder,
+Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors, wire them with WorkflowBuilder,
 and consume streaming events from the workflow. Demonstrate the @handler pattern with typed inputs and typed
-WorkflowContext[T] outputs, and finish by emitting a WorkflowCompletedEvent from the terminal node while printing
-intermediate events for observability.
+WorkflowContext[T_Out, T_W_Out] outputs. Agents automatically yield outputs when they complete.
+The streaming loop also surfaces WorkflowEvent.origin so you can distinguish runner-generated lifecycle events
+from executor-generated data-plane events.
 
 Prerequisites:
-- Azure OpenAI configured for AzureChatClient with required environment variables.
+- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -48,8 +50,8 @@ class Writer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureChatClient, id: str = "writer"):
-        # Create a domain specific agent using your configured AzureChatClient.
+    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "writer"):
+        # Create a domain specific agent using your configured AzureOpenAIChatClient.
         agent = chat_client.create_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
@@ -85,7 +87,7 @@ class Reviewer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureChatClient, id: str = "reviewer"):
+    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
         agent = chat_client.create_agent(
             instructions=(
@@ -95,20 +97,20 @@ class Reviewer(Executor):
         super().__init__(agent=agent, id=id)
 
     @handler
-    async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[str]) -> None:
-        """Review the full conversation transcript and complete with a final string.
+    async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[Never, str]) -> None:
+        """Review the full conversation transcript and yield the final output.
 
         This node consumes all messages so far. It uses its agent to produce the final text,
-        then signals completion by adding a WorkflowCompletedEvent to the event stream.
+        then yields the output. The workflow completes when it becomes idle.
         """
         response = await self.agent.run(messages)
-        await ctx.add_event(WorkflowCompletedEvent(response.text))
+        await ctx.yield_output(response.text)
 
 
 async def main():
     """Build the two node workflow and run it with streaming to observe events."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     # Instantiate the two agent backed executors.
     writer = Writer(chat_client)
     reviewer = Reviewer(chat_client)
@@ -118,41 +120,45 @@ async def main():
     workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
     # Run the workflow with the user's initial message and stream events as they occur.
-    # In addition to executor events and WorkflowCompletedEvent, this also surfaces run-state and errors.
+    # This surfaces executor events, workflow outputs, run-state changes, and errors.
     async for event in workflow.run_stream(
         ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
     ):
         if isinstance(event, WorkflowStatusEvent):
+            prefix = f"State ({event.origin.value}): "
             if event.state == WorkflowRunState.IN_PROGRESS:
-                print("State: IN_PROGRESS")
-            elif event.state == WorkflowRunState.COMPLETED:
-                print("State: COMPLETED")
+                print(prefix + "IN_PROGRESS")
             elif event.state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS:
-                print("State: IN_PROGRESS_PENDING_REQUESTS (requests in flight)")
+                print(prefix + "IN_PROGRESS_PENDING_REQUESTS (requests in flight)")
             elif event.state == WorkflowRunState.IDLE:
-                print("State: IDLE (no active work)")
+                print(prefix + "IDLE (no active work)")
             elif event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
-                print("State: IDLE_WITH_PENDING_REQUESTS (prompt user or UI now)")
+                print(prefix + "IDLE_WITH_PENDING_REQUESTS (prompt user or UI now)")
             else:
-                print(f"State: {event.state}")
+                print(prefix + str(event.state))
+        elif isinstance(event, WorkflowOutputEvent):
+            print(f"Workflow output ({event.origin.value}): {event.data}")
         elif isinstance(event, ExecutorFailedEvent):
-            print(f"Executor failed: {event.executor_id} {event.details.error_type}: {event.details.message}")
+            print(
+                f"Executor failed ({event.origin.value}): "
+                f"{event.executor_id} {event.details.error_type}: {event.details.message}"
+            )
         elif isinstance(event, WorkflowFailedEvent):
             details = event.details
-            print(f"Workflow failed: {details.error_type}: {details.message}")
+            print(f"Workflow failed ({event.origin.value}): {details.error_type}: {details.message}")
         else:
-            print(event)
+            print(f"{event.__class__.__name__} ({event.origin.value}): {event}")
 
     """
     Sample Output:
 
-    State: IN_PROGRESS
-    ExecutorInvokeEvent(executor_id=writer)
-    ExecutorCompletedEvent(executor_id=writer)
-    ExecutorInvokeEvent(executor_id=reviewer)
-    WorkflowCompletedEvent(data=Drive the Future. Affordable Adventure, Electrified.)
-    ExecutorCompletedEvent(executor_id=reviewer)
-    State: COMPLETED
+    State (RUNNER): IN_PROGRESS
+    ExecutorInvokeEvent (RUNNER): ExecutorInvokeEvent(executor_id=writer)
+    ExecutorCompletedEvent (RUNNER): ExecutorCompletedEvent(executor_id=writer)
+    ExecutorInvokeEvent (RUNNER): ExecutorInvokeEvent(executor_id=reviewer)
+    Workflow output (EXECUTOR): Drive the Future. Affordable Adventure, Electrified.
+    ExecutorCompletedEvent (RUNNER): ExecutorCompletedEvent(executor_id=reviewer)
+    State (RUNNER): IDLE
     """
 
 

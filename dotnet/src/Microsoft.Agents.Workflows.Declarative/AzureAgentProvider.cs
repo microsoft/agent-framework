@@ -48,10 +48,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
         await this.GetAgentsClient().Messages.CreateMessageAsync(
             conversationId,
             role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
-            // TODO: PersistentAgent bug blocks supporting multiple content types:
-            //       https://github.com/Azure/azure-sdk-for-net/issues/52571
-            //contentBlocks: GetContent(),
-            content: conversationMessage.Text,
+            contentBlocks: GetContent(),
             attachments: null,
             metadata: GetMetadata(),
             cancellationToken).ConfigureAwait(false);
@@ -66,36 +63,30 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
             return conversationMessage.AdditionalProperties.ToDictionary(prop => prop.Key, prop => prop.Value?.ToString() ?? string.Empty);
         }
 
-        // TODO: PersistentAgent bug blocks supporting multiple content types:
-        //       https://github.com/Azure/azure-sdk-for-net/issues/52571
-        //IEnumerable<MessageInputContentBlock> GetContent()
-        //{
-        //    foreach (AIContent content in conversationMessage.Contents)
-        //    {
-        //        MessageInputContentBlock? contentBlock =
-        //            content switch
-        //            {
-        //                TextContent textContent => new MessageInputTextBlock(textContent.Text),
-        //                HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
-        //                UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
-        //                _ => null // Unsupported content type
-        //            };
+        IEnumerable<MessageInputContentBlock> GetContent()
+        {
+            foreach (AIContent content in conversationMessage.Contents)
+            {
+                MessageInputContentBlock? contentBlock =
+                    content switch
+                    {
+                        TextContent textContent => new MessageInputTextBlock(textContent.Text),
+                        HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
+                        UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
+                        _ => null // Unsupported content type
+                    };
 
-        //        if (contentBlock is not null)
-        //        {
-        //            yield return contentBlock;
-        //        }
-        //    }
-        //}
+                if (contentBlock is not null)
+                {
+                    yield return contentBlock;
+                }
+            }
+        }
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
-    {
-        AIAgent agent = await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken).ConfigureAwait(false);
-
-        return agent;
-    }
+    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default) =>
+        await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)

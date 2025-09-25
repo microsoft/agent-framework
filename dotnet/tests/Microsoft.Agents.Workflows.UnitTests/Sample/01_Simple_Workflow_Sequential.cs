@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Reflection;
 
@@ -8,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step1EntryPoint
 {
-    public static Workflow<string> WorkflowInstance
+    public static Workflow WorkflowInstance
     {
         get
         {
@@ -18,7 +19,7 @@ internal static class Step1EntryPoint
             WorkflowBuilder builder = new(uppercase);
             builder.AddEdge(uppercase, reverse);
 
-            return builder.Build<string>();
+            return builder.Build();
         }
     }
 
@@ -38,22 +39,17 @@ internal static class Step1EntryPoint
 
 internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
 {
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
-    {
-        string result = message.ToUpperInvariant();
-        return result;
-    }
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context) =>
+        message.ToUpperInvariant();
 }
 
 internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
 {
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
-        char[] charArray = message.ToCharArray();
-        System.Array.Reverse(charArray);
-        string result = new(charArray);
+        string result = string.Concat(message.Reverse());
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);
+        await context.AddEventAsync(new RequestHaltEvent(result)).ConfigureAwait(false);
         return result;
     }
 }

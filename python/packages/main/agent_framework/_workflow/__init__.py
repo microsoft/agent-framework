@@ -31,12 +31,14 @@ from ._events import (
     ExecutorCompletedEvent,
     ExecutorEvent,
     ExecutorFailedEvent,
-    ExecutorInvokeEvent,
+    ExecutorInvokedEvent,
     RequestInfoEvent,
-    WorkflowCompletedEvent,
     WorkflowErrorDetails,
     WorkflowEvent,
+    WorkflowEventSource,
     WorkflowFailedEvent,
+    WorkflowLifecycleEvent,
+    WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
@@ -49,11 +51,7 @@ from ._executor import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
-    SubWorkflowRequestInfo,
-    SubWorkflowResponse,
-    WorkflowExecutor,
     handler,
-    intercepts_request,
 )
 from ._function_executor import FunctionExecutor, executor
 from ._magentic import (
@@ -86,11 +84,10 @@ from ._runner_context import (
 )
 from ._sequential import SequentialBuilder
 from ._shared_state import SharedState
-from ._telemetry import EdgeGroupDeliveryStatus, WorkflowTracer, workflow_tracer
 from ._validation import (
     EdgeDuplicationError,
+    ExecutorDuplicationError,
     GraphConnectivityError,
-    HandlerOutputAnnotationError,
     TypeCompatibilityError,
     ValidationTypeEnum,
     WorkflowValidationError,
@@ -99,6 +96,7 @@ from ._validation import (
 from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
+from ._workflow_executor import WorkflowExecutor
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
@@ -113,18 +111,17 @@ __all__ = [
     "Default",
     "Edge",
     "EdgeDuplicationError",
-    "EdgeGroupDeliveryStatus",
     "Executor",
     "ExecutorCompletedEvent",
+    "ExecutorDuplicationError",
     "ExecutorEvent",
     "ExecutorFailedEvent",
-    "ExecutorInvokeEvent",
+    "ExecutorInvokedEvent",
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
     "FileCheckpointStorage",
     "FunctionExecutor",
     "GraphConnectivityError",
-    "HandlerOutputAnnotationError",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticAgentDeltaEvent",
@@ -157,8 +154,6 @@ __all__ = [
     "SharedState",
     "SingleEdgeGroup",
     "StandardMagenticManager",
-    "SubWorkflowRequestInfo",
-    "SubWorkflowResponse",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
@@ -168,25 +163,24 @@ __all__ = [
     "WorkflowAgent",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
-    "WorkflowCompletedEvent",
     "WorkflowContext",
     "WorkflowErrorDetails",
     "WorkflowEvent",
+    "WorkflowEventSource",
     "WorkflowExecutor",
     "WorkflowFailedEvent",
+    "WorkflowLifecycleEvent",
+    "WorkflowOutputEvent",
     "WorkflowRunResult",
     "WorkflowRunState",
     "WorkflowStartedEvent",
     "WorkflowStatusEvent",
-    "WorkflowTracer",
     "WorkflowValidationError",
     "WorkflowViz",
     "create_edge_runner",
     "executor",
     "handler",
-    "intercepts_request",
     "validate_workflow_graph",
-    "workflow_tracer",
 ]
 
 # Rebuild models to resolve forward references after all imports are complete

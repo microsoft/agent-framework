@@ -4,9 +4,19 @@ import asyncio
 from dataclasses import dataclass
 from uuid import uuid4
 
-from agent_framework import AgentRunResponseUpdate, ChatClientProtocol, ChatMessage, Contents, Role
+from agent_framework import (
+    AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
+    ChatClientProtocol,
+    ChatMessage,
+    Contents,
+    Executor,
+    Role,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
+)
 from agent_framework.openai import OpenAIChatClient
-from agent_framework import AgentRunUpdateEvent, Executor, WorkflowBuilder, WorkflowContext, handler
 from pydantic import BaseModel
 
 """
@@ -17,7 +27,7 @@ This sample demonstrates how to wrap a workflow as an agent using WorkflowAgent.
 It uses a reflection pattern where a Worker executor generates responses and a
 Reviewer executor evaluates them. If the response is not approved, the Worker
 regenerates the output based on feedback until the Reviewer approves it. Only
-approved responses are emitted to the external consumer.
+approved responses are emitted to the external consumer. The workflow completes when idle.
 
 Key Concepts Demonstrated:
 - WorkflowAgent: Wraps a workflow to behave like a regular agent.
@@ -54,8 +64,8 @@ class ReviewResponse:
 class Reviewer(Executor):
     """Executor that reviews agent responses and provides structured feedback."""
 
-    def __init__(self, chat_client: ChatClientProtocol) -> None:
-        super().__init__()
+    def __init__(self, id: str, chat_client: ChatClientProtocol) -> None:
+        super().__init__(id=id)
         self._chat_client = chat_client
 
     @handler
@@ -106,8 +116,8 @@ class Reviewer(Executor):
 class Worker(Executor):
     """Executor that generates responses and incorporates feedback when necessary."""
 
-    def __init__(self, chat_client: ChatClientProtocol) -> None:
-        super().__init__()
+    def __init__(self, id: str, chat_client: ChatClientProtocol) -> None:
+        super().__init__(id=id)
         self._chat_client = chat_client
         self._pending_requests: dict[str, tuple[ReviewRequest, list[ChatMessage]]] = {}
 
@@ -189,8 +199,8 @@ async def main() -> None:
     print("Creating chat client and executors...")
     mini_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-nano")
     chat_client = OpenAIChatClient(ai_model_id="gpt-4.1")
-    reviewer = Reviewer(chat_client=chat_client)
-    worker = Worker(chat_client=mini_chat_client)
+    reviewer = Reviewer(id="reviewer", chat_client=chat_client)
+    worker = Worker(id="worker", chat_client=mini_chat_client)
 
     print("Building workflow with Worker ↔ Reviewer cycle...")
     agent = (

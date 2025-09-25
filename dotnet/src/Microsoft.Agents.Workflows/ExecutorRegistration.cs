@@ -8,7 +8,7 @@ using ExecutorFactoryF = System.Func<System.Threading.Tasks.ValueTask<Microsoft.
 
 namespace Microsoft.Agents.Workflows;
 
-internal class ExecutorRegistration(string id, Type executorType, ExecutorFactoryF provider, object? rawData)
+internal sealed class ExecutorRegistration(string id, Type executorType, ExecutorFactoryF provider, object? rawData)
 {
     public string Id { get; } = Throw.IfNullOrEmpty(id);
     public Type ExecutorType { get; } = Throw.IfNull(executorType);

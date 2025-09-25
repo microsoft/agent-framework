@@ -14,23 +14,23 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.Interpreter;
 public sealed class DeclarativeWorkflowModelTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Fact]
-    public async Task GetDepthForDefault()
+    public void GetDepthForDefault()
     {
-        DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
+        DeclarativeWorkflowModel model = new(CreateExecutor("root"));
         Assert.Equal(0, model.GetDepth(null));
     }
 
     [Fact]
-    public async Task GetDepthForMissingNode()
+    public void GetDepthForMissingNode()
     {
-        DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
+        DeclarativeWorkflowModel model = new(CreateExecutor("root"));
         Assert.Throws<DeclarativeModelException>(() => model.GetDepth("missing"));
     }
 
     [Fact]
-    public async Task ConnectMissingNode()
+    public void ConnectMissingNode()
     {
-        TestExecutor rootExecutor = this.CreateExecutor("root");
+        TestExecutor rootExecutor = CreateExecutor("root");
         DeclarativeWorkflowModel model = new(rootExecutor);
         model.AddLink("root", "missing");
         WorkflowBuilder workflowBuilder = new(rootExecutor);
@@ -38,36 +38,34 @@ public sealed class DeclarativeWorkflowModelTest(ITestOutputHelper output) : Wor
     }
 
     [Fact]
-    public async Task AddToMissingParent()
+    public void AddToMissingParent()
     {
-        DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
-        Assert.Throws<DeclarativeModelException>(() => model.AddNode(this.CreateExecutor("next"), "missing"));
+        DeclarativeWorkflowModel model = new(CreateExecutor("root"));
+        Assert.Throws<DeclarativeModelException>(() => model.AddNode(CreateExecutor("next"), "missing"));
     }
 
     [Fact]
-    public async Task LinkFromMissingSource()
+    public void LinkFromMissingSource()
     {
-        DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
+        DeclarativeWorkflowModel model = new(CreateExecutor("root"));
         Assert.Throws<DeclarativeModelException>(() => model.AddLink("missing", "anything"));
     }
 
     [Fact]
-    public async Task LocateMissingParent()
+    public void LocateMissingParent()
     {
-        DeclarativeWorkflowModel model = new(this.CreateExecutor("root"));
+        DeclarativeWorkflowModel model = new(CreateExecutor("root"));
         Assert.Null(model.LocateParent<TestExecutor>(null));
         Assert.Throws<DeclarativeModelException>(() => model.LocateParent<TestExecutor>("missing"));
     }
 
-    private TestExecutor CreateExecutor(string id) => new(id);
+    private static TestExecutor CreateExecutor(string id) => new(id);
 
     internal sealed class TestExecutor(string actionId) :
         ReflectingExecutor<TestExecutor>(actionId),
         IMessageHandler<string>
     {
-        public async ValueTask HandleAsync(string message, IWorkflowContext context)
-        {
-            await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow.ToShortTimeString()}").ConfigureAwait(false);
-        }
+        public async ValueTask HandleAsync(string message, IWorkflowContext context) =>
+            await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow:t}").ConfigureAwait(false);
     }
 }

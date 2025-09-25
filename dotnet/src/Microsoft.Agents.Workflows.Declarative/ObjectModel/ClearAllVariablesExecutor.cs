@@ -13,50 +13,29 @@ namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
 internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, WorkflowFormulaState state)
     : DeclarativeActionExecutor<ClearAllVariables>(model, state)
 {
-    protected override ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        EvaluationResult<VariablesToClearWrapper> variablesResult = this.State.Evaluator.GetValue<VariablesToClearWrapper>(this.Model.Variables);
+        EvaluationResult<VariablesToClearWrapper> variablesResult = this.Evaluator.GetValue(this.Model.Variables);
 
-        variablesResult.Value.Handle(new ScopeHandler(this.Id, this.State));
-
-        return default;
-    }
-
-    private sealed class ScopeHandler(string executorId, WorkflowFormulaState state) : IEnumVariablesToClearHandler
-    {
-        public void HandleAllGlobalVariables()
+        string? scope = variablesResult.Value.Value switch
         {
-            this.ClearAll(VariableScopeNames.Global);
-        }
+            VariablesToClear.AllGlobalVariables => VariableScopeNames.Global,
+            VariablesToClear.ConversationScopedVariables => WorkflowFormulaState.DefaultScopeName,
+            VariablesToClear.ConversationHistory => null,
+            VariablesToClear.UserScopedVariables => null,
+            _ => null
+        };
 
-        public void HandleConversationHistory()
+        if (scope is not null)
         {
-            // Not supported....
-        }
-
-        public void HandleConversationScopedVariables()
-        {
-            this.ClearAll(WorkflowFormulaState.DefaultScopeName);
-        }
-
-        public void HandleUnknownValue()
-        {
-            // No scope to clear for unknown values.
-        }
-
-        public void HandleUserScopedVariables()
-        {
-            // Not supported....
-        }
-
-        private void ClearAll(string scope)
-        {
-            state.ResetAll(scope);
+            await context.QueueClearScopeAsync(scope).ConfigureAwait(false);
             Debug.WriteLine(
                 $"""
-                 STATE: {this.GetType().Name} [{executorId}]
-                 SCOPE: {scope}
-                 """);
+                STATE: {this.GetType().Name} [{this.Id}]
+                SCOPE: {scope}
+                """);
         }
+
+        return default;
     }
 }

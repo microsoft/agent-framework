@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import os
+from datetime import datetime
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
+from pydantic import BaseModel
 
 from agent_framework import (
     AgentRunResponse,
@@ -16,6 +19,8 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    DataContent,
+    FunctionResultContent,
     HostedWebSearchTool,
     TextContent,
     ToolProtocol,
@@ -24,6 +29,7 @@ from agent_framework import (
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
+from agent_framework.openai._shared import prepare_function_call_results
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -589,3 +595,268 @@ async def test_exception_message_includes_original_error_details() -> None:
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
     assert original_error_message in exception_message
+
+
+def test_chat_response_content_order_text_before_tool_calls(openai_unit_test_env: dict[str, str]):
+    """Test that text content appears before tool calls in ChatResponse contents."""
+    # Import locally to avoid break other tests when the import changes
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
+
+    # Create a mock OpenAI response with both text and tool calls
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="gpt-4o-mini",
+        choices=[
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(
+                    role="assistant",
+                    content="I'll help you with that calculation.",
+                    tool_calls=[
+                        ChatCompletionMessageToolCall(
+                            id="call-123",
+                            type="function",
+                            function=Function(name="calculate", arguments='{"x": 5, "y": 3}'),
+                        )
+                    ],
+                ),
+                finish_reason="tool_calls",
+            )
+        ],
+    )
+
+    client = OpenAIChatClient()
+    response = client._create_chat_response(mock_response, ChatOptions())
+
+    # Verify we have both text and tool call content
+    assert len(response.messages) == 1
+    message = response.messages[0]
+    assert len(message.contents) == 2
+
+    # Verify text content comes first, tool call comes second
+    assert message.contents[0].type == "text"
+    assert message.contents[0].text == "I'll help you with that calculation."
+    assert message.contents[1].type == "function_call"
+    assert message.contents[1].name == "calculate"
+
+
+def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, str]):
+    """Test that falsy values (like empty list) in function result are properly handled."""
+    client = OpenAIChatClient()
+
+    # Test with empty list (falsy but not None)
+    message_with_empty_list = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-123", result=[])])
+
+    openai_messages = client._openai_chat_message_parser(message_with_empty_list)
+    assert len(openai_messages) == 1
+    assert openai_messages[0]["content"] == "[]"  # Empty list should be JSON serialized
+
+    # Test with empty string (falsy but not None)
+    message_with_empty_string = ChatMessage(
+        role="tool", contents=[FunctionResultContent(call_id="call-456", result="")]
+    )
+
+    openai_messages = client._openai_chat_message_parser(message_with_empty_string)
+    assert len(openai_messages) == 1
+    assert openai_messages[0]["content"] == ""  # Empty string should be preserved
+
+    # Test with False (falsy but not None)
+    message_with_false = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-789", result=False)])
+
+    openai_messages = client._openai_chat_message_parser(message_with_false)
+    assert len(openai_messages) == 1
+    assert openai_messages[0]["content"] == "false"  # False should be JSON serialized
+
+
+def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]):
+    """Test that exceptions in function result are properly handled.
+
+    Feel free to remove this test in case there's another new behavior.
+    """
+    client = OpenAIChatClient()
+
+    # Test with exception (no result)
+    test_exception = ValueError("Test error message")
+    message_with_exception = ChatMessage(
+        role="tool", contents=[FunctionResultContent(call_id="call-123", exception=test_exception)]
+    )
+
+    openai_messages = client._openai_chat_message_parser(message_with_exception)
+    assert len(openai_messages) == 1
+    assert openai_messages[0]["content"] == "Error: Test error message"
+    assert openai_messages[0]["tool_call_id"] == "call-123"
+
+
+def test_prepare_function_call_results_with_basemodel():
+    """Test prepare_function_call_results with BaseModel objects."""
+
+    class TestModel(BaseModel):
+        name: str
+        value: int
+        raw_representation: str = "should be excluded"
+        additional_properties: dict = {"should": "be excluded"}
+
+    model_instance = TestModel(name="test", value=42)
+    result = prepare_function_call_results(model_instance)
+
+    assert isinstance(result, str)
+    parsed = json.loads(result)
+    assert parsed["name"] == "test"
+    assert parsed["value"] == 42
+    assert "raw_representation" not in parsed
+    assert "additional_properties" not in parsed
+
+
+def test_prepare_function_call_results_with_nested_structures():
+    """Test prepare_function_call_results with complex nested structures."""
+
+    class NestedModel(BaseModel):
+        id: int
+        raw_representation: str = "excluded"
+
+    # Test with list of BaseModel objects
+    models = [NestedModel(id=1), [NestedModel(id=2)]]
+    result = prepare_function_call_results(models)
+
+    assert isinstance(result, str)
+    parsed = json.loads(result)
+    assert len(parsed) == 2
+    assert parsed[0]["id"] == 1
+    assert isinstance(parsed[1], list)
+    assert len(parsed[1]) == 1
+    assert parsed[1][0]["id"] == 2
+    assert "raw_representation" not in parsed[0]
+    assert "raw_representation" not in parsed[1][0]
+
+
+def test_prepare_function_call_results_with_dict_containing_basemodel():
+    """Test prepare_function_call_results with dictionary containing BaseModel."""
+
+    class TestModel(BaseModel):
+        value: str
+        raw_representation: str = "excluded"
+
+    # Test with dict containing BaseModel
+    complex_dict = {"model": TestModel(value="test"), "simple": "value", "number": 42}
+
+    result = prepare_function_call_results(complex_dict)
+
+    assert isinstance(result, str)
+    parsed = json.loads(result)
+    assert parsed["model"]["value"] == "test"
+    assert "raw_representation" not in parsed["model"]
+    assert parsed["simple"] == "value"
+    assert parsed["number"] == 42
+
+
+def test_prepare_function_call_results_string_passthrough():
+    """Test that string values are passed through directly without JSON encoding."""
+    result = prepare_function_call_results("simple string")
+    assert result == "simple string"
+    assert isinstance(result, str)
+
+
+def test_prepare_function_call_results_with_none_values():
+    """Test that None values in BaseModel fields are preserved to avoid validation errors during reloading."""
+
+    class Flight(BaseModel):
+        flight_id: str
+        departure: datetime | None
+        arrival: datetime | None
+
+    # Test single BaseModel with None values (performance shortcut)
+    flight_with_nones = Flight(flight_id="123", departure=None, arrival=None)
+    result = prepare_function_call_results(flight_with_nones)
+
+    assert isinstance(result, str)
+    parsed = json.loads(result)
+    assert parsed["flight_id"] == "123"
+    assert parsed["departure"] is None
+    assert parsed["arrival"] is None
+
+    new_flight = Flight.model_validate_json(result)
+    assert new_flight == flight_with_nones
+
+
+def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str, str]) -> None:
+    """Test _openai_content_parser converts DataContent with image media type to OpenAI format."""
+    client = OpenAIChatClient()
+
+    # Test DataContent with image media type
+    image_data_content = DataContent(
+        uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+        media_type="image/png",
+    )
+
+    result = client._openai_content_parser(image_data_content)  # type: ignore
+
+    # Should convert to OpenAI image_url format
+    assert result["type"] == "image_url"
+    assert result["image_url"]["url"] == image_data_content.uri
+
+    # Test DataContent with non-image media type should use default model_dump
+    text_data_content = DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
+
+    result = client._openai_content_parser(text_data_content)  # type: ignore
+
+    # Should use default model_dump format
+    assert result["type"] == "data"
+    assert result["uri"] == text_data_content.uri
+    assert result["media_type"] == "text/plain"
+
+    # Test DataContent with audio media type
+    audio_data_content = DataContent(
+        uri="data:audio/wav;base64,UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA",
+        media_type="audio/wav",
+    )
+
+    result = client._openai_content_parser(audio_data_content)  # type: ignore
+
+    # Should convert to OpenAI input_audio format
+    assert result["type"] == "input_audio"
+    # Data should contain just the base64 part, not the full data URI
+    assert result["input_audio"]["data"] == "UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA"
+    assert result["input_audio"]["format"] == "wav"
+
+    # Test DataContent with MP3 audio
+    mp3_data_content = DataContent(uri="data:audio/mp3;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==", media_type="audio/mp3")
+
+    result = client._openai_content_parser(mp3_data_content)  # type: ignore
+
+    # Should convert to OpenAI input_audio format with mp3
+    assert result["type"] == "input_audio"
+    # Data should contain just the base64 part, not the full data URI
+    assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
+    assert result["input_audio"]["format"] == "mp3"
+
+    # Test DataContent with PDF file
+    pdf_data_content = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXS9QYXJlbnQgMiAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDQgMCBSPj4+Pi9Db250ZW50cyA1IDAgUj4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvRm9udC9TdWJ0eXBlL1R5cGUxL0Jhc2VGb250L0hlbHZldGljYT4+CmVuZG9iago1IDAgb2JqCjw8L0xlbmd0aCA0ND4+CnN0cmVhbQpCVApxCjcwIDUwIFRECi9GMSA4IFRmCihIZWxsbyBXb3JsZCEpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQ1IDAwMDAwIG4gCjAwMDAwMDAzMDcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgo0MDUKJSVFT0Y=",
+        media_type="application/pdf",
+    )
+
+    result = client._openai_content_parser(pdf_data_content)  # type: ignore
+
+    # Should convert to OpenAI file format
+    assert result["type"] == "file"
+    assert result["file"]["filename"] == "document.pdf"
+    assert "file_data" in result["file"]
+    # Base64 data should be the full data URI (OpenAI requirement)
+    assert result["file"]["file_data"].startswith("data:application/pdf;base64,")
+
+    # Test DataContent with PDF and custom filename
+    pdf_with_filename = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQ=",
+        media_type="application/pdf",
+        additional_properties={"filename": "report.pdf"},
+    )
+
+    result = client._openai_content_parser(pdf_with_filename)  # type: ignore
+
+    # Should use custom filename
+    assert result["type"] == "file"
+    assert result["file"]["filename"] == "report.pdf"

@@ -25,7 +25,7 @@ public static class AssistantExtensions
             throw new ArgumentNullException(nameof(assistantClientResult));
         }
 
-        return AssistantExtensions.AsAIAgent(assistantClientResult, assistantClient, chatOptions);
+        return AsAIAgent(assistantClientResult.Value, assistantClient, chatOptions);
     }
 
     /// <summary>
@@ -46,9 +46,7 @@ public static class AssistantExtensions
             throw new ArgumentNullException(nameof(assistantClient));
         }
 
-#pragma warning disable CA2000 // Dispose objects before losing scope
         var chatClient = assistantClient.AsIChatClient(assistantMetadata.Id);
-#pragma warning restore CA2000 // Dispose objects before losing scope
 
         return new ChatClientAgent(chatClient, options: new()
         {

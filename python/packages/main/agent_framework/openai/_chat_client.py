@@ -25,11 +25,13 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Contents,
+    DataContent,
     FinishReason,
     FunctionCallContent,
     FunctionResultContent,
     Role,
     TextContent,
+    UriContent,
     UsageContent,
     UsageDetails,
 )
@@ -38,7 +40,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..telemetry import use_telemetry
+from ..observability import use_observability
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
 
@@ -183,10 +185,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             if choice.finish_reason:
                 finish_reason = FinishReason(value=choice.finish_reason)
             contents: list[Contents] = []
-            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
-                contents.extend(parsed_tool_calls)
             if text_content := self._parse_text_from_choice(choice):
                 contents.append(text_content)
+            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
+                contents.extend(parsed_tool_calls)
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -352,8 +354,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                         args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
                 case FunctionResultContent():
                     args["tool_call_id"] = content.call_id
-                    if content.result:
+                    if content.result is not None:
                         args["content"] = prepare_function_call_results(content.result)
+                    elif content.exception is not None:
+                        # Send the exception message to the model
+                        # Otherwise we won't have any channels to talk to OpenAI
+                        # TODO(yuge): This should ideally be customizable
+                        args["content"] = "Error: " + str(content.exception)
                 case _:
                     if "content" not in args:
                         args["content"] = []
@@ -378,6 +385,53 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     "tool_call_id": content.call_id,
                     "content": content.result,
                 }
+            case DataContent() | UriContent() if content.has_top_level_media_type("image"):
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": content.uri},
+                }
+            case DataContent() | UriContent() if content.has_top_level_media_type("audio"):
+                if content.media_type and "wav" in content.media_type:
+                    audio_format = "wav"
+                elif content.media_type and "mp3" in content.media_type:
+                    audio_format = "mp3"
+                else:
+                    # Fallback to default model_dump for unsupported audio formats
+                    return content.model_dump(exclude_none=True)
+
+                # Extract base64 data from data URI
+                audio_data = content.uri
+                if audio_data.startswith("data:"):
+                    # Extract just the base64 part after "data:audio/format;base64,"
+                    audio_data = audio_data.split(",", 1)[-1]
+
+                return {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": audio_data,
+                        "format": audio_format,
+                    },
+                }
+            case DataContent() | UriContent() if content.media_type and content.media_type.startswith("application/"):
+                if content.media_type == "application/pdf":
+                    if content.uri.startswith("data:"):
+                        filename = (
+                            getattr(content, "filename", None)
+                            or content.additional_properties.get("filename", "document.pdf")
+                            if hasattr(content, "additional_properties") and content.additional_properties
+                            else "document.pdf"
+                        )
+                        return {
+                            "type": "file",
+                            "file": {
+                                "file_data": content.uri,  # Send full data URI
+                                "filename": filename,
+                            },
+                        }
+
+                    return content.model_dump(exclude_none=True)
+
+                return content.model_dump(exclude_none=True)
             case _:
                 return content.model_dump(exclude_none=True)
 
@@ -397,7 +451,7 @@ TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
 
 @use_function_invocation
-@use_telemetry
+@use_observability
 class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
     """OpenAI Chat completion class."""
 

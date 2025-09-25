@@ -71,7 +71,7 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     public void FormatTextSegment()
     {
         // Arrange
-        TemplateSegment textSegment = TextSegment.FromText("Hello World");
+        TemplateSegment textSegment = TemplateSegment.FromText("Hello World");
         TemplateLine line = new([textSegment]);
 
         // Act
@@ -100,6 +100,8 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New("Hello World"));
+        this.State.Bind();
+
         ExpressionSegment expressionSegment = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
         TemplateLine line = new([expressionSegment]);
 
@@ -125,7 +127,7 @@ public class TemplateExtensionsTests(ITestOutputHelper output) : RecalcEngineTes
     public void FormatMultipleSegments()
     {
         // Arrange
-        TemplateSegment textSegment = TextSegment.FromText("Hello ");
+        TemplateSegment textSegment = TemplateSegment.FromText("Hello ");
         ExpressionSegment expressionSegment = new(ValueExpression.Expression(@"""World"""));
         TemplateLine line = new([textSegment, expressionSegment]);
 

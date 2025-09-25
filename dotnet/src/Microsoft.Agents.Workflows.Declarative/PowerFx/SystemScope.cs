@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Frozen;
-using System.Collections.Generic;
 using System.Globalization;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
@@ -22,7 +21,6 @@ internal static class SystemScope
         public const string Bot = nameof(Bot);
         public const string Conversation = nameof(Conversation);
         public const string ConversationId = nameof(SystemVariables.ConversationId);
-        public const string InternalId = nameof(InternalId);
         public const string LastMessage = nameof(LastMessage);
         public const string LastMessageId = nameof(SystemVariables.LastMessageId);
         public const string LastMessageText = nameof(SystemVariables.LastMessageText);
@@ -31,79 +29,64 @@ internal static class SystemScope
         public const string UserLanguage = nameof(UserLanguage);
     }
 
-    public static FrozenSet<string> AllNames { get; } = GetNames().ToFrozenSet();
+    public static FrozenSet<string> AllNames { get; } =
+    [
+        Names.Activity,
+        Names.Bot,
+        Names.Conversation,
+        Names.ConversationId,
+        Names.LastMessage,
+        Names.LastMessageId,
+        Names.LastMessageText,
+        Names.Recognizer,
+        Names.User,
+        Names.UserLanguage,
+    ];
 
-    public static IEnumerable<string> GetNames()
+    public static void InitializeSystem(this WorkflowFormulaState state)
     {
-        yield return Names.Activity;
-        yield return Names.Bot;
-        yield return Names.Conversation;
-        yield return Names.ConversationId;
-        yield return Names.InternalId;
-        yield return Names.LastMessage;
-        yield return Names.LastMessageId;
-        yield return Names.LastMessageText;
-        yield return Names.Recognizer;
-        yield return Names.User;
-        yield return Names.UserLanguage;
-    }
+        state.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
+        state.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
 
-    public static void InitializeSystem(this WorkflowFormulaState scopes)
-    {
-        scopes.Set(Names.Activity, RecordValue.Empty(), VariableScopeNames.System);
-        scopes.Set(Names.Bot, RecordValue.Empty(), VariableScopeNames.System);
-
-        scopes.Set(Names.LastMessage, s_emptyMessage, VariableScopeNames.System);
+        state.Set(Names.LastMessage, s_emptyMessage, VariableScopeNames.System);
         Set(Names.LastMessageId);
         Set(Names.LastMessageText);
 
-        scopes.Set(
+        state.Set(
             Names.Conversation,
-            RecordValue.NewRecordFromFields(
+            FormulaValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
                 new NamedValue("LocalTimeZone", FormulaValue.New(TimeZoneInfo.Local.StandardName)),
                 new NamedValue("LocalTimeZoneOffset", FormulaValue.New(TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow))),
                 new NamedValue("InTestMode", FormulaValue.New(false))),
             VariableScopeNames.System);
-        scopes.Set(Names.ConversationId, FormulaType.String.NewBlank(), VariableScopeNames.System);
-        scopes.Set(Names.InternalId, FormulaType.String.NewBlank(), VariableScopeNames.System);
+        state.Set(Names.ConversationId, FormulaType.String.NewBlank(), VariableScopeNames.System);
 
-        scopes.Set(
+        state.Set(
             Names.Recognizer,
-            RecordValue.NewRecordFromFields(
+            FormulaValue.NewRecordFromFields(
                 new NamedValue("Id", FormulaType.String.NewBlank()),
                 new NamedValue("Text", FormulaType.String.NewBlank())),
             VariableScopeNames.System);
 
-        scopes.Set(
+        state.Set(
             Names.User,
-            RecordValue.NewRecordFromFields(
-                new NamedValue("Language", StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))),
+            FormulaValue.NewRecordFromFields(
+                new NamedValue("Language", FormulaValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName))),
             VariableScopeNames.System);
-        scopes.Set(Names.UserLanguage, StringValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName), VariableScopeNames.System);
+        state.Set(Names.UserLanguage, FormulaValue.New(CultureInfo.CurrentCulture.TwoLetterISOLanguageName), VariableScopeNames.System);
 
         void Set(string key, string? value = null)
         {
             if (string.IsNullOrEmpty(value))
             {
-                scopes.Set(key, FormulaType.String.NewBlank(), VariableScopeNames.System);
+                state.Set(key, FormulaType.String.NewBlank(), VariableScopeNames.System);
             }
             else
             {
-                scopes.Set(key, FormulaValue.New(value), VariableScopeNames.System);
+                state.Set(key, FormulaValue.New(value), VariableScopeNames.System);
             }
         }
-    }
-
-    public static FormulaValue GetConversationId(this WorkflowFormulaState state) =>
-        state.Get(Names.ConversationId, VariableScopeNames.System);
-
-    public static void SetConversationId(this WorkflowFormulaState state, string conversationId)
-    {
-        RecordValue conversation = (RecordValue)state.Get(Names.Conversation, VariableScopeNames.System);
-        conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        state.Set(Names.Conversation, conversation, VariableScopeNames.System);
-        state.Set(Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
     }
 
     public static void SetLastMessage(this WorkflowFormulaState state, ChatMessage message)
@@ -111,5 +94,6 @@ internal static class SystemScope
         state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
         state.Set(Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), VariableScopeNames.System);
         state.Set(Names.LastMessageText, FormulaValue.New(message.Text), VariableScopeNames.System);
+        state.Bind();
     }
 }

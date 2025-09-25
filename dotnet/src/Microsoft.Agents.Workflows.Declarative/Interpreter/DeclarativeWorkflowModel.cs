@@ -23,7 +23,7 @@ internal sealed class DeclarativeWorkflowModel
 
     public int GetDepth(string? nodeId)
     {
-        if (nodeId == null)
+        if (nodeId is null)
         {
             return 0;
         }
@@ -112,15 +112,7 @@ internal sealed class DeclarativeWorkflowModel
             workflowBuilder.AddEdge(GetExecutorIsh(link.Source), GetExecutorIsh(targetNode), link.Condition);
         }
 
-        ExecutorIsh GetExecutorIsh(ModelNode node)
-        {
-            if (node.Port is not null)
-            {
-                return node.Port;
-            }
-
-            return node.Executor;
-        }
+        static ExecutorIsh GetExecutorIsh(ModelNode node) => node.Port ?? (ExecutorIsh)node.Executor;
     }
 
     private ModelNode DefineNode(Executor executor, ModelNode? parentNode = null, Action? completionHandler = null)
@@ -148,7 +140,7 @@ internal sealed class DeclarativeWorkflowModel
             return null;
         }
 
-        while (itemId != null)
+        while (itemId is not null)
         {
             if (!this.Nodes.TryGetValue(itemId, out ModelNode? itemNode))
             {
@@ -180,7 +172,7 @@ internal sealed class DeclarativeWorkflowModel
 
         public List<ModelNode> Children { get; } = [];
 
-        public int Depth => this.Parent?.Depth + 1 ?? 0;
+        public int Depth => (this.Parent?.Depth + 1) ?? 0;
 
         public Action? CompletionHandler => completionHandler;
     }

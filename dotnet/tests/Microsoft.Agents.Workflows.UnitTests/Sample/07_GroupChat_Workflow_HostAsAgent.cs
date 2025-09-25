@@ -13,7 +13,10 @@ internal static class Step7EntryPoint
 {
     public static async ValueTask RunAsync(TextWriter writer, int maxSteps = 2)
     {
-        Workflow<List<ChatMessage>> workflow = Step6EntryPoint.CreateWorkflow(maxSteps);
+        Workflow<List<ChatMessage>> workflow = (await Step6EntryPoint.CreateWorkflow(maxSteps)
+                                                                     .TryPromoteAsync<List<ChatMessage>>()
+                                                                     .ConfigureAwait(false))!;
+
         AIAgent agent = workflow.AsAgent("group-chat-agent", "Group Chat Agent");
 
         AgentThread thread = agent.GetNewThread();

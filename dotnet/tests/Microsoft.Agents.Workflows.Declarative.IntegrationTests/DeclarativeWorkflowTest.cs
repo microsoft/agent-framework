@@ -20,15 +20,15 @@ namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests;
 /// Tests execution of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
 /// </summary>
 [Collection("Global")]
-public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixture agentFixture) : WorkflowTest(output), IClassFixture<AgentFixture>
+public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
-    public Task Validate(string workflowFileName, string testcaseFileName) =>
-        this.RunWorkflow(workflowFileName, testcaseFileName);
+    public Task ValidateAsync(string workflowFileName, string testcaseFileName) =>
+        this.RunWorkflowAsync(workflowFileName, testcaseFileName);
 
-    private Task RunWorkflow(string workflowFileName, string testcaseFileName)
+    private Task RunWorkflowAsync(string workflowFileName, string testcaseFileName)
     {
         this.Output.WriteLine($"WORKFLOW: {workflowFileName}");
         this.Output.WriteLine($"TESTCASE: {testcaseFileName}");
@@ -42,13 +42,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         return
             testcase.Setup.Input.Type switch
             {
-                nameof(ChatMessage) => this.RunWorkflow<ChatMessage>(testcase, workflowPath, configuration),
-                nameof(String) => this.RunWorkflow<string>(testcase, workflowPath, configuration),
+                nameof(ChatMessage) => this.RunWorkflowAsync<ChatMessage>(testcase, workflowPath, configuration),
+                nameof(String) => this.RunWorkflowAsync<string>(testcase, workflowPath, configuration),
                 _ => throw new NotSupportedException($"Input type '{testcase.Setup.Input.Type}' is not supported."),
             };
     }
 
-    private async Task RunWorkflow<TInput>(
+    private async Task RunWorkflowAsync<TInput>(
         Testcase testcase,
         string workflowPath,
         IConfiguration configuration) where TInput : notnull
@@ -58,7 +58,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         AzureAIConfiguration? foundryConfig = configuration.GetSection("AzureAI").Get<AzureAIConfiguration>();
         Assert.NotNull(foundryConfig);
 
-        IDictionary<string, string?> agentMap = await agentFixture.GetAgentsAsync(foundryConfig);
+        IReadOnlyDictionary<string, string?> agentMap = await AgentFixture.GetAgentsAsync(foundryConfig);
 
         IConfiguration workflowConfig =
             new ConfigurationBuilder()
@@ -71,7 +71,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
                 Configuration = workflowConfig,
                 LoggerFactory = this.Output
             };
-        Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
 
         WorkflowEvents workflowEvents = await WorkflowHarness.RunAsync(workflow, (TInput)GetInput<TInput>(testcase));
         foreach (DeclarativeActionInvokedEvent actionInvokeEvent in workflowEvents.ActionInvokeEvents)

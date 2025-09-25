@@ -5,14 +5,15 @@ import asyncio
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any
 
 import aiofiles
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
-    WorkflowBuilder,  # Fluent graph builder for executors and edges
-    WorkflowCompletedEvent,  # Terminal event that carries final output
+    WorkflowBuilder,  # Fluent builder for executors and edges
     WorkflowContext,  # Per run context with shared state and messaging
+    WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
 )
@@ -61,7 +62,7 @@ class Split(Executor):
 
     def __init__(self, map_executor_ids: list[str], id: str | None = None):
         """Store mapper ids so we can assign non overlapping ranges per mapper."""
-        super().__init__(id)
+        super().__init__(id=id or "split")
         self._map_executor_ids = map_executor_ids
 
     @handler
@@ -145,7 +146,7 @@ class Shuffle(Executor):
 
     def __init__(self, reducer_ids: list[str], id: str | None = None):
         """Remember reducer ids so we can partition work deterministically."""
-        super().__init__(id)
+        super().__init__(id=id or "shuffle")
         self._reducer_ids = reducer_ids
 
     @handler
@@ -246,12 +247,12 @@ class Reduce(Executor):
 
 
 class CompletionExecutor(Executor):
-    """Joins all reducer outputs and emits the final completion event."""
+    """Joins all reducer outputs and yields the final output."""
 
     @handler
-    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext[Any]) -> None:
-        """Collect reducer output file paths and publish a terminal event."""
-        await ctx.add_event(WorkflowCompletedEvent(data=[result.file_path for result in data]))
+    async def complete(self, data: list[ReduceCompleted], ctx: WorkflowContext[Never, list[str]]) -> None:
+        """Collect reducer output file paths and yield final output."""
+        await ctx.yield_output([result.file_path for result in data])
 
 
 async def main():
@@ -303,14 +304,10 @@ async def main():
         raw_text = await f.read()
 
     # Step 4: Run the workflow with the raw text as input.
-    completion_event = None
     async for event in workflow.run_stream(raw_text):
         print(f"Event: {event}")
-        if isinstance(event, WorkflowCompletedEvent):
-            completion_event = event
-
-    if completion_event:
-        print(f"Completion Event: {completion_event}")
+        if isinstance(event, WorkflowOutputEvent):
+            print(f"Final Output: {event.data}")
 
 
 if __name__ == "__main__":

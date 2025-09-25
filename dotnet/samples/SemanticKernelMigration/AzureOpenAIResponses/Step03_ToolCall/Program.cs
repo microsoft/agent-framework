@@ -21,10 +21,10 @@ Console.WriteLine($"User Input: {userInput}");
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     OpenAIResponseAgent agent = new(new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
         .GetOpenAIResponseClient(deploymentName));
@@ -43,7 +43,7 @@ async Task SKAgent()
     }
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
         .GetOpenAIResponseClient(deploymentName)

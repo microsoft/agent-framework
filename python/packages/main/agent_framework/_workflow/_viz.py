@@ -89,25 +89,33 @@ class WorkflowViz:
         dot_content = self.to_digraph()
         source = graphviz.Source(dot_content)
 
-        if filename:
-            # Save to specified file
-            output_path = Path(filename)
-            if output_path.suffix and output_path.suffix[1:] != format:
-                raise ValueError(f"File extension {output_path.suffix} doesn't match format {format}")
+        try:
+            if filename:
+                # Save to specified file
+                output_path = Path(filename)
+                if output_path.suffix and output_path.suffix[1:] != format:
+                    raise ValueError(f"File extension {output_path.suffix} doesn't match format {format}")
 
-            # Remove extension if present since graphviz.render() adds it
-            base_name = str(output_path.with_suffix(""))
+                # Remove extension if present since graphviz.render() adds it
+                base_name = str(output_path.with_suffix(""))
+                source.render(base_name, format=format, cleanup=True)
+
+                # Return the actual filename with extension
+                return f"{base_name}.{format}"
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False) as temp_file:
+                temp_path = Path(temp_file.name)
+                base_name = str(temp_path.with_suffix(""))
+
             source.render(base_name, format=format, cleanup=True)
-
-            # Return the actual filename with extension
             return f"{base_name}.{format}"
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False) as temp_file:
-            temp_path = Path(temp_file.name)
-            base_name = str(temp_path.with_suffix(""))
-
-        source.render(base_name, format=format, cleanup=True)
-        return f"{base_name}.{format}"
+        except graphviz.backend.execute.ExecutableNotFound as e:
+            raise ImportError(
+                "The graphviz executables are not found. The graphviz Python package is installed, but the "
+                "graphviz executables (dot, neato, etc.) are not available on your system's PATH. "
+                "Install graphviz executables: sudo apt-get install graphviz on Debian/Ubuntu, "
+                "brew install graphviz on macOS, or download from https://graphviz.org/download/ for other platforms."
+            ) from e
 
     def save_svg(self, filename: str) -> str:
         """Convenience method to save as SVG.
@@ -245,7 +253,7 @@ class WorkflowViz:
         """Emit DOT subgraphs for any WorkflowExecutor instances found in the workflow."""
         # Lazy import to avoid any potential import cycles
         try:
-            from ._executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor  # type: ignore
         except ImportError:  # pragma: no cover - best-effort; if unavailable, skip subgraphs
             return
 
@@ -319,7 +327,7 @@ class WorkflowViz:
 
     def _emit_sub_workflows_mermaid(self, wf: Workflow, lines: list[str], indent: str) -> None:
         try:
-            from ._executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor  # type: ignore
         except ImportError:  # pragma: no cover
             return
 

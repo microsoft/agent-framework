@@ -33,7 +33,16 @@ internal sealed class Program
 {
     public static async Task Main(string[] args)
     {
-        Program program = new(args);
+        string? workflowFile = ParseWorkflowFile(args);
+        if (workflowFile is null)
+        {
+            Notify("\nUsage: DeclarativeWorkflow <workflow-file> [<input>]\n");
+            return;
+        }
+
+        string? workflowInput = ParseWorkflowInput(args);
+
+        Program program = new(workflowFile, workflowInput);
         await program.ExecuteAsync();
     }
 
@@ -44,7 +53,7 @@ internal sealed class Program
 
         Stopwatch timer = Stopwatch.StartNew();
 
-        Workflow<string> workflow = this.CreateWorkflow();
+        Workflow workflow = this.CreateWorkflow();
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
 
@@ -53,7 +62,7 @@ internal sealed class Program
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
 
-        CheckpointManager checkpointManager = new();
+        CheckpointManager checkpointManager = CheckpointManager.Default;
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 
         bool isComplete = false;
@@ -91,7 +100,7 @@ internal sealed class Program
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    private Workflow<string> CreateWorkflow()
+    private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         DeclarativeWorkflowOptions options =
@@ -99,11 +108,10 @@ internal sealed class Program
             {
                 Configuration = this.Configuration
             };
-        Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
-        return workflow;
+
+        return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
     }
 
-    private const string DefaultWorkflow = "HelloWorld.yaml";
     private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
 
     private static Dictionary<string, string> NameCache { get; } = [];
@@ -116,10 +124,10 @@ internal sealed class Program
     private IConfiguration Configuration { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
 
-    private Program(string[] args)
+    private Program(string workflowFile, string? workflowInput)
     {
-        this.WorkflowFile = ParseWorkflowFile(args);
-        this.WorkflowInput = ParseWorkflowInput(args);
+        this.WorkflowFile = workflowFile;
+        this.WorkflowInput = workflowInput;
 
         this.Configuration = InitializeConfig();
 
@@ -151,7 +159,7 @@ internal sealed class Program
                     Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionComplete.ActionType}]");
                     break;
 
-                case ExecutorFailureEvent executorFailure:
+                case ExecutorFailedEvent executorFailure:
                     Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
                     break;
 
@@ -164,7 +172,7 @@ internal sealed class Program
                     Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
                     if (response is not null)
                     {
-                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse<InputResponse>(response);
+                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse(response);
                         await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
                         response = null;
                     }
@@ -256,8 +264,8 @@ internal sealed class Program
     }
     private static InputResponse HandleExternalRequest(ExternalRequest request)
     {
-        InputRequest? message = request.Data as InputRequest;
-        string? userInput = null;
+        InputRequest? message = request.Data.As<InputRequest>();
+        string? userInput;
         do
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;
@@ -270,16 +278,20 @@ internal sealed class Program
         return new InputResponse(userInput);
     }
 
-    private static string ParseWorkflowFile(string[] args)
+    private static string? ParseWorkflowFile(string[] args)
     {
-        string workflowFile = args.FirstOrDefault() ?? DefaultWorkflow;
+        string? workflowFile = args.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(workflowFile))
+        {
+            return null;
+        }
 
         if (!File.Exists(workflowFile) && !Path.IsPathFullyQualified(workflowFile))
         {
             string? repoFolder = GetRepoFolder();
             if (repoFolder is not null)
             {
-                workflowFile = Path.Combine(repoFolder, "Workflows", workflowFile);
+                workflowFile = Path.Combine(repoFolder, "workflow-samples", workflowFile);
                 workflowFile = Path.ChangeExtension(workflowFile, ".yaml");
             }
         }

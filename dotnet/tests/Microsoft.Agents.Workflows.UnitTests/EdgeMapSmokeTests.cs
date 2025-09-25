@@ -17,9 +17,9 @@ public class EdgeMapSmokeTests
         runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
         runContext.Executors["executor3"] = new ForwardMessageExecutor<string>("executor3");
 
-        Dictionary<string, HashSet<Edge>> workflowEdges = new();
+        Dictionary<string, HashSet<Edge>> workflowEdges = [];
 
-        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3");
+        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0));
         Edge fanInEdge = new(edgeData);
 
         workflowEdges["executor1"] = [fanInEdge];

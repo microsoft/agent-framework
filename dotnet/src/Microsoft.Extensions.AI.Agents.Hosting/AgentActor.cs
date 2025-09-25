@@ -34,14 +34,11 @@ internal sealed class AgentActor(
 
         this._etag = response.ETag;
         var hasExistingThread = false;
-        if (response.Results[0] is GetValueResult threadResult)
+        if (response.Results[0] is GetValueResult { Value: { } threadJson })
         {
-            if (threadResult.Value is { } threadJson)
-            {
-                // Deserialize the thread state if it exists
-                this._thread = agent.DeserializeThread(threadJson, cancellationToken: cancellationToken);
-                hasExistingThread = true;
-            }
+            // Deserialize the thread state if it exists
+            this._thread = agent.DeserializeThread(threadJson);
+            hasExistingThread = true;
         }
 
         this._thread ??= agent.GetNewThread();
@@ -89,7 +86,7 @@ internal sealed class AgentActor(
         {
             // Unsupported method, we can only handle "Run" requests.
             var data = JsonSerializer.SerializeToElement("Unsupported method.", AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(string)));
-            var writeResponse = await context.WriteAsync(
+            await context.WriteAsync(
                 new(this._etag, [
                     new UpdateRequestOperation(
                         requestId,

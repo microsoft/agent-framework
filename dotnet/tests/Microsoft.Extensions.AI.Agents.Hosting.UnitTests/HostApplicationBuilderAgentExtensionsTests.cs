@@ -14,12 +14,10 @@ public class HostApplicationBuilderAgentExtensionsTests
     /// Verifies that providing a null builder to AddAIAgent throws an ArgumentNullException.
     /// </summary>
     [Fact]
-    public void AddAIAgent_NullBuilder_ThrowsArgumentNullException()
-    {
+    public void AddAIAgent_NullBuilder_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(
             () => HostApplicationBuilderAgentExtensions.AddAIAgent(null!, "agent", "instructions"));
-    }
 
     /// <summary>
     /// Verifies that AddAIAgent with valid parameters returns the same builder instance.
@@ -106,15 +104,13 @@ public class HostApplicationBuilderAgentExtensionsTests
     /// Verifies that AddAIAgent with factory delegate throws ArgumentNullException for null builder.
     /// </summary>
     [Fact]
-    public void AddAIAgentWithFactory_NullBuilder_ThrowsArgumentNullException()
-    {
+    public void AddAIAgentWithFactory_NullBuilder_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             HostApplicationBuilderAgentExtensions.AddAIAgent(
                 null!,
                 "agentName",
                 (sp, key) => new Mock<AIAgent>().Object));
-    }
 
     /// <summary>
     /// Verifies that AddAIAgent with factory delegate throws ArgumentNullException for null name.
@@ -179,7 +175,7 @@ public class HostApplicationBuilderAgentExtensionsTests
 
         // Assert
         var descriptor = builder.Services.FirstOrDefault(
-            d => d.ServiceKey as string == AgentName &&
+            d => (d.ServiceKey as string) == AgentName &&
                  d.ServiceType == typeof(AIAgent));
 
         Assert.NotNull(descriptor);
@@ -275,7 +271,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         Assert.Same(builder, result);
         // The agent should be registered (proving the method chain worked)
         var descriptor = builder.Services.FirstOrDefault(
-            d => d.ServiceKey as string == "agentName" &&
+            d => d.ServiceKey is "agentName" &&
                  d.ServiceType == typeof(AIAgent));
         Assert.NotNull(descriptor);
     }
@@ -302,7 +298,7 @@ public class HostApplicationBuilderAgentExtensionsTests
         // Assert
         Assert.Same(builder, result);
         var descriptor = builder.Services.FirstOrDefault(
-            d => d.ServiceKey as string == name &&
+            d => (d.ServiceKey as string) == name &&
                  d.ServiceType == typeof(AIAgent));
         Assert.NotNull(descriptor);
     }

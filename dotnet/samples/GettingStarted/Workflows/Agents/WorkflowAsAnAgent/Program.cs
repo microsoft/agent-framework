@@ -38,7 +38,7 @@ public static class Program
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the workflow and turn it into an agent
-        var workflow = WorkflowHelper.GetWorkflow(chatClient);
+        var workflow = await WorkflowHelper.GetWorkflowAsync(chatClient).ConfigureAwait(false);
         var agent = workflow.AsAgent("workflow-agent", "Workflow Agent");
         var thread = agent.GetNewThread();
 
@@ -64,7 +64,7 @@ public static class Program
             Dictionary<string, List<AgentRunResponseUpdate>> buffer = [];
             await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, thread).ConfigureAwait(false))
             {
-                if (update.MessageId == null)
+                if (update.MessageId is null)
                 {
                     // skip updates that don't have a message ID
                     continue;

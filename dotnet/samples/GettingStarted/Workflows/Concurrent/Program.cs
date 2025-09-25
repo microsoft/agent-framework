@@ -56,18 +56,19 @@ public static class Program
         var aggregationExecutor = new ConcurrentAggregationExecutor();
 
         // Build the workflow by adding executors and connecting them
-        WorkflowBuilder builder = new(startExecutor);
-        builder.AddFanOutEdge(startExecutor, targets: [physicist, chemist]);
-        builder.AddFanInEdge(aggregationExecutor, sources: [physicist, chemist]);
-        var workflow = builder.Build<string>();
+        var workflow = new WorkflowBuilder(startExecutor)
+            .AddFanOutEdge(startExecutor, targets: [physicist, chemist])
+            .AddFanInEdge(aggregationExecutor, sources: [physicist, chemist])
+            .WithOutputFrom(aggregationExecutor)
+            .Build();
 
         // Execute the workflow in streaming mode
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is temperature?");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is WorkflowCompletedEvent completed)
+            if (evt is WorkflowOutputEvent output)
             {
-                Console.WriteLine($"Workflow completed with results:\n{completed.Data}");
+                Console.WriteLine($"Workflow completed with results:\n{output.Data}");
             }
         }
     }
@@ -118,7 +119,7 @@ internal sealed class ConcurrentAggregationExecutor() :
         if (this._messages.Count == 2)
         {
             var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.AuthorName}: {m.Text}"));
-            await context.AddEventAsync(new WorkflowCompletedEvent(formattedMessages));
+            await context.YieldOutputAsync(formattedMessages);
         }
     }
 }

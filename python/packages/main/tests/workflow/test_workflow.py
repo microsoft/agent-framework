@@ -15,9 +15,11 @@ from agent_framework import (
     RequestInfoMessage,
     RequestResponse,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,
+    WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
 )
 
@@ -36,20 +38,20 @@ class IncrementExecutor(Executor):
     increment: int = 1
 
     @handler
-    async def mock_handler(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage]) -> None:
+    async def mock_handler(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
         if message.data < self.limit:
             await ctx.send_message(NumberMessage(data=message.data + self.increment))
         else:
-            await ctx.add_event(WorkflowCompletedEvent(data=message.data))
+            await ctx.yield_output(message.data)
 
 
 class AggregatorExecutor(Executor):
     """A mock executor that aggregates results from multiple executors."""
 
     @handler
-    async def mock_handler(self, messages: list[NumberMessage], ctx: WorkflowContext[Any]) -> None:
-        # This mock simply returns the data incremented by 1
-        await ctx.add_event(WorkflowCompletedEvent(data=sum(msg.data for msg in messages)))
+    async def mock_handler(self, messages: list[NumberMessage], ctx: WorkflowContext[Any, int]) -> None:
+        # This mock simply returns the sum of the data
+        await ctx.yield_output(sum(msg.data for msg in messages))
 
 
 @dataclass
@@ -70,18 +72,21 @@ class MockExecutorRequestApproval(Executor):
 
     @handler
     async def mock_handler_b(
-        self, message: RequestResponse[RequestInfoMessage, ApprovalMessage], ctx: WorkflowContext[NumberMessage]
+        self,
+        message: RequestResponse[RequestInfoMessage, ApprovalMessage],
+        ctx: WorkflowContext[NumberMessage, int],
     ) -> None:
         """A mock handler that processes the approval response."""
         data = await ctx.get_shared_state(self.id)
+        assert isinstance(data, int)
         assert isinstance(message.data, ApprovalMessage)
         if message.data.approved:
-            await ctx.add_event(WorkflowCompletedEvent(data=data))
+            await ctx.yield_output(data)
         else:
             await ctx.send_message(NumberMessage(data=data))
 
 
-async def test_workflow_run_streaming():
+async def test_workflow_run_streaming() -> None:
     """Test the workflow run stream."""
     executor_a = IncrementExecutor(id="executor_a")
     executor_b = IncrementExecutor(id="executor_b")
@@ -97,7 +102,7 @@ async def test_workflow_run_streaming():
     result: int | None = None
     async for event in workflow.run_stream(NumberMessage(data=0)):
         assert isinstance(event, WorkflowEvent)
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             result = event.data
 
     assert result is not None and result == 10
@@ -136,9 +141,9 @@ async def test_workflow_run():
     )
 
     events = await workflow.run(NumberMessage(data=0))
-    completed_event = events.get_completed_event()
-    assert isinstance(completed_event, WorkflowCompletedEvent)
-    assert completed_event.data == 10
+    assert events.get_final_state() == WorkflowRunState.IDLE
+    outputs = events.get_outputs()
+    assert outputs[0] == 10
 
 
 async def test_workflow_run_not_completed():
@@ -163,7 +168,7 @@ async def test_workflow_send_responses_streaming():
     """Test the workflow run with approval."""
     executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
-    request_info_executor = RequestInfoExecutor()
+    request_info_executor = RequestInfoExecutor(id="request_info")
 
     workflow = (
         WorkflowBuilder()
@@ -182,20 +187,25 @@ async def test_workflow_send_responses_streaming():
 
     assert request_info_event is not None
     result: int | None = None
+    completed = False
     async for event in workflow.send_responses_streaming({
         request_info_event.request_id: ApprovalMessage(approved=True)
     }):
-        if isinstance(event, WorkflowCompletedEvent):
+        if isinstance(event, WorkflowOutputEvent):
             result = event.data
+        elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+            completed = True
 
-    assert result is not None and result == 1  # The data should be incremented by 1 from the initial message
+    assert (
+        completed and result is not None and result == 1
+    )  # The data should be incremented by 1 from the initial message
 
 
 async def test_workflow_send_responses():
     """Test the workflow run with approval."""
     executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
-    request_info_executor = RequestInfoExecutor()
+    request_info_executor = RequestInfoExecutor(id="request_info")
 
     workflow = (
         WorkflowBuilder()
@@ -214,9 +224,9 @@ async def test_workflow_send_responses():
 
     result = await workflow.send_responses({request_info_events[0].request_id: ApprovalMessage(approved=True)})
 
-    completed_event = result.get_completed_event()
-    assert isinstance(completed_event, WorkflowCompletedEvent)
-    assert completed_event.data == 1  # The data should be incremented by 1 from the initial message
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    outputs = result.get_outputs()
+    assert outputs[0] == 1  # The data should be incremented by 1 from the initial message
 
 
 async def test_fan_out():
@@ -231,12 +241,13 @@ async def test_fan_out():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
-    # executor_b will also emit a WorkflowCompletedEvent
+    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
+    # executor_b will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
     assert len(events) == 7
 
-    completed_event = events.get_completed_event()
-    assert completed_event is not None and completed_event.data == 1
+    assert events.get_final_state() == WorkflowRunState.IDLE
+    outputs = events.get_outputs()
+    assert outputs[0] == 1
 
 
 async def test_fan_out_multiple_completed_events():
@@ -251,12 +262,13 @@ async def test_fan_out_multiple_completed_events():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
-    # executor_a and executor_b will also emit a WorkflowCompletedEvent
+    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
+    # executor_b and executor_c will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
     assert len(events) == 8
 
-    with pytest.raises(ValueError):
-        events.get_completed_event()
+    # Multiple outputs are expected from both executors
+    outputs = events.get_outputs()
+    assert len(outputs) == 2
 
 
 async def test_fan_in():
@@ -276,19 +288,20 @@ async def test_fan_in():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokeEvent and ExecutorCompletedEvent
-    # aggregator will also emit a WorkflowCompletedEvent
+    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
+    # aggregator will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
     assert len(events) == 9
 
-    completed_event = events.get_completed_event()
-    assert completed_event is not None and completed_event.data == 4
+    assert events.get_final_state() == WorkflowRunState.IDLE
+    outputs = events.get_outputs()
+    assert outputs[0] == 4  # executor_a(0->1), both executor_b and executor_c(1->2), aggregator(2+2=4)
 
 
 @pytest.fixture
 def simple_executor() -> Executor:
     class SimpleExecutor(Executor):
         @handler
-        async def handle_message(self, message: str, context: WorkflowContext[None]) -> None:
+        async def handle_message(self, message: str, context: WorkflowContext) -> None:
             pass
 
     return SimpleExecutor(id="test_executor")
@@ -442,7 +455,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
         # Test non-streaming run_from_checkpoint method
         result = await workflow.run_from_checkpoint(checkpoint_id)
         assert isinstance(result, list)  # Should return WorkflowRunResult which extends list
-        assert hasattr(result, "get_completed_event")  # Should have WorkflowRunResult methods
+        assert hasattr(result, "get_outputs")  # Should have WorkflowRunResult methods
 
 
 async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executor: Executor):
@@ -498,7 +511,7 @@ class StateTrackingExecutor(Executor):
     """An executor that tracks state in shared state to test context reset behavior."""
 
     @handler
-    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any]) -> None:
+    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any, list]) -> None:
         """Handle the message and track it in shared state."""
         # Get existing messages from shared state
         try:
@@ -513,8 +526,8 @@ class StateTrackingExecutor(Executor):
         # Update shared state
         await ctx.set_shared_state("processed_messages", existing_messages)
 
-        # Complete workflow with current shared state
-        await ctx.add_event(WorkflowCompletedEvent(data=existing_messages.copy()))  # type: ignore
+        # Yield output
+        await ctx.yield_output(existing_messages.copy())  # type: ignore
 
 
 async def test_workflow_multiple_runs_no_state_collision():
@@ -536,27 +549,27 @@ async def test_workflow_multiple_runs_no_state_collision():
 
         # Run 1: Should only see messages from run 1
         result1 = await workflow.run(StateTrackingMessage(data="message1", run_id="run1"))
-        completed1 = result1.get_completed_event()
-        assert completed1 is not None
-        assert completed1.data == ["run1:message1"]
+        assert result1.get_final_state() == WorkflowRunState.IDLE
+        outputs1 = result1.get_outputs()
+        assert outputs1[0] == ["run1:message1"]
 
         # Run 2: Should only see messages from run 2, not run 1
         result2 = await workflow.run(StateTrackingMessage(data="message2", run_id="run2"))
-        completed2 = result2.get_completed_event()
-        assert completed2 is not None
-        assert completed2.data == ["run2:message2"]  # Should NOT contain run1 data
+        assert result2.get_final_state() == WorkflowRunState.IDLE
+        outputs2 = result2.get_outputs()
+        assert outputs2[0] == ["run2:message2"]  # Should NOT contain run1 data
 
         # Run 3: Should only see messages from run 3
         result3 = await workflow.run(StateTrackingMessage(data="message3", run_id="run3"))
-        completed3 = result3.get_completed_event()
-        assert completed3 is not None
-        assert completed3.data == ["run3:message3"]  # Should NOT contain run1 or run2 data
+        assert result3.get_final_state() == WorkflowRunState.IDLE
+        outputs3 = result3.get_outputs()
+        assert outputs3[0] == ["run3:message3"]  # Should NOT contain run1 or run2 data
 
         # Verify that each run only processed its own message
         # This confirms that the checkpointable context properly resets between runs
-        assert completed1.data != completed2.data
-        assert completed2.data != completed3.data
-        assert completed1.data != completed3.data
+        assert outputs1[0] != outputs2[0]
+        assert outputs2[0] != outputs3[0]
+        assert outputs1[0] != outputs3[0]
 
 
 async def test_comprehensive_edge_groups_workflow():
@@ -604,17 +617,17 @@ async def test_comprehensive_edge_groups_workflow():
     # router(2->3) -> switch routes to proc_a -> proc_a(3->4) -> fanout_hub(4->5)
     # -> [parallel_1(5->8), parallel_2(5->10)] -> aggregator(8+10=18)
     events_small = await workflow.run(NumberMessage(data=2))
-    completed_small = events_small.get_completed_event()
-    assert completed_small is not None
-    assert completed_small.data == 18  # Exact expected result: 8+10 from parallel processors
+    assert events_small.get_final_state() == WorkflowRunState.IDLE
+    outputs_small = events_small.get_outputs()
+    assert outputs_small[0] == 18  # Exact expected result: 8+10 from parallel processors
 
     # Test with large number (should go through processor_b)
     # router(8->9) -> switch routes to proc_b -> proc_b(9->11) -> fanout_hub(11->12)
     # -> [parallel_1(12->15), parallel_2(12->17)] -> aggregator(15+17=32)
     events_large = await workflow.run(NumberMessage(data=8))
-    completed_large = events_large.get_completed_event()
-    assert completed_large is not None
-    assert completed_large.data == 32  # Exact expected result: 15+17 from parallel processors
+    assert events_large.get_final_state() == WorkflowRunState.IDLE
+    outputs_large = events_large.get_outputs()
+    assert outputs_large[0] == 32  # Exact expected result: 15+17 from parallel processors
 
     # The key verification is that we successfully executed a workflow using all three edge group types
     # and that both switch-case paths work (small vs large numbers)
@@ -624,9 +637,9 @@ async def test_comprehensive_edge_groups_workflow():
     assert len(events_large) >= 6
 
     # Verify different paths were taken by checking exact results
-    assert completed_small.data == 18, f"Small number path should result in 18, got {completed_small.data}"
-    assert completed_large.data == 32, f"Large number path should result in 32, got {completed_large.data}"
-    assert completed_small.data != completed_large.data, "Different paths should produce different results"
+    assert outputs_small[0] == 18, f"Small number path should result in 18, got {outputs_small[0]}"
+    assert outputs_large[0] == 32, f"Large number path should result in 32, got {outputs_large[0]}"
+    assert outputs_small[0] != outputs_large[0], "Different paths should produce different results"
 
     # Both tests should complete successfully, proving all edge group types work
 
@@ -660,17 +673,15 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
     # Test the cycle
     # Expected: exec_a(2->4) -> exec_b(4->5) -> exec_a(5->7, completes because 7 >= 6)
     events = await workflow.run(NumberMessage(data=2))
-    completed_event = events.get_completed_event()
-    assert completed_event is not None
-    assert (
-        completed_event.data is not None and completed_event.data >= 6
-    )  # Should complete when executor_a reaches its limit
+    assert events.get_final_state() == WorkflowRunState.IDLE
+    outputs = events.get_outputs()
+    assert outputs[0] is not None and outputs[0] >= 6  # Should complete when executor_a reaches its limit
 
     # Verify cycling occurred (should have events from both executors)
-    # Check for ExecutorInvokeEvent and ExecutorCompletedEvent types that have executor_id
-    from agent_framework import ExecutorCompletedEvent, ExecutorInvokeEvent
+    # Check for ExecutorInvokedEvent and ExecutorCompletedEvent types that have executor_id
+    from agent_framework import ExecutorCompletedEvent, ExecutorInvokedEvent
 
-    executor_events = [e for e in events if isinstance(e, (ExecutorInvokeEvent, ExecutorCompletedEvent))]
+    executor_events = [e for e in events if isinstance(e, (ExecutorInvokedEvent, ExecutorCompletedEvent))]
     executor_ids = {e.executor_id for e in executor_events}
     assert "exec_a" in executor_ids, "Should have events from executor A"
     assert "exec_b" in executor_ids, "Should have events from executor B"

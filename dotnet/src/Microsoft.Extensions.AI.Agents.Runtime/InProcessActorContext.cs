@@ -19,7 +19,7 @@ namespace Microsoft.Extensions.AI.Agents.Runtime;
 
 internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDisposable, IDisposable
 {
-    private static readonly ActivitySource ActivitySource = new(ActorRuntimeOpenTelemetryConsts.InProcessSourceName);
+    private static readonly ActivitySource ActivitySource = new(Tel.InProcessSourceName);
 
     private readonly CancellationTokenSource _cts = new();
     private readonly Channel<ActorMessage> _pendingMessages = Channel.CreateUnbounded<ActorMessage>();
@@ -50,7 +50,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
     public void Start()
     {
         using var activity = ActivitySource.StartActivity(
-            ActorRuntimeOpenTelemetryConsts.SpanNames.FormatActorOperation(ActorRuntimeOpenTelemetryConsts.Operations.StartActor));
+            Tel.SpanNames.FormatActorOperation(Tel.Operations.StartActor));
 
         activity.SetActorAttributes(this.ActorId, "start");
 
@@ -72,7 +72,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
     public void EnqueueMessage(ActorMessage message)
     {
         using var activity = ActivitySource.StartActivity(
-            ActorRuntimeOpenTelemetryConsts.SpanNames.FormatMessageOperation(ActorRuntimeOpenTelemetryConsts.Operations.ReceiveMessage));
+            Tel.SpanNames.FormatMessageOperation(Tel.Operations.ReceiveMessage));
 
         var messageId = message switch
         {
@@ -95,7 +95,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         }
         catch (Exception ex)
         {
-            activity.RecordFailure(ex, null, (ActorRuntimeOpenTelemetryConsts.Message.Status, "failed"));
+            activity.RecordFailure(ex, null, (Tel.Message.Status, "failed"));
             throw;
         }
     }
@@ -118,7 +118,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
     public ActorResponseHandle SendRequest(ActorRequest request)
     {
         using var activity = ActivitySource.StartActivity(
-            ActorRuntimeOpenTelemetryConsts.SpanNames.FormatRequestOperation(ActorRuntimeOpenTelemetryConsts.Operations.ProcessRequest));
+            Tel.SpanNames.FormatRequestOperation(Tel.Operations.ProcessRequest));
 
         activity.SetupRequestOperation(this.ActorId, request.MessageId, request.Method, "ActorContext", "SendRequest");
 
@@ -148,9 +148,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
                     requestStatus = "found";
                 }
 
-#pragma warning disable CA2000 // Dispose objects before losing scope
                 var handle = new InProcessActorResponseHandle(this, entry);
-#pragma warning restore CA2000 // Dispose objects before losing scope
                 Log.ResponseHandleCreated(this._logger, this.ActorId.ToString(), request.MessageId);
 
                 activity.Complete(RequestCompleted, this.ActorId, [(Tel.Request.Status, requestStatus), (Tel.Response.Status, HandleCreated)],
@@ -161,7 +159,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         }
         catch (Exception ex)
         {
-            activity.RecordFailure(ex, null, (ActorRuntimeOpenTelemetryConsts.Request.Status, "failed"));
+            activity.RecordFailure(ex, null, (Tel.Request.Status, "failed"));
             throw;
         }
     }
@@ -169,11 +167,11 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
     public void OnProgressUpdate(string messageId, int sequenceNumber, JsonElement data)
     {
         using var activity = ActivitySource.StartActivity(
-            ActorRuntimeOpenTelemetryConsts.SpanNames.FormatActorOperation(ActorRuntimeOpenTelemetryConsts.Operations.ProgressUpdate));
+            Tel.SpanNames.FormatActorOperation(Tel.Operations.ProgressUpdate));
 
         activity.SetActorAttributes(this.ActorId);
         activity.SetMessageAttributes(messageId);
-        activity?.SetTag(ActorRuntimeOpenTelemetryConsts.Message.SequenceNumber, sequenceNumber);
+        activity?.SetTag(Tel.Message.SequenceNumber, sequenceNumber);
 
         try
         {
@@ -181,7 +179,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
             var update = new UpdateRequestOperation(messageId, RequestStatus.Pending, data);
             this.PostRequestUpdate(update);
 
-            activity.RecordSuccess((ActorRuntimeOpenTelemetryConsts.Message.Status, "processed"));
+            activity.RecordSuccess((Tel.Message.Status, "processed"));
         }
         catch (Exception ex)
         {
@@ -259,8 +257,7 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         IReadOnlyCollection<ActorStateWriteOperation> writeOps =
             [.. operations.Operations.OfType<ActorStateWriteOperation>()];
 
-        WriteResponse result;
-        result = await this.Storage.WriteStateAsync(
+        WriteResponse result = await this.Storage.WriteStateAsync(
             this.ActorId,
             writeOps,
             operations.ETag,
@@ -317,7 +314,6 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         Log.ActorContextDisposing(this._logger, this.ActorId.ToString());
 
         this._cts.Dispose();
-#pragma warning disable CA2012 // Use ValueTasks correctly
 #pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
         if (this._actorInstance is IDisposable actorInstanceDisposable)
         {
@@ -325,12 +321,11 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         }
         else
         {
-            this._actorInstance.DisposeAsync().GetAwaiter().GetResult();
+            this._actorInstance.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
 
         this._actorRunTask?.GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
-#pragma warning restore CA2012 // Use ValueTasks correctly
+#pragma warning restore VSTHRD002
 
         Log.ActorContextDisposed(this._logger, this.ActorId.ToString());
     }
@@ -368,10 +363,8 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
     private sealed class InProcessActorResponseHandle(InProcessActorContext context, ActorInboxEntry entry) : ActorResponseHandle
     {
 #if NET8_0_OR_GREATER
-        public override async ValueTask CancelAsync(CancellationToken cancellationToken)
-        {
+        public override async ValueTask CancelAsync(CancellationToken cancellationToken) =>
             await entry.Cts.CancelAsync().ConfigureAwait(false);
-        }
 #else
         public override ValueTask CancelAsync(CancellationToken cancellationToken)
         {
@@ -383,7 +376,6 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
         public override async ValueTask<ActorResponse> GetResponseAsync(CancellationToken cancellationToken)
         {
             ActorResponse response;
-#pragma warning disable CA1031 // Do not catch general exception types
             try
             {
                 var responseMessage = await entry.Response
@@ -409,7 +401,6 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
                     Status = RequestStatus.Failed,
                 };
             }
-#pragma warning restore CA1031 // Do not catch general exception types
 
             return response;
         }
@@ -419,8 +410,8 @@ internal sealed class InProcessActorContext : IActorRuntimeContext, IAsyncDispos
             if (entry.Response.Status is TaskStatus.RanToCompletion)
             {
 #pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-                var responseMessage = entry.Response.GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+                var responseMessage = entry.Response.Result;
+#pragma warning restore VSTHRD002
                 response = new ActorResponse
                 {
                     ActorId = context.ActorId,

@@ -85,13 +85,13 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
         while (agent is not null)
         {
-            this.LogOrchestrationSubagentRunning(context, agent);
+            LogOrchestrationSubagentRunning(context, agent);
 
             if (!this._handoffs.Targets.TryGetValue(agent, out var handoffs) || handoffs.Count == 0)
             {
                 // If no handoff is available, we can run the agent directly and return its response.
                 response = await RunAsync(agent, context, allMessages, context.Options, cancellationToken).ConfigureAwait(false);
-                this.LogOrchestrationSubagentCompleted(context, agent);
+                LogOrchestrationSubagentCompleted(context, agent);
                 allMessages.AddRange(response.Messages);
                 agent = null;
                 await CheckpointAsync().ConfigureAwait(false);
@@ -100,7 +100,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
             // Create the options for the next agent request, including handoff functions.
             HandoffContext handoffCtx = new(handoffs);
-            ChatClientAgentRunOptions? options = null;
+            ChatClientAgentRunOptions? options;
             List<AITool> handoffTools = handoffCtx.CreateHandoffFunctions(this.InteractiveCallback is not null);
             if (context.Options is ChatClientAgentRunOptions contextOptions)
             {
@@ -115,7 +115,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
 
             // Invoke the next agent with all of the messages collected so far.
             response = await RunAsync(agent, context, allMessages, options, cancellationToken).ConfigureAwait(false);
-            this.LogOrchestrationSubagentCompleted(context, agent);
+            LogOrchestrationSubagentCompleted(context, agent);
             allMessages.AddRange(response.Messages);
             agent = handoffCtx.TargetedAgent;
             RemoveHandoffFunctionCalls(response, handoffTools);
@@ -139,7 +139,7 @@ public sealed partial class HandoffOrchestration : OrchestratingAgent
         return response;
 
         Task CheckpointAsync() => context.Runtime is not null ?
-            base.WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(agent?.Id, allMessages, originalMessageCount), OrchestrationJsonContext.Default.HandoffState), context, cancellationToken) :
+            WriteCheckpointAsync(JsonSerializer.SerializeToElement(new(agent?.Id, allMessages, originalMessageCount), OrchestrationJsonContext.Default.HandoffState), context, cancellationToken) :
             Task.CompletedTask;
     }
 

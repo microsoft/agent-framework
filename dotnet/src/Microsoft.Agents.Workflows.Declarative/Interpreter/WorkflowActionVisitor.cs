@@ -40,13 +40,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     public bool HasUnsupportedActions { get; private set; }
 
-    public Workflow<TInput> Complete<TInput>()
+    public Workflow Complete()
     {
         // Process the cached links
         this._workflowModel.ConnectNodes(this._workflowBuilder);
 
         // Build final workflow
-        return this._workflowBuilder.Build<TInput>();
+        return this._workflowBuilder.Build();
     }
 
     protected override void Visit(ActionScope item)
@@ -137,7 +137,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
             // Create conditional link for else action
             string stepId = ConditionGroupExecutor.Steps.Else(item);
-            this._workflowModel.AddLink(action.Id, stepId, (result) => action.IsElse(result));
+            this._workflowModel.AddLink(action.Id, stepId, action.IsElse);
         }
     }
 
@@ -197,7 +197,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             DefaultActionExecutor continueLoopExecutor = new(item, this._workflowState);
             this.ContinueWith(continueLoopExecutor);
-            this._workflowModel.AddLink(continueLoopExecutor.Id, Steps.Post(loopExecutor.Id));
+            this._workflowModel.AddLink(continueLoopExecutor.Id, ForeachExecutor.Steps.Next(loopExecutor.Id));
             this.RestartAfter(continueLoopExecutor.Id, continueLoopExecutor.ParentId);
         }
     }
@@ -221,10 +221,10 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         QuestionExecutor questionExecutor = new(item, this._workflowState);
         this.ContinueWith(questionExecutor);
-        this._workflowModel.AddLink(actionId, postId, message => questionExecutor.IsComplete(message));
+        this._workflowModel.AddLink(actionId, postId, QuestionExecutor.IsComplete);
 
         string prepareId = QuestionExecutor.Steps.Prepare(actionId);
-        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !questionExecutor.IsComplete(message));
+        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !QuestionExecutor.IsComplete(message));
 
         string inputId = QuestionExecutor.Steps.Input(actionId);
         InputPort inputPort = InputPort.Create<InputRequest, InputResponse>(inputId);
@@ -234,8 +234,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         string captureId = QuestionExecutor.Steps.Capture(actionId);
         this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, questionExecutor.CaptureResponseAsync, emitResult: false), parentId);
 
-        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, questionExecutor.CompleteAsync), parentId, message => questionExecutor.IsComplete(message));
-        this._workflowModel.AddLink(captureId, prepareId, message => !questionExecutor.IsComplete(message));
+        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, questionExecutor.CompleteAsync), parentId, QuestionExecutor.IsComplete);
+        this._workflowModel.AddLink(captureId, prepareId, message => !QuestionExecutor.IsComplete(message));
     }
 
     protected override void Visit(CreateConversation item)
@@ -355,170 +355,74 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.NotSupported(item);
     }
 
-    protected override void Visit(GetActivityMembers item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(GetActivityMembers item) => this.NotSupported(item);
 
-    protected override void Visit(UpdateActivity item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(UpdateActivity item) => this.NotSupported(item);
 
-    protected override void Visit(ActivateExternalTrigger item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(ActivateExternalTrigger item) => this.NotSupported(item);
 
-    protected override void Visit(DisableTrigger item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(DisableTrigger item) => this.NotSupported(item);
 
-    protected override void Visit(WaitForConnectorTrigger item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(WaitForConnectorTrigger item) => this.NotSupported(item);
 
-    protected override void Visit(InvokeConnectorAction item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(InvokeConnectorAction item) => this.NotSupported(item);
 
-    protected override void Visit(InvokeCustomModelAction item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(InvokeCustomModelAction item) => this.NotSupported(item);
 
-    protected override void Visit(InvokeFlowAction item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(InvokeFlowAction item) => this.NotSupported(item);
 
-    protected override void Visit(InvokeAIBuilderModelAction item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(InvokeAIBuilderModelAction item) => this.NotSupported(item);
 
-    protected override void Visit(InvokeSkillAction item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(InvokeSkillAction item) => this.NotSupported(item);
 
-    protected override void Visit(AdaptiveCardPrompt item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(AdaptiveCardPrompt item) => this.NotSupported(item);
 
     protected override void Visit(CSATQuestion item)
     {
         this.NotSupported(item);
     }
 
-    protected override void Visit(OAuthInput item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(OAuthInput item) => this.NotSupported(item);
 
-    protected override void Visit(BeginDialog item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(BeginDialog item) => this.NotSupported(item);
 
-    protected override void Visit(UnknownDialogAction item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(UnknownDialogAction item) => this.NotSupported(item);
 
-    protected override void Visit(EndDialog item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(EndDialog item) => this.NotSupported(item);
 
-    protected override void Visit(RepeatDialog item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(RepeatDialog item) => this.NotSupported(item);
 
-    protected override void Visit(ReplaceDialog item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(ReplaceDialog item) => this.NotSupported(item);
 
-    protected override void Visit(CancelAllDialogs item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(CancelAllDialogs item) => this.NotSupported(item);
 
-    protected override void Visit(CancelDialog item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(CancelDialog item) => this.NotSupported(item);
 
-    protected override void Visit(EmitEvent item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(EmitEvent item) => this.NotSupported(item);
 
-    protected override void Visit(GetConversationMembers item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(GetConversationMembers item) => this.NotSupported(item);
 
-    protected override void Visit(HttpRequestAction item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(HttpRequestAction item) => this.NotSupported(item);
 
-    protected override void Visit(RecognizeIntent item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(RecognizeIntent item) => this.NotSupported(item);
 
-    protected override void Visit(TransferConversation item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(TransferConversation item) => this.NotSupported(item);
 
-    protected override void Visit(TransferConversationV2 item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(TransferConversationV2 item) => this.NotSupported(item);
 
-    protected override void Visit(SignOutUser item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(SignOutUser item) => this.NotSupported(item);
 
-    protected override void Visit(LogCustomTelemetryEvent item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(LogCustomTelemetryEvent item) => this.NotSupported(item);
 
-    protected override void Visit(DisconnectedNodeContainer item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(DisconnectedNodeContainer item) => this.NotSupported(item);
 
-    protected override void Visit(CreateSearchQuery item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(CreateSearchQuery item) => this.NotSupported(item);
 
-    protected override void Visit(SearchKnowledgeSources item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(SearchKnowledgeSources item) => this.NotSupported(item);
 
-    protected override void Visit(SearchAndSummarizeWithCustomModel item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(SearchAndSummarizeWithCustomModel item) => this.NotSupported(item);
 
-    protected override void Visit(SearchAndSummarizeContent item)
-    {
-        this.NotSupported(item);
-    }
+    protected override void Visit(SearchAndSummarizeContent item) => this.NotSupported(item);
 
     #endregion
 
@@ -563,10 +467,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.HasUnsupportedActions = true;
     }
 
-    private void Trace(BotElement item)
-    {
+    private void Trace(BotElement item) =>
         Debug.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}");
-    }
 
     private void Trace(DialogAction item)
     {
@@ -575,6 +477,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             parentId = Steps.Root(parentId);
         }
+
         Debug.WriteLine($"> VISIT: {new string('\t', this._workflowModel.GetDepth(parentId))}{FormatItem(item)} => {FormatParent(item)}");
     }
 

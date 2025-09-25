@@ -45,7 +45,7 @@ Below are the basics for each language implementation. For more details on pytho
 ### .NET
 - [Getting Started with Agents](./dotnet/samples/GettingStarted/Agents): basic agent creation and tool usage
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
-- [Orchestration Samples](./dotnet/samples/GettingStarted/Orchestration): advanced multi-agent patterns
+- [Orchestration Samples](./dotnet/samples/GettingStarted/AgentOrchestration): advanced multi-agent patterns
 
 ## Agent Framework Documentation
 

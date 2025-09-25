@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -24,7 +25,7 @@ public class SpecializedExecutorSmokeTests
         {
             List<ChatMessage> result = messages.Select(ToMessage).ToList();
 
-            ChatMessage ToMessage(string text)
+            static ChatMessage ToMessage(string text)
             {
                 if (string.IsNullOrEmpty(text))
                 {
@@ -34,7 +35,7 @@ public class SpecializedExecutorSmokeTests
                 string[] splits = text.Split(' ');
                 for (int i = 0; i < splits.Length - 1; i++)
                 {
-                    splits[i] = splits[i] + ' ';
+                    splits[i] += ' ';
                 }
 
                 List<AIContent> contents = splits.Select<string, AIContent>(text => new TextContent(text) { RawRepresentation = text }).ToList();
@@ -42,28 +43,30 @@ public class SpecializedExecutorSmokeTests
                 {
                     MessageId = Guid.NewGuid().ToString("N"),
                     RawRepresentation = text,
-                    CreatedAt = DateTime.Now,
+                    CreatedAt = DateTime.UtcNow,
                 };
             }
 
             return result;
         }
 
-        public static TestAIAgent FromStrings(params string[] messages)
-        {
-            return new TestAIAgent(ToChatMessages(messages));
-        }
+        public override AgentThread GetNewThread()
+            => new TestAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => new TestAgentThread();
+
+        public static TestAIAgent FromStrings(params string[] messages) =>
+            new(ToChatMessages(messages));
 
         public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(new AgentRunResponse(this.Messages)
+        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new AgentRunResponse(this.Messages)
             {
                 AgentId = this.Id,
                 ResponseId = Guid.NewGuid().ToString("N")
             });
-        }
 
         public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
@@ -88,11 +91,11 @@ public class SpecializedExecutorSmokeTests
         {
             string? currentMessageId = null;
 
-            if (candidateMessages != null)
+            if (candidateMessages is not null)
             {
                 foreach (ChatMessage message in candidateMessages)
                 {
-                    if (currentMessageId == null)
+                    if (currentMessageId is null)
                     {
                         currentMessageId = message.MessageId;
                     }
@@ -107,34 +110,32 @@ public class SpecializedExecutorSmokeTests
         }
     }
 
+    public sealed class TestAgentThread() : InMemoryAgentThread();
+
     internal sealed class TestWorkflowContext : IWorkflowContext
     {
-        public List<List<ChatMessage>> Updates { get; } = new();
+        public List<List<ChatMessage>> Updates { get; } = [];
 
-        public ValueTask AddEventAsync(WorkflowEvent workflowEvent)
-        {
-            return default;
-        }
+        public ValueTask AddEventAsync(WorkflowEvent workflowEvent) =>
+            default;
 
-        public ValueTask QueueClearScopeAsync(string? scopeName = null)
-        {
-            return default;
-        }
+        public ValueTask YieldOutputAsync(object output) =>
+            default;
 
-        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null)
-        {
-            return default;
-        }
+        public ValueTask RequestHaltAsync() =>
+            default;
 
-        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
-        {
+        public ValueTask QueueClearScopeAsync(string? scopeName = null) =>
+            default;
+
+        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null) =>
+            default;
+
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null) =>
             throw new NotImplementedException();
-        }
 
-        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null)
-        {
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null) =>
             throw new NotImplementedException();
-        }
 
         public ValueTask SendMessageAsync(object message, string? targetId = null)
         {
@@ -166,7 +167,7 @@ public class SpecializedExecutorSmokeTests
         {
             for (int i = 0; i < messageSplits.Length - 1; i++)
             {
-                messageSplits[i] = messageSplits[i] + ' ';
+                messageSplits[i] += ' ';
             }
         }
 

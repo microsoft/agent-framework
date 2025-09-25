@@ -1,61 +1,44 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Checkpointing;
 
-internal class WorkflowInfo
+internal sealed class WorkflowInfo
 {
+    [JsonConstructor]
     internal WorkflowInfo(
         Dictionary<string, ExecutorInfo> executors,
         Dictionary<string, List<EdgeInfo>> edges,
         HashSet<InputPortInfo> inputPorts,
-        TypeId inputType,
+        TypeId? inputType,
         string startExecutorId,
-        TypeId? outputType = null,
-        string? outputCollectorId = null)
+        HashSet<string>? outputExecutorIds)
     {
         this.Executors = Throw.IfNull(executors);
         this.Edges = Throw.IfNull(edges);
         this.InputPorts = Throw.IfNull(inputPorts);
 
-        this.InputType = Throw.IfNull(inputType);
+        this.InputType = inputType;
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
-
-        if (outputType != null && outputCollectorId != null)
-        {
-            this.OutputType = outputType;
-            this.OutputCollectorId = outputCollectorId;
-        }
-        else if (outputCollectorId != null)
-        {
-            throw new InvalidOperationException(
-                $"Either both or none of OutputType and OutputCollectorId must be set. ({nameof(outputType)}: {outputType} vs. {nameof(outputCollectorId)}: {outputCollectorId})"
-            );
-        }
+        this.OutputExecutorIds = outputExecutorIds ?? [];
     }
 
     public Dictionary<string, ExecutorInfo> Executors { get; }
     public Dictionary<string, List<EdgeInfo>> Edges { get; }
     public HashSet<InputPortInfo> InputPorts { get; }
 
-    public TypeId InputType { get; }
+    public TypeId? InputType { get; }
     public string StartExecutorId { get; }
 
-    public TypeId? OutputType { get; }
-    public string? OutputCollectorId { get; }
+    public HashSet<string> OutputExecutorIds { get; }
 
-    private bool IsMatch(Workflow workflow)
+    public bool IsMatch(Workflow workflow)
     {
         if (workflow is null)
-        {
-            return false;
-        }
-
-        if (!this.InputType.IsMatch(workflow.InputType))
         {
             return false;
         }
@@ -93,8 +76,15 @@ internal class WorkflowInfo
         if (workflow.Ports.Count != this.InputPorts.Count ||
             this.InputPorts.Any(portInfo =>
                 !workflow.Ports.TryGetValue(portInfo.PortId, out InputPort? port) ||
-                !portInfo.InputType.IsMatch(port.Request) ||
-                !portInfo.OutputType.IsMatch(port.Response)))
+                !portInfo.RequestType.IsMatch(port.Request) ||
+                !portInfo.ResponseType.IsMatch(port.Response)))
+        {
+            return false;
+        }
+
+        // Validate the outputs
+        if (workflow.OutputExecutors.Count != this.OutputExecutorIds.Count ||
+            this.OutputExecutorIds.Any(id => !workflow.OutputExecutors.Contains(id)))
         {
             return false;
         }
@@ -102,10 +92,11 @@ internal class WorkflowInfo
         return true;
     }
 
-    public bool IsMatch<TInput>(Workflow<TInput> workflow) => this.IsMatch(workflow as Workflow);
+    public bool IsMatch<TInput>(Workflow<TInput> workflow) =>
+        this.IsMatch(workflow as Workflow) && this.InputType?.IsMatch<TInput>() == true;
 
-    public bool IsMatch<TInput, TResult>(Workflow<TInput, TResult> workflow)
-        => this.IsMatch(workflow as Workflow)
-           && this.OutputType != null && this.OutputType.IsMatch(typeof(TResult))
-           && this.OutputCollectorId != null && this.OutputCollectorId == workflow.OutputCollectorId;
+    //public bool IsMatch<TInput, TResult>(WorkflowWithOutput<TInput, TResult> workflow)
+    //    => this.IsMatch(workflow as Workflow)
+    //       && this.OutputType?.IsMatch(typeof(TResult)) is true
+    //       && this.OutputCollectorId is not null && this.OutputCollectorId == workflow.OutputCollectorId;
 }

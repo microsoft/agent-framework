@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
@@ -28,8 +29,8 @@ public static class Program
 
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
-        builder.AddEdge(uppercase, reverse);
-        var workflow = builder.Build<string>();
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        var workflow = builder.Build();
 
         // Execute the workflow with input data
         Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
@@ -54,13 +55,8 @@ internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor
     /// <param name="message">The input text to convert</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
     /// <returns>The input text converted to uppercase</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
-    {
-        string result = message.ToUpperInvariant();
-
-        // The return value will be sent as a message along an edge to subsequent executors
-        return result;
-    }
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context) =>
+        message.ToUpperInvariant(); // The return value will be sent as a message along an edge to subsequent executors
 }
 
 /// <summary>
@@ -76,13 +72,7 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     /// <returns>The input text reversed</returns>
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
     {
-        char[] charArray = message.ToCharArray();
-        System.Array.Reverse(charArray);
-        string result = new(charArray);
-
-        // Signal that the workflow is complete
-        await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);
-
-        return result;
+        // Because we do not suppress it, the returned result will be yielded as an output from this executor.
+        return string.Concat(message.Reverse());
     }
 }

@@ -16,11 +16,9 @@ namespace Microsoft.Extensions.AI.Agents.Abstractions.UnitTests;
 public class InMemoryChatMessageStoreTests
 {
     [Fact]
-    public void Constructor_Throws_ForNullReducer()
-    {
+    public void Constructor_Throws_ForNullReducer() =>
         // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() => new InMemoryChatMessageStore(null!));
-    }
 
     [Fact]
     public void Constructor_DefaultsToBeforeMessageRetrieval_ForNotProvidedTriggerEvent()
@@ -91,7 +89,7 @@ public class InMemoryChatMessageStoreTests
     [Fact]
     public async Task DeserializeConstructorWithEmptyElementAsync()
     {
-        var emptyObject = JsonSerializer.Deserialize<JsonElement>("{}", TestJsonSerializerContext.Default.JsonElement);
+        var emptyObject = JsonSerializer.Deserialize("{}", TestJsonSerializerContext.Default.JsonElement);
 
         var newStore = new InMemoryChatMessageStore(emptyObject);
 
@@ -151,7 +149,7 @@ public class InMemoryChatMessageStoreTests
     {
         // Arrange
         var stateWithEmptyMessages = JsonSerializer.SerializeToElement(
-            new Dictionary<string, object> { ["Messages"] = new List<ChatMessage>() },
+            new Dictionary<string, object> { ["messages"] = new List<ChatMessage>() },
             TestJsonSerializerContext.Default.IDictionaryStringObject);
 
         // Act
@@ -166,7 +164,7 @@ public class InMemoryChatMessageStoreTests
     {
         // Arrange
         var stateWithNullMessages = JsonSerializer.SerializeToElement(
-            new Dictionary<string, object> { ["Messages"] = null! },
+            new Dictionary<string, object> { ["messages"] = null! },
             TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
@@ -185,7 +183,7 @@ public class InMemoryChatMessageStoreTests
             new(ChatRole.User, "User message"),
             new(ChatRole.Assistant, "Assistant message")
         };
-        var state = new Dictionary<string, object> { ["Messages"] = messages };
+        var state = new Dictionary<string, object> { ["messages"] = messages };
         var serializedState = JsonSerializer.SerializeToElement(
             state,
             TestJsonSerializerContext.Default.DictionaryStringObject);
@@ -304,9 +302,11 @@ public class InMemoryChatMessageStoreTests
     public void Clear_RemovesAllMessages()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
-        store.Add(new ChatMessage(ChatRole.User, "First"));
-        store.Add(new ChatMessage(ChatRole.Assistant, "Second"));
+        var store = new InMemoryChatMessageStore
+        {
+            new ChatMessage(ChatRole.User, "First"),
+            new ChatMessage(ChatRole.Assistant, "Second")
+        };
 
         // Act
         store.Clear();
@@ -527,8 +527,10 @@ public class InMemoryChatMessageStoreTests
 
         var reducerMock = new Mock<IChatReducer>();
 
-        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded);
-        store.Add(originalMessages[0]);
+        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded)
+        {
+            originalMessages[0]
+        };
 
         // Act
         var result = (await store.GetMessagesAsync(CancellationToken.None)).ToList();

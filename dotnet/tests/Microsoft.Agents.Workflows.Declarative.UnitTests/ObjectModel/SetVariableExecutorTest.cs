@@ -14,147 +14,145 @@ namespace Microsoft.Agents.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class SetVariableExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public void InvalidModel()
-    {
+    public void InvalidModel() =>
         // Arrange, Act, Assert
         Assert.Throws<DeclarativeModelException>(() => new SetVariableExecutor(new SetVariable(), this.State));
-    }
 
     [Fact]
-    public async Task SetNumericValue()
-    {
+    public async Task SetNumericValueAsync() =>
         // Arrange, Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetNumericValue),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetNumericValueAsync),
             variableName: "TestVariable",
             variableValue: new NumberDataValue(42),
             expectedValue: FormulaValue.New(42));
-    }
 
     [Fact]
-    public async Task SetStringValue()
-    {
+    public async Task SetStringValueAsync() =>
         // Arrange, Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetStringValue),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetStringValueAsync),
             variableName: "TestVariable",
             variableValue: new StringDataValue("Text"),
             expectedValue: FormulaValue.New("Text"));
-    }
 
     [Fact]
-    public async Task SetBooleanValue()
-    {
+    public async Task SetBooleanValueAsync() =>
         // Arrange, Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetBooleanValue),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetBooleanValueAsync),
             variableName: "TestVariable",
             variableValue: new BooleanDataValue(true),
             expectedValue: FormulaValue.New(true));
-    }
 
     [Fact]
-    public async Task SetBooleanExpression()
+    public async Task SetBooleanExpressionAsync()
     {
         // Arrange
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Expression("true || false"));
 
         // Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetBooleanExpression),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetBooleanExpressionAsync),
             variableName: "TestVariable",
             valueExpression: expressionBuilder,
             expectedValue: FormulaValue.New(true));
     }
 
     [Fact]
-    public async Task SetNumberExpression()
+    public async Task SetNumberExpressionAsync()
     {
         // Arrange
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Expression("9 - 3"));
 
         // Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetBooleanExpression),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetBooleanExpressionAsync),
             variableName: "TestVariable",
             valueExpression: expressionBuilder,
             expectedValue: FormulaValue.New(6));
     }
 
     [Fact]
-    public async Task SetStringExpression()
+    public async Task SetStringExpressionAsync()
     {
         // Arrange
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Expression(@"Concatenate(""A"", ""B"", ""C"")"));
 
         // Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetBooleanExpression),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetBooleanExpressionAsync),
             variableName: "TestVariable",
             valueExpression: expressionBuilder,
             expectedValue: FormulaValue.New("ABC"));
     }
 
     [Fact]
-    public async Task SetBooleanVariable()
+    public async Task SetBooleanVariableAsync()
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New(true));
+        this.State.Bind();
+
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetBooleanExpression),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetBooleanExpressionAsync),
             variableName: "TestVariable",
             valueExpression: expressionBuilder,
             expectedValue: FormulaValue.New(true));
     }
 
     [Fact]
-    public async Task SetNumberVariable()
+    public async Task SetNumberVariableAsync()
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New(321));
+        this.State.Bind();
+
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetBooleanExpression),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetBooleanExpressionAsync),
             variableName: "TestVariable",
             valueExpression: expressionBuilder,
             expectedValue: FormulaValue.New(321));
     }
 
     [Fact]
-    public async Task SetStringVariable()
+    public async Task SetStringVariableAsync()
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New("Test"));
+        this.State.Bind();
+
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
         // Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(SetBooleanExpression),
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetBooleanExpressionAsync),
             variableName: "TestVariable",
             valueExpression: expressionBuilder,
             expectedValue: FormulaValue.New("Test"));
     }
 
     [Fact]
-    public async Task UpdateExistingValue()
+    public async Task UpdateExistingValueAsync()
     {
         // Arrange
         this.State.Set("VarA", FormulaValue.New(33));
 
         // Act, Assert
-        await this.ExecuteTest(
-            displayName: nameof(UpdateExistingValue),
+        await this.ExecuteTestAsync(
+            displayName: nameof(UpdateExistingValueAsync),
             variableName: "VarA",
             variableValue: new NumberDataValue(42),
             expectedValue: FormulaValue.New(42));
     }
 
-    private Task ExecuteTest(
+    private Task ExecuteTestAsync(
         string displayName,
         string variableName,
         DataValue variableValue,
@@ -164,10 +162,10 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Literal(variableValue));
 
         // Act & Assert
-        return this.ExecuteTest(displayName, variableName, expressionBuilder, expectedValue);
+        return this.ExecuteTestAsync(displayName, variableName, expressionBuilder, expectedValue);
     }
 
-    private async Task ExecuteTest(
+    private async Task ExecuteTestAsync(
         string displayName,
         string variableName,
         ValueExpression.Builder valueExpression,
@@ -184,10 +182,10 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
 
         // Act
         SetVariableExecutor action = new(model, this.State);
-        await this.Execute(action);
+        await this.ExecuteAsync(action);
 
         // Assert
-        this.VerifyModel(model, action);
+        VerifyModel(model, action);
         this.VerifyState(variableName, expectedValue);
     }
 
@@ -202,8 +200,6 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
                 Value = valueExpression,
             };
 
-        SetVariable model = this.AssignParent<SetVariable>(actionBuilder);
-
-        return model;
+        return AssignParent<SetVariable>(actionBuilder);
     }
 }

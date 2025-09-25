@@ -2,6 +2,7 @@
 
 using System.Text;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.OpenAI;
@@ -19,14 +20,12 @@ var assistantsClient = new AssistantClient(apiKey);
 
 Console.WriteLine($"User Input: {userInput}");
 
-await SKAgent();
-await AFAgent();
+await SKAgentAsync();
+await AFAgentAsync();
 
-async Task SKAgent()
+async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
-
-    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
 
     // Define the assistant
     Assistant assistant = await assistantsClient.CreateAssistantAsync(modelId, enableCodeInterpreter: true);
@@ -62,16 +61,16 @@ async Task SKAgent()
             {
                 Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
             }
+#pragma warning restore SKEXP0110
         }
     }
-#pragma warning restore SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
     // Clean up
     await thread.DeleteAsync();
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }
 
-async Task AFAgent()
+async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
@@ -122,6 +121,9 @@ async Task AFAgent()
     }
 
     // Clean up
-    await assistantsClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantsClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }

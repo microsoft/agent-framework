@@ -3,8 +3,8 @@
 import asyncio
 from typing import Any
 
-from agent_framework import ChatMessage, ConcurrentBuilder, WorkflowCompletedEvent
-from agent_framework.azure import AzureChatClient
+from agent_framework import ChatMessage, ConcurrentBuilder
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -12,23 +12,23 @@ Sample: Concurrent fan-out/fan-in (agent-only API) with default aggregator
 
 Build a high-level concurrent workflow using ConcurrentBuilder and three domain agents.
 The default dispatcher fans out the same user prompt to all agents in parallel.
-The default aggregator fans in their results and emits a WorkflowCompletedEvent whose
-data is a list[ChatMessage] representing the concatenated conversations from all agents.
+The default aggregator fans in their results and yields output containing
+a list[ChatMessage] representing the concatenated conversations from all agents.
 
 Demonstrates:
 - Minimal wiring with ConcurrentBuilder().participants([...]).build()
 - Fan-out to multiple agents, fan-in aggregation of final ChatMessages
-- Streaming of AgentRunEvent for simple progress visibility
+- Workflow completion when idle with no pending work
 
 Prerequisites:
-- Azure OpenAI access configured for AzureChatClient (use az login + env vars)
-- Familiarity with Workflow events (AgentRunEvent, WorkflowCompletedEvent)
+- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
+- Familiarity with Workflow events (AgentRunEvent, WorkflowOutputEvent)
 """
 
 
 async def main() -> None:
-    # 1) Create three domain agents using AzureChatClient
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    # 1) Create three domain agents using AzureOpenAIChatClient
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     researcher = chat_client.create_agent(
         instructions=(
@@ -58,18 +58,17 @@ async def main() -> None:
     # Participants are either Agents (type of AgentProtocol) or Executors
     workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
 
-    # 3) Run with a single prompt, stream progress, and pretty-print the final combined messages
-    completion: WorkflowCompletedEvent | None = None
-    async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
+    # 3) Run with a single prompt and pretty-print the final combined messages
+    events = await workflow.run("We are launching a new budget-friendly electric bike for urban commuters.")
+    outputs = events.get_outputs()
 
-    if completion:
+    if outputs:
         print("===== Final Aggregated Conversation (messages) =====")
-        messages: list[ChatMessage] | Any = completion.data
-        for i, msg in enumerate(messages, start=1):
-            name = msg.author_name if msg.author_name else "user"
-            print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")
+        for output in outputs:
+            messages: list[ChatMessage] | Any = output
+            for i, msg in enumerate(messages, start=1):
+                name = msg.author_name if msg.author_name else "user"
+                print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")
 
     """
     Sample Output:

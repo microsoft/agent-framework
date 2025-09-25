@@ -38,7 +38,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     Instructions = "You are a friendly assistant. Always address the user by their name.",
-    AIContextProviderFactory = (jse, jso) => new UserInfoMemory(chatClient.AsIChatClient(), jse, jso)
+    AIContextProviderFactory = ctx => new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions)
 });
 
 // Create a new thread for the conversation.
@@ -62,27 +62,26 @@ Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedT
 
 Console.WriteLine("\n>> Read memories from memory component\n");
 
-// It's possible to access the memory component via the thread's AIContextProvider property.
-var userInfo = ((UserInfoMemory)deserializedThread.AIContextProvider!).UserInfo;
+// It's possible to access the memory component via the thread's GetService method.
+var userInfo = deserializedThread.GetService<UserInfoMemory>()?.UserInfo;
 
 // Output the user info that was captured by the memory component.
-Console.WriteLine($"MEMORY - User Name: {userInfo.UserName}");
-Console.WriteLine($"MEMORY - User Age: {userInfo.UserAge}");
+Console.WriteLine($"MEMORY - User Name: {userInfo?.UserName}");
+Console.WriteLine($"MEMORY - User Age: {userInfo?.UserAge}");
 
 Console.WriteLine("\n>> Use new thread with previously created memories\n");
 
-// Create a new thread.
-thread = agent.GetNewThread();
-
-// It is also possible to add the memory component to an individual thread only instead of all
-// threads via the factory above.
-// In this case we will also use the same user info object, so this thread will share the same
-// memories as the previous thread.
-thread.AIContextProvider = new UserInfoMemory(chatClient.AsIChatClient(), userInfo);
+// It is also possible to set the memories in a memory component on an individual thread.
+// This is useful if we want to start a new thread, but have it share the same memories as a previous thread.
+var newThread = agent.GetNewThread();
+if (userInfo is not null && newThread.GetService<UserInfoMemory>() is UserInfoMemory newThreadMemory)
+{
+    newThreadMemory.UserInfo = userInfo;
+}
 
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.
-Console.WriteLine(await agent.RunAsync("What is my name and age?", thread));
+Console.WriteLine(await agent.RunAsync("What is my name and age?", newThread));
 
 namespace SampleApp
 {
@@ -102,7 +101,10 @@ namespace SampleApp
         public UserInfoMemory(IChatClient chatClient, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             this._chatClient = chatClient;
-            this.UserInfo = JsonSerializer.Deserialize<UserInfo>(serializedState, jsonSerializerOptions) ?? new UserInfo();
+
+            this.UserInfo = serializedState.ValueKind == JsonValueKind.Object ?
+                serializedState.Deserialize<UserInfo>(jsonSerializerOptions)! :
+                new UserInfo();
         }
 
         public UserInfo UserInfo { get; set; }
@@ -110,7 +112,7 @@ namespace SampleApp
         public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
-            if ((this.UserInfo.UserName == null || this.UserInfo.UserAge == null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
+            if ((this.UserInfo.UserName is null || this.UserInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
             {
                 var result = await this._chatClient.GetResponseAsync<UserInfo>(
                     context.RequestMessages,
@@ -130,15 +132,15 @@ namespace SampleApp
             StringBuilder instructions = new();
 
             // If we don't already know the user's name and age, add instructions to ask for them, otherwise just provide what we have to the context.
-            instructions.AppendLine(
-                this.UserInfo.UserName == null ?
-                "Ask the user for their name and politely decline to answer any questions until they provide it." :
-                $"The user's name is {this.UserInfo.UserName}.");
-
-            instructions.AppendLine(
-                this.UserInfo.UserAge == null ?
-                "Ask the user for their age and politely decline to answer any questions until they provide it." :
-                $"The user's age is {this.UserInfo.UserAge}.");
+            instructions
+                .AppendLine(
+                    this.UserInfo.UserName is null ?
+                        "Ask the user for their name and politely decline to answer any questions until they provide it." :
+                        $"The user's name is {this.UserInfo.UserName}.")
+                .AppendLine(
+                    this.UserInfo.UserAge is null ?
+                        "Ask the user for their age and politely decline to answer any questions until they provide it." :
+                        $"The user's age is {this.UserInfo.UserAge}.");
 
             return new ValueTask<AIContext>(new AIContext
             {
@@ -149,12 +151,6 @@ namespace SampleApp
         public override ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions));
-        }
-
-        public override ValueTask DeserializeAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        {
-            this.UserInfo = JsonSerializer.Deserialize<UserInfo>(serializedState, jsonSerializerOptions) ?? new UserInfo();
-            return default;
         }
     }
 

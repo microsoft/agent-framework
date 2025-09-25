@@ -12,36 +12,36 @@ public class AgentProxyThreadTests
     /// <summary>
     /// Provides valid identifier values that conform to RFC 3986 unreserved characters.
     /// </summary>
-    public static IEnumerable<object[]> ValidIds => new List<object[]>
-        {
-            new object[] { "normal" },
-            new object[] { "test-id" },
-            new object[] { "test_id" },
-            new object[] { "test.id" },
-            new object[] { "test~id" },
-            new object[] { "ABC123" },
-            new object[] { "a" },
-            new object[] { "123" },
-            new object[] { "test-id_with.various~chars" },
-            new object[] { new string('a', 100) } // Long but valid ID
-        };
+    public static IEnumerable<object[]> ValidIds { get; } =
+        [
+            ["normal"],
+            ["test-id"],
+            ["test_id"],
+            ["test.id"],
+            ["test~id"],
+            ["ABC123"],
+            ["a"],
+            ["123"],
+            ["test-id_with.various~chars"],
+            [new string('a', 100)] // Long but valid ID
+        ];
 
     /// <summary>
     /// Provides invalid identifier values that violate the RFC 3986 unreserved character rules.
     /// </summary>
-    public static IEnumerable<object[]> InvalidIds => new List<object[]>
-        {
-            new object[] { " " }, // Space not allowed
-            new object[] { "!@#$%^&*()" }, // Special characters not allowed
-            new object[] { "test id" }, // Space not allowed
-            new object[] { "test/id" }, // Forward slash not allowed
-            new object[] { "test?id" }, // Question mark not allowed
-            new object[] { "test#id" }, // Hash not allowed
-            new object[] { "test@id" }, // At symbol not allowed
-            new object[] { "test id with spaces" }, // Multiple spaces not allowed
-            new object[] { "test\tid" }, // Tab not allowed
-            new object[] { "test\nid" }, // Newline not allowed
-        };
+    public static IEnumerable<object[]> InvalidIds { get; } =
+        [
+            [" "], // Space not allowed
+            ["!@#$%^&*()"], // Special characters not allowed
+            ["test id"], // Space not allowed
+            ["test/id"], // Forward slash not allowed
+            ["test?id"], // Question mark not allowed
+            ["test#id"], // Hash not allowed
+            ["test@id"], // At symbol not allowed
+            ["test id with spaces"], // Multiple spaces not allowed
+            ["test\tid"], // Tab not allowed
+            ["test\nid"], // Newline not allowed
+        ];
 
     /// <summary>
     /// Verifies that providing valid id to <see cref="AgentProxyThread"/> constructor sets the Id property correctly.
@@ -76,21 +76,17 @@ public class AgentProxyThreadTests
     /// Verifies that providing a null id to <see cref="AgentProxyThread"/> constructor throws an <see cref="ArgumentNullException"/>.
     /// </summary>
     [Fact]
-    public void Constructor_NullId_ThrowsArgumentNullException()
-    {
+    public void Constructor_NullId_ThrowsArgumentNullException() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new AgentProxyThread(null!));
-    }
 
     /// <summary>
     /// Verifies that providing an empty id to <see cref="AgentProxyThread"/> constructor throws an <see cref="ArgumentException"/>.
     /// </summary>
     [Fact]
-    public void Constructor_EmptyId_ThrowsArgumentException()
-    {
+    public void Constructor_EmptyId_ThrowsArgumentException() =>
         // Act & Assert
         Assert.Throws<ArgumentException>(() => new AgentProxyThread(""));
-    }
 
     /// <summary>
     /// Verifies that the default constructor initializes the Id property with a valid non-empty GUID string in "N" format.
@@ -160,10 +156,7 @@ public class AgentProxyThreadTests
         var ids = new string[NumberOfIds];
 
         // Act - Create IDs in parallel to test thread safety
-        Parallel.For(0, NumberOfIds, i =>
-        {
-            ids[i] = AgentProxyThread.CreateId();
-        });
+        Parallel.For(0, NumberOfIds, i => ids[i] = AgentProxyThread.CreateId());
 
         // Assert
         var uniqueIds = ids.Distinct().Count();
@@ -256,7 +249,7 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread();
 
         // Assert
-        Assert.IsAssignableFrom<AgentThread>(thread);
+        Assert.IsType<AgentThread>(thread, exactMatch: false);
     }
 
     /// <summary>

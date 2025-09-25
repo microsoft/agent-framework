@@ -16,7 +16,7 @@ public abstract class WorkflowTest : IDisposable
     protected WorkflowTest(ITestOutputHelper output)
     {
         this.Output = new TestOutputAdapter(output);
-        System.Console.SetOut(this.Output);
+        Console.SetOut(this.Output);
     }
 
     public void Dispose()
@@ -32,6 +32,9 @@ public abstract class WorkflowTest : IDisposable
             this.Output.Dispose();
         }
     }
+
+    internal static string? FormatOptionalPath(string? variableName, string? scope = null) =>
+        variableName is null ? null : FormatVariablePath(variableName, scope);
 
     internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? VariableScopeNames.Topic}.{variableName}";
 }

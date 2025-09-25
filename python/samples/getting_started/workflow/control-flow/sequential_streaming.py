@@ -2,19 +2,20 @@
 
 import asyncio
 
-from agent_framework import WorkflowBuilder, WorkflowCompletedEvent, WorkflowContext, executor
+from typing_extensions import Never
+
+from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, executor
 
 """
 Sample: Foundational sequential workflow with streaming using function-style executors.
 
 Two lightweight steps run in order. The first converts text to uppercase.
-The second reverses the text and completes the workflow. Events are printed as they arrive from run_stream.
+The second reverses the text and yields the workflow output. Events are printed as they arrive from run_stream.
 
 Purpose:
 Show how to declare executors with the @executor decorator, connect them with WorkflowBuilder,
-pass intermediate values using ctx.send_message, and signal completion with ctx.add_event by emitting a
-WorkflowCompletedEvent. Demonstrate how streaming exposes ExecutorInvokeEvent and WorkflowCompletedEvent
-for observability.
+pass intermediate values using ctx.send_message, and yield final output using ctx.yield_output().
+Demonstrate how streaming exposes ExecutorInvokedEvent and ExecutorCompletedEvent for observability.
 
 Prerequisites:
 - No external services required.
@@ -37,17 +38,17 @@ async def to_upper_case(text: str, ctx: WorkflowContext[str]) -> None:
 
 
 @executor(id="reverse_text_executor")
-async def reverse_text(text: str, ctx: WorkflowContext[str]) -> None:
-    """Reverse the input and complete the workflow with the final result.
+async def reverse_text(text: str, ctx: WorkflowContext[Never, str]) -> None:
+    """Reverse the input and yield the workflow output.
 
     Concepts:
-    - Terminal nodes publish a WorkflowCompletedEvent using ctx.add_event.
-    - No further messages are forwarded after completion.
+    - Terminal nodes yield output using ctx.yield_output().
+    - The workflow completes when it becomes idle (no more work to do).
     """
     result = text[::-1]
 
-    # Emit the terminal event that carries the final output for this run.
-    await ctx.add_event(WorkflowCompletedEvent(result))
+    # Yield the final output for this workflow run.
+    await ctx.yield_output(result)
 
 
 async def main():
@@ -57,26 +58,20 @@ async def main():
     workflow = WorkflowBuilder().add_edge(to_upper_case, reverse_text).set_start_executor(to_upper_case).build()
 
     # Step 3: Run the workflow and stream events in real time.
-    completion_event = None
     async for event in workflow.run_stream("hello world"):
-        # You will see executor invoke and completion events, and then the final WorkflowCompletedEvent.
+        # You will see executor invoke and completion events as the workflow progresses.
         print(f"Event: {event}")
-        if isinstance(event, WorkflowCompletedEvent):
-            # The WorkflowCompletedEvent contains the final result.
-            completion_event = event
-
-    # Print the final result after the streaming loop concludes.
-    if completion_event:
-        print(f"Workflow completed with result: {completion_event.data}")
+        if isinstance(event, WorkflowOutputEvent):
+            print(f"Workflow completed with result: {event.data}")
 
     """
     Sample Output:
 
-    Event: ExecutorInvokeEvent(executor_id=upper_case_executor)
+    Event: ExecutorInvokedEvent(executor_id=upper_case_executor)
     Event: ExecutorCompletedEvent(executor_id=upper_case_executor)
-    Event: ExecutorInvokeEvent(executor_id=reverse_text_executor)
-    Event: WorkflowCompletedEvent(data=DLROW OLLEH)
+    Event: ExecutorInvokedEvent(executor_id=reverse_text_executor)
     Event: ExecutorCompletedEvent(executor_id=reverse_text_executor)
+    Event: WorkflowOutputEvent(data='DLROW OLLEH', source_executor_id=reverse_text_executor)
     Workflow completed with result: DLROW OLLEH
     """
 

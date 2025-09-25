@@ -1,15 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Microsoft.Agents.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
-internal class StepContext
+internal sealed class StepContext
 {
-    public Dictionary<ExecutorIdentity, List<MessageEnvelope>> QueuedMessages { get; } = new();
+    public Dictionary<ExecutorIdentity, List<MessageEnvelope>> QueuedMessages { get; } = [];
 
     public bool HasMessages => this.QueuedMessages.Values.Any(messageList => messageList.Count > 0);
 
@@ -17,7 +16,7 @@ internal class StepContext
     {
         if (!this.QueuedMessages.TryGetValue(executorId, out var messages))
         {
-            this.QueuedMessages[executorId] = messages = new();
+            this.QueuedMessages[executorId] = messages = [];
         }
 
         return messages;
@@ -25,25 +24,22 @@ internal class StepContext
 
     // TODO: Create a MessageEnvelope class that extends from the ExportedState object (with appropriate rename) to avoid
     // unnecessary wrapping and unwrapping of messages during checkpointing.
-    internal Dictionary<ExecutorIdentity, List<ExportedState>> ExportMessages()
+    internal Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> ExportMessages()
     {
         return this.QueuedMessages.Keys.ToDictionary(
             keySelector: identity => identity,
             elementSelector: identity => this.QueuedMessages[identity]
-                                             .Select(v => new ExportedState(v))
-                                             .ToList()
+                                             .ConvertAll(v => new PortableMessageEnvelope(v))
         );
     }
 
-    internal void ImportMessages(Dictionary<ExecutorIdentity, List<ExportedState>> messages)
+    internal void ImportMessages(Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> messages)
     {
         foreach (ExecutorIdentity identity in messages.Keys)
         {
-            this.QueuedMessages[identity] = messages[identity].Select(UnwrapExportedState).ToList();
+            this.QueuedMessages[identity] = messages[identity].ConvertAll(UnwrapExportedState);
         }
 
-        MessageEnvelope UnwrapExportedState(ExportedState es)
-            => es.Value as MessageEnvelope
-            ?? throw new InvalidDataException($"Expected a MessageEnvelope in the ExportedState. Got {es.RuntimeType}");
+        static MessageEnvelope UnwrapExportedState(PortableMessageEnvelope es) => es.ToMessageEnvelope();
     }
 }

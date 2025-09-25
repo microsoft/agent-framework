@@ -26,7 +26,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = WorkflowHelper.GetWorkflow();
+        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
 
         // Execute the workflow
         StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
@@ -40,9 +40,9 @@ public static class Program
                     await handle.SendResponseAsync(response).ConfigureAwait(false);
                     break;
 
-                case WorkflowCompletedEvent workflowCompleteEvt:
-                    // The workflow has completed successfully
-                    Console.WriteLine($"Workflow completed with result: {workflowCompleteEvt.Data}");
+                case WorkflowOutputEvent outputEvt:
+                    // The workflow has yielded output
+                    Console.WriteLine($"Workflow completed with result: {outputEvt.Data}");
                     return;
             }
         }
@@ -50,24 +50,23 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        if (request.Port.Request == typeof(NumberSignal))
+        if (request.DataIs<NumberSignal>())
         {
-            var signal = (NumberSignal)request.Data;
-            switch (signal)
+            switch (request.DataAs<NumberSignal>())
             {
                 case NumberSignal.Init:
                     int initialGuess = ReadIntegerFromConsole("Please provide your initial guess: ");
-                    return request.CreateResponse<int>(initialGuess);
+                    return request.CreateResponse(initialGuess);
                 case NumberSignal.Above:
                     int lowerGuess = ReadIntegerFromConsole("You previously guessed too large. Please provide a new guess: ");
-                    return request.CreateResponse<int>(lowerGuess);
+                    return request.CreateResponse(lowerGuess);
                 case NumberSignal.Below:
                     int higherGuess = ReadIntegerFromConsole("You previously guessed too small. Please provide a new guess: ");
-                    return request.CreateResponse<int>(higherGuess);
+                    return request.CreateResponse(higherGuess);
             }
         }
 
-        throw new NotSupportedException($"Request {request.Port.Request} is not supported");
+        throw new NotSupportedException($"Request {request.PortInfo.RequestType} is not supported");
     }
 
     private static int ReadIntegerFromConsole(string prompt)

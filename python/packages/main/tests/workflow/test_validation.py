@@ -8,6 +8,7 @@ import pytest
 from agent_framework import (
     EdgeDuplicationError,
     Executor,
+    ExecutorDuplicationError,
     GraphConnectivityError,
     TypeCompatibilityError,
     ValidationTypeEnum,
@@ -18,7 +19,6 @@ from agent_framework import (
     validate_workflow_graph,
 )
 from agent_framework._workflow._edge import SingleEdgeGroup
-from agent_framework._workflow._validation import HandlerOutputAnnotationError
 
 
 class StringExecutor(Executor):
@@ -50,8 +50,8 @@ class AnyExecutor(Executor):
 
 class NoOutputTypesExecutor(Executor):
     @handler
-    async def handle_message(self, message: str, ctx: WorkflowContext[Any]) -> None:
-        await ctx.send_message("processed")
+    async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
+        await ctx.send_message("processed")  # type: ignore[arg-type]
 
 
 class MultiTypeExecutor(Executor):
@@ -77,6 +77,17 @@ def test_valid_workflow_passes_validation():
     )
 
     assert workflow is not None
+
+
+def test_duplicate_executor_ids_fail_validation():
+    executor1 = StringExecutor(id="dup")
+    executor2 = IntExecutor(id="dup")
+
+    with pytest.raises(ExecutorDuplicationError) as exc_info:
+        (WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build())
+
+    assert exc_info.value.executor_id == "dup"
+    assert exc_info.value.validation_type == ValidationTypeEnum.EXECUTOR_DUPLICATION
 
 
 def test_edge_duplication_validation_fails():
@@ -563,58 +574,33 @@ def test_validation_enum_usage() -> None:
 
 
 def test_handler_ctx_missing_annotation_raises() -> None:
-    class BadExecutor(Executor):
-        @handler
-        async def handle(self, message: str, ctx) -> None:  # type: ignore[no-untyped-def]
-            pass
+    # Validation now happens at handler registration time, not workflow build time
+    with pytest.raises(ValueError) as exc:
 
-    start = StringExecutor(id="s")
-    bad = BadExecutor(id="b")
+        class BadExecutor(Executor):
+            @handler
+            async def handle(self, message: str, ctx) -> None:  # type: ignore[no-untyped-def]
+                pass
 
-    with pytest.raises(HandlerOutputAnnotationError) as exc:
-        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
-
-    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
-    assert "missing type annotation" in str(exc.value)
-
-
-def test_handler_ctx_unsubscripted_workflow_context_raises() -> None:
-    class BadExecutor(Executor):
-        @handler
-        async def handle(self, message: str, ctx: WorkflowContext) -> None:  # type: ignore # missing T
-            pass
-
-    start = StringExecutor(id="s")
-    bad = BadExecutor(id="b")
-
-    with pytest.raises(HandlerOutputAnnotationError) as exc:
-        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
-
-    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
-    # Message should mention missing T or WorkflowContext[None]
-    assert "WorkflowContext[None]" in str(exc.value) or "missing" in str(exc.value).lower()
+    assert "must have a WorkflowContext" in str(exc.value)
 
 
 def test_handler_ctx_invalid_t_out_entries_raises() -> None:
-    class BadExecutor(Executor):
-        @handler
-        async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
-            pass
+    # Validation now happens at handler registration time, not workflow build time
+    with pytest.raises(ValueError) as exc:
 
-    start = StringExecutor(id="s")
-    bad = BadExecutor(id="b")
+        class BadExecutor(Executor):
+            @handler
+            async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
+                pass
 
-    with pytest.raises(HandlerOutputAnnotationError) as exc:
-        WorkflowBuilder().add_edge(start, bad).set_start_executor(start).build()
-
-    assert exc.value.validation_type == ValidationTypeEnum.HANDLER_OUTPUT_ANNOTATION
-    assert "invalid entries" in str(exc.value)
+    assert "invalid type entry" in str(exc.value)
 
 
 def test_handler_ctx_none_is_allowed() -> None:
     class NoneExecutor(Executor):
         @handler
-        async def handle(self, message: str, ctx: WorkflowContext[None]) -> None:
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:
             # does not emit
             return None
 

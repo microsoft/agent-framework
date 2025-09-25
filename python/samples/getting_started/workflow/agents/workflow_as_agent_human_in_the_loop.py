@@ -1,27 +1,31 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-from agent_framework import (
+# Ensure local getting_started package can be imported when running as a script.
+_SAMPLES_ROOT = Path(__file__).resolve().parents[3]
+if str(_SAMPLES_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SAMPLES_ROOT))
+
+from agent_framework import (  # noqa: E402
     ChatMessage,
+    Executor,
     FunctionCallContent,
     FunctionResultContent,
-    Role,
-)
-from agent_framework.openai import OpenAIChatClient
-from agent_framework import (
-    Executor,
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
+    Role,
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
     handler,
 )
-
-from samples.getting_started.workflow.agents.workflow_as_agent_reflection_pattern import (
+from agent_framework.openai import OpenAIChatClient  # noqa: E402
+from getting_started.workflow.agents.workflow_as_agent_reflection_pattern import (  # noqa: E402
     ReviewRequest,
     ReviewResponse,
     Worker,
@@ -35,7 +39,7 @@ This sample demonstrates how to build a workflow agent that escalates uncertain
 decisions to a human manager. A Worker generates results, while a Reviewer
 evaluates them. When the Reviewer is not confident, it escalates the decision
 to a human via RequestInfoExecutor, receives the human response, and then
-forwards that response back to the Worker.
+forwards that response back to the Worker. The workflow completes when idle.
 
 Prerequisites:
 - OpenAI account configured and accessible for OpenAIChatClient.
@@ -56,8 +60,9 @@ class HumanReviewRequest(RequestInfoMessage):
 class ReviewerWithHumanInTheLoop(Executor):
     """Executor that always escalates reviews to a human manager."""
 
-    def __init__(self, worker_id: str, request_info_id: str) -> None:
-        super().__init__()
+    def __init__(self, worker_id: str, request_info_id: str, reviewer_id: str | None = None) -> None:
+        unique_id = reviewer_id or f"{worker_id}-reviewer"
+        super().__init__(id=unique_id)
         self._worker_id = worker_id
         self._request_info_id = request_info_id
 
@@ -96,8 +101,8 @@ async def main() -> None:
     # Create executors for the workflow.
     print("Creating chat client and executors...")
     mini_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-nano")
-    worker = Worker(chat_client=mini_chat_client)
-    request_info_executor = RequestInfoExecutor()
+    worker = Worker(id="sub-worker", chat_client=mini_chat_client)
+    request_info_executor = RequestInfoExecutor(id="request_info")
     reviewer = ReviewerWithHumanInTheLoop(worker_id=worker.id, request_info_id=request_info_executor.id)
 
     print("Building workflow with Worker ↔ Reviewer cycle...")
