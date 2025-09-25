@@ -34,14 +34,14 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         : base(output)
     {
         this.State.Set(Variables.GlobalValue, FormulaValue.New(255), VariableScopeNames.Global);
-        this.State.Set(Variables.BoolValue, FormulaValue.New(true), VariableScopeNames.Topic);
-        this.State.Set(Variables.StringValue, FormulaValue.New("Hello World"), VariableScopeNames.Topic);
-        this.State.Set(Variables.IntValue, FormulaValue.New(long.MaxValue), VariableScopeNames.Topic);
-        this.State.Set(Variables.NumberValue, FormulaValue.New(33.3), VariableScopeNames.Topic);
-        this.State.Set(Variables.EnumValue, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)), VariableScopeNames.Topic);
-        this.State.Set(Variables.ObjectValue, ObjectData, VariableScopeNames.Topic);
-        this.State.Set(Variables.ArrayValue, TableData, VariableScopeNames.Topic);
-        this.State.Set(Variables.BlankValue, FormulaValue.NewBlank(), VariableScopeNames.Topic);
+        this.State.Set(Variables.BoolValue, FormulaValue.New(true));
+        this.State.Set(Variables.StringValue, FormulaValue.New("Hello World"));
+        this.State.Set(Variables.IntValue, FormulaValue.New(long.MaxValue));
+        this.State.Set(Variables.NumberValue, FormulaValue.New(33.3));
+        this.State.Set(Variables.EnumValue, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)));
+        this.State.Set(Variables.ObjectValue, ObjectData);
+        this.State.Set(Variables.ArrayValue, TableData);
+        this.State.Set(Variables.BlankValue, FormulaValue.NewBlank());
         this.State.Bind();
     }
 

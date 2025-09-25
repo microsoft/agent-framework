@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -36,5 +37,5 @@ public abstract class WorkflowTest : IDisposable
     internal static string? FormatOptionalPath(string? variableName, string? scope = null) =>
         variableName is null ? null : FormatVariablePath(variableName, scope);
 
-    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? VariableScopeNames.Topic}.{variableName}";
+    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}";
 }
