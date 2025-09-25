@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, overload
 
 from pydantic import model_validator
@@ -99,7 +99,6 @@ class ChatMessageStoreState(AFBaseModel):
 TChatMessageStore = TypeVar("TChatMessageStore", bound="ChatMessageStore")
 
 
-@dataclass
 class ChatMessageStore:
     """An in-memory implementation of ChatMessageStoreProtocol that stores messages in a list.
 
@@ -114,7 +113,13 @@ class ChatMessageStore:
         messages: Optional initial list of ChatMessage objects to populate the store.
     """
 
-    messages: list[ChatMessage] = field(default_factory=list)
+    def __init__(self, messages: Sequence[ChatMessage] | None = None):
+        """Create a ChatMessageStore for use in a thread.
+
+        Args:
+            messages: The messages to store.
+        """
+        self.messages = list(messages) if messages else []
 
     async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
         """Add messages to the store.
@@ -226,13 +231,12 @@ class AgentThread:
         self._message_store = message_store
 
     @property
-    def is_uninitialized(self) -> bool:
-        """Indicates if the thread is uninitialized.
+    def is_initialized(self) -> bool:
+        """Indicates if the thread is initialized.
 
-        This means both the service_thread_id and message_store are None.
-        And the thread can still be used either way.
+        This means either the service_thread_id or the message_store is set.
         """
-        return self._service_thread_id is None and self._message_store is None
+        return self._service_thread_id is not None or self._message_store is not None
 
     @property
     def service_thread_id(self) -> str | None:

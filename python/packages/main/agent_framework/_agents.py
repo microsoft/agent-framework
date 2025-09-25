@@ -701,7 +701,7 @@ class ChatAgent(BaseAgent):
         If you supply a chat_message_store_factory, the thread will
         use the provided factory to create a message store for the thread and the thread will be managed
         locally.
-        if you don't supply either but have a chat_message_store_factory configured on the agent,
+        If you don't supply either but have a chat_message_store_factory configured on the agent,
         that factory will be used to create a message store for the thread and the thread will be
         managed locally.
         When neither is provided, the thread will be created without a service ID or message store,

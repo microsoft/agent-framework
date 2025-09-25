@@ -50,7 +50,7 @@ class AgentInitializationError(AgentException):
 
 
 class AgentThreadException(AgentException):
-    """An error occurred while initializing the agent thread."""
+    """An error occurred while managing the agent thread."""
 
     pass
 

@@ -40,7 +40,7 @@ async def main() -> None:
                 tools=get_weather,
             ) as agent:
                 thread = agent.get_new_thread(service_thread_id=created_thread.id)
-                assert not thread.is_uninitialized
+                assert thread.is_initialized
                 result = await agent.run("What's the weather like in Tokyo?", thread=thread)
                 print(f"Result: {result}\n")
         finally:

@@ -2,12 +2,10 @@
 
 import json
 from collections.abc import Sequence
-from dataclasses import field
 from typing import Any
 
 import tiktoken
-from agent_framework._threads import ChatMessageStore
-from agent_framework._types import ChatMessage, Role
+from agent_framework import ChatMessage, ChatMessageStore, Role
 from loguru import logger
 
 
@@ -19,8 +17,6 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
     Also removes leading tool messages to ensure valid conversation flow.
     """
 
-    truncated_messages: list[ChatMessage] = field(default_factory=list)
-
     def __init__(
         self,
         messages: Sequence[ChatMessage] | None = None,
@@ -28,11 +24,8 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
         system_message: str | None = None,
         tool_definitions: Any | None = None,
     ):
-        if messages is not None:
-            super().__init__(messages)  # type: ignore[reportArgumentType]
-        else:
-            super().__init__()
-        self.truncated_messages = self.messages.copy()  # Separate truncated view
+        super().__init__(messages=messages)
+        self.truncated_messages = self.messages.copy()
         self.max_tokens = max_tokens
         self.system_message = system_message  # Included in token count
         self.tool_definitions = tool_definitions
