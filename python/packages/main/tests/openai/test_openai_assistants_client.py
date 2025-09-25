@@ -622,7 +622,7 @@ def test_openai_assistants_client_prepare_options_basic(mock_async_openai: Magic
     # Create basic chat options
     chat_options = ChatOptions(
         max_tokens=100,
-        ai_model_id="gpt-4",
+        model_id="gpt-4",
         temperature=0.7,
         top_p=0.9,
     )

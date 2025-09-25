@@ -238,7 +238,7 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
     span_exporter.clear()
-    response = await client.get_response(messages=messages, ai_model_id="Test")
+    response = await client.get_response(messages=messages, model="Test")
     assert response is not None
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1

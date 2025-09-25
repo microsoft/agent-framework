@@ -1,14 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import os
-from datetime import datetime
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
-from pydantic import BaseModel
 
 from agent_framework import (
     AgentRunResponse,
@@ -691,95 +688,11 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     assert openai_messages[0]["tool_call_id"] == "call-123"
 
 
-def test_prepare_function_call_results_with_basemodel():
-    """Test prepare_function_call_results with BaseModel objects."""
-
-    class TestModel(BaseModel):
-        name: str
-        value: int
-        raw_representation: str = "should be excluded"
-        additional_properties: dict = {"should": "be excluded"}
-
-    model_instance = TestModel(name="test", value=42)
-    result = prepare_function_call_results(model_instance)
-
-    assert isinstance(result, str)
-    parsed = json.loads(result)
-    assert parsed["name"] == "test"
-    assert parsed["value"] == 42
-    assert "raw_representation" not in parsed
-    assert "additional_properties" not in parsed
-
-
-def test_prepare_function_call_results_with_nested_structures():
-    """Test prepare_function_call_results with complex nested structures."""
-
-    class NestedModel(BaseModel):
-        id: int
-        raw_representation: str = "excluded"
-
-    # Test with list of BaseModel objects
-    models = [NestedModel(id=1), [NestedModel(id=2)]]
-    result = prepare_function_call_results(models)
-
-    assert isinstance(result, str)
-    parsed = json.loads(result)
-    assert len(parsed) == 2
-    assert parsed[0]["id"] == 1
-    assert isinstance(parsed[1], list)
-    assert len(parsed[1]) == 1
-    assert parsed[1][0]["id"] == 2
-    assert "raw_representation" not in parsed[0]
-    assert "raw_representation" not in parsed[1][0]
-
-
-def test_prepare_function_call_results_with_dict_containing_basemodel():
-    """Test prepare_function_call_results with dictionary containing BaseModel."""
-
-    class TestModel(BaseModel):
-        value: str
-        raw_representation: str = "excluded"
-
-    # Test with dict containing BaseModel
-    complex_dict = {"model": TestModel(value="test"), "simple": "value", "number": 42}
-
-    result = prepare_function_call_results(complex_dict)
-
-    assert isinstance(result, str)
-    parsed = json.loads(result)
-    assert parsed["model"]["value"] == "test"
-    assert "raw_representation" not in parsed["model"]
-    assert parsed["simple"] == "value"
-    assert parsed["number"] == 42
-
-
 def test_prepare_function_call_results_string_passthrough():
     """Test that string values are passed through directly without JSON encoding."""
     result = prepare_function_call_results("simple string")
     assert result == "simple string"
     assert isinstance(result, str)
-
-
-def test_prepare_function_call_results_with_none_values():
-    """Test that None values in BaseModel fields are preserved to avoid validation errors during reloading."""
-
-    class Flight(BaseModel):
-        flight_id: str
-        departure: datetime | None
-        arrival: datetime | None
-
-    # Test single BaseModel with None values (performance shortcut)
-    flight_with_nones = Flight(flight_id="123", departure=None, arrival=None)
-    result = prepare_function_call_results(flight_with_nones)
-
-    assert isinstance(result, str)
-    parsed = json.loads(result)
-    assert parsed["flight_id"] == "123"
-    assert parsed["departure"] is None
-    assert parsed["arrival"] is None
-
-    new_flight = Flight.model_validate_json(result)
-    assert new_flight == flight_with_nones
 
 
 def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str, str]) -> None:

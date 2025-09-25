@@ -772,7 +772,11 @@ def _trace_get_response(
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
-            model_id = str(kwargs.get("model_id") or getattr(self, "model_id", "unknown"))
+            model_id = (
+                kwargs.get("model")
+                or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
+                or getattr(self, "model_id", None)
+            )
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -853,7 +857,11 @@ def _trace_get_streaming_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
-            model_id = kwargs.get("model_id") or getattr(self, "model_id", None)
+            model_id = (
+                kwargs.get("model")
+                or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
+                or getattr(self, "model_id", None)
+            )
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)

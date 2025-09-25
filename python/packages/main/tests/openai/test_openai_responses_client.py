@@ -370,7 +370,7 @@ async def test_response_format_parse_path() -> None:
         )
 
         assert response.conversation_id == "parsed_response_123"
-        assert response.ai_model_id == "test-model"
+        assert response.model_id == "test-model"
 
 
 async def test_bad_request_error_non_content_filter() -> None:
