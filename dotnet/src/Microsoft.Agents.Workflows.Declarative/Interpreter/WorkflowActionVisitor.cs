@@ -45,13 +45,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     public bool HasUnsupportedActions { get; private set; }
 
-    public Workflow<TInput> Complete<TInput>()
+    public Workflow Complete()
     {
         WorkflowModelBuilder builder = new(this._rootAction);
 
         this._workflowModel.Build(builder);
 
-        return builder.WorkflowBuilder.Build<TInput>();
+        // Build final workflow
+        return this._workflowBuilder.Build();
     }
 
     protected override void Visit(ActionScope item)

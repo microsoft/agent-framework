@@ -18,7 +18,7 @@ from agent_framework import (  # Core chat primitives to build LLM requests
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     handler,  # Decorator to mark an Executor method as invokable
 )
-from agent_framework.azure import AzureChatClient  # Client wrapper for Azure OpenAI chat models
+from agent_framework.azure import AzureOpenAIChatClient  # Client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 
 """
@@ -35,7 +35,7 @@ Show how to construct a parallel branch pattern in workflows. Demonstrate:
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
-- Azure OpenAI access configured for AzureChatClient. Log in with Azure CLI and set any required environment variables.
+- Azure OpenAI access configured for AzureOpenAIChatClient. Log in with Azure CLI and set any required environment variables.
 - Comfort reading AgentExecutorResponse.agent_run_response.text for assistant output aggregation.
 """
 
@@ -107,7 +107,7 @@ class AggregateInsights(Executor):
 
 async def main() -> None:
     # 1) Create agent executors for domain experts
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     researcher = AgentExecutor(
         chat_client.create_agent(

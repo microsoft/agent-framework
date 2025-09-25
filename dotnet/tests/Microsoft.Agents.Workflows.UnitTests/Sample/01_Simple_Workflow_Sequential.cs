@@ -9,7 +9,7 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step1EntryPoint
 {
-    public static Workflow<string> WorkflowInstance
+    public static Workflow WorkflowInstance
     {
         get
         {
@@ -19,7 +19,7 @@ internal static class Step1EntryPoint
             WorkflowBuilder builder = new(uppercase);
             builder.AddEdge(uppercase, reverse);
 
-            return builder.Build<string>();
+            return builder.Build();
         }
     }
 
@@ -49,7 +49,7 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     {
         string result = string.Concat(message.Reverse());
 
-        await context.AddEventAsync(new WorkflowCompletedEvent(result)).ConfigureAwait(false);
+        await context.AddEventAsync(new RequestHaltEvent(result)).ConfigureAwait(false);
         return result;
     }
 }

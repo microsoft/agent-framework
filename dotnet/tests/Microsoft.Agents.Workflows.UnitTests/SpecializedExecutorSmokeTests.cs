@@ -119,6 +119,12 @@ public class SpecializedExecutorSmokeTests
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) =>
             default;
 
+        public ValueTask YieldOutputAsync(object output) =>
+            default;
+
+        public ValueTask RequestHaltAsync() =>
+            default;
+
         public ValueTask QueueClearScopeAsync(string? scopeName = null) =>
             default;
 

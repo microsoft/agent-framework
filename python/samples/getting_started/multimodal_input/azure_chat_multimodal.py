@@ -2,13 +2,15 @@
 
 import asyncio
 import base64
+
 import requests
 from agent_framework import ChatMessage, DataContent, Role, TextContent
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
+
 
 async def test_image():
     """Test image analysis with Azure."""
-    client = AzureChatClient()
+    client = AzureOpenAIChatClient()
 
     # Fetch image from httpbin
     image_url = "https://httpbin.org/image/jpeg"
@@ -18,10 +20,7 @@ async def test_image():
 
     message = ChatMessage(
         role=Role.USER,
-        contents=[
-            TextContent(text="What's in this image?"),
-            DataContent(uri=image_uri, media_type="image/jpeg")
-        ]
+        contents=[TextContent(text="What's in this image?"), DataContent(uri=image_uri, media_type="image/jpeg")],
     )
 
     response = await client.get_response(message)
@@ -30,7 +29,8 @@ async def test_image():
 
 async def main():
     print("=== Testing Azure Multimodal ===")
-    await test_image() 
+    await test_image()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
