@@ -8,9 +8,9 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.A2A.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AIContentExtensions"/> class.
+/// Unit tests for the <see cref="A2AAIContentExtensions"/> class.
 /// </summary>
-public sealed class AIContentExtensionsTests
+public sealed class A2AAIContentExtensionsTests
 {
     [Fact]
     public void ToA2APart_WithTextContent_ReturnsTextPart()

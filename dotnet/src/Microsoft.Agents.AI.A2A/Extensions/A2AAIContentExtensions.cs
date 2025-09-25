@@ -2,14 +2,14 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.Extensions.AI;
+using A2A;
 
-namespace A2A;
+namespace Microsoft.Extensions.AI;
 
 /// <summary>
 /// Extension methods for the <see cref="AIContent"/> class.
 /// </summary>
-internal static class AIContentExtensions
+internal static class A2AAIContentExtensions
 {
     /// <summary>
     ///  Converts a collection of <see cref="AIContent"/> to a list of <see cref="Part"/> objects.

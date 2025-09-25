@@ -11,8 +11,6 @@ using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
-using Microsoft.PowerFx.Types;
-using Microsoft.Agents.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
