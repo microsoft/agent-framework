@@ -607,6 +607,7 @@ async def _auto_invoke_function(
         middleware_context = FunctionInvocationContext(
             function=tool,
             arguments=args,
+            kwargs=custom_args or {},
         )
 
         async def final_function_handler(context_obj: Any) -> Any:
@@ -721,7 +722,15 @@ def _handle_function_calls_response(
             **kwargs: Any,
         ) -> "ChatResponse":
             from ._clients import prepare_messages
+            from ._middleware import extract_and_merge_function_middleware
             from ._types import ChatMessage, ChatOptions, FunctionCallContent, FunctionResultContent
+
+            # Extract and merge function middleware from chat client with kwargs pipeline
+            extract_and_merge_function_middleware(self, kwargs)
+
+            # Extract the middleware pipeline before calling the underlying function
+            # because the underlying function may not preserve it in kwargs
+            stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
@@ -746,8 +755,9 @@ def _handle_function_calls_response(
                 if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
                     tools = chat_options.tools
                 if function_calls and tools:
-                    # Extract function middleware pipeline from kwargs if available
-                    middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+                    # Use the stored middleware pipeline instead of extracting from kwargs
+                    # because kwargs may have been modified by the underlying function
+                    middleware_pipeline = stored_middleware_pipeline
                     function_results = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
@@ -820,7 +830,15 @@ def _handle_function_calls_streaming_response(
         ) -> AsyncIterable["ChatResponseUpdate"]:
             """Wrap the inner get streaming response method to handle tool calls."""
             from ._clients import prepare_messages
+            from ._middleware import extract_and_merge_function_middleware
             from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, FunctionCallContent
+
+            # Extract and merge function middleware from chat client with kwargs pipeline
+            extract_and_merge_function_middleware(self, kwargs)
+
+            # Extract the middleware pipeline before calling the underlying function
+            # because the underlying function may not preserve it in kwargs
+            stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
             prepped_messages = prepare_messages(messages)
             for attempt_idx in range(max_iterations):
@@ -858,8 +876,9 @@ def _handle_function_calls_streaming_response(
                     tools = chat_options.tools
 
                 if function_calls and tools:
-                    # Extract function middleware pipeline from kwargs if available
-                    middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+                    # Use the stored middleware pipeline instead of extracting from kwargs
+                    # because kwargs may have been modified by the underlying function
+                    middleware_pipeline = stored_middleware_pipeline
                     function_results = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,

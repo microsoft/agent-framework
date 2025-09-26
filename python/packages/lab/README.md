@@ -8,7 +8,7 @@ Lab packages are not part of the core framework and may experience breaking chan
 Lab packages are extensions to the core Agent Framework that falls into
 one of the following categories:
 
-1. Incubation of new features that may get incorprated by the core framework.
+1. Incubation of new features that may get incorporated by the core framework.
 2. Research prototypes built on the core framework.
 3. Benchmarks and experimentation tools.
 
@@ -26,7 +26,7 @@ If you want to contribute, please take the following steps:
 1. Follow the [Create a New Lab Package](#create-new-lab-package) guide
    below to create your own lab package.
 2. Create a new repo on GitHub and check in your package there.
-3. Tag your repo with `agent-framework-lab` for bettter discovery.
+3. Tag your repo with `agent-framework-lab` for better discovery.
 4. Submit a PR to this repo (github.com/microsoft/agent-framework)
    to add a link to your repo in the [list](#lab-packages) above.
    **The PR title must contain "[New Lab Package]"**.

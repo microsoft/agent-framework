@@ -25,6 +25,7 @@ from agent_framework import (
     TextContent,
     ToolProtocol,
     ai_function,
+    use_chat_middleware,
     use_function_invocation,
 )
 
@@ -111,11 +112,13 @@ class MockChatClient:
             yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
 
 
+@use_chat_middleware
 class MockBaseChatClient(BaseChatClient):
     """Mock implementation of the BaseChatClient."""
 
     run_responses: list[ChatResponse] = Field(default_factory=list)
     streaming_responses: list[list[ChatResponseUpdate]] = Field(default_factory=list)
+    call_count: int = Field(default=0)
 
     @override
     async def _inner_get_response(
@@ -136,6 +139,7 @@ class MockBaseChatClient(BaseChatClient):
             The chat response contents representing the response(s).
         """
         logger.debug(f"Running base chat client inner, with: {messages=}, {chat_options=}, {kwargs=}")
+        self.call_count += 1
         if not self.run_responses:
             return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
 
