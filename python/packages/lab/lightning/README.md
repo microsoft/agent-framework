@@ -1,6 +1,6 @@
 # Agent Framework Lab - Agent Framework x Agent Lightning
 
-RL Module for Microsoft Agent Framework
+[Agent-lightning](https://github.com/microsoft/agent-lightning) is the "trainer" for agents. This package builds upon agent-framework and agent-lightning to provide a convenient approach to train agents written with agent-framework.
 
 ## Installation
 
@@ -9,6 +9,11 @@ pip install agent-framework-lab-lightning
 ```
 
 ## Usage
+
+1. prepare a dataset to be a list of samples. Each sample is recommended to be a dict.
+2. prepare an agent function that takes one sample (same as you prepared), and llm configuration.  The function should use the configuration to initialize a chat client that solves the sample task; then grade the answer and return the evaluation score.
+3. use `rollout` decorator to decorate the agent function.
+4. use `Trainer` to train the agent.
 
 ```python
 from agent_framework.lab.lightning import YourClass

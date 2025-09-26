@@ -19,4 +19,5 @@ except importlib.metadata.PackageNotFoundError:
 
 def init() -> None:
     """Initialize the agent-framework-lab-lightning for training."""
-    setup_observability()
+    # Mute the default exporters added by agent-framework
+    setup_observability(enable_default_exporters=False)

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""This sample will train a math agent using a dataset in `math_data/`.
+"""This sample will train a math agent using a dataset in `data/math/`.
 
 One GPU with 16GB of memory is sufficient for this sample.
 """
@@ -148,10 +148,10 @@ def main():
         },
         "data": {
             # Uses this many tasks from the dataset to perform rollouts
-            "train_batch_size": 32,
+            "train_batch_size": 8,
             # Used to filter out the over-long prompt-response pairs
             "max_prompt_length": 4096,
-            "max_response_length": 2048,
+            "max_response_length": 1024,
         },
         "actor_rollout_ref": {
             # Controls the rollout process
@@ -161,7 +161,7 @@ def main():
                 # Repeat each task N many times. Required by G(rouped)RPO
                 "n": 4,
                 # Controls the batch size per GPU when computing the log-prob
-                "log_prob_micro_batch_size_per_gpu": 4,
+                "log_prob_micro_batch_size_per_gpu": 2,
                 # Controls the multi-turn format (this is binded to the LLM used)
                 # See https://docs.vllm.ai/en/stable/features/tool_calling.html
                 "multi_turn": {"format": "hermes"},
@@ -169,13 +169,13 @@ def main():
                 "name": "vllm",
                 # Controls the GPU memory utilization of vLLM
                 # You might want to set this to under 0.8 to prevent OOM
-                "gpu_memory_utilization": 0.6,
+                "gpu_memory_utilization": 0.75,
             },
             "actor": {
                 # Split each sample into sub-batches of this size for PPO
-                "ppo_mini_batch_size": 32,
+                "ppo_mini_batch_size": 8,
                 # Local per-GPU micro batch size
-                "ppo_micro_batch_size_per_gpu": 4,
+                "ppo_micro_batch_size_per_gpu": 2,
                 # Optimizer configuration
                 "optim": {"lr": 1e-6},
                 # Whether to use KL loss during training
@@ -195,7 +195,7 @@ def main():
             # Reference model config
             "ref": {
                 # Controls the batch size per GPU when computing log-prob for reference model
-                "log_prob_micro_batch_size_per_gpu": 8,
+                "log_prob_micro_batch_size_per_gpu": 2,
                 "fsdp_config": {"param_offload": True},
             },
             # Common configs for the model
@@ -217,26 +217,20 @@ def main():
             "val_before_train": True,
             # Logging backends to use: "console", "wandb", etc.
             "logger": ["console"],
-            # Project name for experiment tracking (e.g., on wandb)
-            "project_name": "agent-framework-lab-lightning",
-            # Experiment name for run identification in tracking tools
-            "experiment_name": "math_agent",
             # Number of nodes used in the training
             "nnodes": 1,
-            # Save frequency (by iteration) for model checkpoints
-            "save_freq": 32,
             # Validation frequency (in training iterations)
             "test_freq": 4,
             # Number of epochs in training
-            "total_epochs": 1,
+            "total_epochs": 2,
         },
     }
 
     # Prepare for lightning training in agent frameworks
     lightning_init()
 
-    train_dataset = _load_jsonl("math_data/train.jsonl")
-    val_dataset = _load_jsonl("math_data/test.jsonl")
+    train_dataset = _load_jsonl("data/math/train.jsonl")
+    val_dataset = _load_jsonl("data/math/test.jsonl")
 
     print("First 5 rows of train dataset:")
     for i in range(5):
@@ -250,7 +244,7 @@ def main():
 
 
 def debug():
-    train_dataset = _load_jsonl("math_data/train.jsonl")
+    train_dataset = _load_jsonl("data/math/train.jsonl")
     train_sample = train_dataset[0]
     model = "gpt-4o-mini"
     base_url = os.getenv("OPENAI_BASE_URL")
