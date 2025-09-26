@@ -5,9 +5,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using A2A;
+using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents.Hosting;
-using Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.Web;
