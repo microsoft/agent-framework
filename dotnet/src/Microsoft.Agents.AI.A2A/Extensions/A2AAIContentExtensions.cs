@@ -2,13 +2,9 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.Extensions.AI;
+using A2A;
 
-<<<<<<<< HEAD:dotnet/src/Microsoft.Agents.AI.A2A/Extensions/AIContentExtensions.cs
-namespace A2A;
-========
 namespace Microsoft.Extensions.AI;
->>>>>>>> upstream/main:dotnet/src/Microsoft.Agents.AI.A2A/Extensions/A2AAIContentExtensions.cs
 
 /// <summary>
 /// Extension methods for the <see cref="AIContent"/> class.
