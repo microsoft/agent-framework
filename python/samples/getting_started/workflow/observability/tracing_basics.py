@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, get_logger, handler
+from agent_framework.observability import setup_observability
 
 """Basic tracing workflow sample.
 
@@ -23,28 +23,9 @@ Purpose:
 
 Prerequisites:
 - No external services required for the workflow itself.
-- To print spans to the console, install the OpenTelemetry SDK: pip install opentelemetry-sdk
-- Enable diagnostics:
-    configure your .env file with `ENABLE_OTEL=true` or run:
-    export ENABLE_OTEL=true
 """
 
 logger = get_logger()
-
-
-def _ensure_tracing_configured() -> None:
-    """Fail fast unless diagnostics are enabled and the SDK is present.
-
-    If the env var is set, attach a ConsoleSpanExporter so spans print to stdout.
-    """
-    env = os.getenv("ENABLE_OTEL", "").lower()
-    if env not in {"1", "true", "yes"}:
-        logger.info("Tracing diagnostics are disabled in the env. Setting this manually here.")
-
-    from agent_framework.observability import setup_observability
-    from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-
-    setup_observability(exporters=[ConsoleSpanExporter()])
 
 
 class StartExecutor(Executor):
@@ -62,7 +43,9 @@ class EndExecutor(Executor):
 
 
 async def main() -> None:
-    _ensure_tracing_configured()  # Enforce tracing configuration before building or running the workflow.
+    # This will enable tracing and create the necessary tracing, logging and metrics providers
+    # based on environment variables.
+    setup_observability()
 
     # Build a two node graph: StartExecutor -> EndExecutor. The builder emits a workflow.build span.
     workflow = (

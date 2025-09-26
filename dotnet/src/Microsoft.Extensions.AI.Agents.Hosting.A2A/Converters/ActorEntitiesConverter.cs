@@ -3,6 +3,7 @@
 using System;
 using System.Text.Json;
 using A2A;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;

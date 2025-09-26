@@ -3,8 +3,8 @@
 using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace AgentConformance.IntegrationTests;
 

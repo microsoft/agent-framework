@@ -10,7 +10,7 @@
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Hosting.A2A\Microsoft.Extensions.AI.Agents.Hosting.A2A.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Hosting\Microsoft.Extensions.AI.Agents.Hosting.csproj" />
     <ProjectReference Include="..\AgentWebChat.ServiceDefaults\AgentWebChat.ServiceDefaults.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
   </ItemGroup>
 
   <!-- A2A dependency -->

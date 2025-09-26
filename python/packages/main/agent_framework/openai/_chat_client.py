@@ -18,6 +18,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
+from .._middleware import use_chat_middleware
 from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
     ChatMessage,
@@ -452,6 +453,7 @@ TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
     """OpenAI Chat completion class."""
 

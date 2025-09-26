@@ -34,6 +34,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     get_logger,
+    use_chat_middleware,
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -123,6 +124,7 @@ TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class AzureAIAgentClient(BaseChatClient):
     """Azure AI Agent Chat client."""
 
@@ -165,7 +167,6 @@ class AzureAIAgentClient(BaseChatClient):
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable.
             async_credential: Azure async credential to use for authentication.
-            setup_tracing: Whether to setup tracing for the project_client. Defaults to True.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
@@ -216,7 +217,7 @@ class AzureAIAgentClient(BaseChatClient):
         )
         self._should_close_client = should_close_client
 
-    async def setup_observability(self, enable_live_metrics: bool = False) -> None:
+    async def setup_observability(self) -> None:
         """Use this method to setup tracing in your Azure AI Project.
 
         This will take the connection string from the project project_client.
@@ -227,7 +228,6 @@ class AzureAIAgentClient(BaseChatClient):
 
         setup_observability(
             applicationinsights_connection_string=await self.project_client.telemetry.get_application_insights_connection_string(),  # noqa: E501
-            enable_live_metrics=enable_live_metrics,
         )
 
     async def __aenter__(self) -> "Self":

@@ -8,15 +8,15 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal sealed class StepContext
 {
-    public Dictionary<ExecutorIdentity, List<MessageEnvelope>> QueuedMessages { get; } = [];
+    public Dictionary<string, List<MessageEnvelope>> QueuedMessages { get; } = [];
 
     public bool HasMessages => this.QueuedMessages.Values.Any(messageList => messageList.Count > 0);
 
-    public List<MessageEnvelope> MessagesFor(string? executorId)
+    public List<MessageEnvelope> MessagesFor(string target)
     {
-        if (!this.QueuedMessages.TryGetValue(executorId, out var messages))
+        if (!this.QueuedMessages.TryGetValue(target, out var messages))
         {
-            this.QueuedMessages[executorId] = messages = [];
+            this.QueuedMessages[target] = messages = [];
         }
 
         return messages;
@@ -24,7 +24,7 @@ internal sealed class StepContext
 
     // TODO: Create a MessageEnvelope class that extends from the ExportedState object (with appropriate rename) to avoid
     // unnecessary wrapping and unwrapping of messages during checkpointing.
-    internal Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> ExportMessages()
+    internal Dictionary<string, List<PortableMessageEnvelope>> ExportMessages()
     {
         return this.QueuedMessages.Keys.ToDictionary(
             keySelector: identity => identity,
@@ -33,9 +33,9 @@ internal sealed class StepContext
         );
     }
 
-    internal void ImportMessages(Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> messages)
+    internal void ImportMessages(Dictionary<string, List<PortableMessageEnvelope>> messages)
     {
-        foreach (ExecutorIdentity identity in messages.Keys)
+        foreach (string identity in messages.Keys)
         {
             this.QueuedMessages[identity] = messages[identity].ConvertAll(UnwrapExportedState);
         }

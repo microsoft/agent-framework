@@ -406,7 +406,7 @@ def test_cycle_detection_warning(caplog: Any) -> None:
 
     assert workflow is not None
     assert "Cycle detected in the workflow graph" in caplog.text
-    assert "Ensure proper termination conditions exist" in caplog.text
+    assert "Ensure termination or iteration limits exist" in caplog.text
 
 
 def test_successful_type_compatibility_logging(caplog: Any) -> None:

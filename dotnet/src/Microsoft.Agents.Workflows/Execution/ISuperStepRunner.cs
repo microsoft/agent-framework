@@ -19,4 +19,6 @@ internal interface ISuperStepRunner
     event EventHandler<WorkflowEvent>? WorkflowEvent;
 
     ValueTask<bool> RunSuperStepAsync(CancellationToken cancellation);
+
+    ValueTask RequestEndRunAsync();
 }

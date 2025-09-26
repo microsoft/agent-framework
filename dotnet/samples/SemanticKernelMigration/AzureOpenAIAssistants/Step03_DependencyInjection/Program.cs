@@ -4,7 +4,7 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.OpenAI;
@@ -72,9 +72,7 @@ async Task AFAgent()
     {
         var assistantClient = sp.GetRequiredService<AssistantClient>();
 
-        var agent = assistantClient.CreateAIAgent(deploymentName, name: "Joker", instructions: "You are good at telling jokes.");
-
-        return agent;
+        return assistantClient.CreateAIAgent(deploymentName, name: "Joker", instructions: "You are good at telling jokes.");
     });
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
@@ -94,6 +92,9 @@ async Task AFAgent()
 
     // Clean up
     var assistantClient = serviceProvider.GetRequiredService<AssistantClient>();
-    await assistantClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantClient.DeleteAssistantAsync(agent.Id);
 }

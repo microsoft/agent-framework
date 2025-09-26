@@ -13,8 +13,8 @@ namespace Microsoft.Agents.Workflows.Checkpointing;
 /// at the time of initial deserialization, e.g. user-defined state types.
 ///
 /// This operates in conjuction with <see cref="IDelayedDeserialization"/> and <see cref="PortableValue"/> to abstract
-/// away the speicfics of a given serialization format in favor of <see cref="PortableValue.As{TValue}"/> and
-/// <see cref="PortableValue.Is{TValue}"/>.
+/// away the speicfics of a given serialization format in favor of <see cref="PortableValue.As{TValue}()"/> and
+/// <see cref="PortableValue.Is{TValue}()"/> and related methods.
 /// </summary>
 /// <param name="marshaller"></param>
 internal sealed class PortableValueConverter(JsonMarshaller marshaller) : JsonConverter<PortableValue>
