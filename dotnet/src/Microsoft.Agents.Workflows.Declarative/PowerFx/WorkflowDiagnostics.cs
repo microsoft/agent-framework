@@ -59,13 +59,13 @@ internal static class WorkflowDiagnostics
 
             FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormula() ?? variableDiagnostic.Type.NewBlank();
 
-            if (variableDiagnostic.Path.VariableScopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) is true &&
+            if (variableDiagnostic.Path.NamespaceAlias?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) is true &&
                 !SystemScope.AllNames.Contains(variableDiagnostic.Path.VariableName))
             {
                 throw new DeclarativeModelException($"Variable '{variableDiagnostic.Path.VariableName}' is not a supported system variable.");
             }
 
-            scopes.Set(variableDiagnostic.Path.VariableName, defaultValue, variableDiagnostic.Path.VariableScopeName ?? WorkflowFormulaState.DefaultScopeName);
+            scopes.Set(variableDiagnostic.Path.VariableName, defaultValue, variableDiagnostic.Path.NamespaceAlias ?? WorkflowFormulaState.DefaultScopeName);
         }
     }
 
