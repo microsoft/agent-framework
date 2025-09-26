@@ -46,12 +46,12 @@ public static class TestWorkflowProvider
             // Set environment variables
             await this.InitializeEnvironmentAsync(
                 context,
-                "FOUNDRY_AGENT_RESEARCHMANAGER",
-                "FOUNDRY_AGENT_RESEARCHWEB",
                 "FOUNDRY_AGENT_RESEARCHWEATHER",
-                "FOUNDRY_AGENT_RESEARCHANALYST",
-                "FOUNDRY_AGENT_RESEARCHCODER"
-                ).ConfigureAwait(false);
+                "FOUNDRY_AGENT_RESEARCHCODER",
+                "FOUNDRY_AGENT_RESEARCHWEB",
+                "FOUNDRY_AGENT_RESEARCHMANAGER",
+                "FOUNDRY_AGENT_RESEARCHANALYST").ConfigureAwait(false);
+
             // Initialize variables
             await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
             await context.QueueStateUpdateAsync("AgentResponseText", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
@@ -131,7 +131,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.ReadStateAsync<object>(key: "LastMessage", scopeName: "System").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("System.LastMessage.Text").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "InputTask", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
 
             return default;

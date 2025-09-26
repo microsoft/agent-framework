@@ -1810,7 +1810,7 @@ this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write("? ");
+this.Write(" ");
 
         
         #line default
@@ -1868,7 +1868,7 @@ this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write("? ");
+this.Write(" ");
 
         
         #line default
