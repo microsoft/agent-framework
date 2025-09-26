@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Agents.AI.Runtime;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.AgentHost;
 

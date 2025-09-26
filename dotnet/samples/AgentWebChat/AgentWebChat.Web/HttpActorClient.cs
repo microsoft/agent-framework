@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
-using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Agents.AI.Runtime;
 
 namespace AgentWebChat.Web;
 
