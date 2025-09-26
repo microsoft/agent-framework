@@ -341,8 +341,6 @@ class ObservabilitySettings(AFBaseSettings):
                     (Env var ENABLE_OTEL)
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
                     (Env var ENABLE_SENSITIVE_DATA)
-        enable_default_exporters: Enable the default console exporters when no additional exporters
-                    are provided. Default is True. (Env var ENABLE_DEFAULT_EXPORTERS)
         applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
                     (Env var APPLICATIONINSIGHTS_CONNECTION_STRING)
         otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
@@ -356,7 +354,6 @@ class ObservabilitySettings(AFBaseSettings):
 
     enable_otel: bool = False
     enable_sensitive_data: bool = False
-    enable_default_exporters: bool = True
     applicationinsights_connection_string: str | list[str] | None = None
     otlp_endpoint: str | list[str] | None = None
     vs_code_extension_port: int | None = None
@@ -378,11 +375,6 @@ class ObservabilitySettings(AFBaseSettings):
         Sensitive events are enabled if the diagnostic with sensitive events is enabled.
         """
         return self.enable_sensitive_data
-
-    @property
-    def DEFAULT_EXPORTERS_ENABLED(self) -> bool:
-        """Check if the default exporters are enabled."""
-        return self.enable_default_exporters
 
     @property
     def is_setup(self) -> bool:
@@ -477,7 +469,7 @@ class ObservabilitySettings(AFBaseSettings):
         # Tracing
         tracer_provider = TracerProvider(resource=self.resource)
         trace.set_tracer_provider(tracer_provider)
-        should_add_console_exporter = self.enable_default_exporters
+        should_add_console_exporter = True
         for exporter in exporters:
             if isinstance(exporter, SpanExporter):
                 tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
@@ -489,7 +481,7 @@ class ObservabilitySettings(AFBaseSettings):
 
         # Logging
         logger_provider = LoggerProvider(resource=self.resource)
-        should_add_console_exporter = self.enable_default_exporters
+        should_add_console_exporter = True
         for exporter in exporters:
             if isinstance(exporter, LogExporter):
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
@@ -511,7 +503,7 @@ class ObservabilitySettings(AFBaseSettings):
             for exporter in exporters
             if isinstance(exporter, MetricExporter)
         ]
-        if not metric_readers and self.enable_default_exporters:
+        if not metric_readers:
             from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
 
             metric_readers = [PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=5000)]
@@ -586,7 +578,6 @@ def setup_observability(
     credential: "TokenCredential | None" = None,
     exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
     vs_code_extension_port: int | None = None,
-    enable_default_exporters: bool | None = None,
 ) -> None:
     """Convenient method to setup observability for the application.
 
@@ -680,8 +671,6 @@ def setup_observability(
             `http://localhost:{vs_code_extension_port}` unless this endpoint is already configured.
             This will override the value set through the environment variable.
             Default is None.
-        enable_default_exporters: Enable the default console exporters when no additional exporters
-            are provided. Default is None.
     """
     global OBSERVABILITY_SETTINGS
     # Update the observability settings with the provided values
@@ -690,8 +679,6 @@ def setup_observability(
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
     if vs_code_extension_port is not None:
         OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
-    if enable_default_exporters is not None:
-        OBSERVABILITY_SETTINGS.enable_default_exporters = enable_default_exporters
 
     # Create exporters, after checking if they are already configured through the env.
     new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = exporters or []
