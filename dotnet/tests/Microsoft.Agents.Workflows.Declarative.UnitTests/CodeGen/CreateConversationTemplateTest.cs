@@ -70,7 +70,7 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
             {
                 Id = this.CreateActionId("create_conversation"),
                 DisplayName = this.FormatDisplayName(displayName),
-                ConversationId = InitializablePropertyPath.Create(variablePath),
+                ConversationId = PropertyPath.Create(variablePath),
             };
 
         if (metadata is not null)

@@ -41,7 +41,7 @@ public class ResetVariableTemplateTest(ITestOutputHelper output) : WorkflowActio
             {
                 Id = this.CreateActionId("set_variable"),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = InitializablePropertyPath.Create(variablePath)
+                Variable = PropertyPath.Create(variablePath)
             };
 
         return actionBuilder.Build();

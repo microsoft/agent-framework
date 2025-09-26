@@ -44,14 +44,14 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
-            await context.QueueStateUpdateAsync("Count", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("LoopIndex", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("LoopValue", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("Count", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("LoopIndex", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("LoopValue", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
     
     /// <summary>
-    /// Loops over a list assignign the loop variable to "Topic.LoopValue" variable.
+    /// Loops over a list assignign the loop variable to "Local.LoopValue" variable.
     /// </summary>
     internal sealed class ForeachLoopExecutor(FormulaSession session) : ActionExecutor(id: "foreach_loop", session)
     {
@@ -92,8 +92,8 @@ public static class WorkflowProvider
             {
                 object value = this._values[this._index];
     
-            await context.QueueStateUpdateAsync(key: "LoopValue", value: value, scopeName: "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "LoopIndex", value: this._index, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "LoopValue", value: value, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "LoopIndex", value: this._index, scopeName: "Local").ConfigureAwait(false);
     
                 this._index++;
             }
@@ -101,21 +101,21 @@ public static class WorkflowProvider
     
         public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
         {
-            await context.QueueStateUpdateAsync(key: "LoopValue", value: UnassignedValue.Instance, scopeName: "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "LoopIndex", value: UnassignedValue.Instance, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "LoopValue", value: UnassignedValue.Instance, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "LoopIndex", value: UnassignedValue.Instance, scopeName: "Local").ConfigureAwait(false);
         }
     }
     
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.Count" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.Count" variable.
     /// </summary>
     internal sealed class SetVariableInnerExecutor(FormulaSession session) : ActionExecutor(id: "set_variable_inner", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Topic.Count + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.Count + 1").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }
@@ -132,7 +132,7 @@ public static class WorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    x{Topic.Count} - {Topic.LoopIndex}:{Topic.LoopValue}
+                    x{Local.Count} - {Local.LoopIndex}:{Local.LoopValue}
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);

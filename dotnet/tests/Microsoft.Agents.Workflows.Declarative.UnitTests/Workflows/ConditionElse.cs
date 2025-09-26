@@ -44,12 +44,12 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
-            await context.QueueStateUpdateAsync("TestValue", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TestValue", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
     
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.TestValue" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TestValue" variable.
     /// </summary>
     internal sealed class SetvariableTestExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_test", session)
     {
@@ -57,7 +57,7 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Value(System.LastMessageText)").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }
@@ -71,7 +71,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Mod(Topic.TestValue, 2) = 1").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateExpressionAsync<bool>("Mod(Local.TestValue, 2) = 1").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_odd";
@@ -153,8 +153,8 @@ public static class WorkflowProvider
         builder.AddEdge(myWorkflowRoot, myWorkflow);
         builder.AddEdge(myWorkflow, setVariableTest);
         builder.AddEdge(setVariableTest, conditionGroupTest);
-        builder.AddEdge(conditionGroupTest, conditionItemOdd, (object? result) => string.Equals("conditionItem_odd", result as string, StringComparison.Ordinal));
-        builder.AddEdge(conditionGroupTest, conditionGroupTestelseactions, (object? result) => string.Equals("conditionGroup_testElseActions", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupTest, conditionItemOdd, (object? result) => ActionExecutor.IsMatch("conditionItem_odd", result));
+        builder.AddEdge(conditionGroupTest, conditionGroupTestelseactions, (object? result) => ActionExecutor.IsMatch("conditionGroup_testElseActions", result));
         builder.AddEdge(conditionItemOdd, conditionItemOddactions);
         builder.AddEdge(conditionItemOddactions, sendActivityOdd);
         builder.AddEdge(conditionItemOddRestart, conditionGroupTestelseactions);

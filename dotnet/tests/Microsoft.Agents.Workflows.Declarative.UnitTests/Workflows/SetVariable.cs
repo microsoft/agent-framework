@@ -44,12 +44,12 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
-            await context.QueueStateUpdateAsync("TestVar", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TestVar", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
     
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.TestVar" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TestVar" variable.
     /// </summary>
     internal sealed class SetVarExecutor(FormulaSession session) : ActionExecutor(id: "set_var", session)
     {
@@ -57,7 +57,7 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.EvaluateExpressionAsync<object>("3").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TestVar", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TestVar", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }

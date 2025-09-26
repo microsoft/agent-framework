@@ -54,7 +54,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? targetScopeName = "Topic";
+            string? targetScopeName = "Local";
             await context.QueueClearScopeAsync(targetScopeName).ConfigureAwait(false);
     
             return default;

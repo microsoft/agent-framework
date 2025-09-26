@@ -31,7 +31,7 @@ public static class DeclarativeWorkflowBuilder
             };
 
     /// <summary>
-    /// Builds a workflow from the provided YAML definition of a CPS Topic ObjectModel.
+    /// Builder for converting a Foundry workflow object-model YAML definition into a process.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="workflowFile">The path to the workflow.</param>

@@ -67,7 +67,7 @@ namespace Microsoft.Agents.Workflows.Declarative.CodeGen
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\ClearAllVariablesTemplate.tt"
 
-        EvaluateEnumExpression<VariablesToClearWrapper, string>(this.Model.Variables, "targetScopeName", TopicMap, isNullable: true); 
+        EvaluateEnumExpression<VariablesToClearWrapper, string>(this.Model.Variables, "targetScopeName", ScopeMap, isNullable: true); 
             
             #line default
             #line hidden

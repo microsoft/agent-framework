@@ -44,12 +44,12 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
-            await context.QueueStateUpdateAsync("MyVar", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("MyVar", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
     
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.MyVar" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.MyVar" variable.
     /// </summary>
     internal sealed class SetVarExecutor(FormulaSession session) : ActionExecutor(id: "set_var", session)
     {
@@ -57,21 +57,21 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = 42;
-            await context.QueueStateUpdateAsync(key: "MyVar", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "MyVar", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }
     }
     
     /// <summary>
-    /// Resets the value of the "Topic.MyVar" variable, potentially causing re-evaluation
+    /// Resets the value of the "Local.MyVar" variable, potentially causing re-evaluation
     /// of the default value, question or action that provides the value to this variable.
     /// </summary>
     internal sealed class ClearVarExecutor(FormulaSession session) : ActionExecutor(id: "clear_var", session)
     {
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            await context.QueueStateUpdateAsync(key: "MyVar", value: UnassignedValue.Instance, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "MyVar", value: UnassignedValue.Instance, scopeName: "Local").ConfigureAwait(false);
     
             return default;
        }

@@ -123,7 +123,7 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
         InitializablePropertyPath? outputMessages = null;
         if (messagesVariable is not null)
         {
-            outputMessages = InitializablePropertyPath.Create(FormatVariablePath(messagesVariable));
+            outputMessages = PropertyPath.Create(FormatVariablePath(messagesVariable));
         }
 
         InvokeAzureAgent.Builder actionBuilder =

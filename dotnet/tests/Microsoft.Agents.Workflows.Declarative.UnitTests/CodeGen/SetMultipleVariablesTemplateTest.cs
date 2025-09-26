@@ -57,7 +57,7 @@ public class SetMultipleVariablesTemplateTest(ITestOutputHelper output) : Workfl
             actionBuilder.Assignments.Add(
                 new VariableAssignment.Builder()
                 {
-                    Variable = InitializablePropertyPath.Create(FormatVariablePath(assignment.Path)),
+                    Variable = PropertyPath.Create(FormatVariablePath(assignment.Path)),
                     Value = assignment.Expression,
                 });
         }

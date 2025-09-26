@@ -44,7 +44,7 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
-            await context.QueueStateUpdateAsync("MyVar", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("MyVar", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
     

@@ -44,12 +44,12 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
-            await context.QueueStateUpdateAsync("TestValue", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TestValue", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
     
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.TestValue" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TestValue" variable.
     /// </summary>
     internal sealed class SetInputExecutor(FormulaSession session) : ActionExecutor(id: "set_input", session)
     {
@@ -57,7 +57,7 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.ReadStateAsync<object>(key: "LastMessageText", scopeName: "System").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }
@@ -74,7 +74,7 @@ public static class WorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    Input: {Topic.TestValue}
+                    Input: "{Local.TestValue}"
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);

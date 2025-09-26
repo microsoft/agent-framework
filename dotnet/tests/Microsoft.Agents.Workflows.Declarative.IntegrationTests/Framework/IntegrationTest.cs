@@ -2,6 +2,7 @@
 
 using System;
 using System.Reflection;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Configuration;
 using Xunit.Abstractions;
@@ -19,6 +20,7 @@ public abstract class IntegrationTest : IDisposable
     {
         this.Output = new TestOutputAdapter(output);
         Console.SetOut(this.Output);
+        SetProduct();
     }
 
     public void Dispose()
@@ -35,7 +37,15 @@ public abstract class IntegrationTest : IDisposable
         }
     }
 
-    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? VariableScopeNames.Topic}.{variableName}";
+    protected static void SetProduct()
+    {
+        if (!ProductContext.IsLocalScopeSupported())
+        {
+            ProductContext.SetContext(Product.Foundry);
+        }
+    }
+
+    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}";
 
     protected static IConfigurationRoot InitializeConfig() =>
         new ConfigurationBuilder()

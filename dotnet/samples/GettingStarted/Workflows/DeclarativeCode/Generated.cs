@@ -53,27 +53,27 @@ public static class TestWorkflowProvider
                 "FOUNDRY_AGENT_RESEARCHANALYST").ConfigureAwait(false);
 
             // Initialize variables
-            await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("AgentResponseText", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("AvailableAgents", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("FinalResponse", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("InputTask", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("InternalConversationId", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("NextSpeaker", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("Plan", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("ProgressLedgerUpdate", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("RestartCount", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("SeedTask", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("StallCount", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TaskFacts", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TaskInstructions", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TeamDescription", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TypedProgressLedger", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("AgentResponseText", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("AvailableAgents", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("FinalResponse", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("InputTask", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("InternalConversationId", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("NextSpeaker", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("Plan", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("ProgressLedgerUpdate", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("RestartCount", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("SeedTask", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("StallCount", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TaskFacts", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TaskInstructions", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TeamDescription", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TypedProgressLedger", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.AvailableAgents" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.AvailableAgents" variable.
     /// </summary>
     internal sealed class SetvariableAaslmfExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_aASlmF", session)
     {
@@ -99,14 +99,14 @@ public static class TestWorkflowProvider
         }
     ]
     """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "AvailableAgents", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "AvailableAgents", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.TeamDescription" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TeamDescription" variable.
     /// </summary>
     internal sealed class SetvariableV6yeboExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_V6yEbo", session)
     {
@@ -114,17 +114,17 @@ public static class TestWorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.EvaluateExpressionAsync<object>("""
-    Concat(ForAll(Topic.AvailableAgents, $"- " & name & $": " & description), Value, "
+    Concat(ForAll(Local.AvailableAgents, $"- " & name & $": " & description), Value, "
     ")
     """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TeamDescription", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TeamDescription", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.InputTask" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.InputTask" variable.
     /// </summary>
     internal sealed class SetvariableNz2u0lExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_NZ2u0l", session)
     {
@@ -132,22 +132,22 @@ public static class TestWorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = await context.EvaluateExpressionAsync<object>("System.LastMessage.Text").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "InputTask", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "InputTask", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.SeedTask" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.SeedTask" variable.
     /// </summary>
     internal sealed class Setvariable10U2znExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_10u2ZN", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.ReadStateAsync<object>(key: "InputTask", scopeName: "Topic").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "SeedTask", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            object? evaluatedValue = await context.ReadStateAsync<object>(key: "InputTask", scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "SeedTask", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -175,14 +175,14 @@ public static class TestWorkflowProvider
     }
 
     /// <summary>
-    /// Creates a new conversation and stores the identifier value to the "Topic.InternalConversationId" variable.
+    /// Creates a new conversation and stores the identifier value to the "Local.InternalConversationId" variable.
     /// </summary>
     internal sealed class Conversation1A2b3cExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "conversation_1a2b3c", session)
     {
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "InternalConversationId", value: conversationId, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "InternalConversationId", value: conversationId, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -203,7 +203,7 @@ public static class TestWorkflowProvider
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Topic").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -227,7 +227,7 @@ public static class TestWorkflowProvider
     
                     DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so.
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Topic.InputTask)]").ConfigureAwait(false);
+            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.InputTask)]").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -244,7 +244,7 @@ public static class TestWorkflowProvider
                 await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -286,7 +286,7 @@ public static class TestWorkflowProvider
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Topic").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -295,13 +295,13 @@ public static class TestWorkflowProvider
     
                     Only select the following team which is listed as "- [Name]: [Description]"
     
-                    {Topic.TeamDescription}
+                    {Local.TeamDescription}
     
                     The plan must be a bullet point list must be in the form "- [AgentName]: [Specific action or task for that agent to perform]"
     
                     Remember, there is no requirement to involve the entire team -- only select team member's whose particular expertise is required for this task.
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Topic.InputTask)]").ConfigureAwait(false);
+            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.InputTask)]").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -318,14 +318,14 @@ public static class TestWorkflowProvider
                 await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.TaskInstructions" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TaskInstructions" variable.
     /// </summary>
     internal sealed class SetvariableKk2ldlExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_Kk2LDL", session)
     {
@@ -336,27 +336,27 @@ public static class TestWorkflowProvider
     "# TASK
     Address the following user request:
     
-    " & Topic.InputTask & "
+    " & Local.InputTask & "
     
     
     # TEAM
     Use the following team to answer this request:
     
-    " & Topic.TeamDescription & "
+    " & Local.TeamDescription & "
     
     
     # FACTS
     Consider this initial fact sheet:
     
-    " & Trim(Topic.TaskFacts.Text) & "
+    " & Trim(Local.TaskFacts.Text) & "
     
     
     # PLAN
     Here is the plan to follow as best as possible:
     
-    " & Topic.Plan.Text
+    " & Local.Plan.Text
     """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -373,7 +373,7 @@ public static class TestWorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    {Topic.TaskInstructions}
+                    {Local.TaskInstructions}
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -398,25 +398,25 @@ public static class TestWorkflowProvider
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Topic").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
                     """
                     Recall we are working on the following request:
     
-                    {Topic.InputTask}
+                    {Local.InputTask}
     
                     And we have assembled the following team:
     
-                    {Topic.TeamDescription}
+                    {Local.TeamDescription}
     
                     To make progress on the request, please answer the following questions, including necessary reasoning:
     
                         - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
                         - Are we in a loop where we are repeating the same requests and / or getting the same responses from an agent multiple times? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
                         - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
-                        - Who should speak next? (select from: {Concat(Topic.AvailableAgents, name, ",")})
+                        - Who should speak next? (select from: {Concat(Local.AvailableAgents, name, ",")})
                         - What instruction or question would you give this team member? (Phrase as if speaking directly to them, and include any specific information they may need)
     
                     Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
@@ -436,7 +436,7 @@ public static class TestWorkflowProvider
                             }},
                             "next_speaker": {{
                                 "reason": string,
-                                "answer": string (select from: {Concat(Topic.AvailableAgents, name, ",")})
+                                "answer": string (select from: {Concat(Local.AvailableAgents, name, ",")})
                             }},
                             "instruction_or_question": {{
                                 "reason": string,
@@ -444,7 +444,7 @@ public static class TestWorkflowProvider
                             }}
                         }}
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Topic.AgentResponseText)]").ConfigureAwait(false);
+            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.AgentResponseText)]").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -461,7 +461,7 @@ public static class TestWorkflowProvider
                 await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "ProgressLedgerUpdate", value: agentResponse.Messages, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "ProgressLedgerUpdate", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -487,13 +487,13 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Topic.TypedProgressLedger.is_request_satisfied.answer").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateExpressionAsync<bool>("Local.TypedProgressLedger.is_request_satisfied.answer").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_fj432c";
             }
 
-            bool condition1 = await context.EvaluateExpressionAsync<bool>("Topic.TypedProgressLedger.is_in_loop.answer || Not(Topic.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
+            bool condition1 = await context.EvaluateExpressionAsync<bool>("Local.TypedProgressLedger.is_in_loop.answer || Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
             if (condition1)
             {
                 return "conditionItem_yiqund";
@@ -514,7 +514,7 @@ public static class TestWorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    Completed! {Topic.TypedProgressLedger.is_request_satisfied.reason}
+                    Completed! {Local.TypedProgressLedger.is_request_satisfied.reason}
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -548,7 +548,7 @@ public static class TestWorkflowProvider
                     Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
                     The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Topic.SeedTask)]").ConfigureAwait(false);
+            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.SeedTask)]").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -565,22 +565,22 @@ public static class TestWorkflowProvider
                 await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "FinalResponse", value: agentResponse.Messages, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "FinalResponse", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.StallCount" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
     /// </summary>
     internal sealed class SetvariableH5lxddExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_H5lXdD", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Topic.StallCount + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -600,7 +600,7 @@ public static class TestWorkflowProvider
                 return "conditionItem_fpaNL9";
             }
 
-            bool condition1 = await context.EvaluateExpressionAsync<bool>("Not(Topic.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
+            bool condition1 = await context.EvaluateExpressionAsync<bool>("Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
             if (condition1)
             {
                 return "conditionItem_NnqvXh";
@@ -621,7 +621,7 @@ public static class TestWorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    {Topic.TypedProgressLedger.is_in_loop.reason}
+                    {Local.TypedProgressLedger.is_in_loop.reason}
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -642,7 +642,7 @@ public static class TestWorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    {Topic.TypedProgressLedger.is_progress_being_made.reason}
+                    {Local.TypedProgressLedger.is_progress_being_made.reason}
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -660,7 +660,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Topic.StallCount > 2").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateExpressionAsync<bool>("Local.StallCount > 2").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_NlQTBv";
@@ -699,7 +699,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Topic.RestartCount > 2").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateExpressionAsync<bool>("Local.RestartCount > 2").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_EXAlhZ";
@@ -720,7 +720,7 @@ public static class TestWorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    Stopping after attempting {Topic.RestartCount} restarts...
+                    Stopping after attempting {Local.RestartCount} restarts...
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -766,7 +766,7 @@ public static class TestWorkflowProvider
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Topic").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -779,14 +779,14 @@ public static class TestWorkflowProvider
     
                     Here is the old fact sheet:
     
-                    {Topic.TaskFacts}
+                    {Local.TaskFacts}
                     """);
             ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("""
     [
       UserMessage(
       "As a reminder, we are working to solve the following task:
     
-      " & Topic.InputTask)
+      " & Local.InputTask)
     ]
     """).ConfigureAwait(false);
 
@@ -805,7 +805,7 @@ public static class TestWorkflowProvider
                 await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -847,7 +847,7 @@ public static class TestWorkflowProvider
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Topic").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -857,7 +857,7 @@ public static class TestWorkflowProvider
                     As before, the new plan should be concise, be expressed in bullet-point form, and consider the following team composition
                     (do not involve any other outside people since we cannot contact anyone else):
     
-                    {Topic.TeamDescription}
+                    {Local.TeamDescription}
                     """);
             ChatMessage[]? inputMessages = null;
 
@@ -876,14 +876,14 @@ public static class TestWorkflowProvider
                 await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.TaskInstructions" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TaskInstructions" variable.
     /// </summary>
     internal sealed class SetvariableJw7tmmExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_jW7tmM", session)
     {
@@ -894,34 +894,34 @@ public static class TestWorkflowProvider
     "# TASK
     Address the following user request:
     
-    " & Topic.InputTask & "
+    " & Local.InputTask & "
     
     
     # TEAM
     Use the following team to answer this request:
     
-    " & Topic.TeamDescription & "
+    " & Local.TeamDescription & "
     
     
     # FACTS
     Consider this initial fact sheet:
     
-    " & Topic.TaskFacts.Text & "
+    " & Local.TaskFacts.Text & "
     
     
     # PLAN
     Here is the plan to follow as best as possible:
     
-    " & Topic.Plan.Text
+    " & Local.Plan.Text
     """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.StallCount" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
     /// </summary>
     internal sealed class Setvariable6J2snpExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_6J2snP", session)
     {
@@ -929,22 +929,22 @@ public static class TestWorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = 0;
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.RestartCount" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.RestartCount" variable.
     /// </summary>
     internal sealed class SetvariableS6hcghExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_S6HCgh", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Topic.RestartCount + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "RestartCount", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.RestartCount + 1").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "RestartCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -961,9 +961,9 @@ public static class TestWorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    ({Topic.TypedProgressLedger.next_speaker.reason})
+                    ({Local.TypedProgressLedger.next_speaker.reason})
     
-                    {Topic.TypedProgressLedger.next_speaker.answer} - {Topic.TypedProgressLedger.instruction_or_question.answer}
+                    {Local.TypedProgressLedger.next_speaker.answer} - {Local.TypedProgressLedger.instruction_or_question.answer}
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
@@ -974,7 +974,7 @@ public static class TestWorkflowProvider
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.StallCount" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
     /// </summary>
     internal sealed class SetvariableL7ooqoExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_L7ooQO", session)
     {
@@ -982,22 +982,22 @@ public static class TestWorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = 0;
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.NextSpeaker" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.NextSpeaker" variable.
     /// </summary>
     internal sealed class SetvariableNxn1meExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_nxN1mE", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Search(Topic.AvailableAgents, Topic.TypedProgressLedger.next_speaker.answer, name)").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "NextSpeaker", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Search(Local.AvailableAgents, Local.TypedProgressLedger.next_speaker.answer, name)").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "NextSpeaker", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -1011,7 +1011,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("CountRows(Topic.NextSpeaker) = 1").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateExpressionAsync<bool>("CountRows(Local.NextSpeaker) = 1").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_GmigcU";
@@ -1029,7 +1029,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.EvaluateExpressionAsync<string>("First(Topic.NextSpeaker).agentid").ConfigureAwait(false);
+            string? agentName = await context.EvaluateExpressionAsync<string>("First(Local.NextSpeaker).agentid").ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
@@ -1041,9 +1041,9 @@ public static class TestWorkflowProvider
             string additionalInstructions =
                 await context.FormatTemplateAsync(
                     """
-                    {Topic.TypedProgressLedger.instruction_or_question.answer}
+                    {Local.TypedProgressLedger.instruction_or_question.answer}
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Topic.SeedTask)]").ConfigureAwait(false);
+            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.SeedTask)]").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -1060,36 +1060,36 @@ public static class TestWorkflowProvider
                 await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "AgentResponse", value: agentResponse.Messages, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "AgentResponse", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.AgentResponseText" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.AgentResponseText" variable.
     /// </summary>
     internal sealed class SetvariableXznrdmExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_XzNrdM", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Topic.AgentResponse.Text").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "AgentResponseText", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.AgentResponse.Text").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "AgentResponseText", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Resets the value of the "Topic.SeedTask" variable, potentially causing re-evaluation
+    /// Resets the value of the "Local.SeedTask" variable, potentially causing re-evaluation
     /// of the default value, question or action that provides the value to this variable.
     /// </summary>
     internal sealed class Setvariable8Eix2aExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_8eIx2A", session)
     {
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            await context.QueueStateUpdateAsync(key: "SeedTask", value: UnassignedValue.Instance, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "SeedTask", value: UnassignedValue.Instance, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -1117,15 +1117,15 @@ public static class TestWorkflowProvider
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Topic.StallCount" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
     /// </summary>
     internal sealed class SetvariableBhcsi7Executor(FormulaSession session) : ActionExecutor(id: "setVariable_BhcsI7", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Topic.StallCount + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Topic").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }

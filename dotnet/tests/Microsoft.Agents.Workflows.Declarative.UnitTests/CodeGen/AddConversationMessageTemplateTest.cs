@@ -137,7 +137,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
                 Id = this.CreateActionId("add_message"),
                 DisplayName = this.FormatDisplayName(displayName),
                 ConversationId = conversation,
-                Message = InitializablePropertyPath.Create(variablePath),
+                Message = PropertyPath.Create(variablePath),
                 Role = role,
                 Metadata = metadata,
             };

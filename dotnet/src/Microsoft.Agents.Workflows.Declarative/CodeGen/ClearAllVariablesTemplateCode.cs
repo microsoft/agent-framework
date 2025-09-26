@@ -2,6 +2,7 @@
 
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.Workflows.Declarative.CodeGen;
@@ -15,10 +16,10 @@ internal partial class ClearAllVariablesTemplate
 
     public ClearAllVariables Model { get; }
 
-    public static readonly FrozenDictionary<VariablesToClearWrapper, string?> TopicMap =
+    public static readonly FrozenDictionary<VariablesToClearWrapper, string?> ScopeMap =
         new Dictionary<VariablesToClearWrapper, string?>()
         {
             [VariablesToClearWrapper.Get(VariablesToClear.AllGlobalVariables)] = VariableScopeNames.Global,
-            [VariablesToClearWrapper.Get(VariablesToClear.ConversationScopedVariables)] = VariableScopeNames.Topic,
+            [VariablesToClearWrapper.Get(VariablesToClear.ConversationScopedVariables)] = WorkflowFormulaState.DefaultScopeName,
         }.ToFrozenDictionary();
 }

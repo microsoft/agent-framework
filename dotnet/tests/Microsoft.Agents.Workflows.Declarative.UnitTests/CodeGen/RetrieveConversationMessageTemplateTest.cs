@@ -56,7 +56,7 @@ public class RetrieveConversationMessageTemplateTest(ITestOutputHelper output) :
             {
                 Id = this.CreateActionId("retrieve_message"),
                 DisplayName = this.FormatDisplayName(displayName),
-                Message = InitializablePropertyPath.Create(variableName),
+                Message = PropertyPath.Create(variableName),
                 ConversationId = conversationExpression,
                 MessageId = messageExpression,
             };

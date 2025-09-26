@@ -44,12 +44,12 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
-            await context.QueueStateUpdateAsync("TestVar", UnassignedValue.Instance, "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("TestVar", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
     
     /// <summary>
-    /// Assigns an evaluated message template to the "Topic.TestVar" variable.
+    /// Assigns an evaluated message template to the "Local.TestVar" variable.
     /// </summary>
     internal sealed class SetTextExecutor(FormulaSession session) : ActionExecutor(id: "set_text", session)
     {
@@ -60,7 +60,7 @@ public static class WorkflowProvider
                     """
                     Test content
                     """);
-            await context.QueueStateUpdateAsync(key: "TestVar", value: textValue, scopeName: "Topic").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TestVar", value: textValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }

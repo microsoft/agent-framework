@@ -47,7 +47,7 @@ public class SetTextVariableTemplateTest(ITestOutputHelper output) : WorkflowAct
             {
                 Id = this.CreateActionId("set_variable"),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = InitializablePropertyPath.Create(variablePath),
+                Variable = PropertyPath.Create(variablePath),
                 Value = TemplateLine.Parse(textValue),
             };
 

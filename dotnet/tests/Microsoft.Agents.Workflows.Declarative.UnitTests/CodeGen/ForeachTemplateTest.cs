@@ -69,8 +69,8 @@ public class ForeachTemplateTest(ITestOutputHelper output) : WorkflowActionTempl
                 Id = this.CreateActionId("loop_action"),
                 DisplayName = this.FormatDisplayName(displayName),
                 Items = items,
-                Value = InitializablePropertyPath.Create(valueName),
-                Index = indexName is null ? null : InitializablePropertyPath.Create(indexName, false),
+                Value = PropertyPath.Create(valueName),
+                Index = indexName is null ? null : PropertyPath.Create(indexName, false),
             };
 
         return actionBuilder.Build();

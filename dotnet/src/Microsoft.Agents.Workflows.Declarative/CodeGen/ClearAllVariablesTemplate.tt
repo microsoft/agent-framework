@@ -10,7 +10,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
     // <inheritdoc />
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<#
-        EvaluateEnumExpression<VariablesToClearWrapper, string>(this.Model.Variables, "targetScopeName", TopicMap, isNullable: true); #>
+        EvaluateEnumExpression<VariablesToClearWrapper, string>(this.Model.Variables, "targetScopeName", ScopeMap, isNullable: true); #>
         await context.QueueClearScopeAsync(targetScopeName).ConfigureAwait(false);
 
         return default;
