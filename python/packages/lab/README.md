@@ -51,12 +51,6 @@ Install the base lab package:
 pip install agent-framework-lab
 ```
 
-Install all module dependencies:
-
-```bash
-pip install "agent-framework-lab[all]"
-```
-
 For details on installing individual modules, see their respective README files listed above.
 
 ## Usage

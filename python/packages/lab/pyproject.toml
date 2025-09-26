@@ -42,12 +42,12 @@ lightning = [
 # TAU2 benchmark module dependencies
 tau2 = [
   "pydantic>=2.0.0",
+  "tiktoken>=0.11.0",
+  "loguru>=0.7.3",
+  "numpy",
+  "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
 ]
 
-# All modules
-all = [
-  "agent-framework-lab[gaia,lightning,tau2]",
-]
 
 [project.scripts]
 gaia_viewer = "agent_framework_lab_gaia:viewer_main"
