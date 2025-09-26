@@ -42,6 +42,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["agent_framework_lab_lightning", "agent_framework.lab.lightning"]
 
+[tool.setuptools.package-dir]
+"agent_framework.lab.lightning" = "namespace/agent_framework/lab/lightning"
+"agent_framework_lab_lightning" = "agent_framework_lab_lightning"
+
 [tool.setuptools.package-data]
 agent_framework_lab_lightning = ["py.typed"]
 

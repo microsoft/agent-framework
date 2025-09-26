@@ -8,7 +8,7 @@ RL Module for Microsoft Agent Framework
 
 import importlib.metadata
 
-from agent_framework.observability import setup_observability
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agentlightning import *  # type: ignore
 
 try:
@@ -19,5 +19,4 @@ except importlib.metadata.PackageNotFoundError:
 
 def init() -> None:
     """Initialize the agent-framework-lab-lightning for training."""
-    # Mute the default exporters added by agent-framework
-    setup_observability(enable_default_exporters=False)
+    OBSERVABILITY_SETTINGS.enable_otel = True

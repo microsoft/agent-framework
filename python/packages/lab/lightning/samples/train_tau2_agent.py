@@ -156,6 +156,8 @@ def main():
 
 
 def debug():
+    lightning_init()
+
     train_dataset, _ = _load_dataset()
     tau2_agent = Tau2Agent(trained_agents=ASSISTANT_AGENT_ID)
 
