@@ -73,7 +73,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             // No completion for root scope
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                DelegateAction<ExecutorResultMessage>? action = null;
+                DelegateAction<ActionExecutorResult>? action = null;
                 ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
                 if (conditionGroup is not null)
                 {
@@ -483,9 +483,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddLinkFromPeer(parentId, executor.Id, condition);
     }
 
-    private string ContinuationFor(string parentId, DelegateAction<ExecutorResultMessage>? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
+    private string ContinuationFor(string parentId, DelegateAction<ActionExecutorResult>? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
 
-    private string ContinuationFor(string actionId, string parentId, DelegateAction<ExecutorResultMessage>? stepAction = null)
+    private string ContinuationFor(string actionId, string parentId, DelegateAction<ActionExecutorResult>? stepAction = null)
     {
         actionId = Steps.Post(actionId);
         this._workflowModel.AddNode(new DelegateActionExecutor(actionId, this._workflowState, stepAction), parentId);

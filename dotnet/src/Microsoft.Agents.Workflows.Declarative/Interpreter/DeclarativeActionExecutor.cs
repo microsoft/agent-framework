@@ -21,7 +21,7 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
+internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>
 {
     private string? _parentId;
     private readonly WorkflowFormulaState _state;
@@ -54,7 +54,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
     protected virtual bool EmitResultEvent => true;
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(ExecutorResultMessage message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
         if (this.Model.Disabled)
         {
