@@ -18,12 +18,12 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    HostedFileSearchTool,
     MCPStreamableHTTPTool,
     Role,
     TextContent,
     UriContent,
 )
-from agent_framework.azure import AzureAIAgentClient, AzureAISettings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     RequiredFunctionToolCall,
@@ -33,6 +33,8 @@ from azure.ai.agents.models import (
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field, ValidationError
+
+from agent_framework_azure_ai import AzureAIAgentClient, AzureAISettings
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -49,6 +51,7 @@ def create_test_azure_ai_chat_client(
     thread_id: str | None = None,
     azure_ai_settings: AzureAISettings | None = None,
     should_delete_agent: bool = False,
+    agent_name: str | None = None,
 ) -> AzureAIAgentClient:
     """Helper function to create AzureAIAgentClient instances for testing, bypassing Pydantic validation."""
     if azure_ai_settings is None:
@@ -60,6 +63,7 @@ def create_test_azure_ai_chat_client(
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
         ai_model_id=azure_ai_settings.model_deployment_name,
+        agent_name=agent_name,
     )
 
 
@@ -169,7 +173,6 @@ def test_azure_ai_chat_client_from_dict(mock_ai_project_client: MagicMock) -> No
     azure_ai_settings = AzureAISettings(
         project_endpoint=settings["project_endpoint"],
         model_deployment_name=settings["model_deployment_name"],
-        agent_name=settings["agent_name"],
     )
 
     chat_client: AzureAIAgentClient = create_test_azure_ai_chat_client(
@@ -229,10 +232,10 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test _get_agent_id_or_create when creating a new agent."""
-    azure_ai_settings = AzureAISettings(
-        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
+    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    chat_client = create_test_azure_ai_chat_client(
+        mock_ai_project_client, azure_ai_settings=azure_ai_settings, agent_name="TestAgent"
     )
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
 
@@ -519,10 +522,10 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
     mock_ai_project_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create with run_options containing tools and instructions."""
-    azure_ai_settings = AzureAISettings(
-        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"], agent_name="TestAgent"
+    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    chat_client = create_test_azure_ai_chat_client(
+        mock_ai_project_client, azure_ai_settings=azure_ai_settings, agent_name="TestAgent"
     )
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     run_options = {
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
@@ -833,6 +836,59 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
         assert response.text is not None
         # Factorial of 5 is 120
         assert "120" in response.text or "factorial" in response.text.lower()
+
+
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_file_search():
+    """Test ChatAgent with file search through AzureAIAgentClient."""
+    from pathlib import Path
+
+    from agent_framework import HostedVectorStoreContent
+    from azure.ai.agents.models import FileInfo, VectorStore
+
+    client = AzureAIAgentClient(async_credential=AzureCliCredential())
+    file: FileInfo | None = None
+    vector_store: VectorStore | None = None
+
+    try:
+        # 1. Read and upload the test file to the Azure AI agent service
+        test_file_path = Path(__file__).parent / "resources" / "employees.pdf"
+        file = await client.project_client.agents.files.upload_and_poll(
+            file_path=str(test_file_path), purpose="assistants"
+        )
+        vector_store = await client.project_client.agents.vector_stores.create_and_poll(
+            file_ids=[file.id], name="test_employees_vectorstore"
+        )
+
+        # 2. Create file search tool with uploaded resources
+        file_search_tool = HostedFileSearchTool(inputs=[HostedVectorStoreContent(vector_store_id=vector_store.id)])
+
+        async with ChatAgent(
+            chat_client=client,
+            instructions="You are a helpful assistant that can search through uploaded employee files.",
+            tools=[file_search_tool],
+        ) as agent:
+            # 3. Test file search functionality
+            response = await agent.run("Who is the youngest employee in the files?")
+
+            # Validate response
+            assert isinstance(response, AgentRunResponse)
+            assert response.text is not None
+            # Should find information about Alice Johnson (age 24) being the youngest
+            assert any(term in response.text.lower() for term in ["alice", "johnson", "24"])
+
+    finally:
+        # 4. Cleanup: Delete the vector store and file
+        try:
+            if vector_store:
+                await client.project_client.agents.vector_stores.delete(vector_store.id)
+            if file:
+                await client.project_client.agents.files.delete(file.id)
+        except Exception:
+            # Ignore cleanup errors to avoid masking the actual test failure
+            pass
+        finally:
+            await client.close()
 
 
 @skip_if_azure_ai_integration_tests_disabled

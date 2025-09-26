@@ -1,0 +1,76 @@
+%PDF-1.7
+%����
+1 0 obj
+<</Type/Catalog/Pages 2 0 R/Lang(en) /StructTreeRoot 22 0 R/MarkInfo<</Marked true>>/Metadata 132 0 R/ViewerPreferences 133 0 R>>
+endobj
+2 0 obj
+<</Type/Pages/Count 1/Kids[ 4 0 R] >>
+endobj
+3 0 obj
+<</Author(Test Author) /Creator(Test Creator) /Title(Employee Directory) >>
+endobj
+4 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 5 0 R>>>>/Contents 6 0 R>>
+endobj
+5 0 obj
+<</Type/Font/Subtype/Type1/BaseFont/Times-Roman>>
+endobj
+6 0 obj
+<</Length 200>>
+stream
+BT
+/F1 12 Tf
+50 750 Td
+(Employee Directory) Tj
+0 -30 Td
+(Name: John Smith) Tj
+0 -15 Td
+(Department: Engineering) Tj
+0 -15 Td
+(Age: 28) Tj
+0 -30 Td
+(Name: Alice Johnson) Tj
+0 -15 Td
+(Department: Sales) Tj
+0 -15 Td
+(Age: 24) Tj
+0 -30 Td
+(Name: Bob Wilson) Tj
+0 -15 Td
+(Department: Marketing) Tj
+0 -15 Td
+(Age: 35) Tj
+ET
+endstream
+endobj
+22 0 obj
+<</Type/StructTreeRoot>>
+endobj
+132 0 obj
+<</Type/Metadata/Subtype/XML>>
+endobj
+133 0 obj
+<</DisplayDocTitle true>>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000015 00000 n 
+0000000152 00000 n 
+0000000209 00000 n 
+0000000300 00000 n 
+0000000420 00000 n 
+0000000490 00000 n 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+22 1
+0000000740 00000 n 
+132 2
+0000000780 00000 n 
+0000000820 00000 n 
+trailer
+<</Size 134/Root 1 0 R/Info 3 0 R>>
+startxref
+860
+%%EOF

@@ -317,6 +317,8 @@ class AzureAIAgentClient(BaseChatClient):
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
+                if "tool_resources" in run_options:
+                    args["tool_resources"] = run_options["tool_resources"]
                 if "instructions" in run_options:
                     args["instructions"] = run_options["instructions"]
                 if "response_format" in run_options:
@@ -634,7 +636,7 @@ class AzureAIAgentClient(BaseChatClient):
 
             if chat_options.tool_choice is not None:
                 if chat_options.tool_choice != "none" and chat_options.tools:
-                    tool_definitions = await self._prep_tools(chat_options.tools)
+                    tool_definitions = await self._prep_tools(chat_options.tools, run_options)
                     if tool_definitions:
                         run_options["tools"] = tool_definitions
 
@@ -708,7 +710,7 @@ class AzureAIAgentClient(BaseChatClient):
         return run_options, required_action_results
 
     async def _prep_tools(
-        self, tools: list["ToolProtocol | MutableMapping[str, Any]"]
+        self, tools: list["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the run options."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
@@ -778,6 +780,9 @@ class AzureAIAgentClient(BaseChatClient):
                     if vector_stores:
                         file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
                         tool_definitions.extend(file_search.definitions)
+                        # Set tool_resources for file search to work properly with Azure AI
+                        if run_options is not None and "tool_resources" not in run_options:
+                            run_options["tool_resources"] = file_search.resources
                     else:
                         additional_props = tool.additional_properties or {}
                         index_name = additional_props.get("index_name") or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
