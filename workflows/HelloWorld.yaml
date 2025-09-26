@@ -1,0 +1,30 @@
+#
+# This workflow provides the most basic example of providing a response that includes the user and environment input.
+#
+# No agent setup is required to run this workflow.
+#
+kind: AdaptiveDialog
+beginDialog:
+
+  kind: OnActivity
+  id: workflow_demo
+  actions:
+
+    # Capture input
+    - kind: SetVariable
+      id: setvar_userinput
+      variable: Topic.UserInput
+      value: =System.LastMessageText
+
+    # Capture environment variable
+    - kind: SetVariable
+      id: setvar_username
+      variable: Global.UserName
+      value: =Env.USERNAME
+
+    # Respond with input
+    - kind: SendActivity
+      id: sendActivity_demo
+      activity: |-
+        Hello {Global.UserName},
+        You said, "{Topic.UserInput}"
