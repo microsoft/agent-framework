@@ -139,8 +139,6 @@ async def test_observability(workflow_two_agents):
         with tracer.trace_context():
             await workflow_two_agents.run("Please analyze the quarterly sales data")
 
-        print(tracer.get_last_trace())
-
         triplets = TraceTripletAdapter(agent_match=None, llm_call_match="chat").adapt(tracer.get_last_trace())
         assert len(triplets) == 2
 
