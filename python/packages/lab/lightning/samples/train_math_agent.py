@@ -5,8 +5,11 @@
 One GPU with 16GB of memory is sufficient for this sample.
 """
 
+import argparse
+import asyncio
 import json
 import math
+import os
 import re
 import string
 from typing import TypedDict, cast
@@ -115,7 +118,7 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
         ChatAgent(
             chat_client=OpenAIChatClient(
                 ai_model_id=llm.model,
-                api_key="dummy",
+                api_key=os.getenv("OPENAI_API_KEY") or "dummy",
                 base_url=llm.endpoint,
             ),
             name="MathAgent",
@@ -194,7 +197,8 @@ def main():
             },
             # Common configs for the model
             "model": {
-                # Huggingface model path. This can be either local path or HDFS path.
+                # Huggingface model path.
+                # If you want to train a different model, change the path here.
                 "path": "Qwen/Qwen2.5-0.5B-Instruct",
                 # Whether to remove padding tokens in inputs during training
                 "use_remove_padding": True,
@@ -239,5 +243,31 @@ def main():
     trainer.fit(math_agent, train_dataset, val_data=val_dataset)
 
 
+def debug():
+    train_dataset = _load_jsonl("math_data/train.jsonl")
+    train_sample = train_dataset[0]
+    model = "gpt-4o-mini"
+    base_url = os.getenv("OPENAI_BASE_URL")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key is None:
+        raise ValueError("OPENAI_API_KEY must be set")
+    if base_url is None:
+        raise ValueError("OPENAI_BASE_URL must be set")
+
+    asyncio.run(math_agent(train_sample, LLM(model=model, endpoint=base_url)))  # type: ignore
+
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Train or debug the math agent.")
+    parser.add_argument(
+        "--mode",
+        choices=["main", "debug"],
+        default="main",
+        help="Mode to run: 'main' for training (default), 'debug' for debugging a single sample.",
+    )
+    args = parser.parse_args()
+
+    if args.mode == "debug":
+        debug()
+    else:
+        main()
