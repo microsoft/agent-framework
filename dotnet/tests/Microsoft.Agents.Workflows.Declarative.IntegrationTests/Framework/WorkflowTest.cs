@@ -1,9 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using System.Reflection;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.Configuration;
 using Xunit.Abstractions;
 
