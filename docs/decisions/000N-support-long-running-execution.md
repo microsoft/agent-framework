@@ -1396,6 +1396,15 @@ public class ChatOptions
 
 **Pro:** No dependency on the `System.ClientModel` package.
 
+##### 6.1.5 Continuation Token of a Custom Type
+
+The option is similar the the "6.1.3 Continuation Token of System.ClientModel.ContinuationToken Type" option but suggests using a 
+custom type for the continuation token instead of the `System.ClientModel.ContinuationToken` type.
+
+**Pros**
+- There is no dependency on the `System.ClientModel` package.   
+- There is no ambiguity between extension methods for `IChatClient` that would occur if a new extension method, which accepts a continuation token of string type as the first parameter, is added.
+
 #### 6.2 Overloads of GetResponseAsync and GetStreamingResponseAsync
 
 This option proposes introducing overloads of the `GetResponseAsync` and `GetStreamingResponseAsync` methods that will accept long-running operation parameters directly:
@@ -1685,7 +1694,7 @@ AgentRunResponse response = await agent.RunAsync("<prompt>", new AgentRunOptions
  - Option **2.2 Execution Mode per `Get{Streaming}ResponseAsync` Invocation + Model Class** is selected.
  - Option **3.2: One Method to Get Status and Result** is selected.
  - Option **4.2. As Properties Of ChatResponse** is selected.
- - Option **6.1.4 Continuation Token of String Type** is selected.
+ - Option **6.1.5 Continuation Token of a Custom Type** is selected.
 
 ### Long-Running Operations Support for AF Agents
  - Options **1.1 Run{Streaming}Async Methods for Common Operations and the Update Operation + New Method Per Uncommon Operation** is selected.
