@@ -3,6 +3,7 @@
 using System;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Agents.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting;

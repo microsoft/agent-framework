@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using OpenAI;
 

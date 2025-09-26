@@ -7,10 +7,10 @@ using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace WorkflowMultiSelectionSample;
 

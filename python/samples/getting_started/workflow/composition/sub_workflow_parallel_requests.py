@@ -4,8 +4,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from typing_extensions import Never
-
 from agent_framework import (
     Executor,
     RequestInfoExecutor,
@@ -16,6 +14,7 @@ from agent_framework import (
     WorkflowExecutor,
     handler,
 )
+from typing_extensions import Never
 
 """
 Sample: Sub-workflow with parallel request handling by specialized interceptors
@@ -170,7 +169,9 @@ class ResourceRequester(Executor):
 
     @handler
     async def handle_policy_response(
-        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext[Never, RequestFinished]
+        self,
+        response: RequestResponse[PolicyCheckRequest, PolicyResponse],
+        ctx: WorkflowContext[Never, RequestFinished],
     ) -> None:
         """Handle policy check response."""
         if response.data:

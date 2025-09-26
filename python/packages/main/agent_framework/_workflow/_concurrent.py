@@ -10,6 +10,7 @@ from typing_extensions import Never
 
 from agent_framework import AgentProtocol, ChatMessage, Role
 
+from ._checkpoint import CheckpointStorage
 from ._executor import AgentExecutorRequest, AgentExecutorResponse, Executor, handler
 from ._workflow import Workflow, WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -198,12 +199,17 @@ class ConcurrentBuilder:
 
 
     workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(summarize).build()
+
+
+    # Enable checkpoint persistence so runs can resume
+    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
     ```
     """
 
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
         self._aggregator: Executor | None = None
+        self._checkpoint_storage: CheckpointStorage | None = None
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "ConcurrentBuilder":
         r"""Define the parallel participants for this concurrent workflow.
@@ -275,6 +281,11 @@ class ConcurrentBuilder:
             raise TypeError("aggregator must be an Executor or a callable")
         return self
 
+    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "ConcurrentBuilder":
+        """Enable checkpoint persistence using the provided storage backend."""
+        self._checkpoint_storage = checkpoint_storage
+        return self
+
     def build(self) -> Workflow:
         r"""Build and validate the concurrent workflow.
 
@@ -303,9 +314,11 @@ class ConcurrentBuilder:
         aggregator = self._aggregator or _AggregateAgentConversations(id="aggregator")
 
         builder = WorkflowBuilder()
-        return (
-            builder.set_start_executor(dispatcher)
-            .add_fan_out_edges(dispatcher, list(self._participants))
-            .add_fan_in_edges(list(self._participants), aggregator)
-            .build()
-        )
+        builder.set_start_executor(dispatcher)
+        builder.add_fan_out_edges(dispatcher, list(self._participants))
+        builder.add_fan_in_edges(list(self._participants), aggregator)
+
+        if self._checkpoint_storage is not None:
+            builder = builder.with_checkpointing(self._checkpoint_storage)
+
+        return builder.build()

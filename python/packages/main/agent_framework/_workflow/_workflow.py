@@ -37,11 +37,11 @@ from ._events import (
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
-    _framework_event_origin,
+    _framework_event_origin,  # type: ignore
 )
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
-from ._runner_context import CheckpointState, InProcRunnerContext, RunnerContext
+from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
 from ._validation import validate_workflow_graph
 from ._workflow_context import WorkflowContext
@@ -218,7 +218,7 @@ class Workflow(AFBaseModel):
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
         self._shared_state = SharedState()
-        self._runner = Runner(
+        self._runner: Runner = Runner(
             self.edge_groups,
             self.executors,
             self._shared_state,
@@ -411,22 +411,24 @@ class Workflow(AFBaseModel):
         async def checkpoint_restoration() -> None:
             has_checkpointing = self._runner.context.has_checkpointing()
 
-            if not has_checkpointing and not checkpoint_storage:
+            if not has_checkpointing and checkpoint_storage is None:
                 raise ValueError(
                     "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
                     "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
                 )
 
-            if has_checkpointing:
-                # restore via Runner so shared state and iteration are synchronized
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id)
-            else:
-                if checkpoint_storage is None:
-                    raise ValueError("checkpoint_storage cannot be None.")
-                restored = await self._restore_from_external_checkpoint(checkpoint_id, checkpoint_storage)
+            restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
             if not restored:
                 raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+
+            # Process any pending messages from the checkpoint first
+            # This ensures that RequestInfoExecutor state is properly populated
+            # before we try to handle responses
+            if await self._runner.context.has_messages():
+                # Run one iteration to process pending messages
+                # This will populate RequestInfoExecutor._request_events properly
+                await self._runner._run_iteration()  # type: ignore
 
             if responses:
                 request_info_executor = self._find_request_info_executor()
@@ -633,119 +635,6 @@ class Workflow(AFBaseModel):
             if isinstance(executor, RequestInfoExecutor):
                 return executor
         return None
-
-    async def _restore_from_external_checkpoint(
-        self, checkpoint_id: str, checkpoint_storage: CheckpointStorage
-    ) -> bool:
-        """Restore workflow state from an external checkpoint storage.
-
-        This method implements the state transfer pattern: load checkpoint data
-        from external storage and transfer it to the current workflow context.
-
-        Args:
-            checkpoint_id: The ID of the checkpoint to restore from.
-            checkpoint_storage: The checkpoint storage to load from.
-
-        Returns:
-            True if restoration was successful, False otherwise.
-        """
-        try:
-            checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
-            if not checkpoint:
-                return False
-
-            graph_hash = getattr(self._runner, "graph_signature_hash", None)
-            checkpoint_hash = (checkpoint.metadata or {}).get("graph_signature")
-            if graph_hash and checkpoint_hash and graph_hash != checkpoint_hash:
-                raise ValueError(
-                    "Workflow graph has changed since the checkpoint was created. "
-                    "Please rebuild the original workflow before resuming."
-                )
-            if graph_hash and not checkpoint_hash:
-                logger.warning(
-                    f"Checkpoint {checkpoint_id} does not include graph signature metadata; "
-                    f"skipping topology validation."
-                )
-
-            temp_context = InProcRunnerContext(checkpoint_storage)
-            state: CheckpointState = {
-                "messages": checkpoint.messages,
-                "shared_state": checkpoint.shared_state,
-                "executor_states": checkpoint.executor_states,
-                "iteration_count": checkpoint.iteration_count,
-                "max_iterations": checkpoint.max_iterations,
-            }
-
-            await temp_context.set_checkpoint_state(state)
-            restored_state = await temp_context.get_checkpoint_state()
-            await self._transfer_state_to_context(restored_state)
-
-            # Also set runner iteration/max so superstep numbering continues
-            self._runner.mark_resumed(iteration=checkpoint.iteration_count, max_iterations=checkpoint.max_iterations)
-
-            return True
-
-        except ValueError:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to restore from external checkpoint {checkpoint_id}: {e}")
-            return False
-
-    async def _transfer_state_to_context(self, restored_state: CheckpointState) -> None:
-        """Transfer restored checkpoint state into the current workflow runtime.
-
-        This transfers:
-        - messages -> into the current RunnerContext so delivery can continue
-        - executor_states -> into the current RunnerContext so ctx.get_state() works after resume
-        - shared_state -> into the Workflow's SharedState so executors can read values set before the checkpoint
-        """
-        # Best-effort restoration
-        # Restore shared state so downstream executors can read values (e.g., original_input)
-        try:
-            shared_state_data = restored_state.get("shared_state", {})
-            if shared_state_data and hasattr(self._shared_state, "_state"):
-                async with self._shared_state.hold():
-                    self._shared_state._state.clear()  # type: ignore[attr-defined]
-                    self._shared_state._state.update(shared_state_data)  # type: ignore[attr-defined]
-        except Exception as exc:  # pragma: no cover
-            logger.debug(f"Failed to restore shared_state during external restore: {exc}")
-
-        # Restore executor states into the context so ctx.get_state() calls after resume succeed
-        try:
-            executor_states = restored_state.get("executor_states", {})
-            for exec_id, state in executor_states.items():
-                try:
-                    await self._runner.context.set_state(exec_id, state)
-                except Exception as exc:  # pragma: no cover - ignore per-executor failures
-                    logger.debug(f"Failed to restore executor state for {exec_id} during external restore: {exc}")
-        except Exception as exc:  # pragma: no cover
-            logger.debug(f"Failed to iterate executor_states during external restore: {exc}")
-
-        # Transfer pending messages into the context for delivery in the next superstep
-        messages_data = restored_state["messages"]
-        for _, message_list in messages_data.items():
-            for msg_data in message_list:
-                source_any = msg_data.get("source_id", "")
-                source_id: str = source_any if isinstance(source_any, str) else str(source_any)
-                if not source_id:
-                    source_id = ""
-                target_raw = msg_data.get("target_id")
-                target_id: str | None = (
-                    target_raw if target_raw is None or isinstance(target_raw, str) else str(target_raw)
-                )
-
-                # Build and send Message via runner context
-                from ._runner_context import Message as _Msg
-
-                await self._runner.context.send_message(
-                    _Msg(
-                        data=msg_data.get("data"),
-                        source_id=source_id,
-                        target_id=target_id,
-                        trace_contexts=msg_data.get("trace_contexts"),
-                        source_span_ids=msg_data.get("source_span_ids"),
-                    )
-                )
 
     # Graph signature helpers
 

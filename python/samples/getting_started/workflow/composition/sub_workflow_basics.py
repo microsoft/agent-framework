@@ -4,8 +4,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from typing_extensions import Never
-
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -14,6 +12,7 @@ from agent_framework import (
     WorkflowExecutor,
     handler,
 )
+from typing_extensions import Never
 
 """
 Sample: Sub-Workflows (Basics)

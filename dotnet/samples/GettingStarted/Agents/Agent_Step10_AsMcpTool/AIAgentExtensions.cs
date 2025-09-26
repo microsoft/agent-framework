@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using ModelContextProtocol.Server;
 
 namespace Agent_Step10_AsMcpTool;
