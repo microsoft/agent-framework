@@ -14,12 +14,8 @@ For more information about the A2A protocol specification, visit: https://a2a-pr
 Make sure to set the following environment variables before running the example:
 
 ### Required
-- `OPENAI_API_KEY`: Your OpenAI API key (required for orchestration samples that use OpenAI for coordinating between A2A agents)
-
-### Optional
 - `A2A_AGENT_HOST`: URL of a single A2A agent (for simple sample, e.g., `http://localhost:5001/`)
-- `A2A_AGENT_URLS`: Semicolon-separated list of A2A agent URLs (for orchestration sample, e.g., `http://localhost:5000/;http://localhost:5001/;http://localhost:5002/`)
-- `OPENAI_MODEL_ID`: OpenAI model to use (default: `gpt-4o-mini`)
+
 
 ## Quick Testing with .NET A2A Servers
 

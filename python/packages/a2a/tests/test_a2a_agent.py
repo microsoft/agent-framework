@@ -45,12 +45,10 @@ class MockA2AClient:
 
     def add_task_response(self, task_id: str, artifacts: list[dict[str, Any]]) -> None:
         """Add a mock Task response."""
-
         # Create mock artifacts
         mock_artifacts = []
         for artifact_data in artifacts:
             # Create actual TextPart instance and wrap it in Part
-
             text_part = Part(root=TextPart(text=artifact_data.get("content", "Test content")))
 
             artifact = Artifact(
@@ -185,43 +183,6 @@ async def test_run_with_unknown_response_type_raises_error(a2a_agent: A2AAgent, 
 
     with raises(NotImplementedError, match="Only Message and Task responses are supported"):
         await a2a_agent.run("Test message")
-
-
-async def test_normalize_messages_string_input(a2a_agent: A2AAgent) -> None:
-    """Test _normalize_messages with string input."""
-    result = a2a_agent._normalize_messages("Hello")
-
-    assert len(result) == 1
-    assert result[0].role == Role.USER
-    assert result[0].text == "Hello"
-
-
-async def test_normalize_messages_chat_message_input(a2a_agent: A2AAgent) -> None:
-    """Test _normalize_messages with ChatMessage input."""
-    message = ChatMessage(role=Role.USER, text="Test message")
-    result = a2a_agent._normalize_messages(message)
-
-    assert len(result) == 1
-    assert result[0] == message
-
-
-async def test_normalize_messages_list_input(a2a_agent: A2AAgent) -> None:
-    """Test _normalize_messages with list input."""
-    messages = ["First message", ChatMessage(role=Role.USER, text="Second message")]
-    result = a2a_agent._normalize_messages(messages)
-
-    assert len(result) == 2
-    assert result[0].text == "First message"
-    assert result[0].role == Role.USER
-    assert result[1].text == "Second message"
-    assert result[1].role == Role.USER
-
-
-async def test_normalize_messages_none_input(a2a_agent: A2AAgent) -> None:
-    """Test _normalize_messages with None input."""
-    result = a2a_agent._normalize_messages(None)
-
-    assert len(result) == 0
 
 
 def test_task_to_chat_messages_empty_artifacts(a2a_agent: A2AAgent) -> None:

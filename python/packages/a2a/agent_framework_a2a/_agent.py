@@ -63,13 +63,13 @@ class A2AAgent(BaseAgent):
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
     via HTTP/JSON-RPC. Converts framework ChatMessages to A2A Messages on send, and converts
     A2A responses (Messages/Tasks) back to framework types. Inherits BaseAgent capabilities
-    while managing the underlying A2A protocol communication..
+    while managing the underlying A2A protocol communication.
 
     Can be initialized with a URL, AgentCard, or existing A2A Client instance.
     """
 
     client: Client
-    _http_client: httpx.AsyncClient | None
+    _http_client: httpx.AsyncClient | None = None
 
     def __init__(
         self,
@@ -111,9 +111,6 @@ class A2AAgent(BaseAgent):
                 headers = prepend_agent_framework_to_user_agent()
                 http_client = httpx.AsyncClient(timeout=timeout, headers=headers)
                 self._http_client = http_client  # Store for cleanup
-            else:
-                # User provided the httpx client
-                self._http_client = None
 
             # Create A2A client using factory
             config = ClientConfig(
@@ -122,8 +119,6 @@ class A2AAgent(BaseAgent):
             )
             factory = ClientFactory(config)
             client = factory.create(agent_card)
-        else:
-            self._http_client = None
 
         args: dict[str, Any] = {"client": client}
         if name:
@@ -170,8 +165,8 @@ class A2AAgent(BaseAgent):
         Returns:
             An agent response item.
         """
-        # Collect all streaming updates
-        collected_messages: list[ChatMessage] = []
+        # Collect updates and separate metadata-only from message-generating updates
+        message_updates: list[AgentRunResponseUpdate] = []
         response_id: str | None = None
         raw_representation: Any = None
 
@@ -182,20 +177,20 @@ class A2AAgent(BaseAgent):
             if raw_representation is None:
                 raw_representation = update.raw_representation
 
+            # Only include updates that generate messages
             if update.role is not None:
-                # Each update represents a separate message (for Tasks) or content chunk (for Messages)
-                chat_message = ChatMessage(
-                    role=update.role,
-                    contents=update.contents,
-                    raw_representation=update.raw_representation,
-                )
-                collected_messages.append(chat_message)
+                message_updates.append(update)
 
-        return AgentRunResponse(
-            messages=collected_messages,
-            response_id=response_id or str(uuid.uuid4()),
-            raw_representation=raw_representation,
-        )
+        # Handle case where no message-generating updates exist
+        if not message_updates:
+            return AgentRunResponse(
+                messages=[],
+                response_id=response_id or str(uuid.uuid4()),
+                raw_representation=raw_representation,
+            )
+
+        # Use framework's built-in method to consolidate updates into response
+        return AgentRunResponse.from_agent_run_response_updates(message_updates)
 
     async def run_stream(
         self,
@@ -235,15 +230,17 @@ class A2AAgent(BaseAgent):
             elif isinstance(item, tuple) and len(item) == 2:  # ClientEvent = (Task, UpdateEvent)
                 task, _update_event = item
                 if isinstance(task, Task) and task.status.state in TERMINAL_TASK_STATES:
-                    # For Tasks, we need to convert to chat messages and yield updates
-                    # Convert Task to ChatMessages and yield as updates
+                    # Convert Task artifacts to ChatMessages and yield as separate updates
                     task_messages = self._task_to_chat_messages(task)
                     if task_messages:
                         for message in task_messages:
+                            # Use the artifact's ID from raw_representation as message_id for unique identification
+                            artifact_id = getattr(message.raw_representation, "artifact_id", None)
                             yield AgentRunResponseUpdate(
                                 contents=message.contents,
                                 role=message.role,
                                 response_id=task.id,
+                                message_id=artifact_id,
                                 raw_representation=task,
                             )
                     else:
@@ -258,26 +255,6 @@ class A2AAgent(BaseAgent):
                 # Unknown response type
                 msg = f"Only Message and Task responses are supported from A2A agents. Received: {type(item)}"
                 raise NotImplementedError(msg)
-
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        """Normalize various message input types to a consistent ChatMessage list.
-
-        Handles None, single strings, single ChatMessages, and sequences of either,
-        converting strings to USER role ChatMessages as needed.
-        """
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, text=messages)]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
     def _chat_message_to_a2a_message(self, message: ChatMessage) -> A2AMessage:
         """Convert a ChatMessage to an A2A Message.
