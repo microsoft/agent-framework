@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import random
+import traceback
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -88,7 +89,13 @@ class Tau2Agent(LitAgent):
             api_key=openai_api_key,
             ai_model_id="gpt-4.1",  # Fixed model for user simulator
         )
-        conversation = await runner.run(task_obj, assistant_chat_client, user_simulator_chat_client)
+        try:
+            conversation = await runner.run(task_obj, assistant_chat_client, user_simulator_chat_client)
+        except Exception:
+            # Something went wrong, probably an issue with tool call.
+            # Train the model to avoid this case.
+            traceback.print_exc()
+            return 0.0
         evaluation = runner.evaluate(task_obj, conversation, runner.termination_reason)
         return evaluation
 
