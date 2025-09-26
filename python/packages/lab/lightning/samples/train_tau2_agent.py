@@ -140,9 +140,8 @@ def main():
             "project_name": "agent-framework-lab-lightning",
             "experiment_name": "tau2_agent",
             "nnodes": 1,
-            "save_freq": 32,
             "test_freq": 4,
-            "total_epochs": 1,
+            "total_epochs": 8,
         },
     }
 
