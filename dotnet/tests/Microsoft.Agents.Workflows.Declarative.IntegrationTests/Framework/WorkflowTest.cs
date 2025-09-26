@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Azure.Identity;
-using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
