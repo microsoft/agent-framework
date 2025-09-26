@@ -112,7 +112,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
         {
             // Create conditional link for conditional action
             lastConditionItemId = ConditionGroupExecutor.Steps.Item(item, conditionItem);
-            this._workflowModel.AddLink(action.Id, lastConditionItemId, @$"string.Equals(""{lastConditionItemId}"", result as string, StringComparison.Ordinal)");
+            this._workflowModel.AddLink(action.Id, lastConditionItemId, $@"ActionExecutor.IsMatch(""{lastConditionItemId}"", result)");
 
             conditionItem.Accept(this);
         }
@@ -127,7 +127,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
             // Create conditional link for else action
             string stepId = ConditionGroupExecutor.Steps.Else(item);
-            this._workflowModel.AddLink(action.Id, stepId, @$"string.Equals(""{stepId}"", result as string, StringComparison.Ordinal)");
+            this._workflowModel.AddLink(action.Id, stepId, $@"ActionExecutor.IsMatch(""{stepId}"", result)");
         }
     }
 

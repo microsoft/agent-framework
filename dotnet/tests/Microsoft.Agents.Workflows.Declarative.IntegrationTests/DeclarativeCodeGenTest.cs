@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
 using Xunit.Abstractions;
@@ -44,8 +45,9 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
 
             Assert.Empty(workflowEvents.ActionInvokeEvents);
             Assert.Empty(workflowEvents.ActionCompleteEvents);
-            Assert.Equal(testcase.Validation.ActionCount + 2, workflowEvents.ExecutorInvokeEvents.Count);
-            Assert.Equal(testcase.Validation.ActionCount + 2, workflowEvents.ExecutorCompleteEvents.Count);
+            AssertWorkflow.EventCounts(workflowEvents.ExecutorInvokeEvents.Count - 2, testcase);
+            AssertWorkflow.EventCounts(workflowEvents.ExecutorCompleteEvents.Count - 2, testcase);
+            AssertWorkflow.EventSequence(workflowEvents.ExecutorInvokeEvents.Select(e => e.ExecutorId), testcase);
         }
         finally
         {

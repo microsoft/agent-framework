@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
 using Xunit.Abstractions;
@@ -38,8 +39,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             this.Output.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
         }
 
-        //Assert.Equal(workflowEvents.ActionInvokeEvents.Count, workflowEvents.ActionCompleteEvents.Count); // %%% CONDITIONGROUP ISSUE
-        Assert.Equal(testcase.Validation.ActionCount, workflowEvents.ActionInvokeEvents.Count);
-        //Assert.Equal(testcase.Validation.ActionCount, workflowEvents.ActionCompleteEvents.Count);
+        Assert.NotEmpty(workflowEvents.ExecutorInvokeEvents);
+        Assert.NotEmpty(workflowEvents.ExecutorCompleteEvents);
+        AssertWorkflow.EventCounts(workflowEvents.ActionInvokeEvents.Count, testcase);
+        AssertWorkflow.EventCounts(workflowEvents.ActionCompleteEvents.Count, testcase);
+        AssertWorkflow.EventSequence(workflowEvents.ActionInvokeEvents.Select(e => e.ActionId), testcase);
     }
 }

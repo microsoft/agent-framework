@@ -7,6 +7,14 @@
     }
   },
   "validation": {
-    "action_count": 3
+    "min_action_count": 1,
+    "actions": {
+      "start": [
+        "invoke_agent"
+      ],
+      "final": [
+        "invoke_agent"
+      ]
+    }
   }
 }

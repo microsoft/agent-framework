@@ -1,9 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
+using Microsoft.Bot.ObjectModel.InitializableFeatures;
 
 namespace Microsoft.Agents.Workflows.Declarative.Kit;
 
@@ -25,6 +28,25 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Test wether the provided value matches the value returned by the prior executor.
+    /// </summary>
+    /// <param name="value">The value to test against the message result.</param>
+    /// <param name="message">The message containing the prior executor result.</param>
+    /// <returns>True if the value matches the message result</returns>
+    public static bool IsMatch<TValue>(TValue value, object? message) where TValue : class
+    {
+        ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
+
+        object? result = executorMessage.Result;
+        if (result is TValue resultValue)
+        {
+            return value.Equals(resultValue);
+        }
+
+        return false;
+    }
 }
 
 /// <summary>
@@ -50,6 +72,7 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessa
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context)
     {
         object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._session.State), message, cancellationToken: default).ConfigureAwait(false);
+        Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
         await context.SendResultMessageAsync(this.Id, result).ConfigureAwait(false);
     }
