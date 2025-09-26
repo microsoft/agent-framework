@@ -32,8 +32,7 @@ public class WorkflowVizTests
             .AddEdge(executor1, executor2)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // Check that the DOT content contains expected elements
         dotContent.Should().Contain("digraph Workflow {");
@@ -42,71 +41,6 @@ public class WorkflowVizTests
         dotContent.Should().Contain("\"executor1\" -> \"executor2\"");
         dotContent.Should().Contain("fillcolor=lightgreen"); // Start executor styling
         dotContent.Should().Contain("(Start)");
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_Export_DotAsync()
-    {
-        // Create a simple workflow
-        var executor1 = new MockExecutor("executor1");
-        var executor2 = new MockExecutor("executor2");
-
-        var workflow = new WorkflowBuilder("executor1")
-            .AddEdge(executor1, executor2)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-
-        // Test export without filename (returns temporary file path)
-        var filePath = await viz.ExportAsync("dot");
-        filePath.Should().EndWith(".dot");
-
-        File.Exists(filePath).Should().BeTrue();
-        var content = File.ReadAllText(filePath);
-
-        content.Should().Contain("digraph Workflow {");
-        content.Should().Contain("\"executor1\" -> \"executor2\"");
-
-        // Clean up
-        File.Delete(filePath);
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_Export_Dot_WithFilenameAsync()
-    {
-        // Create a simple workflow
-        var executor1 = new MockExecutor("executor1");
-        var executor2 = new MockExecutor("executor2");
-
-        var workflow = new WorkflowBuilder("executor1")
-            .AddEdge(executor1, executor2)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-
-        // Test export with filename
-        var tempPath = Path.GetTempPath();
-        var outputFile = Path.Combine(tempPath, "test_workflow.dot");
-
-        try
-        {
-            var resultPath = await viz.ExportAsync("dot", outputFile);
-
-            resultPath.Should().Be(outputFile);
-            File.Exists(outputFile).Should().BeTrue();
-
-            var content = File.ReadAllText(outputFile);
-            content.Should().Contain("digraph Workflow {");
-            content.Should().Contain("\"executor1\" -> \"executor2\"");
-        }
-        finally
-        {
-            // Clean up
-            if (File.Exists(outputFile))
-            {
-                File.Delete(outputFile);
-            }
-        }
     }
 
     [Fact]
@@ -125,8 +59,7 @@ public class WorkflowVizTests
             .AddEdge(executor3, executor4)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // Check all executors are present
         dotContent.Should().Contain("\"start\"");
@@ -145,24 +78,6 @@ public class WorkflowVizTests
     }
 
     [Fact]
-    public async Task Test_WorkflowViz_Export_UnsupportedFormatAsync()
-    {
-        // Test that unsupported formats raise ArgumentException
-        var executor1 = new MockExecutor("executor1");
-        var executor2 = new MockExecutor("executor2");
-
-        var workflow = new WorkflowBuilder("executor1")
-            .AddEdge(executor1, executor2)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-
-        var act = async () => await viz.ExportAsync("invalid");
-        await act.Should().ThrowAsync<ArgumentException>()
-            .WithMessage("*Unsupported format: invalid*");
-    }
-
-    [Fact]
     public void Test_WorkflowViz_Conditional_Edge()
     {
         // Test that conditional edges are rendered dashed with a label
@@ -178,8 +93,7 @@ public class WorkflowVizTests
             .AddEdge(mid, end)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // Conditional edge should be dashed and labeled
         dotContent.Should().Contain("\"start\" -> \"mid\" [style=dashed, label=\"conditional\"];");
@@ -203,8 +117,7 @@ public class WorkflowVizTests
             .AddFanInEdge(t, s1, s2)  // AddFanInEdge(target, sources)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // There should be a single fan-in node with special styling and label
         var lines = dotContent.Split('\n');
@@ -229,150 +142,6 @@ public class WorkflowVizTests
         // Ensure direct edges are not present
         dotContent.Should().NotContain("\"s1\" -> \"t\"");
         dotContent.Should().NotContain("\"s2\" -> \"t\"");
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_SaveSvg_RequiresGraphvizAsync()
-    {
-        // Test SVG export - this requires graphviz to be installed
-        var executor1 = new MockExecutor("executor1");
-        var executor2 = new MockExecutor("executor2");
-
-        var workflow = new WorkflowBuilder("executor1")
-            .AddEdge(executor1, executor2)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-        var tempFile = Path.GetTempFileName() + ".svg";
-
-        try
-        {
-            // This will fail if graphviz is not installed
-            var filePath = await viz.SaveSvgAsync(tempFile);
-            filePath.Should().EndWith(".svg");
-            File.Exists(filePath).Should().BeTrue();
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Graphviz"))
-        {
-            // Expected if graphviz is not installed
-            // This is fine for CI/CD environments
-        }
-        finally
-        {
-            if (File.Exists(tempFile))
-            {
-                File.Delete(tempFile);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_SavePng_RequiresGraphvizAsync()
-    {
-        // Test PNG export - this requires graphviz to be installed
-        var executor1 = new MockExecutor("executor1");
-        var executor2 = new MockExecutor("executor2");
-
-        var workflow = new WorkflowBuilder("executor1")
-            .AddEdge(executor1, executor2)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-        var tempFile = Path.GetTempFileName() + ".png";
-
-        try
-        {
-            // This will fail if graphviz is not installed
-            var filePath = await viz.SavePngAsync(tempFile);
-            filePath.Should().EndWith(".png");
-            File.Exists(filePath).Should().BeTrue();
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Graphviz"))
-        {
-            // Expected if graphviz is not installed
-            // This is fine for CI/CD environments
-        }
-        finally
-        {
-            if (File.Exists(tempFile))
-            {
-                File.Delete(tempFile);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_SavePdf_RequiresGraphvizAsync()
-    {
-        // Test PDF export - this requires graphviz to be installed
-        var executor1 = new MockExecutor("executor1");
-        var executor2 = new MockExecutor("executor2");
-
-        var workflow = new WorkflowBuilder("executor1")
-            .AddEdge(executor1, executor2)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-        var tempFile = Path.GetTempFileName() + ".pdf";
-
-        try
-        {
-            // This will fail if graphviz is not installed
-            var filePath = await viz.SavePdfAsync(tempFile);
-            filePath.Should().EndWith(".pdf");
-            File.Exists(filePath).Should().BeTrue();
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Graphviz"))
-        {
-            // Expected if graphviz is not installed
-            // This is fine for CI/CD environments
-        }
-        finally
-        {
-            if (File.Exists(tempFile))
-            {
-                File.Delete(tempFile);
-            }
-        }
-    }
-
-    [Fact]
-    public void Test_WorkflowViz_NullWorkflow_ThrowsArgumentNullException()
-    {
-        // Test that null workflow throws ArgumentNullException
-        Action act = () => _ = new WorkflowViz(null!);
-        act.Should().Throw<ArgumentNullException>()
-            .WithParameterName("workflow");
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_Export_NullFormat_ThrowsArgumentExceptionAsync()
-    {
-        var executor1 = new MockExecutor("executor1");
-        var workflow = new WorkflowBuilder("executor1")
-            .BindExecutor(executor1)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-
-        var act = async () => await viz.ExportAsync(null!);
-        await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("format");
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_Export_EmptyFormat_ThrowsArgumentExceptionAsync()
-    {
-        var executor1 = new MockExecutor("executor1");
-        var workflow = new WorkflowBuilder("executor1")
-            .BindExecutor(executor1)
-            .Build<string>();
-
-        var viz = new WorkflowViz(workflow);
-
-        var act = async () => await viz.ExportAsync("");
-        await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("format");
     }
 
     // Note: Sub-workflow tests are commented out as the current implementation
@@ -410,8 +179,7 @@ public class WorkflowVizTests
             .AddFanOutEdge(start, target1, target2, target3)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // Check all fan-out edges are present
         dotContent.Should().Contain("\"start\" -> \"target1\"");
@@ -437,8 +205,7 @@ public class WorkflowVizTests
             .AddFanInEdge(end, b, c) // Fan-in - AddFanInEdge(target, sources)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // Check conditional edge
         dotContent.Should().Contain("\"start\" -> \"a\" [style=dashed, label=\"conditional\"];");
@@ -462,8 +229,7 @@ public class WorkflowVizTests
             .BindExecutor(executor)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // Check single node is present with start styling
         dotContent.Should().Contain("\"single\"");
@@ -483,33 +249,9 @@ public class WorkflowVizTests
             .AddEdge<string>(executor, executor, LoopCondition)
             .Build<string>();
 
-        var viz = new WorkflowViz(workflow);
-        var dotContent = viz.ToDotString();
+        var dotContent = workflow.ToDotString();
 
         // Check self-loop edge is present and conditional
         dotContent.Should().Contain("\"loop\" -> \"loop\" [style=dashed, label=\"conditional\"];");
-    }
-
-    [Fact]
-    public async Task Test_WorkflowViz_Export_CaseInsensitiveAsync()
-    {
-        // Test that format parameter is case-insensitive
-        var executor = new MockExecutor("test");
-        var workflow = new WorkflowBuilder("test")
-            .BindExecutor(executor)
-            .Build<string>();
-        var viz = new WorkflowViz(workflow);
-
-        // Test with uppercase
-        var filePath1 = await viz.ExportAsync("DOT");
-        filePath1.Should().EndWith(".dot");
-        File.Exists(filePath1).Should().BeTrue();
-        File.Delete(filePath1);
-
-        // Test with mixed case
-        var filePath2 = await viz.ExportAsync("DoT");
-        filePath2.Should().EndWith(".dot");
-        File.Exists(filePath2).Should().BeTrue();
-        File.Delete(filePath2);
     }
 }

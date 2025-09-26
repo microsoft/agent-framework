@@ -76,47 +76,16 @@ public static class Program
 
         // Generate and display workflow visualization
         Console.WriteLine("=== WORKFLOW VISUALIZATION ===");
-        var viz = new WorkflowViz(workflow);
 
         // Display DOT (GraphViz) representation
         Console.WriteLine("\n--- GraphViz DOT Format ---");
-        var dotString = viz.ToDotString();
+        var dotString = workflow.ToDotString();
         Console.WriteLine(dotString);
 
-        // Try to export visualizations to files
-        Console.WriteLine("\n--- Exporting Visualizations ---");
-        try
-        {
-            // Export DOT file (always works)
-            var dotFile = await viz.ExportAsync("dot", "workflow.dot");
-            Console.WriteLine($"DOT file saved to: {dotFile}");
-
-            try
-            {
-                // Try to export SVG (requires Graphviz installation)
-                var svgFile = await viz.ExportAsync("svg", "workflow.svg");
-                Console.WriteLine($"SVG file saved to: {svgFile}");
-            }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("Graphviz"))
-            {
-                Console.WriteLine("SVG export requires Graphviz installation. Download from: https://graphviz.org/download/");
-            }
-
-            try
-            {
-                // Try to export PNG (requires Graphviz installation)
-                var pngFile = await viz.ExportAsync("png", "workflow.png");
-                Console.WriteLine($"PNG file saved to: {pngFile}");
-            }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("Graphviz"))
-            {
-                Console.WriteLine("PNG export requires Graphviz installation.");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Visualization export failed: {ex.Message}");
-        }
+        // Display Mermaid representation
+        Console.WriteLine("\n--- Mermaid Format ---");
+        var mermaid = workflow.ToMermaidString();
+        Console.WriteLine(mermaid);
 
         // Execute the workflow
         Console.WriteLine("\n=== WORKFLOW EXECUTION ===");
