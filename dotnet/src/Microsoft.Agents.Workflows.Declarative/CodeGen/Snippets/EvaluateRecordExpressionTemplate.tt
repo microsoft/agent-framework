@@ -11,17 +11,17 @@ void EvaluateRecordExpression<TValue>(ObjectExpression<RecordDataValue> expressi
         <#= resultTypeName #> <#= targetVariable #> =
             <#= FormatDataValue(expression.LiteralValue) #>;<#+ 
     }
-    else if (expression.IsVariableReference)
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
         <#= resultTypeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultTypeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
-    else if (expression.IsExpression)
+    else if (expression.IsVariableReference)
     {#>
-        <#= resultTypeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= resultTypeName #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultTypeName #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
-    {
-        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    {#>
+        <#= resultTypeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultTypeName #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

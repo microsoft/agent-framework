@@ -11,7 +11,7 @@ namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests;
 /// Tests execution of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
 /// </summary>
 [Collection("Global")]
-public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
+public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
@@ -30,16 +30,26 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions)
     {
-        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
+        const string workflowNamespace = "Test.WorkflowProviders";
+        const string workflowPrefix = "Test";
 
-        WorkflowEvents workflowEvents = await WorkflowHarness.RunAsync(workflow, (TInput)GetInput<TInput>(testcase));
-        foreach (DeclarativeActionInvokedEvent actionInvokeEvent in workflowEvents.ActionInvokeEvents)
+        string workflowProviderCode = DeclarativeWorkflowBuilder.Eject(workflowPath, DeclarativeWorkflowLanguage.CSharp, workflowNamespace, workflowPrefix);
+        try
         {
-            this.Output.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
-        }
+            WorkflowEvents workflowEvents = await WorkflowHarness.RunCodeAsync(workflowProviderCode, $"{workflowPrefix}WorkflowProvider", workflowNamespace, workflowOptions, (TInput)GetInput<TInput>(testcase));
+            foreach (ExecutorEvent invokeEvent in workflowEvents.ExecutorInvokeEvents)
+            {
+                this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId}");
+            }
 
-        //Assert.Equal(workflowEvents.ActionInvokeEvents.Count, workflowEvents.ActionCompleteEvents.Count); // %%% CONDITIONGROUP ISSUE
-        Assert.Equal(testcase.Validation.ActionCount, workflowEvents.ActionInvokeEvents.Count);
-        //Assert.Equal(testcase.Validation.ActionCount, workflowEvents.ActionCompleteEvents.Count);
+            Assert.Empty(workflowEvents.ActionInvokeEvents);
+            Assert.Empty(workflowEvents.ActionCompleteEvents);
+            Assert.Equal(testcase.Validation.ActionCount + 2, workflowEvents.ExecutorInvokeEvents.Count);
+            Assert.Equal(testcase.Validation.ActionCount + 2, workflowEvents.ExecutorCompleteEvents.Count);
+        }
+        finally
+        {
+            this.Output.WriteLine($"CODE:\n{workflowProviderCode}");
+        }
     }
 }

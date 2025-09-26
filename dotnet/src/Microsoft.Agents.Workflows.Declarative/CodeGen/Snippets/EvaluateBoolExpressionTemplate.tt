@@ -9,17 +9,17 @@ void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bo
     {#>
         bool <#= targetVariable #> = <#= FormatBoolValue(expression.LiteralValue) #>;<#+ 
     }
-    else if (expression.IsVariableReference)
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
         bool <#= targetVariable #> = await context.ReadStateAsync<bool>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
-    else if (expression.IsExpression)
+    else if (expression.IsVariableReference)
     {#>
-        bool <#= targetVariable #> = await context.EvaluateExpressionAsync<bool>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        bool <#= targetVariable #> = await context.EvaluateExpressionAsync<bool>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
-    {
-        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    {#>
+        bool <#= targetVariable #> = await context.EvaluateExpressionAsync<bool>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

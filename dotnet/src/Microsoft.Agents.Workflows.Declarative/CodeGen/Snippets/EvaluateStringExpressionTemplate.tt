@@ -20,17 +20,17 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
         <#= typeName #> <#= targetVariable #> = <#= FormatStringValue(expression.LiteralValue) #>;<#+ 
         }
     }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<string>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+    }
     else if (expression.IsVariableReference)
     {#>
-        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= typeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
-    }
-    else if (expression.IsExpression)
-    {#>
-        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= typeName #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<string>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
-    {
-        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    {#>
+        <#= typeName #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<string>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

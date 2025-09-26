@@ -1,0 +1,12 @@
+﻿{
+  "description": "Planned orchestration sample - DeepResearch.yaml.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "What is the closest bus-stop that is next to ISHONI YAKINIKU in Seattle?"
+    }
+  },
+  "validation": {
+    "action_count": 28
+  }
+}

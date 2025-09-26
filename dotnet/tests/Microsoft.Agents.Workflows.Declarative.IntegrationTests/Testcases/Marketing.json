@@ -1,0 +1,12 @@
+﻿{
+  "description": "Seqential agent invokcation sample - Marketing.yaml.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours."
+    }
+  },
+  "validation": {
+    "action_count": 4
+  }
+}

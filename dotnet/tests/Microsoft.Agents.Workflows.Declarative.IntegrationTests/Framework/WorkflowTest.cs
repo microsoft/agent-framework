@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
+using System.Collections.Frozen;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 using Xunit.Abstractions;
+using Xunit.Sdk;
 
 namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
 
@@ -21,14 +22,13 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 {
     protected abstract Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions) where TInput : notnull;
 
-    protected Task RunWorkflowAsync(string workflowFileName, string testcaseFileName)
+    protected Task RunWorkflowAsync(string workflowPath, string testcaseFileName)
     {
-        this.Output.WriteLine($"WORKFLOW: {workflowFileName}");
+        this.Output.WriteLine($"WORKFLOW: {workflowPath}");
         this.Output.WriteLine($"TESTCASE: {testcaseFileName}");
 
         Testcase testcase = ReadTestcase(testcaseFileName);
         IConfiguration configuration = InitializeConfig();
-        string workflowPath = Path.Combine("Workflows", workflowFileName);
 
         this.Output.WriteLine($"          {testcase.Description}");
 
@@ -51,7 +51,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
         AzureAIConfiguration? foundryConfig = configuration.GetSection("AzureAI").Get<AzureAIConfiguration>();
         Assert.NotNull(foundryConfig);
 
-        IReadOnlyDictionary<string, string?> agentMap = await AgentFixture.GetAgentsAsync(foundryConfig);
+        FrozenDictionary<string, string?> agentMap = await AgentFactory.GetAgentsAsync(foundryConfig, configuration);
 
         IConfiguration workflowConfig =
             new ConfigurationBuilder()
@@ -81,6 +81,23 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
         Testcase? testcase = JsonSerializer.Deserialize<Testcase>(testcaseStream, s_jsonSerializerOptions);
         Assert.NotNull(testcase);
         return testcase;
+    }
+
+    internal static string GetRepoFolder()
+    {
+        DirectoryInfo? current = new(Directory.GetCurrentDirectory());
+
+        while (current is not null)
+        {
+            if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new XunitException("Unable to locate repository root folder.");
     }
 
     protected static readonly JsonSerializerOptions s_jsonSerializerOptions = new()

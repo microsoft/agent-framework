@@ -59,34 +59,42 @@ if (this.TypeInfo.EnvironmentVariables.Count > 0)
             
             #line default
             #line hidden
-            this.Write("\n        // Set environment variables");
+            this.Write("\n        // Set environment variables\n        await this.InitializeEnvironmentAsy" +
+                    "nc(\n            context,");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
+    int index = this.TypeInfo.EnvironmentVariables.Count - 1;
     foreach (string variableName in this.TypeInfo.EnvironmentVariables)
-    { 
+    {
             
             #line default
             #line hidden
-            this.Write("\n        await context.QueueStateUpdateAsync(\"");
+            this.Write("\n            \"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(variableName));
             
             #line default
             #line hidden
-            this.Write("\", this.GetEnvironmentVariable(\"");
+            this.Write("\"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(variableName));
+            this.Write(this.ToStringHelper.ToStringWithCulture(index > 0 ? "," : ""));
             
             #line default
             #line hidden
-            this.Write("\"), \"Env\").ConfigureAwait(false); ");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 
+        --index;
     }
+            
+            #line default
+            #line hidden
+            this.Write(").ConfigureAwait(false);\n");
+            
+            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
 }
 
 if (this.TypeInfo.UserVariables.Count > 0)

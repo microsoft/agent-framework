@@ -12,17 +12,17 @@ void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVa
     {#>
         <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = <#= FormatDataValue(expression.LiteralValue) #>;<#+ 
     }
-    else if (expression.IsVariableReference)
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
         <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.ReadStateAsync<<#= GetTypeAlias<TValue>() #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
-    else if (expression.IsExpression)
+    else if (expression.IsVariableReference)
     {#>
-        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
-    {
-        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

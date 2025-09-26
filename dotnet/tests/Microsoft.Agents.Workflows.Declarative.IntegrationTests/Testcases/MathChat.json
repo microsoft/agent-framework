@@ -1,0 +1,12 @@
+﻿{
+  "description": "Student/Teacher sample - MathChat.yaml.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "How could one compute the value of PI?"
+    }
+  },
+  "validation": {
+    "action_count": 25
+  }
+}

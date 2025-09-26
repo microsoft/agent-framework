@@ -46,6 +46,7 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
                         NumberDataType => FormulaValue.New(stringValue.Value),
                         BooleanDataType => FormulaValue.New(stringValue.Value),
                         RecordDataType recordType => ParseRecord(recordType, stringValue.Value),
+                        //TableDataType arrayType => // %%% TODO
                         _ => null
                     };
             }

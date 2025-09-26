@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
+using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -64,19 +65,28 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     protected abstract ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Retrieves the value of a named variable from <see cref="IConfiguration"/> if available;
+    /// Initializes the specified variables from <see cref="IConfiguration"/> if available;
     /// otherwise falls back to the process environment variables.
     /// </summary>
-    /// <param name="name">The configuration or environment variable name.</param>
-    /// <returns>The variable value, or an empty string if not found.</returns>
-    protected string GetEnvironmentVariable(string name)
+    /// <param name="context">The workflow execution context providing messaging and state services.</param>
+    /// <param name="variableNames">The set of variable names to initialize.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
+    protected async ValueTask InitializeEnvironmentAsync(IWorkflowContext context, params string[] variableNames)
     {
-        if (this._configuration is not null)
+        foreach (string variableName in variableNames)
         {
-            return this._configuration[name] ?? string.Empty;
+            await context.QueueStateUpdateAsync(variableName, GetEnvironmentVariable(variableName), VariableScopeNames.Environment).ConfigureAwait(false);
         }
 
-        return Environment.GetEnvironmentVariable(name) ?? string.Empty;
+        string GetEnvironmentVariable(string name)
+        {
+            if (this._configuration is not null)
+            {
+                return this._configuration[name] ?? string.Empty;
+            }
+
+            return Environment.GetEnvironmentVariable(name) ?? string.Empty;
+        }
     }
 
     /// <summary>

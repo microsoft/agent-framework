@@ -71,14 +71,8 @@ public static class IWorkflowContextExtensions
     /// <param name="expression">The expression to evaluate.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The evaluated expression value</returns>
-    public static async ValueTask<object?> EvaluateExpressionAsync(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
-    {
-        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
-
-        EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
-
-        return result.Value.ToObject();
-    }
+    public static ValueTask<object?> EvaluateExpressionAsync(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default) =>
+            context.EvaluateExpressionAsync<object>(expression, cancellationToken);
 
     /// <summary>
     /// Evaluate an expression using the workflow's declarative state.
@@ -89,8 +83,11 @@ public static class IWorkflowContextExtensions
     /// <returns>The evaluated expression value</returns>
     public static async ValueTask<TValue?> EvaluateExpressionAsync<TValue>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
     {
-        object? result = await context.EvaluateExpressionAsync(expression, cancellationToken).ConfigureAwait(false);
-        return (TValue?)result;
+        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
+
+        EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
+
+        return (TValue?)result.Value.ToObject();
     }
 
     private static async Task<WorkflowFormulaState> GetStateAsync(this IWorkflowContext context, CancellationToken cancellationToken)

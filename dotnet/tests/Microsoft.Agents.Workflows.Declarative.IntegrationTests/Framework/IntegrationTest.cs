@@ -40,6 +40,5 @@ public abstract class IntegrationTest : IDisposable
     protected static IConfigurationRoot InitializeConfig() =>
         new ConfigurationBuilder()
             .AddUserSecrets(Assembly.GetExecutingAssembly())
-            .AddEnvironmentVariables()
             .Build();
 }

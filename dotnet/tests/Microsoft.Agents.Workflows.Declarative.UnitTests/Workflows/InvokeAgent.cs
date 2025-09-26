@@ -44,7 +44,10 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Set environment variables
-            await context.QueueStateUpdateAsync("MY_STUDENT", this.GetEnvironmentVariable("MY_STUDENT"), "Env").ConfigureAwait(false);
+            await this.InitializeEnvironmentAsync(
+                context,
+                "MY_STUDENT").ConfigureAwait(false);
+    
         }
     }
     
@@ -56,14 +59,14 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string?>(key: "MY_STUDENT", scopeName: "Env").ConfigureAwait(false);
+            string? agentName = await context.ReadStateAsync<string>(key: "MY_STUDENT", scopeName: "Env").ConfigureAwait(false);
     
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
     
-            string? conversationId = await context.ReadStateAsync<string?>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
             bool autoSend = true;
             string? additionalInstructions = null;
             ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);

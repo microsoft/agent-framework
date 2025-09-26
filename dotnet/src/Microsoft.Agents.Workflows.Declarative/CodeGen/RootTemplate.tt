@@ -16,12 +16,16 @@ internal sealed class <#= this.TypeName #>Executor<TInput>(
     {<# 
 if (this.TypeInfo.EnvironmentVariables.Count > 0)
 { #>
-        // Set environment variables<#
+        // Set environment variables
+        await this.InitializeEnvironmentAsync(
+            context,<#
+    int index = this.TypeInfo.EnvironmentVariables.Count - 1;
     foreach (string variableName in this.TypeInfo.EnvironmentVariables)
-    { #>
-        await context.QueueStateUpdateAsync("<#= variableName #>", this.GetEnvironmentVariable("<#= variableName #>"), "Env").ConfigureAwait(false); <#
-    }
-}
+    {#>
+            "<#= variableName #>"<#= index > 0 ? "," : "" #><#
+        --index;
+    }#>).ConfigureAwait(false);
+<#}
 
 if (this.TypeInfo.UserVariables.Count > 0)
 { 

@@ -25,17 +25,17 @@ void EvaluateEnumExpression<TWrapper, TValue>(
         <#= resultType #> <#= targetVariable #> = <#= FormatValue<TValue>(resultValue) #>;<#+ 
         }
     }
-    else if (expression.IsVariableReference)
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
         <#= resultType #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultType #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
     }
-    else if (expression.IsExpression)
+    else if (expression.IsVariableReference)
     {#>
-        <#= resultType #> <#= targetVariable #> = await context.EvaluateExpressionAsync<#= resultType #>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= resultType #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultType #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
-    {
-        throw new DeclarativeModelException($"Unsupported value type for action '{this.Id}'.");
+    {#>
+        <#= resultType #> <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultType #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

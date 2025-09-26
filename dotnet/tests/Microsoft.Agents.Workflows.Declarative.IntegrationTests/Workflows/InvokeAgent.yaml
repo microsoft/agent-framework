@@ -8,7 +8,7 @@ trigger:
     - kind: InvokeAzureAgent
       id: invoke_agent
       agent:
-        name: =Env.BasicAgent
+        name: =Env.FOUNDRY_AGENT_TEST
       input:
         messages: =[UserMessage(System.LastMessageText)]
       output:

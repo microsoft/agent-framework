@@ -1,0 +1,12 @@
+﻿{
+  "description": "Human in the loop sample - HumanInLoop.yaml.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "Iko"
+    }
+  },
+  "validation": {
+    "action_count": 6
+  }
+}

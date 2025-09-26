@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
@@ -86,15 +85,19 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     private ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true)
     {
         bool isManagedScope =
-            scopeName != null && // null scope cannot be managed
-            (ManagedScopes.Contains(scopeName) ||
-            (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal)));
+            scopeName is not null && // null scope cannot be managed
+            VariableScopeNames.IsValidName(scopeName);
 
         if (!isManagedScope)
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
             return this.Source.QueueStateUpdateAsync(key, value, scopeName);
+        }
+
+        if (!ManagedScopes.Contains(scopeName!) && !allowSystem)
+        {
+            throw new DeclarativeActionException($"Cannot manage variable definitions in scope: '{scopeName}'.");
         }
 
         return value switch

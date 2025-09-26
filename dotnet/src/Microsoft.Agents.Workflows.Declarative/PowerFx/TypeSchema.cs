@@ -6,6 +6,8 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 
 internal static class TypeSchema
 {
+    public const string Discriminator = "__type__";
+
     public static class Message
     {
         public static class Fields

@@ -10,8 +10,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
 
-#pragma warning disable CS1591 // Missing XML comment for publicly visible type or member
-public static class ChatMessageExtensions // %%% REVERT SCOPE: internal
+internal static class ChatMessageExtensions
 {
     public static RecordValue ToRecord(this ChatMessage message) =>
         FormulaValue.NewRecordFromFields(message.GetMessageFields());
@@ -186,6 +185,7 @@ public static class ChatMessageExtensions // %%% REVERT SCOPE: internal
 
     private static IEnumerable<NamedValue> GetMessageFields(this ChatMessage message)
     {
+        yield return new NamedValue(TypeSchema.Discriminator, nameof(ChatMessage).ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormula());
