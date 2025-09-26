@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 public class AgentThreadTests
 {
     [Fact]
-    public void Serialize_ReturnsDefaultJsonElementAsync()
+    public void Serialize_ReturnsDefaultJsonElement()
     {
         var thread = new TestAgentThread();
         var result = thread.Serialize();

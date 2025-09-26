@@ -57,7 +57,7 @@ public class InMemoryAgentThreadTests
     }
 
     [Fact]
-    public void Constructor_WithSerializedState_SetsPropertyAsync()
+    public void Constructor_WithSerializedState_SetsProperty()
     {
         // Arrange
         InMemoryChatMessageStore store = [new(ChatRole.User, "TestMsg")];
@@ -88,7 +88,7 @@ public class InMemoryAgentThreadTests
     #region SerializeAsync Tests
 
     [Fact]
-    public void Serialize_ReturnsCorrectJson_WhenMessagesExistAsync()
+    public void Serialize_ReturnsCorrectJson_WhenMessagesExist()
     {
         // Arrange
         var thread = new TestInMemoryAgentThread([new(ChatRole.User, "TestContent")]);
@@ -107,7 +107,7 @@ public class InMemoryAgentThreadTests
     }
 
     [Fact]
-    public void Serialize_ReturnsEmptyMessages_WhenNoMessagesAsync()
+    public void Serialize_ReturnsEmptyMessages_WhenNoMessages()
     {
         // Arrange
         var thread = new TestInMemoryAgentThread();
