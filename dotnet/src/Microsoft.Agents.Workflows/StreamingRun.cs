@@ -108,6 +108,10 @@ public sealed class StreamingRun
             activity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
             do
             {
+                // Because we may be yielding out of this function, we need to ensure that the Activity.Current
+                // is set to our activity for the duration of this loop iteration.
+                Activity.Current = activity;
+
                 // Drain SuperSteps while there are steps to run
                 try
                 {
@@ -122,6 +126,7 @@ public sealed class StreamingRun
                     activity?.CaptureException(ex);
                     throw;
                 }
+
                 if (cancellation.IsCancellationRequested)
                 {
                     yield break; // Exit if cancellation is requested
