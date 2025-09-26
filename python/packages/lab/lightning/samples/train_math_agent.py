@@ -22,6 +22,8 @@ from agent_framework.openai._chat_client import OpenAIChatClient
 from agentlightning import LLM, Dataset, Trainer, rollout
 from agentlightning.algorithm.verl import VERL
 
+from agent_framework_lab_lightning import init as lightning_init
+
 
 class MathProblem(TypedDict):
     id: str
@@ -123,6 +125,7 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
             ),
             name="MathAgent",
             instructions=AGENT_INSTRUCTION,
+            temperature=llm.sampling_parameters.get("temperature", 0.0),
         ) as agent,
     ):
         print(f"Task: {task['question']}")
@@ -229,6 +232,9 @@ def main():
         },
     }
 
+    # Prepare for lightning training in agent frameworks
+    lightning_init()
+
     train_dataset = _load_jsonl("math_data/train.jsonl")
     val_dataset = _load_jsonl("math_data/test.jsonl")
 
@@ -258,16 +264,10 @@ def debug():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train or debug the math agent.")
-    parser.add_argument(
-        "--mode",
-        choices=["main", "debug"],
-        default="main",
-        help="Mode to run: 'main' for training (default), 'debug' for debugging a single sample.",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
-
-    if args.mode == "debug":
+    if args.debug:
         debug()
     else:
         main()

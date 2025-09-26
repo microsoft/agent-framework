@@ -32,6 +32,8 @@ from ._message_utils import flip_messages, log_messages
 from ._sliding_window import SlidingWindowChatMessageList
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
 
+__all__ = ["TaskRunner", "ASSISTANT_AGENT_ID", "USER_SIMULATOR_ID", "ORCHESTRATOR_ID"]
+
 # Agent instructions matching tau2's LLMAgent
 ASSISTANT_AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.

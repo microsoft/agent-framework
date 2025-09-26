@@ -242,15 +242,19 @@ dependencies = [
 math = [
     { name = "sympy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+tau2 = [
+    { name = "agent-framework-lab-tau2", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
+    { name = "agent-framework-lab-tau2", marker = "extra == 'tau2'", editable = "packages/lab/tau2" },
     { name = "agentlightning", url = "https://test-files.pythonhosted.org/packages/31/5e/fc033862bfb83ba33b64eea7bff4d7bf980e57ecfcf3f176edb7368cbe2e/agentlightning-0.2.0.dev20250925060605-py3-none-any.whl" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "sympy", marker = "extra == 'math'", specifier = ">=1.13.0" },
 ]
-provides-extras = ["math"]
+provides-extras = ["math", "tau2"]
 
 [[package]]
 name = "agent-framework-lab-tau2"

@@ -31,9 +31,9 @@ dependencies = [
 math = [
   "sympy>=1.13.0",
 ]
-#tau2 = [
-  #"agent-framework-lab-tau2",
-#]
+tau2 = [
+  "agent-framework-lab-tau2",
+]
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
