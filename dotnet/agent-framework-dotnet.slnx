@@ -139,6 +139,17 @@
     <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step03_ToolCall/OpenAIResponses_Step03_ToolCall.csproj" />
     <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step04_DependencyInjection/OpenAIResponses_Step04_DependencyInjection.csproj" />
   </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAI/">
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step01_Basics/AzureOpenAI_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step02_ToolCall/AzureOpenAI_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step03_DependencyInjection/AzureOpenAI_Step03_DependencyInjection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAIAssistants/">
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step01_Basics/AzureOpenAIAssistants_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step02_ToolCall/AzureOpenAIAssistants_Step02_ToolCall.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step03_DependencyInjection/AzureOpenAIAssistants_Step03_DependencyInjection.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step04_CodeInterpreter/AzureOpenAIAssistants_Step04_CodeInterpreter.csproj" />
+  </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAIResponses/">
     <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step01_Basics/AzureOpenAIResponses_Step01_Basics.csproj" />
     <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step02_ReasoningModel/AzureOpenAIResponses_Step02_ReasoningModel.csproj" />

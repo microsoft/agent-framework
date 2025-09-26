@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
-# type: ignore
+
 import asyncio
 from random import randint
 from typing import TYPE_CHECKING, Annotated
 
+from agent_framework.observability import get_tracer
 from agent_framework.openai import OpenAIResponsesClient
+from opentelemetry.trace import SpanKind
+from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 if TYPE_CHECKING:
@@ -12,13 +15,16 @@ if TYPE_CHECKING:
 
 
 """
-This is the simplest sample of using the Agent Framework with telemetry.
+This sample shows how you can configure observability of an application with zero code changes.
+It relies on the OpenTelemetry auto-instrumentation capabilities, and the observability setup
+is done via environment variables.
 
-This relies on the environment setting up the telemetry, you can test this with
-by navigating to this folder and running:
-uv run --env-file=zero_code.env opentelemetry-instrument python 01-zero_code.py
+This sample requires the `APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable to be set.
 
-Check the zero_code.env file for the settings used in this example and to adapt it to your environment.
+Run the sample with the following command:
+```
+uv run --env-file=.env opentelemetry-instrument python advanced_zero_code.py
+```
 """
 
 
@@ -71,11 +77,13 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
 
 
 async def main() -> None:
-    client = OpenAIResponsesClient()
+    with get_tracer().start_as_current_span("Zero Code", kind=SpanKind.CLIENT) as current_span:
+        print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-    # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
-    await run_chat_client(client, stream=True)
-    await run_chat_client(client, stream=False)
+        client = OpenAIResponsesClient()
+
+        await run_chat_client(client, stream=True)
+        await run_chat_client(client, stream=False)
 
 
 if __name__ == "__main__":

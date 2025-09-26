@@ -79,12 +79,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             {
                 conversationId = assignValue;
 
-                RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
-                conversation.UpdateField("Id", FormulaValue.New(conversationId));
-                await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation).ConfigureAwait(false);
-                await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
-
-                await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
+                await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
             }
         }
     }

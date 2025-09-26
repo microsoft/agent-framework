@@ -12,9 +12,8 @@ using System.Text;
 #endif
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI;
+namespace Microsoft.Extensions.AI;
 
-// TODO: Consolidate with same internal class in Microsoft.Extensions.AI.Abstractions when both are available in the same repository.
 /// <summary>Internal extensions for working with <see cref="AIContent"/>.</summary>
 internal static class AIContentExtensions
 {

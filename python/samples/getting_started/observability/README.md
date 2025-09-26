@@ -1,80 +1,116 @@
 # Agent Framework Python Observability
 
-This sample folder shows how a Python application can be configured to send Agent Framework observability data to the Application Performance Management (APM) vendor(s) of your choice based on the Open Telemetry standard.
+This sample folder shows how a Python application can be configured to send Agent Framework observability data to the Application Performance Management (APM) vendor(s) of your choice based on the OpenTelemetry standard.
 
 In this sample, we provide options to send telemetry to [Application Insights](https://learn.microsoft.com/en-us/azure/azure-monitor/app/app-insights-overview), [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/overview?tabs=bash) and the console.
 
-> **Quick Start**: For local development without Azure setup, you can use the [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone) which runs locally via Docker and provides an excellent telemetry viewing experience for OpenTelemetry data.
-Or you can use the built-in tracing module of the [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio).
+> **Quick Start**: For local development without Azure setup, you can use the [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone) which runs locally via Docker and provides an excellent telemetry viewing experience for OpenTelemetry data. Or you can use the built-in tracing module of the [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio).
 
-> Note that it is also possible to use other Application Performance Management (APM) vendors. An example is [Prometheus](https://prometheus.io/docs/introduction/overview/). Please refer to this [link](https://opentelemetry.io/docs/languages/python/exporters/) to learn more about exporters.
+> Note that it is also possible to use other Application Performance Management (APM) vendors. An example is [Prometheus](https://prometheus.io/docs/introduction/overview/). Please refer to this [page](https://opentelemetry.io/docs/languages/python/exporters/) to learn more about exporters.
 
 For more information, please refer to the following resources:
 
 1. [Azure Monitor OpenTelemetry Exporter](https://github.com/Azure/azure-sdk-for-python/tree/main/sdk/monitor/azure-monitor-opentelemetry-exporter)
 2. [Aspire Dashboard for Python Apps](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone-for-python?tabs=flask%2Cwindows)
-2. [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio)
-3. [Python Logging](https://docs.python.org/3/library/logging.html)
-4. [Observability in Python](https://www.cncf.io/blog/2022/04/22/opentelemetry-and-python-a-complete-instrumentation-guide/)
+3. [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio)
+4. [Python Logging](https://docs.python.org/3/library/logging.html)
+5. [Observability in Python](https://www.cncf.io/blog/2022/04/22/opentelemetry-and-python-a-complete-instrumentation-guide/)
 
 ## What to expect
 
-The Agent Framework Python SDK is designed to efficiently generate comprehensive logs, traces, and metrics throughout the flow of function execution and model invocation. This allows you to effectively monitor your AI application's performance and accurately track token consumption. It does so based on the Semantic Conventions for GenAI defined by OpenTelemetry, and the workflows emit their own spans to provide end-to-end visibility.
+The Agent Framework Python SDK is designed to efficiently generate comprehensive logs, traces, and metrics throughout the flow of agent/model invocation and tool execution. This allows you to effectively monitor your AI application's performance and accurately track token consumption. It does so based on the Semantic Conventions for GenAI defined by OpenTelemetry, and the workflows emit their own spans to provide end-to-end visibility.
 
 ## Configuration
 
 ### Required resources
 
-2. OpenAI or [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/create-resource?pivots=web-portal)
-2. [Azure AI project](https://ai.azure.com/doc/azure/ai-foundry/what-is-azure-ai-foundry)
+1. OpenAI or [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/create-resource?pivots=web-portal)
+2. An [Azure AI project](https://ai.azure.com/doc/azure/ai-foundry/what-is-azure-ai-foundry)
 
 ### Optional resources
+
+The following resources are needed if you want to send telemetry data to them:
 
 1. [Application Insights](https://learn.microsoft.com/en-us/azure/azure-monitor/app/create-workspace-resource)
 2. [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone-for-python?tabs=flask%2Cwindows#start-the-aspire-dashboard)
 
 ### Dependencies
+
 No additional dependencies are required to enable telemetry. The necessary packages are included as part of the `agent-framework` package. Unless you want to use a different APM vendor, in which case you will need to install the appropriate OpenTelemetry exporter package.
 
 ### Environment variables
-The following environment variables can be set to configure telemetry, the first two set the basic configuration:
+
+The following environment variables are used to turn on/off observability of the Agent Framework:
 
 - ENABLE_OTEL=true
 - ENABLE_SENSITIVE_DATA=true
 
-Next we need to know where to send the telemetry, for that you can use either a OTLP endpoint or a connection string for Application Insights:
-- OTLP_ENDPOINT="<url to OTLP endpoint>"
-or
-- APPLICATIONINSIGHTS_CONNECTION_STRING="<connection string>"
-Finally, you can enable live metrics streaming to Application Insights:
-- APPLICATIONINSIGHTS_LIVE_METRICS=true
+The framework will emit observability data when one of the above environment variables is set to true.
+
+> **Note**: Sensitive information includes prompts, responses, and more, and should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
+
+### Configuring exporters and providers
+
+Turning on observability is just the first step, you also need to configure where to send the observability data (i.e. Console, Application Insights). By default, no exporters or providers are configured.
+
+#### Setting up exporters and providers manually
+
+Please refer to sample [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) for a comprehensive example of how to manually setup exporters and providers for traces, logs, and metrics that will get sent to the console.
+
+#### Setting up exporters and providers using `setup_observability()`
+
+To make it easier for developers to get started, the `agent_framework.observability` module provides a `setup_observability()` function that will setup exporters and providers for traces, logs, and metrics based on environment variables. You can call this function at the start of your application to enable telemetry.
+
+```python
+from agent_framework.observability import setup_observability
+
+setup_observability()
+```
+
+#### Environment variables for `setup_observability()`
+
+The `setup_observability()` function will look for the following environment variables to determine how to setup the exporters and providers:
+
+- OTLP_ENDPOINT="..."
+- APPLICATIONINSIGHTS_CONNECTION_STRING="..."
+
+By providing the above environment variables, the `setup_observability()` function will automatically configure the appropriate exporters and providers for you. If no environment variables are provided, the function will not setup any exporters or providers.
+
+You can also pass in a list of exporters directly to the `setup_observability()` function if you want to customize the exporters or add additional ones besides the ones configured via environment variables.
+
+```python
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from agent_framework.observability import setup_observability
+
+exporter = OTLPSpanExporter(endpoint="another-otlp-endpoint")
+setup_observability(exporters=[exporter])
+```
+
+> Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OTEL` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
 
 ## Samples
+
 This folder contains different samples demonstrating how to use telemetry in various scenarios.
 
-### [01 - zero_code](./01-zero_code.py):
-A simple example showing how to enable telemetry in a zero-touch scenario. When the above environment variables are set, telemetry will be automatically enabled, however since you do not define any overarching tracer, you will only see the spans for the specific calls to the chat client and tools.
+| Sample | Description |
+|--------|-------------|
+| [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. |
+| [setup_observability_with_env_vars.py](./setup_observability_with_env_vars.py) | A simple example showing how to setup telemetry with the `setup_observability()` function using environment variables. |
+| [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
+| [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |
+| [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | A simple example showing how to setup telemetry for a chat client with an Azure AI project. |
+| [workflow_observability.py](./workflow_observability.py) | A simple example showing how to setup telemetry for a workflow. |
+| [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | A comprehensive example showing how to manually setup exporters and providers for traces, logs, and metrics that will get sent to the console. |
+| [advanced_zero_code.py](./advanced_zero_code.py) | A comprehensive example showing how to setup telemetry using the `opentelemetry-instrument` lib without modifying any code. |
 
-### [02a](./02a-generic_chat_client.py) and [02b](./02b-azure_ai_chat_client.py) Chat Clients:
-These two samples show how to first setup the telemetry by manually importing the `setup_observability` function from the `agent_framework.observability` module and calling it. After this is done, the trace that get's created will live in the same context as the chat client calls, allowing you to see the end-to-end flow of your application. For Azure AI, there is a method in the Azure AI project client to get the azure monitor connection string for your project, the `.setup_observability()` method in the `AzureAIAgentClient` class will use this url to configure telemetry and you then do not have to import and call `setup_observability()` manually.
-If you or some other process already configure global tracer_providers or metrics_providers, the `setup_observability()` function will not override them, but instead use the existing tracer_provider, if possible. Metrics cannot be setup this way, so if you want to use metrics, you will have to call `setup_observability()` manually, before another process.
-
-### [03a](./03a-generic_agent.py) and [03b](./03b-azure_ai_agent.py) Agents:
-These two samples show how to setup telemetry when using the Agent Framework's agent abstraction layer. They are similar to the chat client samples, but also show how to create an agent and invoke it. The same rules apply for setting up telemetry, you can either call `setup_observability()` manually, or use the `setup_observability()` method in the `AzureAIAgentClient` class.
-
-### [04 - workflow](./04-workflow.py) Workflow:
-This sample shows how to setup telemetry when using the Agent Framework's workflow execution engine. It demonstrates a simple workflow scenario with telemetry.
-
-
-## Running the samples
+### Running the samples
 
 1. Open a terminal and navigate to this folder: `python/samples/getting_started/observability/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
     > Note that `APPLICATIONINSIGHTS_CONNECTION_STRING` and `OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
-    > Set `ENABLE_OTEL=true` to enable telemetry and `ENABLE_SENSITIVE_DATA=true` to include sensitive information like prompts and responses.
-        > Sensitive information should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
-3. Activate your python virtual environment, and then run `python 01-zero_code.py` or others.
-> This will also print the Operation/Trace ID, which can be used later for filtering.
+3. Activate your python virtual environment, and then run `python setup_observability_with_env_vars.py` or others.
+
+> This will also print the Operation/Trace ID, which can be used later for filtering logs and traces in Application Insights or Aspire Dashboard.
 
 ## Application Insights/Azure Monitor
 
@@ -85,7 +121,8 @@ You can connect to your Application Insights instance using a connection string.
 ```python
 from azure.identity import DefaultAzureCredential
 
-setup_observability(credential=DefaultAzureCredential())
+# The credential will be for resources specified in the environment variables and the parameters passed in.
+setup_observability(..., credential=DefaultAzureCredential())
 ```
 
 It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.
