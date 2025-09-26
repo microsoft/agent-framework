@@ -121,7 +121,7 @@ internal sealed class AgentActor(
             }
 
             var serializedRunResponse = JsonSerializer.SerializeToElement(updates.ToAgentRunResponse(), AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse)));
-            var updatedThread = await this._thread.SerializeAsync(AgentHostingJsonUtilities.DefaultOptions, cancellationToken).ConfigureAwait(false);
+            var updatedThread = this._thread.Serialize(AgentHostingJsonUtilities.DefaultOptions);
 
             var writeResponse = await context.WriteAsync(
                 new(this._etag,
