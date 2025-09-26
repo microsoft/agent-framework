@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
@@ -98,6 +100,71 @@ public class Workflow
             Ports = this.Ports,
             OutputExecutors = this.OutputExecutors
         };
+    }
+
+    private bool _needsReset;
+    private bool IsResettable => this.Registrations.Values.All(registration => !registration.IsUnresettableSharedInstance);
+
+    private async ValueTask<bool> TryResetExecutorRegistrationsAsync()
+    {
+        if (this.IsResettable)
+        {
+            foreach (ExecutorRegistration registration in this.Registrations.Values)
+            {
+                if (!await registration.TryResetAsync().ConfigureAwait(false))
+                {
+                    return false;
+                }
+            }
+
+            this._needsReset = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    private object? _ownerToken;
+    internal void TakeOwnership(object ownerToken)
+    {
+        object? maybeToken = Interlocked.CompareExchange(ref this._ownerToken, ownerToken, null);
+        if (maybeToken == null && this._needsReset)
+        {
+            // There is no owner, but the workflow failed to reset on ownership release (because there are
+            // shared executors).
+            throw new InvalidOperationException(
+                "Cannot reuse Workflow with shared Executor instances that do not implement IResettableExecutor."
+                );
+        }
+
+        if (maybeToken != null && !ReferenceEquals(maybeToken, ownerToken))
+        {
+            // Someone else owns the workflow
+            Debug.Assert(maybeToken != null);
+            throw new InvalidOperationException("Cannot use a Workflow in multiple simultaneous (Streaming)Runs.");
+        }
+
+        this._needsReset = true;
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
+            Justification = "Does not exist in NetFx 4.7.2")]
+    internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
+    {
+        if (this._ownerToken == null)
+        {
+            throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
+        }
+
+        if (!ReferenceEquals(this._ownerToken, this._ownerToken))
+        {
+            throw new InvalidOperationException("Attempt to release ownership of a Workflow by non-owner.");
+        }
+
+        await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
+
+        Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken);
+        this._ownerToken = null;
     }
 }
 

@@ -92,7 +92,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     }
 }
 
-internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>
+internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>, IResettableExecutor
 {
     private readonly int _targetNumber;
 
@@ -121,5 +121,11 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
     {
         this.Tries = await context.ReadStateAsync<int?>("TryCount").ConfigureAwait(false) ?? 0;
+    }
+
+    public ValueTask ResetAsync()
+    {
+        this.Tries = null;
+        return default;
     }
 }

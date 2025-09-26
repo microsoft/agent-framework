@@ -709,7 +709,7 @@ def setup_observability(
         )
     if OBSERVABILITY_SETTINGS.vs_code_extension_port:
         endpoint = f"http://localhost:{OBSERVABILITY_SETTINGS.vs_code_extension_port}"
-        if OBSERVABILITY_SETTINGS.check_endpoint_already_configured(endpoint):
+        if not OBSERVABILITY_SETTINGS.check_endpoint_already_configured(endpoint):
             new_exporters.extend(_get_otlp_exporters(endpoints=[endpoint]))
 
     OBSERVABILITY_SETTINGS._configure(credential=credential, additional_exporters=new_exporters)  # pyright: ignore[reportPrivateUsage]

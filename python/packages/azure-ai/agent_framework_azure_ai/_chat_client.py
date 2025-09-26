@@ -34,6 +34,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     get_logger,
+    use_chat_middleware,
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -123,6 +124,7 @@ TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class AzureAIAgentClient(BaseChatClient):
     """Azure AI Agent Chat client."""
 

@@ -42,6 +42,7 @@ from typing import Any
 
 from agent_framework import AgentProtocol, ChatMessage, Role
 
+from ._checkpoint import CheckpointStorage
 from ._executor import (
     AgentExecutor,
     AgentExecutorResponse,
@@ -104,11 +105,15 @@ class SequentialBuilder:
     from agent_framework import SequentialBuilder
 
     workflow = SequentialBuilder().participants([agent1, agent2, summarizer_exec]).build()
+
+    # Enable checkpoint persistence
+    workflow = SequentialBuilder().participants([agent1, agent2]).with_checkpointing(storage).build()
     ```
     """
 
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
+        self._checkpoint_storage: CheckpointStorage | None = None
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "SequentialBuilder":
         """Define the ordered participants for this sequential workflow.
@@ -135,6 +140,11 @@ class SequentialBuilder:
                 seen_agent_ids.add(pid)
 
         self._participants = list(participants)
+        return self
+
+    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "SequentialBuilder":
+        """Enable checkpointing for the built workflow using the provided storage."""
+        self._checkpoint_storage = checkpoint_storage
         return self
 
     def build(self) -> Workflow:
@@ -181,5 +191,8 @@ class SequentialBuilder:
 
         # Terminate with the final conversation
         builder.add_edge(prior, end)
+
+        if self._checkpoint_storage is not None:
+            builder = builder.with_checkpointing(self._checkpoint_storage)
 
         return builder.build()

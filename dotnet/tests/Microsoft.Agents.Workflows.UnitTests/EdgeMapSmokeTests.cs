@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Agents.Workflows.Execution;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
@@ -27,10 +29,20 @@ public class EdgeMapSmokeTests
 
         EdgeMap edgeMap = new(runContext, workflowEdges, [], "executor1", null);
 
-        await edgeMap.InvokeEdgeAsync(fanInEdge, "executor1", new("part1"));
-        MessageDeliveryValidation.CheckForwarded(runContext.QueuedMessages);
+        DeliveryMapping? mapping = await edgeMap.PrepareDeliveryForEdgeAsync(fanInEdge, new("part1", "executor1"));
+        mapping.Should().BeNull();
 
-        await edgeMap.InvokeEdgeAsync(fanInEdge, "executor2", new("part2"));
-        MessageDeliveryValidation.CheckForwarded(runContext.QueuedMessages, ("executor3", ["part1", "part2"]));
+        mapping = await edgeMap.PrepareDeliveryForEdgeAsync(fanInEdge, new("part2", "executor2"));
+        mapping.Should().NotBeNull();
+        List<MessageDelivery> deliveries = mapping.Deliveries.ToList();
+
+        deliveries.Should().HaveCount(2).And.AllSatisfy(delivery => delivery.TargetId.Should().Be("executor3"));
+
+        HashSet<string> expectedMessages = ["part1", "part2"];
+        foreach (MessageDelivery delivery in deliveries)
+        {
+            string message = delivery.Envelope.As<string>()!;
+            expectedMessages.Remove(message);
+        }
     }
 }
