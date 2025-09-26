@@ -2,21 +2,31 @@
 
 import sys
 from collections.abc import MutableSequence, Sequence
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from agent_framework import ChatMessage, Context, ContextProvider, TextContent
 from agent_framework.exceptions import ServiceInitializationError
-from mem0 import AsyncMemoryClient
+from mem0 import AsyncMemory, AsyncMemoryClient
 from pydantic import PrivateAttr
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import NotRequired, Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import NotRequired, Self, TypedDict  # pragma: no cover
+
+
+# Type aliases for Mem0 search response formats (v1.1 and v2; v1 is deprecated, but matches the type definition for v2)
+class MemorySearchResponse_v1_1(TypedDict):
+    results: list[dict[str, Any]]
+    relations: NotRequired[list[dict[str, Any]]]
+
+
+MemorySearchResponse_v2 = list[dict[str, Any]]
 
 
 class Mem0Provider(ContextProvider):
-    mem0_client: AsyncMemoryClient
+    mem0_client: AsyncMemory | AsyncMemoryClient
     api_key: str | None = None
     application_id: str | None = None
     agent_id: str | None = None
@@ -36,7 +46,7 @@ class Mem0Provider(ContextProvider):
         user_id: str | None = None,
         scope_to_per_operation_thread_id: bool = False,
         context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
-        mem0_client: AsyncMemoryClient | None = None,
+        mem0_client: AsyncMemory | AsyncMemoryClient | None = None,
     ) -> None:
         """Initializes a new instance of the Mem0Provider class.
 
@@ -72,14 +82,14 @@ class Mem0Provider(ContextProvider):
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
-        if self.mem0_client:
+        if self.mem0_client and isinstance(self.mem0_client, AbstractAsyncContextManager):
             await self.mem0_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit."""
-        if self._should_close_client and self.mem0_client:
-            await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore
+        if self._should_close_client and self.mem0_client and isinstance(self.mem0_client, AbstractAsyncContextManager):
+            await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def thread_created(self, thread_id: str | None = None) -> None:
         """Called when a new thread is created.
@@ -131,12 +141,21 @@ class Mem0Provider(ContextProvider):
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
-        memories = await self.mem0_client.search(  # type: ignore[misc]
+        search_response: MemorySearchResponse_v1_1 | MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
             query=input_text,
             user_id=self.user_id,
             agent_id=self.agent_id,
             run_id=self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id,
         )
+
+        # Depending on the API version, the response schema varies slightly
+        if isinstance(search_response, list):
+            memories = search_response
+        elif isinstance(search_response, dict) and "results" in search_response:
+            memories = search_response["results"]
+        else:
+            # Fallback for unexpected schema - return response as text as-is
+            memories = [search_response]
 
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
