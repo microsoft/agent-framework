@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.IO;
-using System.Threading.Tasks;
 using FluentAssertions;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
@@ -253,5 +251,147 @@ public class WorkflowVizTests
 
         // Check self-loop edge is present and conditional
         dotContent.Should().Contain("\"loop\" -> \"loop\" [style=dashed, label=\"conditional\"];");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_ToMermaidString_Basic()
+    {
+        // Test that WorkflowViz can generate a Mermaid diagram
+        var executor1 = new MockExecutor("executor1");
+        var executor2 = new MockExecutor("executor2");
+
+        var workflow = new WorkflowBuilder("executor1")
+            .AddEdge(executor1, executor2)
+            .Build<string>();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Check that the Mermaid content contains expected elements
+        mermaidContent.Should().Contain("flowchart TD");
+        mermaidContent.Should().Contain("executor1[\"executor1 (Start)\"]");
+        mermaidContent.Should().Contain("executor2[\"executor2\"]");
+        mermaidContent.Should().Contain("executor1 --> executor2");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_Conditional_Edge()
+    {
+        // Test that conditional edges are rendered with dotted lines and labels in Mermaid
+        var start = new MockExecutor("start");
+        var mid = new MockExecutor("mid");
+        var end = new MockExecutor("end");
+
+        bool OnlyIfFoo(string? msg) => msg == "foo";
+
+        var workflow = new WorkflowBuilder("start")
+            .AddEdge<string>(start, mid, OnlyIfFoo)
+            .AddEdge(mid, end)
+            .Build<string>();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Conditional edge should be dotted with label
+        mermaidContent.Should().Contain("start -. conditional .--> mid");
+        // Non-conditional edge should be solid
+        mermaidContent.Should().Contain("mid --> end");
+        mermaidContent.Should().NotContain("end -. conditional");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_FanIn_EdgeGroup()
+    {
+        // Test that fan-in edges render an intermediate node with label and routed edges in Mermaid
+        var start = new MockExecutor("start");
+        var s1 = new MockExecutor("s1");
+        var s2 = new MockExecutor("s2");
+        var t = new ListStrTargetExecutor("t");
+
+        var workflow = new WorkflowBuilder("start")
+            .AddFanOutEdge(start, s1, s2)
+            .AddFanInEdge(t, s1, s2)
+            .Build<string>();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // There should be a fan-in node with special styling
+        var lines = mermaidContent.Split('\n');
+        var fanInLines = Array.FindAll(lines, line => line.Contains("((fan-in))"));
+        fanInLines.Should().HaveCount(1);
+
+        // Extract the intermediate node id from the line
+        var fanInLine = fanInLines[0].Trim();
+        var fanInNodeId = fanInLine.Substring(0, fanInLine.IndexOf("((fan-in))", StringComparison.Ordinal)).Trim();
+        fanInNodeId.Should().NotBeNullOrEmpty();
+
+        // Edges should be routed through the intermediate node
+        mermaidContent.Should().Contain($"s1 --> {fanInNodeId}");
+        mermaidContent.Should().Contain($"s2 --> {fanInNodeId}");
+        mermaidContent.Should().Contain($"{fanInNodeId} --> t");
+
+        // Ensure direct edges are not present
+        mermaidContent.Should().NotContain("s1 --> t");
+        mermaidContent.Should().NotContain("s2 --> t");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_Complex_Workflow()
+    {
+        // Test Mermaid visualization of a more complex workflow
+        var executor1 = new MockExecutor("start");
+        var executor2 = new MockExecutor("middle1");
+        var executor3 = new MockExecutor("middle2");
+        var executor4 = new MockExecutor("end");
+
+        var workflow = new WorkflowBuilder("start")
+            .AddEdge(executor1, executor2)
+            .AddEdge(executor1, executor3)
+            .AddEdge(executor2, executor4)
+            .AddEdge(executor3, executor4)
+            .Build<string>();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Check all executors are present
+        mermaidContent.Should().Contain("start[\"start (Start)\"]");
+        mermaidContent.Should().Contain("middle1[\"middle1\"]");
+        mermaidContent.Should().Contain("middle2[\"middle2\"]");
+        mermaidContent.Should().Contain("end[\"end\"]");
+
+        // Check all edges are present
+        mermaidContent.Should().Contain("start --> middle1");
+        mermaidContent.Should().Contain("start --> middle2");
+        mermaidContent.Should().Contain("middle1 --> end");
+        mermaidContent.Should().Contain("middle2 --> end");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_Mixed_EdgeTypes()
+    {
+        // Test Mermaid workflow with mixed edge types (direct, conditional, fan-out, fan-in)
+        var start = new MockExecutor("start");
+        var a = new MockExecutor("a");
+        var b = new MockExecutor("b");
+        var c = new MockExecutor("c");
+        var end = new ListStrTargetExecutor("end");
+
+        bool Condition(string? msg) => msg?.Contains("test") ?? false;
+
+        var workflow = new WorkflowBuilder("start")
+            .AddEdge<string>(start, a, Condition) // Conditional edge
+            .AddFanOutEdge(a, b, c) // Fan-out
+            .AddFanInEdge(end, b, c) // Fan-in
+            .Build<string>();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Check conditional edge
+        mermaidContent.Should().Contain("start -. conditional .--> a");
+
+        // Check fan-out edges
+        mermaidContent.Should().Contain("a --> b");
+        mermaidContent.Should().Contain("a --> c");
+
+        // Check fan-in (should have intermediate node)
+        mermaidContent.Should().Contain("((fan-in))");
     }
 }
