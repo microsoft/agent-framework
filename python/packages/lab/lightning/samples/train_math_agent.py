@@ -128,7 +128,7 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
             temperature=llm.sampling_parameters.get("temperature", 0.0),
         ) as agent,
     ):
-        print(f"Task: {task['question']}")
+        print(f"Task: {task['question'][:10]}...")
         result = await agent.run(task["question"], tools=mcp_server)
         print(f"Agent responses: {result}")
 
