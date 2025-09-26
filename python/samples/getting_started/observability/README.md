@@ -97,7 +97,7 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.NOTSET)
 ```
-This get's the root logger and sets the level of that, automatically other loggers inherit from that one, and you will get detailed logs in your telemetry.
+This gets the root logger and sets the level of that, automatically other loggers inherit from that one, and you will get detailed logs in your telemetry.
 
 ## Samples
 

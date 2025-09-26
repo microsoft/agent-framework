@@ -566,11 +566,8 @@ def _tools_to_dict(
             return [tools]
         if callable(tools):
             return [ai_function(tools).to_json_schema_spec()]
-        try:
-            return [json.dumps(tools)]
-        except (TypeError, OverflowError):
-            logger.warning("Can't parse tool.")
-            return None
+        logger.warning("Can't parse tool.")
+        return None
     results: list[str | dict[str, Any]] = []
     for tool in tools:
         if isinstance(tool, AIFunction):
@@ -585,10 +582,7 @@ def _tools_to_dict(
         if callable(tool):
             results.append(ai_function(tool).to_json_schema_spec())
             continue
-        try:
-            results.append(json.dumps(tool))
-        except (TypeError, OverflowError):
-            logger.warning("Can't parse tool.")
+        logger.warning("Can't parse tool.")
     return results
 
 
