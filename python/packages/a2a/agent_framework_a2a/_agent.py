@@ -165,32 +165,9 @@ class A2AAgent(BaseAgent):
         Returns:
             An agent response item.
         """
-        # Collect updates and separate metadata-only from message-generating updates
-        message_updates: list[AgentRunResponseUpdate] = []
-        response_id: str | None = None
-        raw_representation: Any = None
-
-        async for update in self.run_stream(messages, thread=thread, **kwargs):
-            # Capture metadata from all updates
-            if response_id is None:
-                response_id = update.response_id
-            if raw_representation is None:
-                raw_representation = update.raw_representation
-
-            # Only include updates that generate messages
-            if update.role is not None:
-                message_updates.append(update)
-
-        # Handle case where no message-generating updates exist
-        if not message_updates:
-            return AgentRunResponse(
-                messages=[],
-                response_id=response_id or str(uuid.uuid4()),
-                raw_representation=raw_representation,
-            )
-
-        # Use framework's built-in method to consolidate updates into response
-        return AgentRunResponse.from_agent_run_response_updates(message_updates)
+        # Collect all updates and use framework to consolidate updates into response
+        updates = [update async for update in self.run_stream(messages, thread=thread, **kwargs)]
+        return AgentRunResponse.from_agent_run_response_updates(updates)
 
     async def run_stream(
         self,
@@ -247,7 +224,7 @@ class A2AAgent(BaseAgent):
                         # Empty task
                         yield AgentRunResponseUpdate(
                             contents=[],
-                            role=None,
+                            role=Role.ASSISTANT,
                             response_id=task.id,
                             raw_representation=task,
                         )

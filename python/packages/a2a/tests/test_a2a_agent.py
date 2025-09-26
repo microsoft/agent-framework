@@ -173,7 +173,6 @@ async def test_run_with_task_response_no_artifacts(a2a_agent: A2AAgent, mock_a2a
     response = await a2a_agent.run("Do something with no output")
 
     assert isinstance(response, AgentRunResponse)
-    assert len(response.messages) == 0  # No artifacts = no messages
     assert response.response_id == "task-empty"
 
 

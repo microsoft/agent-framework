@@ -67,7 +67,6 @@ name = "agent-framework"
 version = "0.1.0b1"
 source = { editable = "packages/main" }
 dependencies = [
-    { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-monitor-opentelemetry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -127,7 +126,6 @@ viz = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", specifier = ">=0.3.5" },
     { name = "agent-framework-a2a", marker = "extra == 'a2a'", editable = "packages/a2a" },
     { name = "agent-framework-a2a", marker = "extra == 'all'", editable = "packages/a2a" },
     { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
@@ -1423,6 +1421,7 @@ wheels = [
 name = "fastuuid"
 version = "0.13.3"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/00/5ab21d121752b4efe57b0c4ae0b84161261779631bc4c76132c77cce97bb/fastuuid-0.13.3.tar.gz", hash = "sha256:d755dc132addb369877429622535dfb52d79c8968a8a98f15a84c3da1db013c7", size = 18249, upload-time = "2025-09-26T08:50:50.782Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/85/08371c62cd86a4826f4bf90b885784475b232ac2512d45f0193592fbae46/fastuuid-0.13.3-cp310-cp310-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:a445d61106c0bbca80630d00de3d17025da6542da7f95adfa90fd5ac7641d1f8", size = 494073, upload-time = "2025-09-25T17:13:53.822Z" },
     { url = "https://files.pythonhosted.org/packages/e1/b0/0be84b80bd1e9febf4cd06358b46ce536ffc3e426ba2a4d7da04d6b66ca2/fastuuid-0.13.3-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:3ce1a5f3cfec829f326dd9278d90448e62fa531802349f64fe159ab17cedda1d", size = 252783, upload-time = "2025-09-25T17:12:30.108Z" },
