@@ -3,12 +3,12 @@
 // This sample shows how to expose an AI agent as an MCP tool.
 
 using System;
-using Agent_Step10_AsMcpTool;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using ModelContextProtocol.Server;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -29,12 +29,15 @@ var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync
 // Retrieve the server side persistent agent as an AIAgent.
 AIAgent agent = await persistentAgentsClient.GetAIAgentAsync(agentMetadata.Value.Id);
 
-// Register the MCP server with StdIO transport and expose the agent as an MCP tool.
+// Convert the agent to an AIFunction and then to an MCP tool.
 // The agent name and description will be used as the mcp tool name and description.
+McpServerTool tool = McpServerTool.Create(agent.AsAIFunction());
+
+// Register the MCP server with StdIO transport and expose the tool via the server.
 HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(settings: null);
 builder.Services
     .AddMcpServer()
     .WithStdioServerTransport()
-    .WithTools([agent.AsMcpTool()]);
+    .WithTools([tool]);
 
 await builder.Build().RunAsync();
