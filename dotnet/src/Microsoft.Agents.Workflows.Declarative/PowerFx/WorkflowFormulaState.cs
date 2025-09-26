@@ -22,7 +22,6 @@ internal sealed class WorkflowFormulaState
     public static readonly FrozenSet<string> RestorableScopes =
         [
             VariableScopeNames.Local,
-            VariableScopeNames.Topic,
             VariableScopeNames.Global,
             VariableScopeNames.System,
         ];
