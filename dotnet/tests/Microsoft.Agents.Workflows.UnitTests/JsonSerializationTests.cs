@@ -378,7 +378,7 @@ public class JsonSerializationTests
     {
         const string Message = "TestMessage";
 
-        MessageEnvelope envelope = new(Message, new TypeId(typeof(object)), targetId: "Target1");
+        MessageEnvelope envelope = new(Message, "Source1", new TypeId(typeof(object)), targetId: "Target1");
         PortableMessageEnvelope value = new(envelope);
         PortableMessageEnvelope result = RunJsonRoundtrip(value);
 
@@ -402,7 +402,7 @@ public class JsonSerializationTests
     {
         ChatMessage message = new(ChatRole.User, "Hello, world!");
 
-        MessageEnvelope envelope = new(message, new TypeId(typeof(object)), targetId: "Target1");
+        MessageEnvelope envelope = new(message, "Source1", new TypeId(typeof(object)), targetId: "Target1");
         PortableMessageEnvelope value = new(envelope);
         PortableMessageEnvelope result = RunJsonRoundtrip(value);
 
@@ -433,7 +433,7 @@ public class JsonSerializationTests
     {
         TestJsonSerializable message = new() { Id = 42, Name = "Test" };
 
-        MessageEnvelope envelope = new(message, new TypeId(typeof(object)), targetId: "Target1");
+        MessageEnvelope envelope = new(message, "Source1", new TypeId(typeof(object)), targetId: "Target1");
         PortableMessageEnvelope value = new(envelope);
         PortableMessageEnvelope result = RunJsonRoundtrip(value, TestCustomSerializedJsonOptions);
 
@@ -462,15 +462,12 @@ public class JsonSerializationTests
                 outstandingRequests: [TestExternalRequest]
             );
 
-            static Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> CreateQueuedMessages()
+            static Dictionary<string, List<PortableMessageEnvelope>> CreateQueuedMessages()
             {
-                Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> result = [];
+                Dictionary<string, List<PortableMessageEnvelope>> result = [];
 
-                MessageEnvelope externalEnvelope = new(TestExternalResponse);
-                result.Add(ExecutorIdentity.None, [new(externalEnvelope)]);
-
-                MessageEnvelope internalEnvelope = new("InternalMessage");
-                result.Add("TestExecutor1", [new(internalEnvelope)]);
+                MessageEnvelope internalEnvelope = new("InternalMessage", "TestExecutor1");
+                result.Add("TestExecutor2", [new(internalEnvelope)]);
 
                 return result;
             }
@@ -485,7 +482,7 @@ public class JsonSerializationTests
                               (Action<string>)(actual => actual.Should().Be(prototype))).ToArray());
 
         result.QueuedMessages.Should().HaveCount(prototype.QueuedMessages.Count);
-        foreach (ExecutorIdentity key in prototype.QueuedMessages.Keys)
+        foreach (string key in prototype.QueuedMessages.Keys)
         {
             result.QueuedMessages.Should().ContainKey(key);
 
@@ -524,7 +521,7 @@ public class JsonSerializationTests
     private static PortableValue CreateEdgeState<TMessage>(TMessage message) where TMessage : notnull
     {
         FanInEdgeState state = TestFanInEdgeState;
-        _ = state.ProcessMessage("SourceExecutor1", new MessageEnvelope(message, typeof(TMessage)));
+        _ = state.ProcessMessage("SourceExecutor1", new MessageEnvelope(message, "SourceExecutor1", typeof(TMessage)));
 
         return new(state);
     }

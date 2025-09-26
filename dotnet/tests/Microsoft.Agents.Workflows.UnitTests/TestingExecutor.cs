@@ -15,6 +15,10 @@ internal abstract class TestingExecutor<TIn, TOut> : Executor, IDisposable
     private readonly HashSet<CancellationToken> _linkedTokens = [];
     private CancellationTokenSource _internalCts = new();
 
+    public int Iterations { get; private set; }
+    public bool AtEnd => this._nextActionIndex >= this._actions.Length;
+    public bool Completed => !this._loop && this.AtEnd;
+
     protected TestingExecutor(string id, bool loop = false, params Func<TIn, IWorkflowContext, CancellationToken, ValueTask<TOut>>[] actions) : base(id)
     {
         this._loop = loop;
@@ -41,10 +45,11 @@ internal abstract class TestingExecutor<TIn, TOut> : Executor, IDisposable
     private int _nextActionIndex;
     private ValueTask<TOut> RouteToActionsAsync(TIn message, IWorkflowContext context)
     {
-        if (this._nextActionIndex >= this._actions.Length)
+        if (this.AtEnd)
         {
             if (this._loop)
             {
+                this.Iterations++;
                 this._nextActionIndex = 0;
             }
             else
