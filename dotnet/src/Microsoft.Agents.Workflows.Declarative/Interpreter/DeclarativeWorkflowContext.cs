@@ -16,6 +16,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 {
     public static readonly FrozenSet<string> ManagedScopes =
         [
+            VariableScopeNames.Local,
             VariableScopeNames.Topic,
             VariableScopeNames.Global,
         ];

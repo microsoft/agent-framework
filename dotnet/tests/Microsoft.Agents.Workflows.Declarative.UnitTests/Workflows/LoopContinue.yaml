@@ -8,8 +8,8 @@ trigger:
     - kind: Foreach
       id: foreach_loop
       items: =["a", "b", "c", "d", "e", "f"]
-      index: Topic.LoopIndex
-      value: Topic.LoopValue
+      index: Local.LoopIndex
+      value: Local.LoopValue
       actions:
 
         - kind: ContinueLoop
@@ -17,12 +17,12 @@ trigger:
 
         - kind: SetVariable
           id: set_variable_inner
-          variable: Topic.Count
-          value: =Topic.Count + 1
+          variable: Local.Count
+          value: =Local.Count + 1
 
         - kind: SendActivity
           id: send_activity_inner
-          activity: x{Topic.Count} - {Topic.LoopIndex}:{Topic.LoopValue}
+          activity: x{Local.Count} - {Local.LoopIndex}:{Local.LoopValue}
 
     - kind: EndConversation
       id: end_all

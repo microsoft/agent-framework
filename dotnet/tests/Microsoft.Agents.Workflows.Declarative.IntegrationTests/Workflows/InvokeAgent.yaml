@@ -12,4 +12,4 @@ trigger:
       input:
         messages: =[UserMessage(System.LastMessageText)]
       output:
-        messages: Topic.Answer
+        messages: Local.Answer

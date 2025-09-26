@@ -6,11 +6,6 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal sealed class WorkflowElementWalker : BotElementWalker
 {
-    static WorkflowElementWalker()
-    {
-        ProductContext.SetContext(Product.Foundry);
-    }
-
     private readonly DialogActionVisitor _visitor;
 
     public WorkflowElementWalker(DialogActionVisitor visitor)

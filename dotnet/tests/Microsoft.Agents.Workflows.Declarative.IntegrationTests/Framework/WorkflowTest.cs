@@ -9,6 +9,8 @@ using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
+using System.Reflection;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 using Xunit.Abstractions;
@@ -162,6 +164,8 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
             Assert.Contains(lastId, finalIds);
         }
     }
+
+    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}"; // %%% IS REFERENCED ???
 
     protected static readonly JsonSerializerOptions s_jsonSerializerOptions = new()
     {

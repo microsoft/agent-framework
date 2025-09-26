@@ -154,6 +154,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
+    [InlineData("MixedScopes.yaml", 2, "activity_input")]
     public async Task ExecuteActionAsync(string workflowFile, int expectedCount, string expectedId)
     {
         await this.RunWorkflowAsync(workflowFile);
@@ -215,7 +216,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new RootExecutor(), state, options);
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
@@ -248,7 +249,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
 
     private Task RunWorkflowAsync(string workflowPath) =>
-        this.RunWorkflowAsync(workflowPath, string.Empty);
+        this.RunWorkflowAsync(workflowPath, "Test input message");
 
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
@@ -275,6 +276,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             else if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
             {
                 this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
+            }
+            else if (workflowEvent is MessageActivityEvent activityEvent)
+            {
+                this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
             }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {

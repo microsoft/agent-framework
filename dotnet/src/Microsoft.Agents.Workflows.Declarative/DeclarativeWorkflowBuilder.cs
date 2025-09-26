@@ -31,7 +31,7 @@ public static class DeclarativeWorkflowBuilder
             };
 
     /// <summary>
-    /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
+    /// Builds a workflow from the provided YAML definition of a CPS Topic ObjectModel.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="workflowFile">The path to the workflow.</param>
@@ -49,7 +49,7 @@ public static class DeclarativeWorkflowBuilder
     }
 
     /// <summary>
-    /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
+    /// Builds a workflow from the provided YAML definition.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
