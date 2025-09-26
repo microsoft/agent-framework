@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;

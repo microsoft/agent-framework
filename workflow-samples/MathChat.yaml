@@ -65,7 +65,7 @@ trigger:
       id: check_completion
       conditions:
 
-        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Topic.TeacherResponse.Text)))
+        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Last(Topic.TeacherResponse).Text)))
           id: check_turn_done
           actions:
 

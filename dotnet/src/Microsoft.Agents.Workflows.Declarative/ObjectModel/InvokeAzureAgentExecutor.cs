@@ -37,8 +37,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
 
-        ChatMessage response = agentResponse.Messages[agentResponse.Messages.Count - 1];
-        await this.AssignAsync(this.AgentOutput?.Messages?.Path, response.ToRecord(), context).ConfigureAwait(false); // %%% TABLE (NOT RECORD)
+        await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
 
         return default;
     }
