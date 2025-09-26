@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import tempfile
 from dataclasses import dataclass
 from typing import Any
@@ -692,8 +693,6 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
 async def test_workflow_concurrent_execution_prevention():
     """Test that concurrent workflow executions are prevented."""
-    import asyncio
-
     # Create a simple workflow that takes some time to execute
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
     workflow = WorkflowBuilder().set_start_executor(executor).build()
@@ -723,8 +722,6 @@ async def test_workflow_concurrent_execution_prevention():
 
 async def test_workflow_concurrent_execution_prevention_streaming():
     """Test that concurrent workflow streaming executions are prevented."""
-    import asyncio
-
     # Create a simple workflow
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
     workflow = WorkflowBuilder().set_start_executor(executor).build()
@@ -758,8 +755,6 @@ async def test_workflow_concurrent_execution_prevention_streaming():
 
 async def test_workflow_concurrent_execution_prevention_mixed_methods():
     """Test that concurrent executions are prevented across different execution methods."""
-    import asyncio
-
     # Create a simple workflow
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
     workflow = WorkflowBuilder().set_start_executor(executor).build()
