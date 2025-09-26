@@ -847,60 +847,12 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             agent_level_middlewares: Agent-level middleware (executed first)
             run_level_middlewares: Run-level middleware (executed after agent middleware)
         """
-        # Merge middleware lists: agent middleware first, then run middleware
-        combined_middlewares: list[Middleware] = []
-
-        if agent_level_middlewares:
-            if isinstance(agent_level_middlewares, list):
-                combined_middlewares.extend(agent_level_middlewares)  # type: ignore[arg-type]
-            else:
-                combined_middlewares.append(agent_level_middlewares)
-
-        if run_level_middlewares:
-            if isinstance(run_level_middlewares, list):
-                combined_middlewares.extend(run_level_middlewares)  # type: ignore[arg-type]
-            else:
-                combined_middlewares.append(run_level_middlewares)
-
-        if not combined_middlewares:
-            return AgentMiddlewarePipeline(), FunctionMiddlewarePipeline(), []
-
-        middleware_list = combined_middlewares
-
-        # Separate agent, function, and chat middleware using isinstance checks
-        agent_middlewares: list[AgentMiddleware | AgentMiddlewareCallable] = []
-        function_middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] = []
-        chat_middlewares: list[ChatMiddleware | ChatMiddlewareCallable] = []
-
-        for middleware in middleware_list:
-            if isinstance(middleware, AgentMiddleware):
-                agent_middlewares.append(middleware)
-            elif isinstance(middleware, FunctionMiddleware):
-                function_middlewares.append(middleware)
-            elif isinstance(middleware, ChatMiddleware):
-                # Collect chat middleware to be applied to the chat client
-                chat_middlewares.append(middleware)
-            elif callable(middleware):  # type: ignore[arg-type]
-                # Determine middleware type using decorator and/or parameter type annotation
-                middleware_type = _determine_middleware_type(middleware)
-                if middleware_type == MiddlewareType.AGENT:
-                    agent_middlewares.append(middleware)  # type: ignore
-                elif middleware_type == MiddlewareType.FUNCTION:
-                    function_middlewares.append(middleware)  # type: ignore
-                elif middleware_type == MiddlewareType.CHAT:
-                    # Collect chat middleware to be applied to the chat client
-                    chat_middlewares.append(middleware)  # type: ignore
-                else:
-                    # This should not happen if _determine_middleware_type is implemented correctly
-                    raise MiddlewareException(f"Unknown middleware type: {middleware_type}")
-            else:
-                # Fallback
-                agent_middlewares.append(middleware)  # type: ignore
+        middleware = categorize_middleware(agent_level_middlewares, run_level_middlewares)
 
         return (
-            AgentMiddlewarePipeline(agent_middlewares),
-            FunctionMiddlewarePipeline(function_middlewares),
-            chat_middlewares,
+            AgentMiddlewarePipeline(middleware["agent"]),  # type: ignore[arg-type]
+            FunctionMiddlewarePipeline(middleware["function"]),  # type: ignore[arg-type]
+            middleware["chat"],  # type: ignore[return-value]
         )
 
     async def middleware_enabled_run(
@@ -1034,15 +986,15 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         instance_middleware = getattr(self, "middleware", None)
 
         # Merge all middleware and separate by type
-        all_middleware = _merge_middleware_lists(instance_middleware, call_middleware)
-        chat_middleware_list = _merge_and_filter_chat_middleware(instance_middleware, call_middleware)
+        middleware = categorize_middleware(instance_middleware, call_middleware)
+        chat_middleware_list = middleware["chat"]  # type: ignore[assignment]
 
         # Extract function middleware for the function invocation pipeline
-        function_middleware_list = extract_function_middlewares(all_middleware)
+        function_middleware_list = middleware["function"]
 
         # Pass function middleware to function invocation system if present
         if function_middleware_list:
-            kwargs["_function_middleware_pipeline"] = FunctionMiddlewarePipeline(function_middleware_list)
+            kwargs["_function_middleware_pipeline"] = FunctionMiddlewarePipeline(function_middleware_list)  # type: ignore[arg-type]
 
         # If no chat middleware, use original method
         if not chat_middleware_list:
@@ -1054,7 +1006,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         # Extract chat_options or create default
         chat_options = kwargs.pop("chat_options", ChatOptions())
 
-        pipeline = ChatMiddlewarePipeline(all_middleware)
+        pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
         context = ChatContext(
             chat_client=self,
             messages=self.prepare_messages(messages),
@@ -1104,7 +1056,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
             # Extract chat_options or create default
             chat_options = kwargs.pop("chat_options", ChatOptions())
 
-            pipeline = ChatMiddlewarePipeline(all_middleware)
+            pipeline = ChatMiddlewarePipeline(all_middleware)  # type: ignore[arg-type]
             context = ChatContext(
                 chat_client=self,
                 messages=self.prepare_messages(messages),
@@ -1137,64 +1089,59 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
     return chat_client_class
 
 
-def _is_middleware_of_type(middleware: Any, middleware_type: MiddlewareType) -> bool:
-    """Check if a middleware is of a specific type."""
-    type_to_class = {
-        MiddlewareType.FUNCTION: FunctionMiddleware,
-        MiddlewareType.CHAT: ChatMiddleware,
-        MiddlewareType.AGENT: AgentMiddleware,
-    }
+def categorize_middleware(
+    *middleware_sources: Any | list[Any] | None,
+) -> dict[str, list[Any]]:
+    """Categorize middleware from multiple sources into agent, function, and chat types.
 
-    expected_class = type_to_class[middleware_type]
-    return isinstance(middleware, expected_class) or (
-        callable(middleware)
-        and hasattr(middleware, "_middleware_type")
-        and middleware._middleware_type == middleware_type  # type: ignore
-    )
+    Args:
+        *middleware_sources: Variable number of middleware sources to categorize.
 
+    Returns:
+        Dict with keys "agent", "function", "chat" containing lists of categorized middleware.
+    """
+    result: dict[str, list[Any]] = {"agent": [], "function": [], "chat": []}
 
-def extract_middlewares_by_type(
-    middleware_list: list[Middleware] | None,
-    middleware_type: MiddlewareType,
-) -> list[Middleware]:
-    """Extract middlewares of a specific type from a list."""
-    if not middleware_list:
-        return []
+    # Merge all middleware sources into a single list
+    all_middleware: list[Any] = []
+    for source in middleware_sources:
+        if source:
+            if isinstance(source, list):
+                all_middleware.extend(source)  # type: ignore
+            else:
+                all_middleware.append(source)
 
-    extracted_middlewares: list[Middleware] = []
-    for middleware in middleware_list:
-        if _is_middleware_of_type(middleware, middleware_type):
-            extracted_middlewares.append(middleware)
+    # Categorize each middleware item
+    for middleware in all_middleware:
+        if isinstance(middleware, AgentMiddleware):
+            result["agent"].append(middleware)
+        elif isinstance(middleware, FunctionMiddleware):
+            result["function"].append(middleware)
+        elif isinstance(middleware, ChatMiddleware):
+            result["chat"].append(middleware)
+        elif callable(middleware):
+            # Always call _determine_middleware_type to ensure proper validation
+            middleware_type = _determine_middleware_type(middleware)
+            if middleware_type == MiddlewareType.AGENT:
+                result["agent"].append(middleware)
+            elif middleware_type == MiddlewareType.FUNCTION:
+                result["function"].append(middleware)
+            elif middleware_type == MiddlewareType.CHAT:
+                result["chat"].append(middleware)
+        else:
+            # Fallback to agent middleware for unknown types
+            result["agent"].append(middleware)
 
-    return extracted_middlewares
-
-
-def extract_function_middlewares(
-    middleware_list: list[Middleware] | None,
-) -> list[FunctionMiddleware | FunctionMiddlewareCallable]:
-    """Extract function middlewares from a list."""
-    return extract_middlewares_by_type(middleware_list, MiddlewareType.FUNCTION)  # type: ignore
-
-
-def extract_chat_middlewares(
-    middleware_list: list[Middleware] | None,
-) -> list[ChatMiddleware | ChatMiddlewareCallable]:
-    """Extract chat middlewares from a list."""
-    return extract_middlewares_by_type(middleware_list, MiddlewareType.CHAT)  # type: ignore
+    return result
 
 
 def create_function_middleware_pipeline(
     *middleware_sources: list[Middleware] | None,
 ) -> FunctionMiddlewarePipeline | None:
     """Create a function middleware pipeline from multiple middleware sources."""
-    all_function_middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] = []
-
-    for source in middleware_sources:
-        if source:
-            function_middlewares = extract_function_middlewares(source)
-            all_function_middlewares.extend(function_middlewares)
-
-    return FunctionMiddlewarePipeline(all_function_middlewares) if all_function_middlewares else None
+    middleware = categorize_middleware(*middleware_sources)
+    function_middlewares = middleware["function"]
+    return FunctionMiddlewarePipeline(function_middlewares) if function_middlewares else None  # type: ignore[arg-type]
 
 
 def _merge_and_filter_chat_middleware(
@@ -1210,55 +1157,8 @@ def _merge_and_filter_chat_middleware(
     Returns:
         A merged list of chat middleware only.
     """
-    all_middleware = _merge_middleware_lists(instance_middleware, call_middleware)
-
-    # Filter for chat middleware only
-    chat_middleware_list: list[ChatMiddleware | ChatMiddlewareCallable] = []
-    for middleware in all_middleware:
-        # Check if it's a ChatMiddleware instance
-        if isinstance(middleware, ChatMiddleware):
-            chat_middleware_list.append(middleware)
-        elif callable(middleware):
-            # Use the same type detection logic as _build_middleware_pipelines
-            try:
-                middleware_type = _determine_middleware_type(middleware)
-                if middleware_type == MiddlewareType.CHAT:
-                    chat_middleware_list.append(middleware)  # type: ignore[arg-type]
-            except MiddlewareException:
-                # If we can't determine the type, skip this middleware
-                continue
-
-    return chat_middleware_list
-
-
-def _merge_middleware_lists(
-    instance_middleware: Any | list[Any] | None,
-    call_middleware: Any | list[Any] | None,
-) -> list[Any]:
-    """Merge instance-level and call-level middleware into a single list.
-
-    Args:
-        instance_middleware: Middleware defined at the instance level.
-        call_middleware: Middleware provided at the call level.
-
-    Returns:
-        A merged list of middleware in order: instance middleware first, then call middleware.
-    """
-    all_middleware: list[Any] = []
-
-    if instance_middleware:
-        if isinstance(instance_middleware, list):
-            all_middleware.extend(instance_middleware)  # type: ignore
-        else:
-            all_middleware.append(instance_middleware)
-
-    if call_middleware:
-        if isinstance(call_middleware, list):
-            all_middleware.extend(call_middleware)  # type: ignore
-        else:
-            all_middleware.append(call_middleware)
-
-    return all_middleware
+    middleware = categorize_middleware(instance_middleware, call_middleware)
+    return middleware["chat"]  # type: ignore[return-value]
 
 
 def extract_and_merge_function_middleware(chat_client: Any, kwargs: dict[str, Any]) -> None:
