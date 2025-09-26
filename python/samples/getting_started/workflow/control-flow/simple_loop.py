@@ -16,7 +16,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -28,7 +28,7 @@ What it does:
 - The workflow completes when the correct number is guessed.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
+- Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agent.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
@@ -122,7 +122,7 @@ async def main():
     guess_number_executor = GuessNumberExecutor((1, 100))
 
     # Agent judge setup
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     judge_agent = AgentExecutor(
         chat_client.create_agent(
             instructions=(

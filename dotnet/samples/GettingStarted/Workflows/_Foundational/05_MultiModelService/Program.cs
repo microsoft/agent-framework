@@ -2,9 +2,9 @@
 
 using System;
 using Amazon.BedrockRuntime;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 // Define the topic discussion.
 const string Topic = "Goldendoodles make the best pets.";

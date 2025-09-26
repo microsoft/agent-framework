@@ -19,7 +19,7 @@ from agent_framework import (
     WorkflowViz,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -31,7 +31,7 @@ What it does:
 - Visualization: generate Mermaid and GraphViz representations via `WorkflowViz` and optionally export SVG.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureChatClient` agents.
+- Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agents.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 - For visualization export: `pip install agent-framework[viz]` and install GraphViz binaries.
 """
@@ -103,7 +103,7 @@ class AggregateInsights(Executor):
 
 async def main() -> None:
     # 1) Create agent executors for domain experts
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     researcher = AgentExecutor(
         chat_client.create_agent(

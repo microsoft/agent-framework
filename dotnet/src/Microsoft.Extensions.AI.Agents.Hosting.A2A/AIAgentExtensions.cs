@@ -3,6 +3,7 @@
 using System;
 using System.Threading.Tasks;
 using A2A;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Hosting.A2A.Internal;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;

@@ -24,7 +24,7 @@ Make sure to replace `https://your-resource.openai.azure.com/` with the endpoint
 using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using OpenAI;
 
 AIAgent agent = new AzureOpenAIClient(

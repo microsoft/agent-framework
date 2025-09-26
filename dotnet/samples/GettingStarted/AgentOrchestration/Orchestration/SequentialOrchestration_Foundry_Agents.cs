@@ -2,8 +2,8 @@
 
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Orchestration;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Samples;
 
 namespace Orchestration;
