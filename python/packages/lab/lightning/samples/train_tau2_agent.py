@@ -12,7 +12,7 @@ import json
 import os
 import random
 from pathlib import Path
-from typing import Any, cast
+from typing import TypedDict, cast
 
 from agent_framework.lab.tau2 import ASSISTANT_AGENT_ID, patch_env_set_state  # type: ignore
 from agent_framework.lab.tau2 import TaskRunner as Tau2TaskRunner  # type: ignore
@@ -24,13 +24,20 @@ from tau2.data_model.tasks import Task as Tau2Task  # type: ignore[import-untype
 from agent_framework_lab_lightning import init as lightning_init
 
 
-def _load_dataset() -> tuple[Dataset[dict[str, Any]], Dataset[dict[str, Any]]]:
+class SerializedTask(TypedDict):
+    id: str
+    data: str
+
+
+def _load_dataset() -> tuple[Dataset[SerializedTask], Dataset[SerializedTask]]:
     data_dir = os.getenv("TAU2_DATA_DIR")
     if data_dir is None:
         raise ValueError("TAU2_DATA_DIR must be set")
     tasks_path = Path(data_dir) / "tau2/domains/airline/tasks.json"
     with tasks_path.open("r") as f:
         dataset = json.load(f)
+    # Pack the task data into a string to prevent misinterpretation in hf conversion
+    dataset = [{"id": task["id"], "data": json.dumps(task)} for task in dataset]
 
     # Randomly split the dataset into train and val
     random_state = random.Random(42)
@@ -43,11 +50,11 @@ def _load_dataset() -> tuple[Dataset[dict[str, Any]], Dataset[dict[str, Any]]]:
     train_dataset = [dataset[i] for i in train_indices]
     val_dataset = [dataset[i] for i in val_indices]
 
-    return cast(Dataset[dict[str, Any]], train_dataset), cast(Dataset[dict[str, Any]], val_dataset)
+    return cast(Dataset[SerializedTask], train_dataset), cast(Dataset[SerializedTask], val_dataset)
 
 
 class Tau2Agent(LitAgent):
-    async def rollout_async(self, task: dict[str, Any], resources: NamedResources, rollout: Rollout) -> float:
+    async def rollout_async(self, task: SerializedTask, resources: NamedResources, rollout: Rollout) -> float:
         # The agent to be trained can also be written in a class-based way,
         # for richer customization like selecting the agents to be trained with `trained_agents` parameter.
 
@@ -62,7 +69,10 @@ class Tau2Agent(LitAgent):
         if openai_api_key is None:
             raise ValueError("OPENAI_API_KEY must be set")
 
-        task_obj = Tau2Task(**task)
+        # Unpack the task data from the string
+        task_data = json.loads(task["data"])
+        task_obj = Tau2Task(**task_data)
+
         runner = Tau2TaskRunner(
             max_steps=100,
             assistant_window_size=4000,
