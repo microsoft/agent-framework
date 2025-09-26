@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -16,11 +17,11 @@ internal sealed class InProcStepTracer : IStepTracer
     public bool StateUpdated { get; private set; }
     public CheckpointInfo? Checkpoint { get; private set; }
 
-    public HashSet<string> Instantiated { get; } = [];
-    public HashSet<string> Activated { get; } = [];
+    public ConcurrentDictionary<string, string> Instantiated { get; } = new();
+    public ConcurrentDictionary<string, string> Activated { get; } = new();
 
-    public void TraceIntantiated(string executorId) => this.Instantiated.Add(executorId);
-    public void TraceActivated(string executorId) => this.Activated.Add(executorId);
+    public void TraceIntantiated(string executorId) => this.Instantiated.TryAdd(executorId, executorId);
+    public void TraceActivated(string executorId) => this.Activated.TryAdd(executorId, executorId);
     public void TraceStatePublished() => this.StateUpdated = true;
     public void TraceCheckpointCreated(CheckpointInfo checkpoint) => this.Checkpoint = checkpoint;
 
@@ -60,7 +61,7 @@ internal sealed class InProcStepTracer : IStepTracer
         });
     }
 
-    public SuperStepCompletedEvent Complete(bool nextStepHasActions, bool hasPendingRequests) => new(this.StepNumber, new SuperStepCompletionInfo(this.Activated, this.Instantiated)
+    public SuperStepCompletedEvent Complete(bool nextStepHasActions, bool hasPendingRequests) => new(this.StepNumber, new SuperStepCompletionInfo(this.Activated.Keys, this.Instantiated.Keys)
     {
         HasPendingMessages = nextStepHasActions,
         HasPendingRequests = hasPendingRequests,
@@ -72,19 +73,19 @@ internal sealed class InProcStepTracer : IStepTracer
     {
         StringBuilder sb = new();
 
-        if (this.Instantiated.Count != 0)
+        if (this.Instantiated.Keys.Count != 0)
         {
-            sb.Append("Instantiated: ").Append(string.Join(", ", this.Instantiated.OrderBy(id => id, StringComparer.Ordinal)));
+            sb.Append("Instantiated: ").Append(string.Join(", ", this.Instantiated.Keys.OrderBy(id => id, StringComparer.Ordinal)));
         }
 
-        if (this.Activated.Count != 0)
+        if (this.Activated.Keys.Count != 0)
         {
             if (sb.Length != 0)
             {
                 sb.AppendLine();
             }
 
-            sb.Append("Activated: ").Append(string.Join(", ", this.Activated.OrderBy(id => id, StringComparer.Ordinal)));
+            sb.Append("Activated: ").Append(string.Join(", ", this.Activated.Keys.OrderBy(id => id, StringComparer.Ordinal)));
         }
 
         return sb.ToString();

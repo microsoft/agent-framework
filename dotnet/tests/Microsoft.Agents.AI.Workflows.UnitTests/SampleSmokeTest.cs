@@ -1,10 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Sample;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -176,6 +178,42 @@ public class SampleSmokeTest
             line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
             line => Assert.Contains($"{EchoAgent.DefaultId}: {EchoAgent.Prefix}{HelloAgent.Greeting}", line)
         );
+    }
+
+    [Fact]
+    public async Task Test_RunSample_Step8Async()
+    {
+        List<string> textsToProcess = [
+            "Hello world! This is a simple test.",
+            "Python is a powerful programming language used for many applications.",
+            "Short text.",
+            "This is a longer text with multiple sentences. It contains more words and characters. We use it to test our text processing workflow.",
+            "",
+            "   Spaces   around   text   ",
+        ];
+
+        using StringWriter writer = new();
+
+        List<TextProcessingResult> results = await Step8EntryPoint.RunAsync(writer, textsToProcess);
+        Assert.Equal(textsToProcess.Count, results.Count);
+
+        Assert.Collection(results,
+                          textsToProcess.Select(CreateValidator).ToArray());
+
+        Action<TextProcessingResult> CreateValidator(string textToProcess, int index)
+        {
+            return result =>
+            {
+                TextProcessingResult expected = new(
+                    TaskId: $"Task{index}",
+                    Text: textToProcess,
+                    WordCount: textToProcess.Split([' '], StringSplitOptions.RemoveEmptyEntries).Length,
+                    ChatCount: textToProcess.Length
+                );
+
+                result.Should().Be(expected);
+            };
+        }
     }
 }
 

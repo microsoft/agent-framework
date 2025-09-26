@@ -43,7 +43,7 @@ public class RepresentationTests
         ExecutorRegistration registration = target.Registration;
         ExecutorInfo info = registration.ToExecutorInfo();
 
-        info.IsMatch(await registration.ProviderAsync()).Should().BeTrue();
+        info.IsMatch(await registration.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
     }
 
     [Fact]
@@ -53,6 +53,7 @@ public class RepresentationTests
         await RunExecutorishTestAsync(new TestExecutor());
         await RunExecutorishTestAsync(TestInputPort);
         await RunExecutorishTestAsync(new TestAgent());
+        await RunExecutorishTestAsync(Step1EntryPoint.WorkflowInstance.ConfigureSubWorkflow(nameof(Step1EntryPoint)));
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
         await RunExecutorishTestAsync(function.AsExecutor("FunctionExecutor"));

@@ -20,13 +20,13 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 /// scenarios where workflow execution does not require executor distribution. </para></remarks>
 internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 {
-    public InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, params Type[] knownValidInputTypes)
+    public InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, object? workflowOwnership = null, bool subworkflow = false, params Type[] knownValidInputTypes)
     {
         this.RunId = runId ?? Guid.NewGuid().ToString("N");
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, this.StepTracer);
+        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.StepTracer, workflowOwnership, subworkflow);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = [.. knownValidInputTypes];
@@ -60,7 +60,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         return false;
     }
 
-    private async ValueTask<bool> EnqueueMessageInternalAsync(object message, Type messageType)
+    public async ValueTask<bool> EnqueueMessageUntypedAsync(object message, Type declaredType)
     {
         this.RunContext.CheckEnded();
         Throw.IfNull(message);
@@ -72,20 +72,20 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 
         // Check that the type of the incoming message is compatible with the starting executor's
         // input type.
-        if (!await this.IsValidInputTypeAsync(messageType).ConfigureAwait(false))
+        if (!await this.IsValidInputTypeAsync(declaredType).ConfigureAwait(false))
         {
             return false;
         }
 
-        await this.RunContext.AddExternalMessageAsync(message, messageType).ConfigureAwait(false);
+        await this.RunContext.AddExternalMessageAsync(message, declaredType).ConfigureAwait(false);
         return true;
     }
 
     public ValueTask<bool> EnqueueMessageAsync<T>(T message)
-        => this.EnqueueMessageInternalAsync(Throw.IfNull(message), typeof(T));
+        => this.EnqueueMessageUntypedAsync(Throw.IfNull(message), typeof(T));
 
     public ValueTask<bool> EnqueueMessageAsync(object message)
-        => this.EnqueueMessageInternalAsync(Throw.IfNull(message), message.GetType());
+        => this.EnqueueMessageUntypedAsync(Throw.IfNull(message), message.GetType());
 
     ValueTask ISuperStepRunner.EnqueueResponseAsync(ExternalResponse response)
     {
@@ -95,17 +95,11 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 
     private InProcStepTracer StepTracer { get; } = new();
     private Workflow Workflow { get; init; }
-    private InProcessRunnerContext RunContext { get; init; }
+    internal InProcessRunnerContext RunContext { get; init; }
     private ICheckpointManager? CheckpointManager { get; }
     private EdgeMap EdgeMap { get; init; }
 
-    event EventHandler<WorkflowEvent>? ISuperStepRunner.WorkflowEvent
-    {
-        add => this.WorkflowEvent += value;
-        remove => this.WorkflowEvent -= value;
-    }
-
-    private event EventHandler<WorkflowEvent>? WorkflowEvent;
+    public event EventHandler<WorkflowEvent>? WorkflowEvent;
 
     private void RaiseWorkflowEvent(WorkflowEvent workflowEvent)
     {
@@ -129,7 +123,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
     public async ValueTask<StreamingRun> StreamAsync(object input, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
-        await this.EnqueueMessageAsync(input).ConfigureAwait(false);
+        await this.EnqueueMessageUntypedAsync(input, input.GetType()).ConfigureAwait(false);
 
         return new StreamingRun(this);
     }
@@ -236,6 +230,18 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         // that we would need to avoid firing the tasks when we call InvokeEdgeAsync, or RouteExternalMessageAsync.
         await Task.WhenAll(receiverTasks).ConfigureAwait(false);
 
+        // When we have sub-workflows, sending a message to the WorkflowHostExecutor will only queue it into the
+        // subworkflow's input queue. In order to actually process the message and align the supersteps correctly,
+        // we need to drive the superstep of the subworkflow here.
+        // TODO: Investigate if we can fully pull in the subworkflow execution into the WorkflowHostExecutor itself.
+        List<Task> subworkflowTasks = new();
+        foreach (ISuperStepRunner subworkflowRunner in this.RunContext.JoinedSubworkflowRunners)
+        {
+            subworkflowTasks.Add(subworkflowRunner.RunSuperStepAsync(CancellationToken.None).AsTask());
+        }
+
+        await Task.WhenAll(subworkflowTasks).ConfigureAwait(false);
+
         // After the message handler invocations, we may have some events to deliver
         this.EmitPendingEvents();
 
@@ -310,5 +316,5 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
     private bool CheckWorkflowMatch(Checkpoint checkpoint) =>
         checkpoint.Workflow.IsMatch(this.Workflow);
 
-    ValueTask ISuperStepRunner.RequestEndRunAsync() => this.RunContext.EndRunAsync();
+    public ValueTask RequestEndRunAsync() => this.RunContext.EndRunAsync();
 }

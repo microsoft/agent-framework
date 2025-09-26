@@ -2,6 +2,7 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -12,12 +13,12 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public static class InProcessExecution
 {
-    internal static InProcessRunner CreateRunner(Workflow workflow, CheckpointManager? checkpointManager, string? runId)
+    internal static InProcessRunner CreateRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId)
         => new(workflow, checkpointManager, runId);
 
-    internal static InProcessRunner CreateRunner<TInput>(Workflow<TInput> checkedWorkflow, CheckpointManager? checkpointManager, string? runId)
+    internal static InProcessRunner CreateRunner<TInput>(Workflow<TInput> checkedWorkflow, ICheckpointManager? checkpointManager, string? runId)
         where TInput : notnull
-        => new(checkedWorkflow, checkpointManager, runId, [typeof(TInput)]);
+        => new(checkedWorkflow, checkpointManager, runId, knownValidInputTypes: [typeof(TInput)]);
 
     private static ValueTask<StreamingRun> StreamAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellationToken = default)
         => runner.StreamAsync(input, cancellationToken);

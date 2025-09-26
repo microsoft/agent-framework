@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Execution;
 
@@ -74,8 +76,29 @@ public class TestRunContext : IRunnerContext
     ValueTask<StepContext> IRunnerContext.AdvanceAsync() =>
         throw new NotImplementedException();
 
-    public Dictionary<string, Executor> Executors { get; } = [];
+    public Dictionary<string, Executor> Executors { get; set; } = [];
+    public string StartingExecutorId { get; set; } = string.Empty;
+
+    public bool WithCheckpointing => throw new NotSupportedException();
 
     ValueTask<Executor> IRunnerContext.EnsureExecutorAsync(string executorId, IStepTracer? tracer) =>
         new(this.Executors[executorId]);
+
+    public ValueTask<IEnumerable<Type>> GetStartingExecutorInputTypesAsync(CancellationToken cancellation = default)
+    {
+        if (this.Executors.TryGetValue(this.StartingExecutorId, out Executor? executor))
+        {
+            return new(executor.InputTypes);
+        }
+
+        throw new InvalidOperationException($"No executor with ID '{this.StartingExecutorId}' is registered in this context.");
+    }
+
+    public ValueTask ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellation = default)
+        => this.AddEventAsync(workflowEvent);
+
+    public ValueTask SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellation = default)
+        => this.SendMessageAsync(senderId, message, cancellation);
+
+    ValueTask ISuperStepJoinContext.AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellation) => default;
 }

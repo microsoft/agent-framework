@@ -17,6 +17,7 @@ internal interface ISuperStepRunner
 
     ValueTask EnqueueResponseAsync(ExternalResponse response);
     ValueTask<bool> EnqueueMessageAsync<T>(T message);
+    ValueTask<bool> EnqueueMessageUntypedAsync(object message, Type declaredType);
 
     event EventHandler<WorkflowEvent>? WorkflowEvent;
 

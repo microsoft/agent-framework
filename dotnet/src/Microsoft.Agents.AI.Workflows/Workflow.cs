@@ -84,7 +84,7 @@ public class Workflow
 
         // TODO: Can we cache this somehow to avoid having to instantiate a new one when running?
         // Does that break some user expectations?
-        Executor startExecutor = await startRegistration.ProviderAsync().ConfigureAwait(false);
+        Executor startExecutor = await startRegistration.CreateInstanceAsync(string.Empty).ConfigureAwait(false);
 
         if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(TInput))))
         {
@@ -125,9 +125,16 @@ public class Workflow
     }
 
     private object? _ownerToken;
-    internal void TakeOwnership(object ownerToken)
+    private bool _ownedAsSubworkflow;
+    internal void TakeOwnership(object ownerToken, bool subworkflow = false, object? existingOwnershipSignoff = null)
     {
-        object? maybeToken = Interlocked.CompareExchange(ref this._ownerToken, ownerToken, null);
+        object? maybeToken = Interlocked.CompareExchange(ref this._ownerToken, ownerToken, existingOwnershipSignoff);
+        if (maybeToken == null && existingOwnershipSignoff != null)
+        {
+            // We expected to already be owned, but we were not
+            throw new InvalidOperationException("Existing ownership token was provided, but the workflow is unowned.");
+        }
+
         if (maybeToken == null && this._needsReset)
         {
             // There is no owner, but the workflow failed to reset on ownership release (because there are
@@ -137,14 +144,22 @@ public class Workflow
                 );
         }
 
-        if (maybeToken != null && !ReferenceEquals(maybeToken, ownerToken))
+        if (!ReferenceEquals(maybeToken, existingOwnershipSignoff) && !ReferenceEquals(maybeToken, ownerToken))
         {
             // Someone else owns the workflow
             Debug.Assert(maybeToken != null);
-            throw new InvalidOperationException("Cannot use a Workflow in multiple simultaneous (Streaming)Runs.");
+            throw new InvalidOperationException(
+                (subworkflow, this._ownedAsSubworkflow) switch
+                {
+                    (true, true) => "Cannot use a Workflow as a subworkflow of multiple parent workflows.",
+                    (true, false) => "Cannot use a running Workflow as a subworkflow.",
+                    (false, true) => "Cannot directly run a Workflow that is a subworkflow of another workflow.",
+                    (false, false) => "Cannot use a Workflow that is already owned by another runner or parent workflow.",
+                });
         }
 
         this._needsReset = true;
+        this._ownedAsSubworkflow = subworkflow;
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",

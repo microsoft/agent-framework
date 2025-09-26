@@ -78,6 +78,19 @@ public sealed class StreamingRun
         return await this._stepRunner.EnqueueMessageAsync(message).ConfigureAwait(false);
     }
 
+    internal async ValueTask<bool> TrySendMessageUntypedAsync(object message, Type messageType)
+    {
+        Throw.IfNull(message);
+
+        if (message is ExternalResponse response)
+        {
+            await this.SendResponseAsync(response).ConfigureAwait(false);
+            return true;
+        }
+
+        return await this._stepRunner.EnqueueMessageUntypedAsync(message, messageType).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Asynchronously streams workflow events as they occur during workflow execution.
     /// </summary>
