@@ -2,7 +2,7 @@
 
 """This sample will train a math agent using a dataset in `data/math/`.
 
-One GPU with 16GB of memory is sufficient for this sample.
+One GPU with 40GB of memory is sufficient for this sample.
 """
 
 import argparse
@@ -92,7 +92,7 @@ def evaluate(result: AgentRunResponse, ground_truth: str) -> float:
         return 0.0
     final_message = result.messages[-1].text
 
-    answer = re.search(r"###\s*ANSWER:\s*(.+?)(\s*###|$)", final_message)
+    answer = re.search(r"###\s*(.+?)(\s*###|$)", final_message)
     if answer is None:
         print("No answer can be extracted from agent's response. Assuming incorrect.")
         return 0.0
@@ -107,9 +107,9 @@ def evaluate(result: AgentRunResponse, ground_truth: str) -> float:
 
 
 AGENT_INSTRUCTION = """
-Solve the following math problem.
+Solve the following math problem. Use the calculator tool to help you calculate math expressions.
 
-Output the answer when you are ready. The answer should be surrounded by three sharps (`###`), in the form of ### ANSWER: <answer> ###.
+Output the answer when you are ready. The answer should be after three sharps (`###`), with no extra punctuations or texts. For example: ### 123
 """.strip()  # noqa: E501
 
 
@@ -169,7 +169,7 @@ def main():
                 "name": "vllm",
                 # Controls the GPU memory utilization of vLLM
                 # You might want to set this to under 0.8 to prevent OOM
-                "gpu_memory_utilization": 0.75,
+                "gpu_memory_utilization": 0.7,
             },
             "actor": {
                 # Split each sample into sub-batches of this size for PPO
@@ -202,7 +202,7 @@ def main():
             "model": {
                 # Huggingface model path.
                 # If you want to train a different model, change the path here.
-                "path": "Qwen/Qwen2.5-0.5B-Instruct",
+                "path": "Qwen/Qwen2.5-1.5B-Instruct",
                 # Whether to remove padding tokens in inputs during training
                 "use_remove_padding": True,
                 # Enable gradient checkpointing for memory efficiency
