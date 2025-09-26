@@ -16,6 +16,7 @@ one of the following categories:
 
 - [**gaia**](./gaia/): GAIA benchmark implementation (`agent-framework-lab-gaia`)
 - [**lightning**](./lightning/): Reinforcement learning for agents (`agent-framework-lab-lightning`)
+- [**tau2**](./tau2/): Customer service agent simulation framework (`agent-framework-lab-tau2`)
 
 ## How do I contribute?
 

@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
 
-from agent_framework._workflow._checkpoint import WorkflowCheckpoint
-from agent_framework._workflow._events import WorkflowEvent
+from agent_framework._workflow._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from agent_framework._workflow._events import RequestInfoEvent, WorkflowEvent
 from agent_framework._workflow._executor import (
     PendingRequestDetails,
     RequestInfoExecutor,
@@ -65,7 +67,11 @@ class _StubRunnerContext:
     async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:  # pragma: no cover - unused
         raise RuntimeError("Checkpointing not supported in stub context")
 
-    async def restore_from_checkpoint(self, checkpoint_id: str) -> bool:  # pragma: no cover - unused
+    async def restore_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> bool:  # pragma: no cover - unused
         return False
 
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pragma: no cover - unused
@@ -83,6 +89,16 @@ class SimpleApproval(RequestInfoMessage):
     prompt: str = ""
     draft: str = ""
     iteration: int = 0
+
+
+@dataclass(slots=True)
+class SlottedApproval(RequestInfoMessage):
+    note: str = ""
+
+
+@dataclass
+class TimedApproval(RequestInfoMessage):
+    issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @pytest.mark.asyncio
@@ -220,3 +236,84 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
     assert summary.checkpoint_id == "cp-1"
     assert summary.status == "awaiting human response"
     assert summary.pending_requests[0].request_id == "req-42"
+
+
+def test_snapshot_state_serializes_non_json_payloads() -> None:
+    executor = RequestInfoExecutor(id="request_info")
+
+    timed = TimedApproval(issued_at=datetime(2024, 5, 4, 12, 30, 45))
+    timed.request_id = "timed"
+    slotted = SlottedApproval(note="slot-based")
+    slotted.request_id = "slotted"
+
+    executor._request_events = {  # pyright: ignore[reportPrivateUsage]
+        timed.request_id: RequestInfoEvent(
+            request_id=timed.request_id,
+            source_executor_id="source",
+            request_type=TimedApproval,
+            request_data=timed,
+        ),
+        slotted.request_id: RequestInfoEvent(
+            request_id=slotted.request_id,
+            source_executor_id="source",
+            request_type=SlottedApproval,
+            request_data=slotted,
+        ),
+    }
+
+    state = executor.snapshot_state()
+
+    # Should be JSON serializable despite datetime/slots
+    serialized = json.dumps(state)
+    assert "timed" in serialized
+    timed_payload = state["request_events"][timed.request_id]["request_data"]["value"]
+    assert isinstance(timed_payload["issued_at"], str)
+
+
+def test_restore_state_falls_back_to_base_request_type() -> None:
+    executor = RequestInfoExecutor(id="request_info")
+
+    approval = SimpleApproval(prompt="Review", draft="Draft", iteration=1)
+    approval.request_id = "req"
+    executor._request_events = {  # pyright: ignore[reportPrivateUsage]
+        approval.request_id: RequestInfoEvent(
+            request_id=approval.request_id,
+            source_executor_id="source",
+            request_type=SimpleApproval,
+            request_data=approval,
+        )
+    }
+
+    state = executor.snapshot_state()
+    state["request_events"][approval.request_id]["request_type"] = "missing.module:GhostRequest"
+
+    executor.restore_state(state)
+
+    restored = executor._request_events[approval.request_id]  # pyright: ignore[reportPrivateUsage]
+    assert restored.request_type is RequestInfoMessage
+    assert isinstance(restored.data, RequestInfoMessage)
+
+
+@pytest.mark.asyncio
+async def test_run_persists_pending_requests_in_runner_state() -> None:
+    shared_state = SharedState()
+    runner_ctx = _StubRunnerContext()
+    ctx: WorkflowContext[None] = WorkflowContext("request_info", ["source"], shared_state, runner_ctx)
+
+    executor = RequestInfoExecutor(id="request_info")
+    approval = SimpleApproval(prompt="Review", draft="Draft", iteration=1)
+    approval.request_id = "req-123"
+
+    await executor.execute(approval, ctx.source_executor_ids, shared_state, runner_ctx)
+
+    # Runner state should include both pending snapshot and serialized request events
+    assert "pending_requests" in runner_ctx._state  # pyright: ignore[reportPrivateUsage]
+    assert approval.request_id in runner_ctx._state["pending_requests"]  # pyright: ignore[reportPrivateUsage]
+    assert "request_events" in runner_ctx._state  # pyright: ignore[reportPrivateUsage]
+    assert approval.request_id in runner_ctx._state["request_events"]  # pyright: ignore[reportPrivateUsage]
+
+    response_ctx: WorkflowContext[None] = WorkflowContext("request_info", ["source"], shared_state, runner_ctx)
+    await executor.handle_response("approved", approval.request_id, response_ctx)  # type: ignore
+
+    assert runner_ctx._state["pending_requests"] == {}  # pyright: ignore[reportPrivateUsage]
+    assert runner_ctx._state.get("request_events", {}).get(approval.request_id) is None  # pyright: ignore[reportPrivateUsage]
