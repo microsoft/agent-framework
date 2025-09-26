@@ -322,7 +322,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        //this.ContinueWith(new EditTableTemplate(item)); // %%% NEEDED ???
+        //this.ContinueWith(new EditTableTemplate(item));
     }
 
     protected override void Visit(EditTableV2 item)

@@ -12,6 +12,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 /// <param name="context">The workflow execution context providing messaging and state services.</param>
 /// <param name="message">The the message handled by this executor.</param>
 /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
+/// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
 public delegate ValueTask DelegateAction<TMessage>(IWorkflowContext context, TMessage message, CancellationToken cancellationToken) where TMessage : notnull;
 
 /// <summary>

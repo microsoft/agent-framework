@@ -2,6 +2,7 @@
 
 using System;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.AI;
@@ -13,6 +14,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 /// </summary>
 internal sealed class DeclarativeWorkflowExecutor<TInput>(
     string workflowId,
+    WorkflowAgentProvider agentProvider,
     WorkflowFormulaState state,
     Func<TInput, ChatMessage> inputTransform) :
     Executor<TInput>(workflowId), IModeledAction where TInput : notnull
@@ -24,6 +26,11 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
 
         DeclarativeWorkflowContext declarativeContext = new(context, state);
         ChatMessage input = inputTransform.Invoke(message);
+
+        string conversationId = await agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+        await declarativeContext.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+
+        await agentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
         await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);

@@ -19,6 +19,7 @@ namespace Microsoft.Agents.Workflows.Declarative.Kit;
 public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : notnull
 {
     private readonly IConfiguration? _configuration;
+    private readonly WorkflowAgentProvider _agentProvider;
     private readonly WorkflowFormulaState _state;
     private readonly Func<TInput, ChatMessage>? _inputTransform;
 
@@ -37,6 +38,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
         : base(id)
     {
         this._configuration = options.Configuration;
+        this._agentProvider = options.AgentProvider;
         this._inputTransform = inputTransform;
         this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
@@ -50,6 +52,11 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
         await this.ExecuteAsync(message, declarativeContext, cancellationToken: default).ConfigureAwait(false);
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
+
+        string conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+        await declarativeContext.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+
+        await this._agentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
         await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);

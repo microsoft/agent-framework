@@ -4,11 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.Kit;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Moq;
 using Xunit.Abstractions;
 
@@ -211,7 +213,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         AdaptiveDialog dialog = dialogBuilder.Build();
 
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
-        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
         WorkflowActionVisitor visitor = new(new RootExecutor(), state, options);
         WorkflowElementWalker walker = new(visitor);
@@ -251,7 +253,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
         DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
 
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
@@ -280,6 +282,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             }
         }
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
+    }
+
+    private static Mock<WorkflowAgentProvider> CreateMockProvider()
+    {
+        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        mockAgentProvider.Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));
+        mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        return mockAgentProvider;
     }
 
     private sealed class RootExecutor() :

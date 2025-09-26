@@ -33,7 +33,7 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
 /// <typeparam name="TMessage">The type of message being handled</typeparam>
 public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessage : notnull
 {
-    private readonly FormulaSession _context;
+    private readonly FormulaSession _session;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ActionExecutor{TMessage}"/> class.
@@ -43,13 +43,13 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessa
     protected ActionExecutor(string id, FormulaSession session)
         : base(id)
     {
-        this._context = session;
+        this._session = session;
     }
 
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context)
     {
-        object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._context.State), message, cancellationToken: default).ConfigureAwait(false);
+        object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._session.State), message, cancellationToken: default).ConfigureAwait(false);
 
         await context.SendResultMessageAsync(this.Id, result).ConfigureAwait(false);
     }

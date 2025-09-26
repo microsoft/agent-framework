@@ -36,7 +36,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
         this.ExecuteTest(
             nameof(AddConversationMessage),
             "TestVariable",
-            conversation: StringExpression.Literal("#rev_9"),
+            conversation: StringExpression.Variable(PropertyPath.Create("System.ConversationId")),
             role: AgentMessageRoleWrapper.Get(AgentMessageRole.Agent),
             content:
             [
@@ -55,7 +55,7 @@ public class AddConversationMessageTemplateTest(ITestOutputHelper output) : Work
         this.ExecuteTest(
             nameof(AddConversationMessage),
             "TestVariable",
-            conversation: StringExpression.Literal("#rev_9"),
+            conversation: StringExpression.Variable(PropertyPath.Create("System.Conversation.Id")),
             role: AgentMessageRoleWrapper.Get(AgentMessageRole.Agent),
             metadata: ObjectExpression<RecordDataValue>.Literal(
                 new RecordDataValue(

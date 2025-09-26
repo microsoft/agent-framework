@@ -69,6 +69,7 @@ public static class DeclarativeWorkflowBuilder
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
+                options.AgentProvider,
                 state,
                 message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
 
