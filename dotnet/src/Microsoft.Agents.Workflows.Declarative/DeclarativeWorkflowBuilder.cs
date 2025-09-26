@@ -71,7 +71,7 @@ public static class DeclarativeWorkflowBuilder
         return visitor.Complete();
     }
 
-    private static ChatMessage DefaultTransform(object message) =>
+    internal static ChatMessage DefaultTransform(object message) =>
             message switch
             {
                 ChatMessage chatMessage => chatMessage,

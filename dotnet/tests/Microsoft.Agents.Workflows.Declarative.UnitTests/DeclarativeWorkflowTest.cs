@@ -7,7 +7,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Moq;
 using Xunit.Abstractions;
@@ -140,7 +139,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     [Theory]
-    [InlineData("Single.yaml", 1, "end_all")]
+    [InlineData("EndConversation.yaml", 1, "end_all")]
+    [InlineData("EndDialog.yaml", 1, "end_all")]
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 1, "parse_var")]
@@ -149,6 +149,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
+    [InlineData("MixedScopes.yaml", 2, "activity_input")]
     public async Task ExecuteActionAsync(string workflowFile, int expectedCount, string expectedId)
     {
         await this.RunWorkflowAsync(workflowFile);
@@ -168,7 +169,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(DisableTrigger.Builder))]
     [InlineData(typeof(DisconnectedNodeContainer.Builder))]
     [InlineData(typeof(EmitEvent.Builder))]
-    [InlineData(typeof(EndDialog.Builder))]
     [InlineData(typeof(GetActivityMembers.Builder))]
     [InlineData(typeof(GetConversationMembers.Builder))]
     [InlineData(typeof(HttpRequestAction.Builder))]
@@ -211,7 +211,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new RootExecutor(), state, options);
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
@@ -244,7 +244,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
 
     private Task RunWorkflowAsync(string workflowPath) =>
-        this.RunWorkflowAsync(workflowPath, string.Empty);
+        this.RunWorkflowAsync(workflowPath, "Test input message");
 
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
@@ -272,19 +272,15 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             {
                 this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
             }
+            else if (workflowEvent is MessageActivityEvent activityEvent)
+            {
+                this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
+            }
             else if (workflowEvent is AgentRunResponseEvent messageEvent)
             {
                 this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
             }
         }
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
-    }
-
-    private sealed class RootExecutor() :
-        ReflectingExecutor<RootExecutor>(WorkflowActionVisitor.Steps.Root("anything")),
-        IMessageHandler<string>
-    {
-        public async ValueTask HandleAsync(string message, IWorkflowContext context) =>
-            await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow:t}").ConfigureAwait(false);
     }
 }

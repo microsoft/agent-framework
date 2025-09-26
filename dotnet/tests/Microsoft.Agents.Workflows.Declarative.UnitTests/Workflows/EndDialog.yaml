@@ -5,5 +5,9 @@ trigger:
   id: my_workflow
   actions:
 
-    - kind: EndConversation
+    - kind: EndDialog
       id: end_all
+
+    - kind: SendActivity
+      id: send_activity_1
+      activity: NEVER 1!

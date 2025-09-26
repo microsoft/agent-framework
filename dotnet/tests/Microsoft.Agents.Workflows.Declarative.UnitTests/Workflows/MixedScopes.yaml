@@ -7,7 +7,7 @@ trigger:
   
     - kind: SetVariable
       id: set_input
-      variable: Local.TestValue
+      variable: Topic.TestValue
       value: =System.LastMessageText
 
     - kind: SendActivity
