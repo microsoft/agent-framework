@@ -8,7 +8,7 @@ namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
 
 internal static class WorkflowHarness
 {
-    public static async Task<WorkflowEvents> RunAsync<TInput>(Workflow<TInput> workflow, TInput input) where TInput : notnull
+    public static async Task<WorkflowEvents> RunAsync<TInput>(Workflow workflow, TInput input) where TInput : notnull
     {
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
         IReadOnlyList<WorkflowEvent> workflowEvents = run.WatchStreamAsync().ToEnumerable().ToList();

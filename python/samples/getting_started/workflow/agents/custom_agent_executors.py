@@ -7,11 +7,10 @@ from agent_framework import (
     ChatMessage,
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -21,12 +20,12 @@ This sample uses two custom executors. A Writer agent creates or edits content,
 then hands the conversation to a Reviewer agent which evaluates and finalizes the result.
 
 Purpose:
-Show how to wrap chat agents created by AzureChatClient inside workflow executors. Demonstrate the @handler pattern
+Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors. Demonstrate the @handler pattern
 with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder, and finish
-by emitting a WorkflowCompletedEvent from the terminal node.
+by yielding outputs from the terminal node.
 
 Prerequisites:
-- Azure OpenAI configured for AzureChatClient with required environment variables.
+- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming or non streaming runs.
 """
@@ -42,8 +41,8 @@ class Writer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureChatClient, id: str = "writer"):
-        # Create a domain specific agent using your configured AzureChatClient.
+    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "writer"):
+        # Create a domain specific agent using your configured AzureOpenAIChatClient.
         agent = chat_client.create_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
@@ -53,7 +52,7 @@ class Writer(Executor):
         super().__init__(agent=agent, id=id)
 
     @handler
-    async def handle(self, message: ChatMessage, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def handle(self, message: ChatMessage, ctx: WorkflowContext[list[ChatMessage], str]) -> None:
         """Generate content using the agent and forward the updated conversation.
 
         Contract for this handler:
@@ -79,12 +78,12 @@ class Reviewer(Executor):
 
     This class demonstrates:
     - Consuming a typed payload produced upstream.
-    - Emitting a terminal WorkflowCompletedEvent with the final text outcome.
+    - Yielding the final text outcome to complete the workflow.
     """
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureChatClient, id: str = "reviewer"):
+    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
         agent = chat_client.create_agent(
             instructions=(
@@ -94,20 +93,20 @@ class Reviewer(Executor):
         super().__init__(agent=agent, id=id)
 
     @handler
-    async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[str]) -> None:
+    async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage], str]) -> None:
         """Review the full conversation transcript and complete with a final string.
 
         This node consumes all messages so far. It uses its agent to produce the final text,
-        then signals completion by adding a WorkflowCompletedEvent to the event stream.
+        then signals completion by yielding the output.
         """
         response = await self.agent.run(messages)
-        await ctx.add_event(WorkflowCompletedEvent(response.text))
+        await ctx.yield_output(response.text)
 
 
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Instantiate the two agent backed executors.
     writer = Writer(chat_client)
@@ -118,12 +117,14 @@ async def main():
     workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
     # Run the workflow with the user's initial message.
-    # For foundational clarity, use run (non streaming) and print the terminal event.
+    # For foundational clarity, use run (non streaming) and print the workflow output.
     events = await workflow.run(
         ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
     )
-    # The terminal node emits a WorkflowCompletedEvent; print its contents.
-    print(events.get_completed_event())
+    # The terminal node yields output; print its contents.
+    outputs = events.get_outputs()
+    if outputs:
+        print(outputs[-1])
 
 
 if __name__ == "__main__":

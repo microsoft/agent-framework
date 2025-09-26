@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.UnitTests;
 
@@ -249,7 +250,7 @@ public class AgentProxyThreadTests
         var thread = new AgentProxyThread();
 
         // Assert
-        Assert.IsAssignableFrom<AgentThread>(thread);
+        Assert.IsType<AgentThread>(thread, exactMatch: false);
     }
 
     /// <summary>

@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import MutableSequence, Sequence
-from typing import Any, Final
+from typing import Any
 
 from agent_framework import ChatMessage, Context, ContextProvider, TextContent
 from agent_framework.exceptions import ServiceInitializationError
@@ -15,9 +15,6 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 
-DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
-
-
 class Mem0Provider(ContextProvider):
     mem0_client: AsyncMemoryClient
     api_key: str | None = None
@@ -26,7 +23,7 @@ class Mem0Provider(ContextProvider):
     thread_id: str | None = None
     user_id: str | None = None
     scope_to_per_operation_thread_id: bool = False
-    context_prompt: str = DEFAULT_CONTEXT_PROMPT
+    context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT
 
     _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
 
@@ -38,7 +35,7 @@ class Mem0Provider(ContextProvider):
         thread_id: str | None = None,
         user_id: str | None = None,
         scope_to_per_operation_thread_id: bool = False,
-        context_prompt: str = DEFAULT_CONTEXT_PROMPT,
+        context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
         mem0_client: AsyncMemoryClient | None = None,
     ) -> None:
         """Initializes a new instance of the Mem0Provider class.

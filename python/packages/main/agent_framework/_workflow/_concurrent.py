@@ -6,9 +6,11 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import AgentProtocol, ChatMessage, Role
 
-from ._events import WorkflowCompletedEvent
+from ._checkpoint import CheckpointStorage
 from ._executor import AgentExecutorRequest, AgentExecutorResponse, Executor, handler
 from ._workflow import Workflow, WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -25,12 +27,14 @@ parallel workflow with:
 Notes:
 - Participants should be AgentProtocol instances or Executors.
 - A custom aggregator can be provided as:
-  - an Executor instance (it should handle list[AgentExecutorResponse] and add a WorkflowCompletedEvent), or
+  - an Executor instance (it should handle list[AgentExecutorResponse],
+    yield output), or
   - a callback function with signature:
         def cb(results: list[AgentExecutorResponse]) -> Any | None
-        def cb(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None
-    If the callback returns a non-None value, it is sent as the data of a WorkflowCompletedEvent.
-    If it returns None, the callback may have already emitted a completion event via ctx.
+        def cb(results: list[AgentExecutorResponse], ctx: WorkflowContext) -> Any | None
+    The callback is wrapped in _CallbackAggregator.
+    If the callback returns a non-None value, _CallbackAggregator yields that as output.
+    If it returns None, the callback may have already yielded an output via ctx, so no further action is taken.
 """
 
 
@@ -70,7 +74,9 @@ class _AggregateAgentConversations(Executor):
     """
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+    async def aggregate(
+        self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, list[ChatMessage]]
+    ) -> None:
         if not results:
             logger.error("Concurrent aggregator received empty results list")
             raise ValueError("Aggregation failed: no results provided")
@@ -128,7 +134,7 @@ class _AggregateAgentConversations(Executor):
             logger.warning("No user prompt found in any conversation; emitting assistants only")
         output.extend(assistant_replies)
 
-        await ctx.add_event(WorkflowCompletedEvent(data=output))
+        await ctx.yield_output(output)
 
 
 class _CallbackAggregator(Executor):
@@ -141,16 +147,19 @@ class _CallbackAggregator(Executor):
     Notes:
     - Async callbacks are awaited directly.
     - Sync callbacks are executed via asyncio.to_thread to avoid blocking the event loop.
-    - If the callback returns a non-None value, it is wrapped in a WorkflowCompletedEvent.
+    - If the callback returns a non-None value, it is yielded as an output.
     """
 
     def __init__(self, callback: Callable[..., Any], id: str | None = None) -> None:
-        super().__init__(id)
+        derived_id = getattr(callback, "__name__", "") or ""
+        if not derived_id or derived_id == "<lambda>":
+            derived_id = f"{type(self).__name__}_unnamed"
+        super().__init__(id or derived_id)
         self._callback = callback
         self._param_count = len(inspect.signature(callback).parameters)
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, Any]) -> None:
         # Call according to provided signature, always non-blocking for sync callbacks
         if self._param_count >= 2:
             if inspect.iscoroutinefunction(self._callback):
@@ -165,7 +174,7 @@ class _CallbackAggregator(Executor):
 
         # If the callback returned a value, finalize the workflow with it
         if ret is not None:
-            await ctx.add_event(WorkflowCompletedEvent(ret))
+            await ctx.yield_output(ret)
 
 
 class ConcurrentBuilder:
@@ -184,19 +193,23 @@ class ConcurrentBuilder:
 
 
     # Custom aggregator via callback (sync or async). The callback receives
-    # list[AgentExecutorResponse] and its return value becomes
-    # WorkflowCompletedEvent.data
+    # list[AgentExecutorResponse] and its return value becomes the workflow's output.
     def summarize(results):
         return " | ".join(r.agent_run_response.messages[-1].text for r in results)
 
 
     workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(summarize).build()
+
+
+    # Enable checkpoint persistence so runs can resume
+    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
     ```
     """
 
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
         self._aggregator: Executor | None = None
+        self._checkpoint_storage: CheckpointStorage | None = None
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "ConcurrentBuilder":
         r"""Define the parallel participants for this concurrent workflow.
@@ -242,13 +255,13 @@ class ConcurrentBuilder:
     def with_aggregator(self, aggregator: Executor | Callable[..., Any]) -> "ConcurrentBuilder":
         r"""Override the default aggregator with an Executor or a callback.
 
-        - Executor: must handle `list[AgentExecutorResponse]` and add a
-          `WorkflowCompletedEvent` to the context.
+        - Executor: must handle `list[AgentExecutorResponse]` and
+            yield output using `ctx.yield_output(...)` and add a
+          output and the workflow becomes idle.
         - Callback: sync or async callable with one of the signatures:
           `(results: list[AgentExecutorResponse]) -> Any | None` or
-          `(results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> Any | None`.
-          If the callback returns a non-None value, it becomes the
-          `WorkflowCompletedEvent.data`.
+          `(results: list[AgentExecutorResponse], ctx: WorkflowContext) -> Any | None`.
+          If the callback returns a non-None value, it becomes the workflow's output.
 
         Example:
         ```python
@@ -268,13 +281,18 @@ class ConcurrentBuilder:
             raise TypeError("aggregator must be an Executor or a callable")
         return self
 
+    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "ConcurrentBuilder":
+        """Enable checkpoint persistence using the provided storage backend."""
+        self._checkpoint_storage = checkpoint_storage
+        return self
+
     def build(self) -> Workflow:
         r"""Build and validate the concurrent workflow.
 
         Wiring pattern:
         - Dispatcher (internal) fans out the input to all `participants`
         - Fan-in aggregator collects `AgentExecutorResponse` objects
-        - Aggregator emits a `WorkflowCompletedEvent` with either:
+        - Aggregator yields output and the workflow becomes idle. The output is either:
           - list[ChatMessage] (default aggregator: one user + one assistant per agent)
           - custom payload from the provided callback/executor
 
@@ -296,9 +314,11 @@ class ConcurrentBuilder:
         aggregator = self._aggregator or _AggregateAgentConversations(id="aggregator")
 
         builder = WorkflowBuilder()
-        return (
-            builder.set_start_executor(dispatcher)
-            .add_fan_out_edges(dispatcher, list(self._participants))
-            .add_fan_in_edges(list(self._participants), aggregator)
-            .build()
-        )
+        builder.set_start_executor(dispatcher)
+        builder.add_fan_out_edges(dispatcher, list(self._participants))
+        builder.add_fan_in_edges(list(self._participants), aggregator)
+
+        if self._checkpoint_storage is not None:
+            builder = builder.with_checkpointing(self._checkpoint_storage)
+
+        return builder.build()

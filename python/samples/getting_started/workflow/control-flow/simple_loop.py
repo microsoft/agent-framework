@@ -12,11 +12,11 @@ from agent_framework import (
     ExecutorCompletedEvent,
     Role,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -25,9 +25,10 @@ Sample: Simple Loop (with an Agent Judge)
 What it does:
 - Guesser performs a binary search; judge is an agent that returns ABOVE/BELOW/MATCHED.
 - Demonstrates feedback loops in workflows with agent steps.
+- The workflow completes when the correct number is guessed.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureChatClient` agent.
+- Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agent.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
@@ -50,19 +51,19 @@ class GuessNumberExecutor(Executor):
 
     def __init__(self, bound: tuple[int, int], id: str | None = None):
         """Initialize the executor with a target number."""
-        super().__init__(id=id)
+        super().__init__(id=id or "guess_number")
         self._lower = bound[0]
         self._upper = bound[1]
 
     @handler
-    async def guess_number(self, feedback: NumberSignal, ctx: WorkflowContext[int]) -> None:
+    async def guess_number(self, feedback: NumberSignal, ctx: WorkflowContext[int, str]) -> None:
         """Execute the task by guessing a number."""
         if feedback == NumberSignal.INIT:
             self._guess = (self._lower + self._upper) // 2
             await ctx.send_message(self._guess)
         elif feedback == NumberSignal.MATCHED:
             # The previous guess was correct.
-            await ctx.add_event(WorkflowCompletedEvent(f"Guessed the number: {self._guess}"))
+            await ctx.yield_output(f"Guessed the number: {self._guess}")
         elif feedback == NumberSignal.ABOVE:
             # The previous guess was too low.
             # Update the lower bound to the previous guess.
@@ -83,7 +84,7 @@ class SubmitToJudgeAgent(Executor):
     """Send the numeric guess to a judge agent which replies ABOVE/BELOW/MATCHED."""
 
     def __init__(self, judge_agent_id: str, target: int, id: str | None = None):
-        super().__init__(id=id)
+        super().__init__(id=id or "submit_to_judge")
         self._judge_agent_id = judge_agent_id
         self._target = target
 
@@ -121,7 +122,7 @@ async def main():
     guess_number_executor = GuessNumberExecutor((1, 100))
 
     # Agent judge setup
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     judge_agent = AgentExecutor(
         chat_client.create_agent(
             instructions=(
@@ -150,6 +151,8 @@ async def main():
     async for event in workflow.run_stream(NumberSignal.INIT):
         if isinstance(event, ExecutorCompletedEvent) and event.executor_id == guess_number_executor.id:
             iterations += 1
+        elif isinstance(event, WorkflowOutputEvent):
+            print(f"Final result: {event.data}")
         print(f"Event: {event}")
 
     # This is essentially a binary search, so the number of iterations should be logarithmic.

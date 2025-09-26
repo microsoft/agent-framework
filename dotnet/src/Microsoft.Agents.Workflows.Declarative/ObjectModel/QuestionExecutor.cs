@@ -29,7 +29,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
     protected override bool IsDiscreteAction => false;
     protected override bool EmitResultEvent => false;
 
-    public bool IsComplete(object? message)
+    public static bool IsComplete(object? message)
     {
         ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
         return executorMessage.Result is null;
@@ -40,13 +40,13 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
 
         InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
-        bool hasValue = this.State.Get(variable.Path) is BlankValue;
-        bool alwaysPrompt = this.State.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
+        bool hasValue = context.ReadState(variable.Path) is BlankValue;
+        bool alwaysPrompt = this.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
 
         bool proceed = !alwaysPrompt || hasValue;
         if (proceed)
         {
-            SkipQuestionMode mode = this.State.Evaluator.GetValue(this.Model.SkipQuestionMode).Value;
+            SkipQuestionMode mode = this.Evaluator.GetValue(this.Model.SkipQuestionMode).Value;
             proceed =
                 mode switch
                 {
@@ -118,12 +118,12 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
 
     private async ValueTask PromptAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        long repeatCount = this.State.Evaluator.GetValue(this.Model.RepeatCount).Value;
+        long repeatCount = this.Evaluator.GetValue(this.Model.RepeatCount).Value;
         int actualCount = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         if (actualCount >= repeatCount)
         {
             ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
-            DataValue defaultValue = this.State.Evaluator.GetValue(defaultValueExpression).Value;
+            DataValue defaultValue = this.Evaluator.GetValue(defaultValueExpression).Value;
             await this.AssignAsync(this.Model.Variable?.Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim())).ConfigureAwait(false);
@@ -142,6 +142,6 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
             return string.Empty;
         }
 
-        return this.State.Engine.Format(messageActivity.Text).Trim();
+        return this.Engine.Format(messageActivity.Text).Trim();
     }
 }

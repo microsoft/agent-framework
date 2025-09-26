@@ -20,9 +20,9 @@ from agent_framework import (
     TextContent,
     UsageDetails,
 )
-from agent_framework._pydantic import AFBaseModel
-from agent_framework.exceptions import AgentExecutionException
 
+from .._pydantic import AFBaseModel
+from ..exceptions import AgentExecutionException
 from ._events import (
     AgentRunUpdateEvent,
     RequestInfoEvent,
@@ -79,7 +79,7 @@ class WorkflowAgent(BaseAgent):
         except KeyError as exc:  # Defensive: workflow lacks a configured entry point
             raise ValueError("Workflow's start executor is not defined.") from exc
 
-        if not start_executor.can_handle_type(list[ChatMessage]):
+        if list[ChatMessage] not in start_executor.input_types:
             raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)

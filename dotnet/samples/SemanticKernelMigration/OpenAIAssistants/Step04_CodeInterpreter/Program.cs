@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
@@ -60,9 +61,9 @@ async Task SKAgentAsync()
             {
                 Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
             }
+#pragma warning restore SKEXP0110
         }
     }
-#pragma warning restore SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
     // Clean up
     await thread.DeleteAsync();
@@ -120,6 +121,9 @@ async Task AFAgentAsync()
     }
 
     // Clean up
-    await assistantsClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantsClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantsClient.DeleteAssistantAsync(agent.Id);
 }

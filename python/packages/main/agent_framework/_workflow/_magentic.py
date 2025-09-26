@@ -28,7 +28,8 @@ from agent_framework import (
 from agent_framework._agents import BaseAgent
 from agent_framework._pydantic import AFBaseModel
 
-from ._events import WorkflowCompletedEvent, WorkflowEvent
+from ._checkpoint import CheckpointStorage
+from ._events import WorkflowEvent
 from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
@@ -496,6 +497,14 @@ class MagenticManagerBase(AFBaseModel, ABC):
         """Prepare the final answer."""
         ...
 
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize runtime state for checkpointing."""
+        return {}
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore runtime state from checkpoint data."""
+        return
+
 
 class StandardMagenticManager(MagenticManagerBase):
     """Standard Magentic manager that performs real LLM calls via a ChatAgent.
@@ -524,6 +533,22 @@ class StandardMagenticManager(MagenticManagerBase):
     final_answer_prompt: str = ORCHESTRATOR_FINAL_ANSWER_PROMPT
 
     progress_ledger_retry_count: int = Field(default=3)
+
+    def snapshot_state(self) -> dict[str, Any]:
+        state = super().snapshot_state()
+        if self.task_ledger is not None:
+            state = dict(state)
+            state["task_ledger"] = self.task_ledger.model_dump(mode="json")
+        return state
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        super().restore_state(state)
+        ledger = state.get("task_ledger")
+        if ledger is not None:
+            try:
+                self.task_ledger = MagenticTaskLedger.model_validate(ledger)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Failed to restore manager task ledger from checkpoint state")
 
     def __init__(
         self,
@@ -831,16 +856,120 @@ class MagenticOrchestratorExecutor(Executor):
         self._agent_executors = {}
         # Terminal state marker to stop further processing after completion/limits
         self._terminated = False
+        # Tracks whether checkpoint state has been applied for this run
+        self._state_restored = False
 
     def register_agent_executor(self, name: str, executor: "MagenticAgentExecutor") -> None:
         """Register an agent executor for internal control (no messages)."""
         self._agent_executors[name] = executor
 
+    def snapshot_state(self) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "plan_review_round": self._plan_review_round,
+            "max_plan_review_rounds": self._max_plan_review_rounds,
+            "require_plan_signoff": self._require_plan_signoff,
+            "terminated": self._terminated,
+        }
+        if self._context is not None:
+            state["magentic_context"] = self._context.model_dump(mode="json")
+        if self._task_ledger is not None:
+            state["task_ledger"] = self._task_ledger.model_dump(mode="json")
+        manager_state: dict[str, Any] | None = None
+        with contextlib.suppress(Exception):
+            manager_state = self._manager.snapshot_state()
+        if manager_state:
+            state["manager_state"] = manager_state
+        return state
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        ctx_payload = state.get("magentic_context")
+        if ctx_payload is not None:
+            try:
+                self._context = MagenticContext.model_validate(ctx_payload)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to restore magentic context: %s", exc)
+                self._context = None
+        ledger_payload = state.get("task_ledger")
+        if ledger_payload is not None:
+            try:
+                self._task_ledger = ChatMessage.model_validate(ledger_payload)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Failed to restore task ledger message: %s", exc)
+                self._task_ledger = None
+
+        if "plan_review_round" in state:
+            try:
+                self._plan_review_round = int(state["plan_review_round"])
+            except Exception:  # pragma: no cover
+                logger.debug("Ignoring invalid plan_review_round in checkpoint state")
+        if "max_plan_review_rounds" in state:
+            self._max_plan_review_rounds = state.get("max_plan_review_rounds")  # type: ignore[assignment]
+        if "require_plan_signoff" in state:
+            self._require_plan_signoff = bool(state.get("require_plan_signoff"))
+        if "terminated" in state:
+            self._terminated = bool(state.get("terminated"))
+
+        manager_state = state.get("manager_state")
+        if manager_state is not None:
+            try:
+                self._manager.restore_state(manager_state)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Failed to restore manager state: %s", exc)
+
+        self._reconcile_restored_participants()
+
+    def _reconcile_restored_participants(self) -> None:
+        """Ensure restored participant roster matches the current workflow graph."""
+        if self._context is None:
+            return
+
+        restored = self._context.participant_descriptions or {}
+        expected = self._participants
+
+        restored_names = set(restored.keys())
+        expected_names = set(expected.keys())
+
+        if restored_names != expected_names:
+            missing = ", ".join(sorted(expected_names - restored_names)) or "none"
+            unexpected = ", ".join(sorted(restored_names - expected_names)) or "none"
+            raise RuntimeError(
+                "Magentic checkpoint restore failed: participant names do not match the checkpoint. "
+                "Ensure MagenticBuilder.participants keys remain stable across runs. "
+                f"Missing names: {missing}; unexpected names: {unexpected}."
+            )
+
+        # Refresh descriptions so prompt surfaces always reflect the rebuilt workflow inputs.
+        for name, description in expected.items():
+            restored[name] = description
+
+    async def _ensure_state_restored(
+        self,
+        context: WorkflowContext[Any, Any],
+    ) -> None:
+        if self._state_restored and self._context is not None:
+            return
+        state = await context.get_state()
+        if not state:
+            self._state_restored = True
+            return
+        if not isinstance(state, dict):
+            self._state_restored = True
+            return
+        try:
+            self.restore_state(state)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Magentic Orchestrator: Failed to apply checkpoint state: %s", exc, exc_info=True)
+            raise
+        else:
+            self._state_restored = True
+
     @handler
     async def handle_start_message(
         self,
         message: MagenticStartMessage,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest],
+        context: WorkflowContext[
+            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
+        ],
     ) -> None:
         """Handle the initial start message to begin orchestration."""
         if getattr(self, "_terminated", False):
@@ -853,6 +982,7 @@ class MagenticOrchestratorExecutor(Executor):
         )
         # Record the original user task in orchestrator context (no broadcast)
         self._context.chat_history.append(message.task)
+        self._state_restored = True
         # Non-streaming callback for the orchestrator receipt of the task
         if self._message_callback:
             with contextlib.suppress(Exception):
@@ -877,7 +1007,7 @@ class MagenticOrchestratorExecutor(Executor):
 
         # Start the inner loop
         ctx2 = cast(
-            WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+            WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
             context,
         )
         await self._run_inner_loop(ctx2)
@@ -886,11 +1016,12 @@ class MagenticOrchestratorExecutor(Executor):
     async def handle_response_message(
         self,
         message: MagenticResponseMessage,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Handle responses from agents."""
         if getattr(self, "_terminated", False):
             return
+        await self._ensure_state_restored(context)
         if self._context is None:
             raise RuntimeError("Magentic Orchestrator: Received response but not initialized")
 
@@ -916,11 +1047,12 @@ class MagenticOrchestratorExecutor(Executor):
         response: RequestResponse[MagenticPlanReviewRequest, MagenticPlanReviewReply],
         context: WorkflowContext[
             # may broadcast ledger next, or ask for another round of review
-            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest
+            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
         ],
     ) -> None:
         if getattr(self, "_terminated", False):
             return
+        await self._ensure_state_restored(context)
         if self._context is None:
             return
 
@@ -968,7 +1100,7 @@ class MagenticOrchestratorExecutor(Executor):
 
             # Enter the normal coordination loop
             ctx2 = cast(
-                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
                 context,
             )
             await self._run_inner_loop(ctx2)
@@ -997,7 +1129,7 @@ class MagenticOrchestratorExecutor(Executor):
                 self._context.chat_history.append(self._task_ledger)
                 # No further review requests; proceed directly into coordination
             ctx2 = cast(
-                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
                 context,
             )
             await self._run_inner_loop(ctx2)
@@ -1032,7 +1164,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _run_outer_loop(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run the outer orchestration loop - planning phase."""
         if self._context is None:
@@ -1056,7 +1188,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _run_inner_loop(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run the inner orchestration loop. Coordination phase. Serialized with a lock."""
         if self._context is None or self._task_ledger is None:
@@ -1066,7 +1198,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _run_inner_loop_locked(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run inner loop with exclusive access."""
         # Narrow optional context for the remainder of this method
@@ -1154,7 +1286,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _reset_and_replan(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Reset context and replan."""
         if self._context is None:
@@ -1178,7 +1310,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _prepare_final_answer(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Prepare the final answer using the manager."""
         if self._context is None:
@@ -1188,14 +1320,14 @@ class MagenticOrchestratorExecutor(Executor):
         final_answer = await self._manager.prepare_final_answer(self._context.model_copy(deep=True))
 
         # Emit a completed event for the workflow
-        await context.add_event(WorkflowCompletedEvent(final_answer))
+        await context.yield_output(final_answer)
 
         if self._result_callback:
             await self._result_callback(final_answer)
 
     async def _check_within_limits_or_complete(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage],
+        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> bool:
         """Check if orchestrator is within operational limits."""
         if self._context is None:
@@ -1221,8 +1353,8 @@ class MagenticOrchestratorExecutor(Executor):
                         author_name=MAGENTIC_MANAGER_NAME,
                     )
 
-                # Emit a completed event with the partial result
-                await context.add_event(WorkflowCompletedEvent(partial_result))
+                # Yield the partial result and signal completion
+                await context.yield_output(partial_result)
 
                 if self._result_callback:
                     await self._result_callback(partial_result)
@@ -1232,7 +1364,9 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _send_plan_review_request(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest],
+        context: WorkflowContext[
+            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
+        ],
     ) -> None:
         """Emit a PlanReviewRequest via RequestInfoExecutor."""
         # If plan sign-off is disabled (e.g., ran out of review rounds), do nothing
@@ -1274,6 +1408,43 @@ class MagenticAgentExecutor(Executor):
         self._chat_history: list[ChatMessage] = []
         self._agent_response_callback = agent_response_callback
         self._streaming_agent_response_callback = streaming_agent_response_callback
+        self._state_restored = False
+
+    def snapshot_state(self) -> dict[str, Any]:
+        return {
+            "chat_history": [msg.model_dump(mode="json") for msg in self._chat_history],
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        history_payload = state.get("chat_history")
+        if not history_payload:
+            self._chat_history = []
+            return
+        restored: list[ChatMessage] = []
+        for item in history_payload:
+            try:
+                restored.append(ChatMessage.model_validate(item))
+            except Exception as exc:  # pragma: no cover
+                logger.debug("Agent %s: Skipping invalid chat history item during restore: %s", self._agent_id, exc)
+        self._chat_history = restored
+
+    async def _ensure_state_restored(self, context: WorkflowContext[Any, Any]) -> None:
+        if self._state_restored and self._chat_history:
+            return
+        state = await context.get_state()
+        if not state:
+            self._state_restored = True
+            return
+        if not isinstance(state, dict):
+            self._state_restored = True
+            return
+        try:
+            self.restore_state(state)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Agent %s: Failed to apply checkpoint state: %s", self._agent_id, exc, exc_info=True)
+            raise
+        else:
+            self._state_restored = True
 
     @handler
     async def handle_response_message(
@@ -1281,6 +1452,8 @@ class MagenticAgentExecutor(Executor):
     ) -> None:
         """Handle response message (task ledger broadcast)."""
         logger.debug("Agent %s: Received response message", self._agent_id)
+
+        await self._ensure_state_restored(context)
 
         # Check if this message is intended for this agent
         if message.target_agent is not None and message.target_agent != self._agent_id and not message.broadcast:
@@ -1321,6 +1494,8 @@ class MagenticAgentExecutor(Executor):
             return
 
         logger.info("Agent %s: Received request to respond", self._agent_id)
+
+        await self._ensure_state_restored(context)
 
         # Add persona adoption message with appropriate role
         persona_role = self._get_persona_adoption_role()
@@ -1365,6 +1540,7 @@ class MagenticAgentExecutor(Executor):
         """Reset the internal chat history of the agent (internal operation)."""
         logger.debug("Agent %s: Resetting chat history", self._agent_id)
         self._chat_history.clear()
+        self._state_restored = True
 
     async def _invoke_agent(self) -> ChatMessage:
         """Invoke the wrapped agent and return a response."""
@@ -1435,6 +1611,7 @@ class MagenticBuilder:
         # Unified callback wiring
         self._unified_callback: CallbackSink | None = None
         self._callback_mode: MagenticCallbackMode | None = None
+        self._checkpoint_storage: CheckpointStorage | None = None
 
     def participants(self, **participants: AgentProtocol | Executor) -> Self:
         """Add participants (agents) to the workflow."""
@@ -1444,6 +1621,11 @@ class MagenticBuilder:
     def with_plan_review(self, enable: bool = True) -> "MagenticBuilder":
         """Require human sign-off on the plan before coordination begins."""
         self._enable_plan_review = enable
+        return self
+
+    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "MagenticBuilder":
+        """Persist workflow state using the provided checkpoint storage."""
+        self._checkpoint_storage = checkpoint_storage
         return self
 
     def with_standard_manager(
@@ -1627,6 +1809,7 @@ class MagenticBuilder:
             agent_response_callback=self._agent_response_callback,
             streaming_agent_response_callback=self._agent_streaming_callback,
             require_plan_signoff=self._enable_plan_review,
+            executor_id="magentic_orchestrator",
         )
 
         # Create workflow builder and set orchestrator as start
@@ -1635,7 +1818,7 @@ class MagenticBuilder:
         if self._enable_plan_review:
             from ._executor import RequestInfoExecutor
 
-            request_info = RequestInfoExecutor()
+            request_info = RequestInfoExecutor(id="magentic_plan_review")
             workflow_builder = (
                 workflow_builder
                 # Only route plan review asks to request_info
@@ -1679,6 +1862,9 @@ class MagenticBuilder:
                 agent_executor,
                 condition=_cond,
             ).add_edge(agent_executor, orchestrator_executor)
+
+        if self._checkpoint_storage is not None:
+            workflow_builder = workflow_builder.with_checkpointing(self._checkpoint_storage)
 
         return MagenticWorkflow(workflow_builder.build())
 
@@ -1784,6 +1970,87 @@ class MagenticWorkflow:
         async for event in self._workflow.run_stream(message):
             yield event
 
+    async def _validate_checkpoint_participants(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> None:
+        """Ensure participant roster matches the checkpoint before attempting restoration."""
+        orchestrator = next(
+            (
+                executor
+                for executor in self._workflow.executors.values()
+                if isinstance(executor, MagenticOrchestratorExecutor)
+            ),
+            None,
+        )
+        if orchestrator is None:
+            return
+
+        expected = getattr(orchestrator, "_participants", None)
+        if not expected:
+            return
+
+        checkpoint = None
+        if checkpoint_storage is not None:
+            try:
+                checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
+            except Exception:  # pragma: no cover - best effort
+                checkpoint = None
+
+        if checkpoint is None:
+            runner_context = getattr(self._workflow, "_runner_context", None)
+            has_checkpointing = getattr(runner_context, "has_checkpointing", None)
+            load_checkpoint = getattr(runner_context, "load_checkpoint", None)
+            try:
+                if callable(has_checkpointing) and has_checkpointing() and callable(load_checkpoint):
+                    checkpoint = await load_checkpoint(checkpoint_id)  # type: ignore[func-returns-value]
+            except Exception:  # pragma: no cover - best effort
+                checkpoint = None
+
+        if checkpoint is None or not isinstance(getattr(checkpoint, "executor_states", None), dict):
+            return
+
+        orchestrator_state = checkpoint.executor_states.get(getattr(orchestrator, "id", ""))
+        if orchestrator_state is None:
+            orchestrator_state = checkpoint.executor_states.get("magentic_orchestrator")
+
+        if not isinstance(orchestrator_state, dict):
+            return
+
+        context_payload = orchestrator_state.get("magentic_context")
+        if not isinstance(context_payload, dict):
+            return
+
+        restored_participants = context_payload.get("participant_descriptions")
+        if not isinstance(restored_participants, dict):
+            return
+
+        restored_names = set(restored_participants.keys())
+        expected_names = set(expected.keys())
+
+        if restored_names == expected_names:
+            return
+
+        missing = ", ".join(sorted(expected_names - restored_names)) or "none"
+        unexpected = ", ".join(sorted(restored_names - expected_names)) or "none"
+        raise RuntimeError(
+            "Magentic checkpoint restore failed: participant names do not match the checkpoint. "
+            "Ensure MagenticBuilder.participants keys remain stable across runs. "
+            f"Missing names: {missing}; unexpected names: {unexpected}."
+        )
+
+    async def run_stream_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+        responses: dict[str, Any] | None = None,
+    ) -> AsyncIterable[WorkflowEvent]:
+        """Resume orchestration from a checkpoint and stream resulting events."""
+        await self._validate_checkpoint_participants(checkpoint_id, checkpoint_storage)
+        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
+            yield event
+
     async def run_with_string(self, task_text: str) -> WorkflowRunResult:
         """Run the workflow with a task string and return all events.
 
@@ -1824,6 +2091,18 @@ class MagenticWorkflow:
         """
         events: list[WorkflowEvent] = []
         async for event in self.run_stream(message):
+            events.append(event)
+        return WorkflowRunResult(events)
+
+    async def run_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+        responses: dict[str, Any] | None = None,
+    ) -> WorkflowRunResult:
+        """Resume orchestration from a checkpoint and collect all resulting events."""
+        events: list[WorkflowEvent] = []
+        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
             events.append(event)
         return WorkflowRunResult(events)
 

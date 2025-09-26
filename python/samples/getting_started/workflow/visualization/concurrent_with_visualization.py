@@ -2,7 +2,8 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+
+from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
@@ -13,12 +14,12 @@ from agent_framework import (
     Executor,
     Role,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
+    WorkflowOutputEvent,
     WorkflowViz,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -30,7 +31,7 @@ What it does:
 - Visualization: generate Mermaid and GraphViz representations via `WorkflowViz` and optionally export SVG.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureChatClient` agents.
+- Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agents.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 - For visualization export: `pip install agent-framework[viz]` and install GraphViz binaries.
 """
@@ -40,7 +41,7 @@ class DispatchToExperts(Executor):
     """Dispatches the incoming prompt to all expert agent executors (fan-out)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "dispatch_to_experts")
         self._expert_ids = expert_ids
 
     @handler
@@ -67,11 +68,11 @@ class AggregateInsights(Executor):
     """Aggregates expert agent responses into a single consolidated result (fan-in)."""
 
     def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id)
+        super().__init__(id=id or "aggregate_insights")
         self._expert_ids = expert_ids
 
     @handler
-    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any]) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:
@@ -97,12 +98,12 @@ class AggregateInsights(Executor):
             f"Legal/Compliance Notes:\n{aggregated.legal}\n"
         )
 
-        await ctx.add_event(WorkflowCompletedEvent(data=consolidated))
+        await ctx.yield_output(consolidated)
 
 
 async def main() -> None:
     # 1) Create agent executors for domain experts
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     researcher = AgentExecutor(
         chat_client.create_agent(
@@ -165,17 +166,13 @@ async def main() -> None:
         print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz]")
 
     # 3) Run with a single prompt
-    completion: WorkflowCompletedEvent | None = None
     async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
         if isinstance(event, AgentRunEvent):
             # Show which agent ran and what step completed.
             print(event)
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
-
-    if completion:
-        print("===== Final Aggregated Output =====")
-        print(completion.data)
+        elif isinstance(event, WorkflowOutputEvent):
+            print("===== Final Aggregated Output =====")
+            print(event.data)
 
 
 if __name__ == "__main__":

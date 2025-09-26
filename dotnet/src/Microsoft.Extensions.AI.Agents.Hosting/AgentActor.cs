@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 
@@ -37,7 +38,7 @@ internal sealed class AgentActor(
         if (response.Results[0] is GetValueResult { Value: { } threadJson })
         {
             // Deserialize the thread state if it exists
-            this._thread = agent.DeserializeThread(threadJson, cancellationToken: cancellationToken);
+            this._thread = agent.DeserializeThread(threadJson);
             hasExistingThread = true;
         }
 

@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 using OpenAI.Assistants;
 using Shared.IntegrationTests;
@@ -16,10 +16,8 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
 
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
     private AssistantClient? _assistantClient;
-    private ChatClientAgent _agent;
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+    private ChatClientAgent _agent = null!;
 
     public AIAgent Agent => this._agent;
 
@@ -27,8 +25,9 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
+        var typedThread = (ChatClientAgentThread)thread;
         List<ChatMessage> messages = [];
-        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(thread.ConversationId, new() { Order = MessageCollectionOrder.Ascending }))
+        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(typedThread.ConversationId, new() { Order = MessageCollectionOrder.Ascending }))
         {
             messages.Add(new()
             {
@@ -71,9 +70,10 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
     public Task DeleteThreadAsync(AgentThread thread)
     {
-        if (thread?.ConversationId is not null)
+        var typedThread = (ChatClientAgentThread)thread;
+        if (typedThread?.ConversationId is not null)
         {
-            return this._assistantClient!.DeleteThreadAsync(thread.ConversationId);
+            return this._assistantClient!.DeleteThreadAsync(typedThread.ConversationId);
         }
 
         return Task.CompletedTask;

@@ -46,7 +46,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
         else
         {
-            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(this.Model.Items);
+            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
             if (expressionResult.Value is TableDataValue tableValue)
             {
                 this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormula())];
@@ -83,10 +83,10 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     {
         try
         {
-            this.State.Reset(Throw.IfNull(this.Model.Value));
+            await context.QueueStateResetAsync(Throw.IfNull(this.Model.Value)).ConfigureAwait(false);
             if (this.Model.Index is not null)
             {
-                this.State.Reset(this.Model.Index);
+                await context.QueueStateResetAsync(this.Model.Index).ConfigureAwait(false);
             }
         }
         finally

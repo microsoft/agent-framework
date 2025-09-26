@@ -1,0 +1,516 @@
+#
+# This workflow demonstrates a multi-agent orchestrator that attempts to address complex user requests.
+# 
+# For this workflow, several agents used, each with a prompt specific to their role:
+# 
+# 1. Analyst Agent: Able to analyze the current task.
+#    Enable "Bing Grounding Tool" in the agent settings.
+#    See: ./setup/AnalystAgent.yaml
+# 
+# 2. Manager Agent: Able to create plans and delegate tasks to other agents.
+#    See: ./setup/ManagerAgent.yaml
+# 
+# 3. Research Agent:
+#    Enable "Bing Grounding" in the agent settings.
+#    See: ./setup/WebAgent.yaml
+#
+#    With instructions: 
+#    
+#    Only provide requested information in a way that is throughfully organized and formatted.
+#    Never include any analysis or code.
+#    Never generate a file.
+#    Avoid repeating yourself.
+# 
+# 4. Coder Agent: 
+#    Enable "Code Interpreter" in the agent settings.
+#    See: ./setup/CoderAgent.yaml
+#
+# 5. Weather Agent: Able to retrieve factual information from the web.
+#    Enable "Open API" in the agent settings using the wttr.json schema.
+#    See: ./setup/WeatherAgent.yaml
+# 
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+    
+    - kind: SetVariable
+      id: setVariable_aASlmF
+      displayName: List all available agents for this orchestrator
+      variable: Topic.AvailableAgents
+      value: |-
+        =[
+            {
+                name: "WeatherAgent", 
+                description: "Able to retrieve weather information",
+                agentid: Env.FOUNDRY_AGENT_RESEARCHWEATHER
+            },
+            {
+                name: "CoderAgent", 
+                description: "Able to write and execute Python code",
+                agentid: Env.FOUNDRY_AGENT_RESEARCHCODER
+            },
+            {
+                name: "WebAgent", 
+                description: "Able to perform generic websearches",
+                agentid: Env.FOUNDRY_AGENT_RESEARCHWEB
+            }
+        ]
+
+    - kind: SetVariable
+      id: setVariable_V6yEbo
+      displayName: Get a summary of all the agents for use in prompts
+      variable: Topic.TeamDescription
+      value: "=Concat(ForAll(Topic.AvailableAgents, $\"- \" & name & $\": \" & description), Value, \"\n\")"
+
+    - kind: SetVariable
+      id: setVariable_NZ2u0l
+      displayName: Set Task
+      variable: Topic.InputTask
+      value: =System.LastMessage.Text
+
+    - kind: SetVariable
+      id: setVariable_10u2ZN
+      displayName: Set Task
+      variable: Topic.SeedTask
+      value: =Topic.InputTask
+
+    - kind: SendActivity
+      id: sendActivity_yFsbRy
+      activity: Analyzing facts...
+
+    - kind: CreateConversation
+      id: conversation_1a2b3c
+      conversationId: Topic.InternalConversationId
+
+    - kind: InvokeAzureAgent
+      id: question_UDoMUw
+      displayName: Get Facts
+      conversationId: =Topic.InternalConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_RESEARCHANALYST
+      output:
+        messages: Topic.TaskFacts
+      input:
+        messages: =[UserMessage(Topic.InputTask)]
+        additionalInstructions: |-
+          In order to help begin addressing the user request, please answer the following pre-survey to the best of your ability. 
+          Keep in mind that you are Ken Jennings-level with trivia, and Mensa-level with puzzles, so there should be a deep well to draw from.
+
+          Here is the pre-survey:
+
+              1. Please list any specific facts or figures that are GIVEN in the request itself. It is possible that there are none.
+              2. Please list any facts that may need to be looked up, and WHERE SPECIFICALLY they might be found. In some cases, authoritative sources are mentioned in the request itself.
+              3. Please list any facts that may need to be derived (e.g., via logical deduction, simulation, or computation)
+              4. Please list any facts that are recalled from memory, hunches, well-reasoned guesses, etc.
+
+          When answering this survey, keep in mind that 'facts' will typically be specific names, dates, statistics, etc. Your answer must only use the headings:
+
+              1. GIVEN OR VERIFIED FACTS
+              2. FACTS TO LOOK UP
+              3. FACTS TO DERIVE
+              4. EDUCATED GUESSES
+
+          DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so.
+
+    - kind: SendActivity
+      id: sendActivity_yFsbRz
+      activity: Creating a plan...
+
+    - kind: InvokeAzureAgent
+      id: question_DsBaJU
+      displayName: Create a Plan
+      conversationId: =Topic.InternalConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
+      output:
+        messages: Topic.Plan
+      input:
+        messages: =[UserMessage(Topic.InputTask)]
+        additionalInstructions: |-
+          Your only job is to devise an efficient plan that identifies (by name) how a team member may contribute to addressing the user request.
+
+          Only select the following team which is listed as "- [Name]: [Description]"
+
+          {Topic.TeamDescription}
+
+          The plan must be a bullet point list must be in the form "- [AgentName]: [Specific action or task for that agent to perform]"
+  
+          Remember, there is no requirement to involve the entire team -- only select team member's whose particular expertise is required for this task.
+
+    - kind: SetVariable
+      id: setVariable_Kk2LDL
+      displayName: Define instructions
+      variable: Topic.TaskInstructions
+      value: |-
+        ="# TASK
+        Address the following user request:
+
+        " & Topic.InputTask & "
+
+
+        # TEAM
+        Use the following team to answer this request:
+
+        " & Topic.TeamDescription & "
+
+
+        # FACTS
+        Consider this initial fact sheet:
+
+        " & Trim(Topic.TaskFacts.Text) & "
+
+
+        # PLAN
+        Here is the plan to follow as best as possible:
+  
+        " & Topic.Plan.Text
+
+    - kind: SendActivity
+      id: sendActivity_bwNZiM
+      activity: {Topic.TaskInstructions}
+
+    - kind: InvokeAzureAgent
+      id: question_o3BQkf
+      displayName: Progress Ledger Prompt
+      conversationId: =Topic.InternalConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
+      output:
+        messages: Topic.ProgressLedgerUpdate
+      input:
+        messages: =[UserMessage(Topic.AgentResponseText)]
+        additionalInstructions: |-
+          Recall we are working on the following request:
+
+          {Topic.InputTask}
+
+          And we have assembled the following team:
+
+          {Topic.TeamDescription}
+
+          To make progress on the request, please answer the following questions, including necessary reasoning:
+
+              - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
+              - Are we in a loop where we are repeating the same requests and / or getting the same responses from an agent multiple times? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
+              - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
+              - Who should speak next? (select from: {Concat(Topic.AvailableAgents, name, ",")}) 
+              - What instruction or question would you give this team member? (Phrase as if speaking directly to them, and include any specific information they may need)
+
+          Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
+
+              {{
+                  "is_request_satisfied": {{
+                      "reason": string,
+                      "answer": boolean
+                  }},
+                  "is_in_loop": {{
+                      "reason": string,
+                      "answer": boolean
+                  }},
+                  "is_progress_being_made": {{
+                      "reason": string,
+                      "answer": boolean
+                  }},
+                  "next_speaker": {{
+                      "reason": string,
+                      "answer": string (select from: {Concat(Topic.AvailableAgents, name, ",")})
+                  }},
+                  "instruction_or_question": {{
+                      "reason": string,
+                      "answer": string
+                  }}
+              }}
+
+    - kind: ParseValue
+      id: parse_rNZtlV
+      displayName: Parse ledger response
+      variable: Topic.TypedProgressLedger
+      value: =Topic.ProgressLedgerUpdate.Text
+      valueType:
+        kind: Record
+        properties:
+          instruction_or_question:
+            type:
+              kind: Record
+              properties:
+                answer: String
+                reason: String
+
+          is_in_loop:
+            type:
+              kind: Record
+              properties:
+                answer: Boolean
+                reason: String
+
+          is_progress_being_made:
+            type:
+              kind: Record
+              properties:
+                answer: Boolean
+                reason: String
+
+          is_request_satisfied:
+            type:
+              kind: Record
+              properties:
+                answer: Boolean
+                reason: String
+
+          next_speaker:
+            type:
+              kind: Record
+              properties:
+                answer: String
+                reason: String
+
+    - kind: ConditionGroup
+      id: conditionGroup_mVIecC
+      conditions:
+        - id: conditionItem_fj432c
+          condition: =Topic.TypedProgressLedger.is_request_satisfied.answer
+          displayName: If Done
+          actions:
+
+            - kind: SendActivity
+              id: sendActivity_kdl3mC
+              activity: Completed! {Topic.TypedProgressLedger.is_request_satisfied.reason}
+
+            - kind: InvokeAzureAgent
+              id: question_Ke3l1d
+              displayName: Generate Response
+              conversationId: =System.ConversationId
+              agent:
+                name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
+              output:
+                messages: Topic.FinalResponse
+              input:
+                messages: =[UserMessage(Topic.SeedTask)]
+                additionalInstructions: |-
+                  We have completed the task.
+                  Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
+                  The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
+
+            - kind: EndConversation
+              id: end_SVoNSV
+
+        - id: conditionItem_yiqund
+          condition: =Topic.TypedProgressLedger.is_in_loop.answer || Not(Topic.TypedProgressLedger.is_progress_being_made.answer)
+          displayName: If Stalling
+          actions:
+    
+            - kind: SetVariable
+              id: setVariable_H5lXdD
+              displayName: Increase stall count
+              variable: Topic.StallCount
+              value: =Topic.StallCount + 1
+
+
+            - kind: ConditionGroup
+              id: conditionGroup_vBTQd3
+              conditions:
+
+                - id: conditionItem_fpaNL9
+                  condition: =.TypedProgressLedger.is_in_loop.answer
+                  displayName: Is Loop
+                  actions:
+                    - kind: SendActivity
+                      id: sendActivity_fpaNL9
+                      activity: {Topic.TypedProgressLedger.is_in_loop.reason}
+
+                - id: conditionItem_NnqvXh
+                  condition: =Not(Topic.TypedProgressLedger.is_progress_being_made.answer)
+                  displayName: Is No Progress
+                  actions:
+                    - kind: SendActivity
+                      id: sendActivity_NnqvXh
+                      activity: {Topic.TypedProgressLedger.is_progress_being_made.reason}
+
+
+            - kind: ConditionGroup
+              id: conditionGroup_xzNrdM
+              conditions:
+                - id: conditionItem_NlQTBv
+                  condition: =Topic.StallCount > 2
+                  displayName: Stall Count Exceeded
+                  actions:
+
+                    - kind: SendActivity
+                      id: sendActivity_H5lXdD
+                      activity: Unable to make sufficient progress...
+
+                    - kind: ConditionGroup
+                      id: conditionGroup_4s1Z27
+                      conditions:
+                        - id: conditionItem_EXAlhZ
+                          condition: =Topic.RestartCount > 2
+                          actions:
+                            - kind: SendActivity
+                              id: sendActivity_xKxFUU
+                              activity: Stopping after attempting {Topic.RestartCount} restarts...
+
+                            - kind: EndConversation
+                              id: end_GHVrFh
+
+                    - kind: SendActivity
+                      id: sendActivity_cwNZiM
+                      activity: Re-analyzing facts...
+
+                    - kind: InvokeAzureAgent
+                      id: question_wFJ123
+                      displayName: Get New Facts Prompt
+                      conversationId: =Topic.InternalConversationId
+                      agent:
+                        name: =Env.FOUNDRY_AGENT_RESEARCHANALYST
+                      output:
+                        messages: Topic.TaskFacts
+                      input:
+                        messages: |-
+                          =[
+                            UserMessage(
+                            "As a reminder, we are working to solve the following task:
+
+                            " & Topic.InputTask)
+                          ]
+                        additionalInstructions: |-
+                          It's clear we aren't making as much progress as we would like, but we may have learned something new.
+                          Please rewrite the following fact sheet, updating it to include anything new we have learned that may be helpful. 
+                          Example edits can include (but are not limited to) adding new guesses, moving educated guesses to verified facts if appropriate, etc. 
+                          Updates may be made to any section of the fact sheet, and more than one section of the fact sheet can be edited. 
+                          This is an especially good time to update educated guesses, so please at least add or update one educated guess or hunch, and explain your reasoning.
+
+                          Here is the old fact sheet:
+
+                          {Topic.TaskFacts}
+
+                    - kind: SendActivity
+                      id: sendActivity_dsBaJU
+                      activity: Re-analyzing plan...
+                      
+                    - kind: InvokeAzureAgent
+                      id: question_uEJ456
+                      displayName: Create new Plan Prompt
+                      conversationId: =Topic.InternalConversationId
+                      agent:
+                        name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
+                      output:
+                        messages: Topic.Plan
+                      input:
+                        additionalInstructions: |-
+                          Please briefly explain what went wrong on this last run (the root cause of the failure),
+                          and then come up with a new plan that takes steps and/or includes hints to overcome prior challenges and especially avoids repeating the same mistakes. 
+                          As before, the new plan should be concise, be expressed in bullet-point form, and consider the following team composition
+                          (do not involve any other outside people since we cannot contact anyone else):
+
+                          {Topic.TeamDescription}
+
+                    - kind: SetVariable
+                      id: setVariable_jW7tmM
+                      displayName: Set Plan as Context
+                      variable: Topic.TaskInstructions
+                      value: |-
+                        ="# TASK
+                        Address the following user request:
+
+                        " & Topic.InputTask & "
+
+
+                        # TEAM
+                        Use the following team to answer this request:
+
+                        " & Topic.TeamDescription & "
+                        
+
+                        # FACTS
+                        Consider this initial fact sheet:
+
+                        " & Topic.TaskFacts.Text & "
+
+
+                        # PLAN
+                        Here is the plan to follow as best as possible:
+  
+                        " & Topic.Plan.Text
+
+                    - kind: SetVariable
+                      id: setVariable_6J2snP
+                      displayName: Reset Stall count
+                      variable: Topic.StallCount
+                      value: 0
+
+                    - kind: SetVariable
+                      id: setVariable_S6HCgh
+                      displayName: Increase Restart count
+                      variable: Topic.RestartCount
+                      value: =Topic.RestartCount + 1
+
+                    - kind: GotoAction
+                      id: goto_LzfJ8u
+                      actionId: question_o3BQkf
+
+      elseActions:
+        - kind: SendActivity
+          id: sendActivity_L7ooQO
+          activity: |-
+           ({Topic.TypedProgressLedger.next_speaker.reason})
+
+           {Topic.TypedProgressLedger.next_speaker.answer} - {Topic.TypedProgressLedger.instruction_or_question.answer}
+
+        - kind: SetVariable
+          id: setVariable_L7ooQO
+          variable: Topic.StallCount
+          value: 0
+
+    - kind: SetVariable
+      id: setVariable_nxN1mE
+      variable: Topic.NextSpeaker
+      value: =Search(Topic.AvailableAgents, Topic.TypedProgressLedger.next_speaker.answer, name)
+
+    - kind: ConditionGroup
+      id: conditionGroup_QFPiF5
+      conditions:
+        - id: conditionItem_GmigcU
+          condition: =CountRows(Topic.NextSpeaker) = 1
+          displayName: If next Agent tool Exists
+          actions:
+
+            - kind: InvokeAzureAgent
+              id: question_orsBf06
+              displayName: Progress Ledger Prompt
+              conversationId: =System.ConversationId
+              agent:
+                name: =First(Topic.NextSpeaker).agentid
+              output:
+                messages: Topic.AgentResponse
+              input:
+                messages: =[UserMessage(Topic.SeedTask)]
+                additionalInstructions: |-
+                  {Topic.TypedProgressLedger.instruction_or_question.answer}
+
+            - kind: SetVariable
+              id: setVariable_XzNrdM
+              variable: Topic.AgentResponseText
+              value: =Topic.AgentResponse.Text
+
+            - kind: ResetVariable
+              id: setVariable_8eIx2A
+              displayName: Clear seed task
+              variable: Topic.SeedTask
+
+      elseActions:
+        - kind: SendActivity
+          id: sendActivity_BhcsI7
+          activity: Unable to choose next agent...
+
+        - kind: SetVariable
+          id: setVariable_BhcsI7
+          displayName: Increase stall count
+          variable: Topic.StallCount
+          value: =Topic.StallCount + 1
+
+    - kind: GotoAction
+      id: goto_76Hne8
+      actionId: question_o3BQkf

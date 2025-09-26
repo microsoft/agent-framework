@@ -8,10 +8,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using SampleApp;
 
 AIAgent agent = new UpperCaseParrotAgent();
@@ -30,6 +31,14 @@ namespace SampleApp
     // Custom agent that parrot's the user input back in upper case.
     internal sealed class UpperCaseParrotAgent : AIAgent
     {
+        public override string? Name => "UpperCaseParrotAgent";
+
+        public override AgentThread GetNewThread()
+            => new CustomAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => new CustomAgentThread(serializedThread, jsonSerializerOptions);
+
         public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
@@ -44,7 +53,7 @@ namespace SampleApp
             return new AgentRunResponse
             {
                 AgentId = this.Id,
-                ResponseId = Guid.NewGuid().ToString(),
+                ResponseId = Guid.NewGuid().ToString("N"),
                 Messages = responseMessages
             };
         }
@@ -68,8 +77,8 @@ namespace SampleApp
                     AuthorName = this.DisplayName,
                     Role = ChatRole.Assistant,
                     Contents = message.Contents,
-                    ResponseId = Guid.NewGuid().ToString(),
-                    MessageId = Guid.NewGuid().ToString()
+                    ResponseId = Guid.NewGuid().ToString("N"),
+                    MessageId = Guid.NewGuid().ToString("N")
                 };
             }
         }
@@ -79,7 +88,7 @@ namespace SampleApp
                 // Clone the message and update its author to be the agent.
                 var messageClone = x.Clone();
                 messageClone.Role = ChatRole.Assistant;
-                messageClone.MessageId = Guid.NewGuid().ToString();
+                messageClone.MessageId = Guid.NewGuid().ToString("N");
                 messageClone.AuthorName = agentName;
 
                 // Clone and convert any text content to upper case.
@@ -96,5 +105,16 @@ namespace SampleApp
 
                 return messageClone;
             });
+
+        /// <summary>
+        /// A thread type for our custom agent that only supports in memory storage of messages.
+        /// </summary>
+        internal sealed class CustomAgentThread : InMemoryAgentThread
+        {
+            internal CustomAgentThread() { }
+
+            internal CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+                : base(serializedThreadState, jsonSerializerOptions) { }
+        }
     }
 }

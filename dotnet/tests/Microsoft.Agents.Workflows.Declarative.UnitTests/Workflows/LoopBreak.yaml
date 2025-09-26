@@ -1,9 +1,10 @@
-kind: AdaptiveDialog
-beginDialog:
-  kind: OnActivity
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
   id: my_workflow
-  type: Message
   actions:
+
     - kind: SetVariable
       id: setVariable_count
       variable: Topic.Count

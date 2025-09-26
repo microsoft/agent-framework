@@ -8,7 +8,7 @@
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 using System;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using OpenAI;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_APIKEY") ?? throw new InvalidOperationException("OPENAI_APIKEY is not set.");
@@ -37,6 +37,5 @@ AgentThread thread = agent1.GetNewThread();
 Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Cleanup for sample purposes.
-await assistantClient.DeleteThreadAsync(thread.ConversationId);
 await assistantClient.DeleteAssistantAsync(agent1.Id);
 await assistantClient.DeleteAssistantAsync(agent2.Id);

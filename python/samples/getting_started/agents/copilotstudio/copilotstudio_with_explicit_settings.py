@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework.copilotstudio import CopilotStudioAgent, acquire_token
+from agent_framework.microsoft import CopilotStudioAgent, acquire_token
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
 # Environment variables needed:

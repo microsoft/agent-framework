@@ -20,7 +20,7 @@ internal sealed class EditTableExecutor(EditTable model, WorkflowFormulaState st
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
-        FormulaValue table = this.State.Get(variablePath);
+        FormulaValue table = context.ReadState(variablePath);
         if (table is not TableValue tableValue)
         {
             throw this.Exception($"Require '{variablePath}' to be a table, not: '{table.GetType().Name}'.");
@@ -31,14 +31,14 @@ internal sealed class EditTableExecutor(EditTable model, WorkflowFormulaState st
         {
             case TableChangeType.Add:
                 ValueExpression addItemValue = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
-                EvaluationResult<DataValue> addResult = this.State.Evaluator.GetValue(addItemValue);
+                EvaluationResult<DataValue> addResult = this.Evaluator.GetValue(addItemValue);
                 RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), addResult.Value.ToFormula());
                 await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
                 await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
                 break;
             case TableChangeType.Remove:
                 ValueExpression removeItemValue = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
-                EvaluationResult<DataValue> removeResult = this.State.Evaluator.GetValue(removeItemValue);
+                EvaluationResult<DataValue> removeResult = this.Evaluator.GetValue(removeItemValue);
                 if (removeResult.Value is TableDataValue removeItemTable)
                 {
                     await tableValue.RemoveAsync(removeItemTable?.Values.Select(row => row.ToRecordValue()), all: true, cancellationToken).ConfigureAwait(false);

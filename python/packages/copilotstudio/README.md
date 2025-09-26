@@ -31,7 +31,7 @@ The following environment variables are used for configuration:
 
 ```python
 import asyncio
-from agent_framework.copilotstudio import CopilotStudioAgent
+from agent_framework.microsoft import CopilotStudioAgent
 
 async def main():
     # Create agent using environment variables
@@ -49,7 +49,7 @@ asyncio.run(main())
 ```python
 import asyncio
 import os
-from agent_framework.copilotstudio import CopilotStudioAgent, acquire_token
+from agent_framework.microsoft import CopilotStudioAgent, acquire_token
 from microsoft_agents.copilotstudio.client import ConnectionSettings, CopilotClient, PowerPlatformCloud, AgentType
 
 async def main():

@@ -5,7 +5,7 @@
 using System;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4o-mini";
@@ -36,6 +36,5 @@ AgentThread thread = agent1.GetNewThread();
 Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Cleanup for sample purposes.
-await persistentAgentsClient.Threads.DeleteThreadAsync(thread.ConversationId);
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent1.Id);
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent2.Id);

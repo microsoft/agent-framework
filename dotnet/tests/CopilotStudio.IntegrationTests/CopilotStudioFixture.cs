@@ -7,10 +7,10 @@ using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using CopilotStudio.IntegrationTests.Support;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.CopilotStudio;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.CopilotStudio;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -18,9 +18,6 @@ namespace CopilotStudio.IntegrationTests;
 
 public class CopilotStudioFixture : IAgentFixture
 {
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-
     public AIAgent Agent { get; private set; } = null!;
 
     public Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread) =>
