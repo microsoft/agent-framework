@@ -46,7 +46,7 @@ public abstract class AIContextProvider
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         => default;
 
     /// <summary>Asks the <see cref="AIContextProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>

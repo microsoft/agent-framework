@@ -163,7 +163,7 @@ public class AIContextProviderTests
             return default;
         }
 
-        public override JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
             return base.Serialize(jsonSerializerOptions);
         }

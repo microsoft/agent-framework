@@ -107,7 +107,7 @@ public class InMemoryChatMessageStoreTests
         };
 
         var jsonElement = store.Serialize();
-        var newStore = new InMemoryChatMessageStore(jsonElement!.Value);
+        var newStore = new InMemoryChatMessageStore(jsonElement);
 
         Assert.Equal(2, newStore.Count);
         Assert.Equal("A", newStore[0].Text);

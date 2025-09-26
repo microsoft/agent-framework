@@ -84,7 +84,7 @@ public class ChatMessageStoreTests
         public override Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
-        public override JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
             => default;
     }
 }

@@ -131,7 +131,7 @@ namespace SampleApp
             return messages;
         }
 
-        public override JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null) =>
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null) =>
             // We have to serialize the thread id, so that on deserialization we can retrieve the messages using the same thread id.
             JsonSerializer.SerializeToElement(this.ThreadDbKey);
 

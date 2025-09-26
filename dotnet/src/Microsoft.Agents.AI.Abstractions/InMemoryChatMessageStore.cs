@@ -121,7 +121,7 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     }
 
     /// <inheritdoc />
-    public override JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         StoreState state = new()
         {

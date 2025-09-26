@@ -148,7 +148,7 @@ namespace SampleApp
             });
         }
 
-        public override JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
             return JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions);
         }

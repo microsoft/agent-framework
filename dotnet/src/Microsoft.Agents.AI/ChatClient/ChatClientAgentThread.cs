@@ -153,11 +153,11 @@ public class ChatClientAgentThread : AgentThread
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         var storeState = this._messageStore is null ?
-            null :
+            default :
             this._messageStore.Serialize(jsonSerializerOptions);
 
         var aiContextProviderState = this.AIContextProvider is null ?
-            null :
+            default :
             this.AIContextProvider.Serialize(jsonSerializerOptions);
 
         var state = new ThreadState

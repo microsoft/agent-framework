@@ -65,7 +65,7 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
 
     public void UpdateBookmark() => this._bookmark = this._chatMessages.Count;
 
-    public override JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         StoreState state = new()
         {

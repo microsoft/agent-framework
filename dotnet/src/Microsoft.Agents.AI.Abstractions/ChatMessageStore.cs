@@ -52,7 +52,7 @@ public abstract class ChatMessageStore
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public abstract JsonElement? Serialize(JsonSerializerOptions? jsonSerializerOptions = null);
+    public abstract JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null);
 
     /// <summary>Asks the <see cref="ChatMessageStore"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
