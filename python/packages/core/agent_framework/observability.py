@@ -1188,7 +1188,9 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     from ._types import ChatOptions
 
     attributes: dict[str, Any] = {}
-    chat_options: ChatOptions = kwargs.get("chat_options", ChatOptions())
+    chat_options: ChatOptions | None = kwargs.get("chat_options")
+    if chat_options is None:
+        chat_options = ChatOptions()
     if operation_name := kwargs.get("operation_name"):
         attributes[OtelAttr.OPERATION] = operation_name
     if choice_count := kwargs.get("choice_count", 1):
