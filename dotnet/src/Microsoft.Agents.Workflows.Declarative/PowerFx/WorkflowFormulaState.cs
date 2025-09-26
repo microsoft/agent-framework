@@ -27,6 +27,9 @@ internal sealed class WorkflowFormulaState
             VariableScopeNames.System,
         ];
 
+    /// <summary>
+    /// Initialize the product context to Foundry immediately and only once..
+    /// </summary>
     static WorkflowFormulaState()
     {
         ProductContext.SetContext(Product.Foundry);
@@ -42,7 +45,7 @@ internal sealed class WorkflowFormulaState
 
     public WorkflowFormulaState(RecalcEngine engine)
     {
-        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), scopeName => new WorkflowScope());
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
 
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
@@ -131,6 +134,7 @@ internal sealed class WorkflowFormulaState
         return
             VariableScopeNames.GetNamespaceFromName(scopeName) switch
             {
+                // Always alias component level scope as "Local"
                 VariableNamespace.Component => DefaultScopeName,
                 VariableNamespace.Unknown => throw new DeclarativeActionException($"Invalid variable scope name: '{scopeName}'."),
                 _ => scopeName,
