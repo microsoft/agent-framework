@@ -10,6 +10,8 @@ internal interface ISuperStepRunner
 {
     string RunId { get; }
 
+    string StartExecutorId { get; }
+
     bool HasUnservicedRequests { get; }
     bool HasUnprocessedMessages { get; }
 

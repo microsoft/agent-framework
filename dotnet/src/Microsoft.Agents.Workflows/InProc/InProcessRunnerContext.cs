@@ -3,12 +3,14 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Agents.Workflows.Checkpointing;
 using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Observability;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
@@ -175,8 +177,17 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     private sealed class BoundContext(InProcessRunnerContext RunnerContext, string ExecutorId, OutputFilter outputFilter) : IWorkflowContext
     {
+        private static readonly string s_namespace = typeof(IWorkflowContext).Namespace!;
+        private static readonly ActivitySource s_activitySource = new(s_namespace);
+
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
-        public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
+        public ValueTask SendMessageAsync(object message, string? targetId = null)
+        {
+            using Activity? activity = s_activitySource.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+            // TODO(@taochen): Get trace context for linking activities.
+
+            return RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
+        }
 
         public async ValueTask YieldOutputAsync(object output)
         {

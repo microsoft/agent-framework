@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
@@ -13,6 +14,9 @@ internal interface IStatefulEdgeRunner
 
 internal abstract class EdgeRunner
 {
+    protected static readonly string s_namespace = typeof(EdgeRunner).Namespace!;
+    protected static readonly ActivitySource s_activitySource = new(s_namespace);
+
     // TODO: Can this be sync?
     protected internal abstract ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer);
 }

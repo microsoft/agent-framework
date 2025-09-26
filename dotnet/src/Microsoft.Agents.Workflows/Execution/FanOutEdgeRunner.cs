@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Observability;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
@@ -16,25 +17,49 @@ internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData
 
     protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
+        using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
+        activity?
+            .SetTag(Tags.EdgeGroupType, nameof(FanOutEdgeRunner))
+            .SetTag(Tags.MessageSourceId, this.EdgeData.SourceId);
+
         object message = envelope.Message;
-        IEnumerable<string> targetIds =
-            this.EdgeData.EdgeAssigner is null
-                ? this.EdgeData.SinkIds
-                : this.EdgeData.EdgeAssigner(message, this.BoundContexts.Count)
-                               .Select(i => this.EdgeData.SinkIds[i]);
 
-        Executor[] result = await Task.WhenAll(targetIds.Where(IsValidTarget)
-                                                        .Select(tid => this.RunContext.EnsureExecutorAsync(tid, stepTracer)
-                                                        .AsTask()))
-                                      .ConfigureAwait(false);
-
-        if (result.Length == 0)
+        try
         {
-            return null;
-        }
+            IEnumerable<string> targetIds =
+                this.EdgeData.EdgeAssigner is null
+                    ? this.EdgeData.SinkIds
+                    : this.EdgeData.EdgeAssigner(message, this.BoundContexts.Count)
+                                .Select(i => this.EdgeData.SinkIds[i]);
 
-        IEnumerable<Executor> validTargets = result.Where(t => t.CanHandle(envelope.MessageType));
-        return new DeliveryMapping(envelope, validTargets);
+            Executor[] result = await Task.WhenAll(targetIds.Where(IsValidTarget)
+                                                            .Select(tid => this.RunContext.EnsureExecutorAsync(tid, stepTracer)
+                                                            .AsTask()))
+                                        .ConfigureAwait(false);
+
+            if (result.Length == 0)
+            {
+                activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DroppedTargetMismatch);
+                return null;
+            }
+
+            IEnumerable<Executor> validTargets = result.Where(t => t.CanHandle(envelope.MessageType));
+
+            if (!validTargets.Any())
+            {
+                activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DropperTypeMismatch);
+                return null;
+            }
+
+            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Delivered);
+
+            return new DeliveryMapping(envelope, validTargets);
+        }
+        catch
+        {
+            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
+            throw;
+        }
 
         bool IsValidTarget(string targetId)
         {

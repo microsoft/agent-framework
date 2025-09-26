@@ -2,11 +2,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Agents.Workflows.Execution;
+using Microsoft.Agents.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -19,6 +21,9 @@ public sealed class StreamingRun
 {
     private TaskCompletionSource<object>? _waitForResponseSource;
     private readonly ISuperStepRunner _stepRunner;
+
+    private static readonly string s_namespace = typeof(StreamingRun).Namespace!;
+    private static readonly ActivitySource s_activitySource = new(s_namespace);
 
     /// <summary>
     /// Gets a value indicating whether there are any outstanding <see cref="ExternalRequest"/>s for which a
@@ -95,12 +100,28 @@ public sealed class StreamingRun
 
         this._stepRunner.WorkflowEvent += OnWorkflowEvent;
 
+        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowRun);
+        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this.RunId);
+
         try
         {
+            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
             do
             {
                 // Drain SuperSteps while there are steps to run
-                await this._stepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false);
+                try
+                {
+                    await this._stepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    activity?.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
+                        { Tags.ErrorType, ex.GetType().FullName },
+                        { Tags.BuildErrorMessage, ex.Message },
+                    }));
+                    activity?.CaptureException(ex);
+                    throw;
+                }
                 if (cancellation.IsCancellationRequested)
                 {
                     yield break; // Exit if cancellation is requested
@@ -146,6 +167,8 @@ public sealed class StreamingRun
                     this._waitForResponseSource = null;
                 }
             } while (this._stepRunner.HasUnprocessedMessages);
+
+            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
         }
         finally
         {

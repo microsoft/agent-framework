@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.Workflows.Observability;
 
 namespace Microsoft.Agents.Workflows.Execution;
 
@@ -16,10 +17,24 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
 
     protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
-        Debug.Assert(!envelope.IsExternal, "FanIn edges should never be chased from external input");
+        using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
+        activity?
+            .SetTag(Tags.EdgeGroupType, nameof(FanInEdgeRunner))
+            .SetTag(Tags.MessageTargetId, this.EdgeData.SinkId);
+
+        try
+        {
+            Debug.Assert(!envelope.IsExternal, "FanIn edges should never be chased from external input");
+        }
+        catch
+        {
+            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
+            throw;
+        }
 
         if (envelope.TargetId is not null && this.EdgeData.SinkId != envelope.TargetId)
         {
+            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DroppedTargetMismatch);
             return null;
         }
 
@@ -28,14 +43,29 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
         if (releasedMessages is null)
         {
             // Not ready to process yet.
+            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Buffered);
             return null;
         }
 
-        // TODO: Filter messages based on accepted input types?
-        Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, stepTracer)
-                                               .ConfigureAwait(false);
+        try
+        {
+            // TODO: Filter messages based on accepted input types?
+            Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, stepTracer)
+                                                   .ConfigureAwait(false);
+            var finalReleasedMessages = releasedMessages.Where(envelope => target.CanHandle(envelope.MessageType));
+            if (!finalReleasedMessages.Any())
+            {
+                activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DropperTypeMismatch);
+                return null;
+            }
 
-        return new DeliveryMapping(releasedMessages.Where(envelope => target.CanHandle(envelope.MessageType)), target);
+            return new DeliveryMapping(finalReleasedMessages, target);
+        }
+        catch
+        {
+            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
+            throw;
+        }
     }
 
     public ValueTask<PortableValue> ExportStateAsync()
