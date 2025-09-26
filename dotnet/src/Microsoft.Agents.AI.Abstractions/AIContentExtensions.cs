@@ -10,7 +10,6 @@ using System.Runtime.CompilerServices;
 #else
 using System.Text;
 #endif
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Extensions.AI;
 
