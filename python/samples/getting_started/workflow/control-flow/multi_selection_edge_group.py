@@ -22,7 +22,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     executor,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
@@ -184,7 +184,7 @@ async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, 
 
 async def main() -> None:
     # Agents
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     email_analysis_agent = AgentExecutor(
         chat_client.create_agent(

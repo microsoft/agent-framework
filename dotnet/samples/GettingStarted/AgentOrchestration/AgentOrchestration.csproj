@@ -41,9 +41,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.Orchestration\Microsoft.Agents.Orchestration.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.AzureAI\Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.OpenAI\Microsoft.Extensions.AI.Agents.OpenAI.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.AzureAI\Microsoft.Agents.AI.AzureAI.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

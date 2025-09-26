@@ -31,15 +31,17 @@ Once comfortable with these, explore the rest of the samples below.
 ## Samples Overview (by directory)
 
 ### agents
+
 | Sample | File | Concepts |
 |---|---|---|
 | Azure Chat Agents (Streaming) | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py) | Add Azure agents as edges and handle streaming events |
 | Custom Agent Executors | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py) | Create executors to handle agent run methods |
-| Foundry Chat Agents (Streaming) | [agents/foundry_chat_agents_streaming.py](./agents/foundry_chat_agents_streaming.py) | Add Foundry agents as edges and handle streaming events |
+| Azure AI Chat Agents (Streaming) | [agents/azure_ai_chat_agents_streaming.py](./agents/azure_ai_chat_agents_streaming.py) | Add Azure AI agents as edges and handle streaming events |
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py) | Wrap a workflow so it can behave like an agent (reflection pattern) |
 | Workflow as Agent + HITL | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py) | Extend workflow-as-agent with human-in-the-loop capability |
 
 ### checkpoint
+
 | Sample | File | Concepts |
 |---|---|---|
 | Checkpoint & Resume | [checkpoint/checkpoint_with_resume.py](./checkpoint/checkpoint_with_resume.py) | Create checkpoints, inspect them, and resume execution |
@@ -47,6 +49,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Checkpointed Sub-Workflow | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py) | Save and resume a sub-workflow that pauses for human approval |
 
 ### composition
+
 | Sample | File | Concepts |
 |---|---|---|
 | Sub-Workflow (Basics) | [composition/sub_workflow_basics.py](./composition/sub_workflow_basics.py) | Wrap a workflow as an executor and orchestrate sub-workflows |
@@ -54,6 +57,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Sub-Workflow: Parallel Requests | [composition/sub_workflow_parallel_requests.py](./composition/sub_workflow_parallel_requests.py) | Multiple specialized interceptors handling different request types from same sub-workflow |
 
 ### control-flow
+
 | Sample | File | Concepts |
 |---|---|---|
 | Sequential Executors | [control-flow/sequential_executors.py](./control-flow/sequential_executors.py) | Sequential workflow with explicit executor setup |
@@ -64,16 +68,19 @@ Once comfortable with these, explore the rest of the samples below.
 | Simple Loop | [control-flow/simple_loop.py](./control-flow/simple_loop.py) | Feedback loop where an agent judges ABOVE/BELOW/MATCHED |
 
 ### human-in-the-loop
+
 | Sample | File | Concepts |
 |---|---|---|
 | Human-In-The-Loop (Guessing Game) | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human |
 
 ### observability
+
 | Sample | File | Concepts |
 |---|---|---|
-| Tracing (Basics) | [observability/tracing_basics.py](./observability/tracing_basics.py) | Use basic tracing for workflow telemetry |
+| Tracing (Basics) | [observability/tracing_basics.py](./observability/tracing_basics.py) | Use basic tracing for workflow telemetry. Refer to this [directory](../observability/) to learn more about observability concepts. |
 
 ### orchestration
+
 | Sample | File | Concepts |
 |---|---|---|
 | Concurrent Orchestration (Default Aggregator) | [orchestration/concurrent_agents.py](./orchestration/concurrent_agents.py) | Fan-out to multiple agents; fan-in with default aggregator returning combined ChatMessages |
@@ -88,6 +95,7 @@ Once comfortable with these, explore the rest of the samples below.
 **Magentic checkpointing tip**: Treat `MagenticBuilder.participants` keys as stable identifiers. When resuming from a checkpoint, the rebuilt workflow must reuse the same participant names; otherwise the checkpoint cannot be applied and the run will fail fast.
 
 ### parallelism
+
 | Sample | File | Concepts |
 |---|---|---|
 | Concurrent (Fan-out/Fan-in) | [parallelism/fan_out_fan_in_edges.py](./parallelism/fan_out_fan_in_edges.py) | Dispatch to multiple executors and aggregate results |
@@ -95,16 +103,19 @@ Once comfortable with these, explore the rest of the samples below.
 | Map-Reduce with Visualization | [parallelism/map_reduce_and_visualization.py](./parallelism/map_reduce_and_visualization.py) | Fan-out/fan-in pattern with diagram export |
 
 ### state-management
+
 | Sample | File | Concepts |
 |---|---|---|
 | Shared States | [state-management/shared_states_with_agents.py](./state-management/shared_states_with_agents.py) | Store in shared state once and later reuse across agents |
 
 ### visualization
+
 | Sample | File | Concepts |
 |---|---|---|
 | Concurrent with Visualization | [visualization/concurrent_with_visualization.py](./visualization/concurrent_with_visualization.py) | Fan-out/fan-in workflow with diagram export |
 
 ### resources
+
 - Sample text inputs used by certain workflows:
   - [resources/long_text.txt](./resources/long_text.txt)
   - [resources/email.txt](./resources/email.txt)
@@ -112,9 +123,11 @@ Once comfortable with these, explore the rest of the samples below.
   - [resources/ambiguous_email.txt](./resources/ambiguous_email.txt)
 
 Notes
+
 - Agent-based samples use provider SDKs (Azure/OpenAI, etc.). Ensure credentials are configured, or adapt agents accordingly.
 
 Sequential orchestration uses a few small adapter nodes for plumbing:
+
 - "input-conversation" normalizes input to `list[ChatMessage]`
 - "to-conversation:<participant>" converts agent responses into the shared conversation
 - "complete" publishes the final `WorkflowOutputEvent`
@@ -123,9 +136,9 @@ concurrent’s dispatcher and aggregator and can be ignored if you only care abo
 
 ### Environment Variables
 
-- **AzureChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).  
-  These variables are required for samples that construct `AzureChatClient`
+- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).
+  These variables are required for samples that construct `AzureOpenAIChatClient`
 
-- **OpenAI** (used in orchestration samples):  
-  - [OpenAIChatClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_chat_client/README.md)  
+- **OpenAI** (used in orchestration samples):
+  - [OpenAIChatClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_chat_client/README.md)
   - [OpenAIResponsesClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_responses_client/README.md)

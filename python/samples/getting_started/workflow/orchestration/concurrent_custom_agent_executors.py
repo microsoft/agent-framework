@@ -13,7 +13,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -25,21 +25,21 @@ and emit AgentExecutorResponse outputs, which allows reuse of the high-level
 ConcurrentBuilder API and the default aggregator.
 
 Demonstrates:
-- Executors that create their ChatAgent in __init__ (via AzureChatClient)
+- Executors that create their ChatAgent in __init__ (via AzureOpenAIChatClient)
 - A @handler that converts AgentExecutorRequest -> AgentExecutorResponse
 - ConcurrentBuilder().participants([...]) to build fan-out/fan-in
 - Default aggregator returning list[ChatMessage] (one user + one assistant per agent)
 - Workflow completion when all participants become idle
 
 Prerequisites:
-- Azure OpenAI configured for AzureChatClient (az login + required env vars)
+- Azure OpenAI configured for AzureOpenAIChatClient (az login + required env vars)
 """
 
 
 class ResearcherExec(Executor):
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureChatClient, id: str = "researcher"):
+    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "researcher"):
         agent = chat_client.create_agent(
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
@@ -59,7 +59,7 @@ class ResearcherExec(Executor):
 class MarketerExec(Executor):
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureChatClient, id: str = "marketer"):
+    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "marketer"):
         agent = chat_client.create_agent(
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
@@ -79,7 +79,7 @@ class MarketerExec(Executor):
 class LegalExec(Executor):
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureChatClient, id: str = "legal"):
+    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "legal"):
         agent = chat_client.create_agent(
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
@@ -97,7 +97,7 @@ class LegalExec(Executor):
 
 
 async def main() -> None:
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     researcher = ResearcherExec(chat_client)
     marketer = MarketerExec(chat_client)
