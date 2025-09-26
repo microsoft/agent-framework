@@ -27,14 +27,6 @@ internal sealed class WorkflowFormulaState
             VariableScopeNames.System,
         ];
 
-    /// <summary>
-    /// Initialize the product context to Foundry immediately and only once..
-    /// </summary>
-    static WorkflowFormulaState()
-    {
-        ProductContext.SetContext(Product.Foundry);
-    }
-
     private readonly Dictionary<string, WorkflowScope> _scopes;
 
     private int _isInitialized;
@@ -118,7 +110,7 @@ internal sealed class WorkflowFormulaState
 
         void Bind(string scopeName, string? targetScope = null)
         {
-            targetScope ??= scopeName;
+            targetScope = GetScopeName(targetScope ?? scopeName);
             RecordValue scopeRecord = this.GetScope(scopeName).ToRecord();
             this.Engine.DeleteFormula(targetScope);
             this.Engine.UpdateVariable(targetScope, scopeRecord);
@@ -129,6 +121,11 @@ internal sealed class WorkflowFormulaState
 
     public static string GetScopeName(string? scopeName)
     {
+        if (!ProductContext.IsLocalScopeSupported())
+        {
+            ProductContext.SetContext(Product.Foundry);
+        }
+
         scopeName ??= DefaultScopeName;
 
         return
