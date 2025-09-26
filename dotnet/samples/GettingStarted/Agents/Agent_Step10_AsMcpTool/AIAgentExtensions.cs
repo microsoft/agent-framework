@@ -3,7 +3,7 @@
 using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using ModelContextProtocol.Server;
 
 namespace Agent_Step10_AsMcpTool;

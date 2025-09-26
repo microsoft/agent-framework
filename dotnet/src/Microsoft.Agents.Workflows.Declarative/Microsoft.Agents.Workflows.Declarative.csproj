@@ -32,7 +32,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.Workflows\Microsoft.Agents.Workflows.csproj" />
-    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.AzureAI\Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.AzureAI\Microsoft.Agents.AI.AzureAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
