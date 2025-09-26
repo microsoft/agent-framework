@@ -11,7 +11,7 @@ void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bo
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
-        bool <#= targetVariable #> = await context.ReadStateAsync<bool>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+        bool <#= targetVariable #> = await context.ReadStateAsync<bool>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsVariableReference)
     {#>

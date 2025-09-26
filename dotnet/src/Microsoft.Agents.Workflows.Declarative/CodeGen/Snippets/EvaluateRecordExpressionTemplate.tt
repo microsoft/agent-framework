@@ -13,7 +13,7 @@ void EvaluateRecordExpression<TValue>(ObjectExpression<RecordDataValue> expressi
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
-        <#= resultTypeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultTypeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+        <#= resultTypeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultTypeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsVariableReference)
     {#>

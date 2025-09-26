@@ -28,7 +28,7 @@ internal abstract class CodeTemplate
     #region Object Model helpers
 
     public static string VariableName(PropertyPath path) => Throw.IfNull(path.VariableName);
-    public static string VariableScope(PropertyPath path) => Throw.IfNull(path.VariableScopeName);
+    public static string VariableScope(PropertyPath path) => Throw.IfNull(path.NamespaceAlias);
 
     public static string FormatBoolValue(bool? value, bool defaultValue = false) =>
         value ?? defaultValue ? "true" : "false";

@@ -122,7 +122,7 @@ if (this.TypeInfo.UserVariables.Count > 0)
             this.Write("\", UnassignedValue.Instance, \"");
             
             #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\RootTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(variableInfo.Path.VariableScopeName));
+            this.Write(this.ToStringHelper.ToStringWithCulture(variableInfo.Path.NamespaceAlias));
             
             #line default
             #line hidden

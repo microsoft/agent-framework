@@ -12,7 +12,7 @@ void EvaluateIntExpression(IntExpression expression, string targetVariable, bool
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
-        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<int>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<int>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsVariableReference)
     {#>

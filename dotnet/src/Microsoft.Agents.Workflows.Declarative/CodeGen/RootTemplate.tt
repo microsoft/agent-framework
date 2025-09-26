@@ -33,7 +33,7 @@ if (this.TypeInfo.UserVariables.Count > 0)
         // Initialize variables<#
     foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
     {#>
-        await context.QueueStateUpdateAsync("<#= variableInfo.Path.VariableName #>", UnassignedValue.Instance, "<#= variableInfo.Path.VariableScopeName #>").ConfigureAwait(false);<#
+        await context.QueueStateUpdateAsync("<#= variableInfo.Path.VariableName #>", UnassignedValue.Instance, "<#= variableInfo.Path.NamespaceAlias #>").ConfigureAwait(false);<#
     }
 }#>
     }

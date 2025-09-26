@@ -47,7 +47,7 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
         if (variablePath is not null)
         {
             Assert.Contains(@$"key: ""{variablePath.VariableName}""", workflowCode);
-            Assert.Contains(@$"scopeName: ""{variablePath.VariableScopeName}""", workflowCode);
+            Assert.Contains(@$"scopeName: ""{variablePath.NamespaceAlias}""", workflowCode);
         }
     }
 
@@ -55,7 +55,7 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
     {
         Assert.NotNull(variablePath);
         Assert.Contains(@$"key: ""{variablePath.VariableName}""", workflowCode);
-        Assert.Contains(@$"scopeName: ""{variablePath.VariableScopeName}""", workflowCode);
+        Assert.Contains(@$"scopeName: ""{variablePath.NamespaceAlias}""", workflowCode);
     }
 
     protected void AssertDelegate(string actionId, string rootId, string workflowCode)

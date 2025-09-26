@@ -22,7 +22,7 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
-        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<string>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<string>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsVariableReference)
     {#>

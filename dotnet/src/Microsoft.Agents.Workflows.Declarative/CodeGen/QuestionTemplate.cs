@@ -283,7 +283,7 @@ this.Write("\", scopeName: \"");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
@@ -667,7 +667,7 @@ this.Write("\", scopeName: \"");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
@@ -1010,7 +1010,7 @@ this.Write("\", scopeName: \"");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
@@ -1353,7 +1353,7 @@ this.Write("\", scopeName: \"");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
@@ -1757,7 +1757,7 @@ this.Write("\", scopeName: \"");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
@@ -2074,7 +2074,7 @@ this.Write("\", scopeName: \"");
         #line hidden
         
         #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
-this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableScopeName));
+this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default

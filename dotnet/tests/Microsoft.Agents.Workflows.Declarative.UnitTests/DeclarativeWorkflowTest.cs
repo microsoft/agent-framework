@@ -216,7 +216,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), mockAgentProvider.Object, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
@@ -295,13 +295,5 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         mockAgentProvider.Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));
         mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         return mockAgentProvider;
-    }
-
-    private sealed class RootExecutor() :
-        Executor<string>(WorkflowActionVisitor.Steps.Root("anything")),
-        IModeledAction
-    {
-        public override async ValueTask HandleAsync(string message, IWorkflowContext context) =>
-            await context.SendMessageAsync($"{this.Id}: {DateTime.UtcNow:t}").ConfigureAwait(false);
     }
 }

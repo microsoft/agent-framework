@@ -27,7 +27,7 @@ void EvaluateEnumExpression<TWrapper, TValue>(
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
     {#>
-        <#= resultType #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultType #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.VariableScopeName #>").ConfigureAwait(false);<#+
+        <#= resultType #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultType #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
     }
     else if (expression.IsVariableReference)
     {#>
