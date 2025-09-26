@@ -12,7 +12,7 @@
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
 
-    <ItemGroup>
+  <ItemGroup>
     <PackageReference Include="A2A" />
 
     <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
