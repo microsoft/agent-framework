@@ -15,7 +15,7 @@ namespace Microsoft.Agents.Workflows;
 /// A <see cref="Workflow"/> run instance supporting a streaming form of receiving workflow events, and providing
 /// a mechanism to send responses back to the workflow.
 /// </summary>
-public class StreamingRun
+public sealed class StreamingRun
 {
     private TaskCompletionSource<object>? _waitForResponseSource;
     private readonly ISuperStepRunner _stepRunner;
@@ -157,6 +157,14 @@ public class StreamingRun
             eventSink.Add(e);
         }
     }
+
+    /// <summary>
+    /// Signals the end of the current run and initiates any necessary cleanup operations asynchronously.
+    /// Enables the underlying Workflow instance to be reused in subsequent runs.
+    /// </summary>
+    /// <returns>A ValueTask that represents the asynchronous operation. The task is complete when the run has
+    /// ended and cleanup is finished.</returns>
+    public ValueTask EndRunAsync() => this._stepRunner.RequestEndRunAsync();
 }
 
 /// <summary>

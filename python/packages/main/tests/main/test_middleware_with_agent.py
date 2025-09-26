@@ -8,7 +8,9 @@ import pytest
 from agent_framework import (
     AgentRunResponseUpdate,
     ChatAgent,
+    ChatContext,
     ChatMessage,
+    ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
     FunctionCallContent,
@@ -16,7 +18,9 @@ from agent_framework import (
     Role,
     TextContent,
     agent_middleware,
+    chat_middleware,
     function_middleware,
+    use_function_invocation,
 )
 from agent_framework._middleware import (
     AgentMiddleware,
@@ -25,8 +29,9 @@ from agent_framework._middleware import (
     FunctionMiddleware,
     MiddlewareType,
 )
+from agent_framework.exceptions import MiddlewareException
 
-from .conftest import MockChatClient
+from .conftest import MockBaseChatClient, MockChatClient
 
 # region ChatAgent Tests
 
@@ -713,6 +718,101 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert function_calls[0].name == "sample_tool_function"
         assert function_results[0].call_id == function_calls[0].call_id
 
+    async def test_function_middleware_can_access_and_override_custom_kwargs(
+        self, chat_client: "MockChatClient"
+    ) -> None:
+        """Test that function middleware can access and override custom parameters like temperature."""
+        captured_kwargs: dict[str, Any] = {}
+        modified_kwargs: dict[str, Any] = {}
+        middleware_called = False
+
+        @function_middleware
+        async def kwargs_middleware(
+            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        ) -> None:
+            nonlocal middleware_called
+            middleware_called = True
+
+            # Capture the original kwargs
+            captured_kwargs["has_chat_options"] = "chat_options" in context.kwargs
+            captured_kwargs["has_custom_param"] = "custom_param" in context.kwargs
+            captured_kwargs["custom_param"] = context.kwargs.get("custom_param")
+
+            # Capture original chat_options values if present
+            if "chat_options" in context.kwargs:
+                chat_options = context.kwargs["chat_options"]
+                captured_kwargs["original_temperature"] = getattr(chat_options, "temperature", None)
+                captured_kwargs["original_max_tokens"] = getattr(chat_options, "max_tokens", None)
+
+            # Modify some kwargs
+            context.kwargs["temperature"] = 0.9
+            context.kwargs["max_tokens"] = 500
+            context.kwargs["new_param"] = "added_by_middleware"
+
+            # Also modify chat_options if present
+            if "chat_options" in context.kwargs:
+                context.kwargs["chat_options"].temperature = 0.9
+                context.kwargs["chat_options"].max_tokens = 500
+
+            # Store modified kwargs for verification
+            modified_kwargs["temperature"] = context.kwargs.get("temperature")
+            modified_kwargs["max_tokens"] = context.kwargs.get("max_tokens")
+            modified_kwargs["new_param"] = context.kwargs.get("new_param")
+            modified_kwargs["custom_param"] = context.kwargs.get("custom_param")
+
+            # Capture modified chat_options values if present
+            if "chat_options" in context.kwargs:
+                chat_options = context.kwargs["chat_options"]
+                modified_kwargs["chat_options_temperature"] = getattr(chat_options, "temperature", None)
+                modified_kwargs["chat_options_max_tokens"] = getattr(chat_options, "max_tokens", None)
+
+            await next(context)
+
+        chat_client.responses = [
+            ChatResponse(
+                messages=[
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        contents=[
+                            FunctionCallContent(
+                                call_id="test_call", name="sample_tool_function", arguments={"location": "Seattle"}
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Function completed")])]),
+        ]
+
+        # Create ChatAgent with function middleware
+        agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware], tools=[sample_tool_function])
+
+        # Execute the agent with custom parameters
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages, temperature=0.7, max_tokens=100, custom_param="test_value")
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+
+        # First check if middleware was called at all
+        assert middleware_called, "Function middleware was not called"
+
+        # Verify middleware captured the original kwargs
+        assert captured_kwargs["has_chat_options"] is True
+        assert captured_kwargs["has_custom_param"] is True
+        assert captured_kwargs["custom_param"] == "test_value"
+        assert captured_kwargs["original_temperature"] == 0.7
+        assert captured_kwargs["original_max_tokens"] == 100
+
+        # Verify middleware could modify the kwargs
+        assert modified_kwargs["temperature"] == 0.9
+        assert modified_kwargs["max_tokens"] == 500
+        assert modified_kwargs["new_param"] == "added_by_middleware"
+        assert modified_kwargs["custom_param"] == "test_value"
+        assert modified_kwargs["chat_options_temperature"] == 0.9
+        assert modified_kwargs["chat_options_max_tokens"] == 500
+
 
 class TestMiddlewareDynamicRebuild:
     """Test cases for dynamic middleware pipeline rebuilding with ChatAgent."""
@@ -1187,8 +1287,8 @@ class TestMiddlewareDecoratorLogic:
         """Both decorator and parameter type specified but don't match."""
 
         # This will cause a type error at decoration time, so we need to test differently
-        # Should raise ValueError due to mismatch during agent creation
-        with pytest.raises(ValueError, match="Middleware type mismatch"):
+        # Should raise MiddlewareException due to mismatch during agent creation
+        with pytest.raises(MiddlewareException, match="Middleware type mismatch"):
 
             @agent_middleware  # type: ignore[arg-type]
             async def mismatched_middleware(
@@ -1304,8 +1404,8 @@ class TestMiddlewareDecoratorLogic:
         async def no_info_middleware(context: Any, next: Any) -> None:  # No decorator, no type
             await next(context)
 
-        # Should raise ValueError
-        with pytest.raises(ValueError, match="Cannot determine middleware type"):
+        # Should raise MiddlewareException
+        with pytest.raises(MiddlewareException, match="Cannot determine middleware type"):
             agent = ChatAgent(chat_client=chat_client, middleware=[no_info_middleware])
             await agent.run([ChatMessage(role=Role.USER, text="test")])
 
@@ -1313,8 +1413,8 @@ class TestMiddlewareDecoratorLogic:
         """Test that middleware with insufficient parameters raises an error."""
         from agent_framework import ChatAgent, agent_middleware
 
-        # Should raise ValueError about insufficient parameters
-        with pytest.raises(ValueError, match="must have at least 2 parameters"):
+        # Should raise MiddlewareException about insufficient parameters
+        with pytest.raises(MiddlewareException, match="must have at least 2 parameters"):
 
             @agent_middleware  # type: ignore[arg-type]
             async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter
@@ -1340,3 +1440,359 @@ class TestMiddlewareDecoratorLogic:
 
         assert hasattr(test_function_middleware, "_middleware_type")
         assert test_function_middleware._middleware_type == MiddlewareType.FUNCTION  # type: ignore[attr-defined]
+
+
+class TestChatAgentChatMiddleware:
+    """Test cases for chat middleware integration with ChatAgent."""
+
+    async def test_class_based_chat_middleware_with_chat_agent(self) -> None:
+        """Test class-based chat middleware with ChatAgent."""
+        execution_order: list[str] = []
+
+        class TrackingChatMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+                execution_order.append("chat_middleware_before")
+                await next(context)
+                execution_order.append("chat_middleware_after")
+
+        # Create ChatAgent with chat middleware
+        chat_client = MockBaseChatClient()
+        middleware = TrackingChatMiddleware()
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].role == Role.ASSISTANT
+        assert "test response" in response.messages[0].text
+        assert execution_order == ["chat_middleware_before", "chat_middleware_after"]
+
+    async def test_function_based_chat_middleware_with_chat_agent(self) -> None:
+        """Test function-based chat middleware with ChatAgent."""
+        execution_order: list[str] = []
+
+        async def tracking_chat_middleware(
+            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("chat_middleware_before")
+            await next(context)
+            execution_order.append("chat_middleware_after")
+
+        # Create ChatAgent with function-based chat middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[tracking_chat_middleware])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].role == Role.ASSISTANT
+        assert "test response" in response.messages[0].text
+        assert execution_order == ["chat_middleware_before", "chat_middleware_after"]
+
+    async def test_chat_middleware_can_modify_messages(self) -> None:
+        """Test that chat middleware can modify messages before sending to model."""
+
+        @chat_middleware
+        async def message_modifier_middleware(
+            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
+            # Modify the first message by adding a prefix
+            if context.messages and len(context.messages) > 0:
+                original_text = context.messages[0].text or ""
+                context.messages[0] = ChatMessage(role=context.messages[0].role, text=f"MODIFIED: {original_text}")
+            await next(context)
+
+        # Create ChatAgent with message-modifying middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[message_modifier_middleware])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify that the message was modified (MockBaseChatClient echoes back the input)
+        assert response is not None
+        assert len(response.messages) > 0
+        assert "MODIFIED: test message" in response.messages[0].text
+
+    async def test_chat_middleware_can_override_response(self) -> None:
+        """Test that chat middleware can override the response."""
+
+        @chat_middleware
+        async def response_override_middleware(
+            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
+            # Override the response without calling next()
+            context.result = ChatResponse(
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Middleware overridden response")],
+                response_id="middleware-response-123",
+            )
+            context.terminate = True
+
+        # Create ChatAgent with response-overriding middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[response_override_middleware])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify that the response was overridden
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].text == "Middleware overridden response"
+        assert response.response_id == "middleware-response-123"
+
+    async def test_multiple_chat_middleware_execution_order(self) -> None:
+        """Test that multiple chat middleware execute in the correct order."""
+        execution_order: list[str] = []
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("first_before")
+            await next(context)
+            execution_order.append("first_after")
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("second_before")
+            await next(context)
+            execution_order.append("second_after")
+
+        # Create ChatAgent with multiple chat middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[first_middleware, second_middleware])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+        assert execution_order == ["first_before", "second_before", "second_after", "first_after"]
+
+    async def test_chat_middleware_with_streaming(self) -> None:
+        """Test chat middleware with streaming responses."""
+        execution_order: list[str] = []
+        streaming_flags: list[bool] = []
+
+        class StreamingTrackingChatMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+                execution_order.append("streaming_chat_before")
+                streaming_flags.append(context.is_streaming)
+                await next(context)
+                execution_order.append("streaming_chat_after")
+
+        # Create ChatAgent with chat middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[StreamingTrackingChatMiddleware()])
+
+        # Set up mock streaming responses
+        chat_client.streaming_responses = [
+            [
+                ChatResponseUpdate(contents=[TextContent(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+            ]
+        ]
+
+        # Execute streaming
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream(messages):
+            updates.append(update)
+
+        # Verify streaming response
+        assert len(updates) >= 1  # At least some updates
+        assert execution_order == ["streaming_chat_before", "streaming_chat_after"]
+
+        # Verify streaming flag was set (at least one True)
+        assert True in streaming_flags
+
+    async def test_chat_middleware_termination_before_execution(self) -> None:
+        """Test that chat middleware can terminate execution before calling next()."""
+        execution_order: list[str] = []
+
+        class PreTerminationChatMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+                execution_order.append("middleware_before")
+                context.terminate = True
+                # Set a custom response since we're terminating
+                context.result = ChatResponse(
+                    messages=[ChatMessage(role=Role.ASSISTANT, text="Terminated by middleware")]
+                )
+                # We call next() but since terminate=True, execution should stop
+                await next(context)
+                execution_order.append("middleware_after")
+
+        # Create ChatAgent with terminating middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[PreTerminationChatMiddleware()])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify response was from middleware
+        assert response is not None
+        assert len(response.messages) > 0
+        assert response.messages[0].text == "Terminated by middleware"
+        assert execution_order == ["middleware_before", "middleware_after"]
+
+    async def test_chat_middleware_termination_after_execution(self) -> None:
+        """Test that chat middleware can terminate execution after calling next()."""
+        execution_order: list[str] = []
+
+        class PostTerminationChatMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+                execution_order.append("middleware_before")
+                await next(context)
+                execution_order.append("middleware_after")
+                context.terminate = True
+
+        # Create ChatAgent with terminating middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[PostTerminationChatMiddleware()])
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages)
+
+        # Verify response is from actual execution
+        assert response is not None
+        assert len(response.messages) > 0
+        assert "test response" in response.messages[0].text
+        assert execution_order == ["middleware_before", "middleware_after"]
+
+    async def test_combined_middleware(self) -> None:
+        """Test ChatAgent with combined middleware types."""
+        execution_order: list[str] = []
+
+        async def agent_middleware(
+            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("agent_middleware_before")
+            await next(context)
+            execution_order.append("agent_middleware_after")
+
+        async def chat_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            execution_order.append("chat_middleware_before")
+            await next(context)
+            execution_order.append("chat_middleware_after")
+
+        async def function_middleware(
+            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        ) -> None:
+            execution_order.append("function_middleware_before")
+            await next(context)
+            execution_order.append("function_middleware_after")
+
+        # Set up mock to return a function call first, then a regular response
+        function_call_response = ChatResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[
+                        FunctionCallContent(
+                            call_id="call_456",
+                            name="sample_tool_function",
+                            arguments='{"location": "San Francisco"}',
+                        )
+                    ],
+                )
+            ]
+        )
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
+
+        chat_client = use_function_invocation(MockBaseChatClient)()
+        chat_client.run_responses = [function_call_response, final_response]
+
+        # Create ChatAgent with function middleware and tools
+        agent = ChatAgent(
+            chat_client=chat_client,
+            middleware=[chat_middleware, function_middleware, agent_middleware],
+            tools=[sample_tool_function],
+        )
+
+        # Execute the agent
+        messages = [ChatMessage(role=Role.USER, text="Get weather for San Francisco")]
+        response = await agent.run(messages)
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+        assert chat_client.call_count == 2  # Two calls: one for function call, one for final response
+
+        # Verify function middleware was executed
+        assert execution_order == [
+            "agent_middleware_before",
+            "chat_middleware_before",
+            "chat_middleware_after",
+            "function_middleware_before",
+            "function_middleware_after",
+            "chat_middleware_before",
+            "chat_middleware_after",
+            "agent_middleware_after",
+        ]
+
+        # Verify function call and result are in the response
+        all_contents = [content for message in response.messages for content in message.contents]
+        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
+        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+
+        assert len(function_calls) == 1
+        assert len(function_results) == 1
+        assert function_calls[0].name == "sample_tool_function"
+        assert function_results[0].call_id == function_calls[0].call_id
+
+    async def test_agent_middleware_can_access_and_override_custom_kwargs(self) -> None:
+        """Test that agent middleware can access and override custom parameters like temperature."""
+        captured_kwargs: dict[str, Any] = {}
+        modified_kwargs: dict[str, Any] = {}
+
+        @agent_middleware
+        async def kwargs_middleware(
+            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+        ) -> None:
+            # Capture the original kwargs
+            captured_kwargs.update(context.kwargs)
+
+            # Modify some kwargs
+            context.kwargs["temperature"] = 0.9
+            context.kwargs["max_tokens"] = 500
+            context.kwargs["new_param"] = "added_by_middleware"
+
+            # Store modified kwargs for verification
+            modified_kwargs.update(context.kwargs)
+
+            await next(context)
+
+        # Create ChatAgent with agent middleware
+        chat_client = MockBaseChatClient()
+        agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware])
+
+        # Execute the agent with custom parameters
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages, temperature=0.7, max_tokens=100, custom_param="test_value")
+
+        # Verify response
+        assert response is not None
+        assert len(response.messages) > 0
+
+        # Verify middleware captured the original kwargs
+        assert captured_kwargs["temperature"] == 0.7
+        assert captured_kwargs["max_tokens"] == 100
+        assert captured_kwargs["custom_param"] == "test_value"
+
+        # Verify middleware could modify the kwargs
+        assert modified_kwargs["temperature"] == 0.9
+        assert modified_kwargs["max_tokens"] == 500
+        assert modified_kwargs["new_param"] == "added_by_middleware"
+        assert modified_kwargs["custom_param"] == "test_value"  # Should still be there

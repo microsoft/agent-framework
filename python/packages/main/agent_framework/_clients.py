@@ -10,7 +10,13 @@ from pydantic import BaseModel, Field
 from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, ContextProvider
-from ._middleware import Middleware
+from ._middleware import (
+    ChatMiddleware,
+    ChatMiddlewareCallable,
+    FunctionMiddleware,
+    FunctionMiddlewareCallable,
+    Middleware,
+)
 from ._pydantic import AFBaseModel
 from ._threads import ChatMessageStore
 from ._tools import ToolProtocol
@@ -189,6 +195,14 @@ class BaseChatClient(AFBaseModel, ABC):
     """Base class for chat clients."""
 
     additional_properties: dict[str, Any] = Field(default_factory=dict)
+    middleware: (
+        ChatMiddleware
+        | ChatMiddlewareCallable
+        | FunctionMiddleware
+        | FunctionMiddlewareCallable
+        | list[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable]
+        | None
+    ) = None
     OTEL_PROVIDER_NAME: str = "unknown"
     # This is used for OTel setup, should be overridden in subclasses
 
@@ -346,13 +360,7 @@ class BaseChatClient(AFBaseModel, ABC):
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
-        # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
-        if "_function_middleware_pipeline" in kwargs:
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
-        else:
-            filtered_kwargs = kwargs
-
-        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **filtered_kwargs)
+        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
 
     async def get_streaming_response(
         self,
@@ -432,14 +440,8 @@ class BaseChatClient(AFBaseModel, ABC):
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
-        # Remove middleware pipeline from kwargs as it's only used by function invocation wrappers
-        if "_function_middleware_pipeline" in kwargs:
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_middleware_pipeline"}
-        else:
-            filtered_kwargs = kwargs
-
         async for update in self._inner_get_streaming_response(
-            messages=prepped_messages, chat_options=chat_options, **filtered_kwargs
+            messages=prepped_messages, chat_options=chat_options, **kwargs
         ):
             yield update
 

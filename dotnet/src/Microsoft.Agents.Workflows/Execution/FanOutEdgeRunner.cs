@@ -14,37 +14,27 @@ internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData
             sinkId => sinkId,
             runContext.Bind);
 
-    public async ValueTask<IEnumerable<object?>> ChaseAsync(MessageEnvelope envelope, IStepTracer? tracer)
+    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
         object message = envelope.Message;
-        List<string> targets =
+        IEnumerable<string> targetIds =
             this.EdgeData.EdgeAssigner is null
                 ? this.EdgeData.SinkIds
                 : this.EdgeData.EdgeAssigner(message, this.BoundContexts.Count)
-                               .Select(i => this.EdgeData.SinkIds[i]).ToList();
+                               .Select(i => this.EdgeData.SinkIds[i]);
 
-        IEnumerable<string> filteredTargets =
-            envelope.TargetId is not null
-                ? targets.Where(IsValidTarget)
-                : targets;
+        Executor[] result = await Task.WhenAll(targetIds.Where(IsValidTarget)
+                                                        .Select(tid => this.RunContext.EnsureExecutorAsync(tid, stepTracer)
+                                                        .AsTask()))
+                                      .ConfigureAwait(false);
 
-        object?[] result = await Task.WhenAll(filteredTargets.Select(ProcessTargetAsync)).ConfigureAwait(false);
-        return result.Where(r => r is not null);
-
-        async Task<object?> ProcessTargetAsync(string targetId)
+        if (result.Length == 0)
         {
-            Executor executor = await this.RunContext.EnsureExecutorAsync(targetId, tracer)
-                                                         .ConfigureAwait(false);
-
-            if (executor.CanHandle(message.GetType()))
-            {
-                tracer?.TraceActivated(executor.Id);
-                return await executor.ExecuteAsync(message, envelope.MessageType, this.BoundContexts[targetId])
-                                     .ConfigureAwait(false);
-            }
-
             return null;
         }
+
+        IEnumerable<Executor> validTargets = result.Where(t => t.CanHandle(envelope.MessageType));
+        return new DeliveryMapping(envelope, validTargets);
 
         bool IsValidTarget(string targetId)
         {
