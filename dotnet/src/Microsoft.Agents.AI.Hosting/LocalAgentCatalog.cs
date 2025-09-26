@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.AI.Hosting;

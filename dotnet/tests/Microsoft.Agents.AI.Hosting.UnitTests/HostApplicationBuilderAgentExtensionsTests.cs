@@ -2,7 +2,6 @@
 
 using System;
 using System.Linq;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;

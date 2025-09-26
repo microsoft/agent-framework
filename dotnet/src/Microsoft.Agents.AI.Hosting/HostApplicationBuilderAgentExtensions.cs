@@ -2,7 +2,6 @@
 
 using System;
 using System.Linq;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.DependencyInjection;
