@@ -122,7 +122,7 @@ mypy-gaia = "mypy --config-file $POE_ROOT/pyproject.toml gaia/agent_framework_la
 mypy-lightning = "mypy --config-file $POE_ROOT/pyproject.toml lightning/agent_framework_lab_lightning"
 mypy-tau2 = "mypy --config-file $POE_ROOT/pyproject.toml tau2/agent_framework_lab_tau2"
 mypy = ["mypy-gaia", "mypy-lightning", "mypy-tau2"]
-test = "pytest --cov-report=term-missing:skip-covered"
+test = "pytest --cov-report=term-missing:skip-covered --junitxml=test-results.xml"
 test-gaia = "pytest gaia/tests --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered"
 test-lightning = "pytest lightning/tests --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered"
 test-tau2 = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered"

@@ -71,8 +71,9 @@ class GAIATelemetryConfig:
         try:
             import json
             import os
+            from collections.abc import Sequence
 
-            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
             from opentelemetry.trace import get_tracer_provider
 
@@ -82,7 +83,7 @@ class GAIATelemetryConfig:
                     # Ensure directory exists
                     os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
 
-                def export(self, spans) -> SpanExportResult:
+                def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
                     try:
                         with open(self.file_path, "a", encoding="utf-8") as f:
                             for span in spans:
