@@ -34,7 +34,7 @@ trigger:
     - kind: SetVariable
       id: set_project
       variable: Local.Project
-      value: =System.LastMessage.Text
+      value: =System.LastMessageText
 
     - kind: InvokeAzureAgent
       id: question_student
@@ -65,7 +65,7 @@ trigger:
       id: check_completion
       conditions:
 
-        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Local.TeacherResponse.Text)))
+        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Last(Local.TeacherResponse).Text)))
           id: check_turn_done
           actions:
 

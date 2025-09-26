@@ -64,11 +64,10 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
 
         await context.RaiseInvocationEventAsync(this.Model, message.ExecutorId).ConfigureAwait(false);
 
-        Debug.WriteLine($"RESULT #{this.Id} - {message.Result ?? "(null)"}");
-
         try
         {
             object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken: default).ConfigureAwait(false);
+            Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
             if (this.EmitResultEvent)
             {

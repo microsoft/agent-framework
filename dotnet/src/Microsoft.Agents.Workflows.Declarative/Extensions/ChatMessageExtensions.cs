@@ -16,7 +16,7 @@ internal static class ChatMessageExtensions
         FormulaValue.NewRecordFromFields(message.GetMessageFields());
 
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
-        FormulaValue.NewTable(s_messageRecordType, messages.Select(message => message.ToRecord()));
+        FormulaValue.NewTable(TypeSchema.Message.MessageRecordType, messages.Select(message => message.ToRecord()));
 
     public static IEnumerable<ChatMessage> ToChatMessages(this DataValue messages)
     {
@@ -185,10 +185,11 @@ internal static class ChatMessageExtensions
 
     private static IEnumerable<NamedValue> GetMessageFields(this ChatMessage message)
     {
+        yield return new NamedValue(TypeSchema.Discriminator, nameof(ChatMessage).ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormula());
-        yield return new NamedValue(TypeSchema.Message.Fields.Content, FormulaValue.NewTable(s_contentRecordType, message.GetContentRecords()));
+        yield return new NamedValue(TypeSchema.Message.Fields.Content, FormulaValue.NewTable(TypeSchema.Message.ContentRecordType, message.GetContentRecords()));
         yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToRecord());
     }
@@ -228,18 +229,4 @@ internal static class ChatMessageExtensions
             }
         }
     }
-
-    private static readonly RecordType s_contentRecordType =
-        RecordType.Empty()
-            .Add(TypeSchema.Message.Fields.ContentType, FormulaType.String)
-            .Add(TypeSchema.Message.Fields.ContentValue, FormulaType.String);
-
-    private static readonly RecordType s_messageRecordType =
-        RecordType.Empty()
-            .Add(TypeSchema.Message.Fields.Id, FormulaType.String)
-            .Add(TypeSchema.Message.Fields.Role, FormulaType.String)
-            .Add(TypeSchema.Message.Fields.Author, FormulaType.String)
-            .Add(TypeSchema.Message.Fields.Content, s_contentRecordType.ToTable())
-            .Add(TypeSchema.Message.Fields.Text, FormulaType.String)
-            .Add(TypeSchema.Message.Fields.Metadata, RecordType.Empty());
 }

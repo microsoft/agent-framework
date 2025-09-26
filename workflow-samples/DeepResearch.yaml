@@ -160,13 +160,13 @@ trigger:
         # FACTS
         Consider this initial fact sheet:
 
-        " & Trim(Local.TaskFacts.Text) & "
+        " & Trim(Last(Local.TaskFacts).Text) & "
 
 
         # PLAN
         Here is the plan to follow as best as possible:
-  
-        " & Local.Plan.Text
+
+        " & Last(Local.Plan).Text
 
     - kind: SendActivity
       id: sendActivity_bwNZiM
@@ -228,7 +228,7 @@ trigger:
       id: parse_rNZtlV
       displayName: Parse ledger response
       variable: Local.TypedProgressLedger
-      value: =Local.ProgressLedgerUpdate.Text
+      value: =Last(Local.ProgressLedgerUpdate).Text
       valueType:
         kind: Record
         properties:
@@ -493,7 +493,7 @@ trigger:
             - kind: SetVariable
               id: setVariable_XzNrdM
               variable: Local.AgentResponseText
-              value: =Local.AgentResponse.Text
+              value: =Last(Local.AgentResponse).Text
 
             - kind: ResetVariable
               id: setVariable_8eIx2A
