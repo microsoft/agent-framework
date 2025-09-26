@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""This sample will train a math agent using a dataset in `data/math/`.
+"""This sample demonstrates the basic usage pattern of agent-framework-lab-lightning.
+
+It trains a math agent using a dataset in `data/math/` to solve mathematical problems
+using an MCP calculator tool.
 
 One GPU with 40GB of memory is sufficient for this sample.
 """
@@ -25,21 +28,33 @@ from agentlightning.algorithm.verl import VERL
 from agent_framework_lab_lightning import init as lightning_init
 
 
+# This TypedDict defines the structure of each training sample.
+# Your task structure should contain all the information needed for:
+# - The agent to process the task (e.g., 'question')
+# - Evaluation (e.g., 'result' for ground truth)
+# This type is optional. Not necessary to make the example work.
 class MathProblem(TypedDict):
+    # The fields come from the dataset
     id: str
-    question: str
-    chain: str
-    result: str
+    question: str  # The math problem for the agent to solve
+    chain: str  # Step-by-step solution (not used in training)
+    result: str  # Ground truth answer for evaluation
     source: str
 
 
 def _load_jsonl(file_path: str) -> Dataset[MathProblem]:
+    """
+    Load your dataset as a list of task samples.
+    Each sample should match your task structure (MathProblem in this case).
+    """
     with open(file_path) as f:
         raw_data = [MathProblem(**json.loads(line)) for line in f]
     return cast(Dataset[MathProblem], raw_data)
 
 
-# ==== Evaluation tools ====
+# Evaluation logic
+# These functions evaluate whether the agent's answer matches the ground truth.
+# Robust evaluation is crucial for RL training - the reward signal guides learning.
 
 
 def _normalize_option(option: str) -> str:
@@ -86,26 +101,39 @@ def _is_result_correct(prediction: str, ground_truth: str) -> float:
 
 
 def evaluate(result: AgentRunResponse, ground_truth: str) -> float:
-    # Evaluation of the agent's responsee
+    """
+    Main evaluation function that extracts the agent's answer and compares with ground truth.
+
+    This function:
+    1. Extracts the final answer from the agent's response (after ###)
+    2. Compares it with the ground truth using mathematical equivalence
+    3. Returns a reward score (0.0 or 1.0) for RL training
+
+    The reward signal is critical - it directly influences what the model learns.
+    """
+    # Check if agent provided any response
     if len(result.messages) == 0:
         print("No response from agent. Assuming incorrect.")
         return 0.0
     final_message = result.messages[-1].text
 
+    # Extract answer after ### marker (as specified in agent instructions)
     answer = re.search(r"###\s*(.+?)(\s*###|$)", final_message)
     if answer is None:
         print("No answer can be extracted from agent's response. Assuming incorrect.")
         return 0.0
     answer = answer.group(1)
 
+    # Compare extracted answer with ground truth
     reward = _is_result_correct(answer, ground_truth)
     print(f"Reward: {reward}")
     return reward
 
 
-# ==== Agent Part ====
+# Agent Logic
 
-
+# Clear instructions are important for consistent agent behavior
+# The ### format helps with reliable answer extraction during evaluation
 AGENT_INSTRUCTION = """
 Solve the following math problem. Use the calculator tool to help you calculate math expressions.
 
@@ -113,15 +141,32 @@ Output the answer when you are ready. The answer should be after three sharps (`
 """.strip()  # noqa: E501
 
 
+# The @rollout decorator is the key integration point with agent-lightning.
+# It tells the training system that this function defines a trainable agent.
 @rollout
 async def math_agent(task: MathProblem, llm: LLM) -> float:
+    """
+    This is your trainable agent function. Key points:
+
+    1. Must be decorated with @rollout
+    2. Takes a task sample and LLM object as parameters
+    3. Returns a float reward score (0.0 to 1.0 typically)
+    4. The LLM object contains the model being trained and its configuration
+
+    During training:
+    - llm.model: The model checkpoint being trained
+    - llm.endpoint: vLLM server endpoint for inference
+    - llm.sampling_parameters: Temperature, etc.
+    """
+    # Create the Agent Framework components
+    # MCPStdioTool provides calculator functionality via MCP protocol
     async with (
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
         ChatAgent(
             chat_client=OpenAIChatClient(
-                ai_model_id=llm.model,
-                api_key=os.getenv("OPENAI_API_KEY") or "dummy",
-                base_url=llm.endpoint,
+                ai_model_id=llm.model,  # This is the model being trained
+                api_key=os.getenv("OPENAI_API_KEY") or "dummy",  # Can be dummy when connecting to training LLM
+                base_url=llm.endpoint,  # vLLM server endpoint provided by agent-lightning
             ),
             name="MathAgent",
             instructions=AGENT_INSTRUCTION,
@@ -129,14 +174,18 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
         ) as agent,
     ):
         print(f"Task: {task['question'][:10]}...")
+        # Run the agent on the task
         result = await agent.run(task["question"], tools=mcp_server)
         print(f"Agent responses: {result}")
 
-        # Evaluation of the agent's responsee
+        # Evaluate and return reward - this is what drives RL training
         return evaluate(result, task["result"])
 
 
 def main():
+    # Configure RL training
+    # This configuration controls all aspects of the RL training process.
+    # Key sections: algorithm, data, rollout, actor, trainer
     rl_training_config = {
         "agentlightning": {
             # The port to communicate between the rollout workers and the RL training process
@@ -226,12 +275,15 @@ def main():
         },
     }
 
-    # Prepare for lightning training in agent frameworks
+    # Initialize and run training
+    # lightning_init() enables observability integration with agent-framework
     lightning_init()
 
+    # Load your datasets
     train_dataset = _load_jsonl("data/math/train.jsonl")
     val_dataset = _load_jsonl("data/math/test.jsonl")
 
+    # Preview the data to ensure it's loaded correctly
     print("First 5 rows of train dataset:")
     for i in range(5):
         print(train_dataset[i])
@@ -239,13 +291,27 @@ def main():
     for i in range(5):
         print(val_dataset[i])
 
+    # Create trainer with VERL algorithm and start training
+    # n_workers: Number of rollout workers (processes) for parallel data collection
     trainer = Trainer(algorithm=VERL(rl_training_config), n_workers=2)
+
+    # This starts the actual RL training loop:
+    # 1. Collect rollouts using current model
+    # 2. Compute advantages and train the model
+    # 3. Repeat for specified number of epochs
     trainer.fit(math_agent, train_dataset, val_data=val_dataset)
 
 
 def debug():
+    """
+    Debug mode allows you to test your agent function before training.
+
+    Always run debug mode first before starting expensive RL training!
+    """
     train_dataset = _load_jsonl("data/math/train.jsonl")
     train_sample = train_dataset[0]
+
+    # Use a known good model for debugging (not the one being trained)
     model = "gpt-4o-mini"
     base_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -254,6 +320,7 @@ def debug():
     if base_url is None:
         raise ValueError("OPENAI_BASE_URL must be set")
 
+    # Test your agent function with a sample task
     asyncio.run(math_agent(train_sample, LLM(model=model, endpoint=base_url)))  # type: ignore
 
 
