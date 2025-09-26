@@ -9,17 +9,18 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._executor import RequestInfoExecutor
 
+from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
 from ._events import WorkflowEvent, WorkflowOutputEvent, _framework_event_origin
 from ._executor import Executor
 from ._runner_context import (
-    _DATACLASS_MARKER,
-    _PYDANTIC_MARKER,
+    _DATACLASS_MARKER,  # type: ignore
+    _PYDANTIC_MARKER,  # type: ignore
     CheckpointState,
     Message,
     RunnerContext,
-    _decode_checkpoint_value,
+    _decode_checkpoint_value,  # type: ignore
 )
 from ._shared_state import SharedState
 
@@ -307,21 +308,31 @@ class Runner:
         except Exception as e:
             logger.warning(f"Failed to update context with shared state: {e}")
 
-    async def restore_from_checkpoint(self, checkpoint_id: str) -> bool:
+    async def restore_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> bool:
         """Restore workflow state from a checkpoint.
 
         Args:
             checkpoint_id: The ID of the checkpoint to restore from
+            checkpoint_storage: Optional storage to load checkpoints from when the
+                runner context itself is not configured with checkpointing.
 
         Returns:
             True if restoration was successful, False otherwise
         """
-        if not self._ctx.has_checkpointing():
-            logger.warning("Context does not support checkpointing")
-            return False
-
         try:
-            checkpoint = await self._ctx.load_checkpoint(checkpoint_id)
+            checkpoint: WorkflowCheckpoint | None
+            if self._ctx.has_checkpointing():
+                checkpoint = await self._ctx.load_checkpoint(checkpoint_id)
+            elif checkpoint_storage is not None:
+                checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
+            else:
+                logger.warning("Context does not support checkpointing and no external storage was provided")
+                return False
+
             if not checkpoint:
                 logger.error(f"Checkpoint {checkpoint_id} not found")
                 return False
@@ -339,13 +350,7 @@ class Runner:
                     checkpoint_id,
                 )
 
-            state: CheckpointState = {
-                "messages": checkpoint.messages,
-                "shared_state": checkpoint.shared_state,
-                "executor_states": checkpoint.executor_states,
-                "iteration_count": checkpoint.iteration_count,
-                "max_iterations": checkpoint.max_iterations,
-            }
+            state = self._checkpoint_to_state(checkpoint)
             await self._ctx.set_checkpoint_state(state)
             if checkpoint.workflow_id:
                 self._ctx.set_workflow_id(checkpoint.workflow_id)
@@ -365,9 +370,6 @@ class Runner:
             return False
 
     async def _restore_shared_state_from_context(self) -> None:
-        if not self._ctx.has_checkpointing():
-            return
-
         try:
             restored_state = await self._ctx.get_checkpoint_state()
 
@@ -382,6 +384,16 @@ class Runner:
 
         except Exception as e:
             logger.warning(f"Failed to restore shared state from context: {e}")
+
+    @staticmethod
+    def _checkpoint_to_state(checkpoint: WorkflowCheckpoint) -> CheckpointState:
+        return {
+            "messages": checkpoint.messages,
+            "shared_state": checkpoint.shared_state,
+            "executor_states": checkpoint.executor_states,
+            "iteration_count": checkpoint.iteration_count,
+            "max_iterations": checkpoint.max_iterations,
+        }
 
     def _parse_edge_runners(self, edge_runners: list[EdgeRunner]) -> dict[str, list[EdgeRunner]]:
         """Parse the edge runners of the workflow into a mapping where each source executor ID maps to its edge runners.
