@@ -42,7 +42,7 @@ async def main() -> None:
 
     # Get the path to the sample CSV file
     asset_file_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "assets", "synthetic_500_quarterly_results.csv")
+        os.path.join(os.path.dirname(__file__), "..", "assets", "synthetic_500_quarterly_results.csv")
     )
 
     # First, upload the file using AIProjectClient
