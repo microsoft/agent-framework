@@ -23,14 +23,13 @@ def enable_sensitive_data(request: Any) -> bool:
 
 @fixture(autouse=True)
 def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
-    """Fixture to remove environment variables for OtelSettings."""
+    """Fixture to remove environment variables for ObservabilitySettings."""
 
     env_vars = [
         "ENABLE_OTEL",
         "ENABLE_SENSITIVE_DATA",
         "OTLP_ENDPOINT",
         "APPLICATIONINSIGHTS_CONNECTION_STRING",
-        "APPLICATIONINSIGHTS_LIVE_METRICS",
     ]
 
     for key in env_vars:
@@ -47,22 +46,25 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
     import agent_framework.observability as observability
 
     # Reload the module to ensure a clean state for tests, then create a
-    # fresh OtelSettings instance and patch the module attribute.
+    # fresh ObservabilitySettings instance and patch the module attribute.
     importlib.reload(observability)
 
-    # recreate otel settings with values from above and no file.
-    otel = observability.OtelSettings(env_file_path="test.env")
-    otel.setup_observability()
-    monkeypatch.setattr(observability, "OTEL_SETTINGS", otel, raising=False)  # type: ignore
-    exporter = InMemorySpanExporter()
+    # recreate observability settings with values from above and no file.
+    observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
+    observability_settings._configure()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore
+
     with (
-        patch("agent_framework.observability.OTEL_SETTINGS", otel),
+        patch("agent_framework.observability.OBSERVABILITY_SETTINGS", observability_settings),
         patch("agent_framework.observability.setup_observability"),
     ):
+        exporter = InMemorySpanExporter()
         if enable_otel or enable_sensitive_data:
-            trace.get_tracer_provider().add_span_processor(
-                SimpleSpanProcessor(exporter)  # type: ignore[func-returns-value]
-            )
+            tracer_provider = trace.get_tracer_provider()
+            if not hasattr(tracer_provider, "add_span_processor"):
+                raise RuntimeError("Tracer provider does not support adding span processors.")
+
+            tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))  # type: ignore
 
         yield exporter
         # Clean up

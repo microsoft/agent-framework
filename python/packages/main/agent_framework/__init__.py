@@ -10,7 +10,6 @@ except importlib.metadata.PackageNotFoundError:
     _version = "0.0.0"  # Fallback for development mode
 __version__: Final[str] = _version
 
-from ._a2a import *  # noqa: F403
 from ._agents import *  # noqa: F403
 from ._clients import *  # noqa: F403
 from ._logging import *  # noqa: F403

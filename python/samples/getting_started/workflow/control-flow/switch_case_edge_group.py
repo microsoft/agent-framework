@@ -20,7 +20,7 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
 )
-from agent_framework.azure import AzureChatClient  # Thin client for Azure OpenAI chat models
+from agent_framework.azure import AzureOpenAIChatClient  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs with validation
 
@@ -42,7 +42,7 @@ on that type.
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, and events.
 - Understanding of switch-case edge groups and how Case and Default are evaluated in order.
-- Working Azure OpenAI configuration for AzureChatClient, with Azure CLI login and required environment variables.
+- Working Azure OpenAI configuration for AzureOpenAIChatClient, with Azure CLI login and required environment variables.
 - Access to workflow/resources/ambiguous_email.txt, or accept the inline fallback string.
 """
 
@@ -155,7 +155,7 @@ async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Neve
 
 async def main():
     """Main function to run the workflow."""
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Agents. response_format enforces that the LLM returns JSON that Pydantic can validate.
     spam_detection_agent = AgentExecutor(

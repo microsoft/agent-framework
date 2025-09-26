@@ -3,7 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.Shared.Diagnostics;
 
 #pragma warning disable CA1710 // Identifiers should have correct suffix

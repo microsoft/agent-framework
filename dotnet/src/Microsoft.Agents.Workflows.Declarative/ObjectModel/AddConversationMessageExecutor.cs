@@ -17,8 +17,10 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        StringExpression conversationExpression = Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
-        string conversationId = this.Evaluator.GetValue(conversationExpression).Value;
+        Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
+        await context.EnsureWorkflowConversationAsync(agentProvider, this.Model.ConversationId, cancellationToken).ConfigureAwait(false);
+
+        string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
 
         ChatMessage newMessage = new(this.Model.Role.Value.ToChatRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
 

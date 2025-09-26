@@ -15,10 +15,10 @@
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Abstractions\Microsoft.Extensions.AI.Agents.Abstractions.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.Runtime\Microsoft.Extensions.AI.Agents.Runtime.csproj" />
-    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents\Microsoft.Extensions.AI.Agents.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

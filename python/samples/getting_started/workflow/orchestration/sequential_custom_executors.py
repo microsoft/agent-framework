@@ -13,7 +13,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -35,7 +35,7 @@ Note on internal adapters:
   for completion—similar to concurrent's dispatcher/aggregator.
 
 Prerequisites:
-- Azure OpenAI access configured for AzureChatClient (use az login + env vars)
+- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
 """
 
 
@@ -53,7 +53,7 @@ class Summarizer(Executor):
 
 async def main() -> None:
     # 1) Create a content agent
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     content = chat_client.create_agent(
         instructions="Produce a concise paragraph answering the user's request.",
         name="content",

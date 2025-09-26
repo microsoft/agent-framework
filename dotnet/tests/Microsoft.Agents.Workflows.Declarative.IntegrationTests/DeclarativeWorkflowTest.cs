@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -71,7 +70,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 Configuration = workflowConfig,
                 LoggerFactory = this.Output
             };
-        Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
 
         WorkflowEvents workflowEvents = await WorkflowHarness.RunAsync(workflow, (TInput)GetInput<TInput>(testcase));
         foreach (DeclarativeActionInvokedEvent actionInvokeEvent in workflowEvents.ActionInvokeEvents)
@@ -98,12 +97,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.NotNull(testcase);
         return testcase;
     }
-
-    private static IConfigurationRoot InitializeConfig() =>
-        new ConfigurationBuilder()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
-            .AddEnvironmentVariables()
-            .Build();
 
     private static readonly JsonSerializerOptions s_jsonSerializerOptions = new()
     {

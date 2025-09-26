@@ -1,0 +1,36 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+    <RootNamespace>Microsoft.Extensions.AI.Agents</RootNamespace>
+    <NoWarn>$(NoWarn);CA1716;IDE0009;MEAI001</NoWarn>
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
+    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <InjectRequiredMemberOnLegacy>true</InjectRequiredMemberOnLegacy>
+    <InjectCompilerFeatureRequiredOnLegacy>true</InjectCompilerFeatureRequiredOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Extensions AI Agent Framework Abstractions</Title>
+    <Description>Contains the Microsoft Agent Framework interfaces and abstractions.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Abstractions.UnitTests" />
+  </ItemGroup>
+</Project>

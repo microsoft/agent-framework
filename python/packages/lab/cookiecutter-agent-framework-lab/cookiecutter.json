@@ -4,7 +4,7 @@
     "package_description": "{{ cookiecutter.package_display_name }} module for Microsoft Agent Framework.",
     "version": "0.1.0b1",
     "author_name": "Microsoft",
-    "author_email": "SK-Support@microsoft.com",
+    "author_email": "af-support@microsoft.com",
     "license": "MIT",
     "include_cli_script": ["y", "n"],
     "cli_script_name": "{{ cookiecutter.package_name }}_cli",
