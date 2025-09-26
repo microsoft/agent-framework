@@ -49,8 +49,8 @@ environments = [
 ]
 
 [tool.uv.workspace]
-members = [ "packages/*", "packages/lab" ]
-exclude = [ "packages/agent_framework_project.egg-info", "packages/lab/cookiecutter-agent-framework-lab", "packages/lab/README.md" ]
+members = [ "packages/*" ]
+exclude = [ "packages/agent_framework_project.egg-info" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
