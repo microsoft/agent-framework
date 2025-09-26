@@ -9,6 +9,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
@@ -227,16 +228,23 @@ internal static class FormulaValueExtensions
             elementType switch
             {
                 null => FormulaValue.NewTable(RecordType.EmptySealed(), []),
-                Type when elementType == typeof(ExpandoObject) =>
+                _ when elementType == typeof(ExpandoObject) =>
                     FormulaValue.NewTable(
                         value.ToTableType().ToRecord(),
                         [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())]),
-                //Type when elementType == typeof(ChatMessage) =>
-                //Type when elementType.IsPrimitive =>
-                //    FormulaValue.NewSingleColumnTable(
-                //        [.. value.OfType<object>().Select(element => element.ToFormula())]),
-                _ => throw new DeclarativeModelException($"Unsupported element type: {value.GetType().Name}"),
+                _ when typeof(ChatMessage).IsAssignableFrom(elementType) =>
+                    FormulaValue.NewTable(
+                        TypeSchema.Message.MessageRecordType,
+                        [.. value.OfType<ChatMessage>().Select(message => message.ToRecord())]),
+                _ when typeof(IDictionary).IsAssignableFrom(elementType) => value.ToTableOfRecords(),
+                _ => throw new DeclarativeModelException($"Unsupported element type: {elementType.Name}"),
             };
+    }
+
+    private static TableValue ToTableOfRecords(this IEnumerable list)
+    {
+        RecordValue[] elements = [.. list.OfType<IDictionary>().Select(table => table.ToRecord())];
+        return FormulaValue.NewTable(elements.First().Type, elements);
     }
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());

@@ -5,7 +5,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Kit;
+using Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -29,7 +31,7 @@ internal static class DataValueExtensions
             DateTime datetimeValue => DateTimeDataValue.Create(datetimeValue),
             TimeSpan timeValue => TimeDataValue.Create(timeValue),
             object when value is IDictionary dictionaryValue => dictionaryValue.ToRecordValue(),
-            //object when value is IEnumerable tableValue => tableValue.ToTable(), // %%% TODO
+            //object when value is IEnumerable tableValue => tableValue.ToTable(),
             _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
         };
 
@@ -89,8 +91,8 @@ internal static class DataValueExtensions
             DateTimeDataValue dateTimeValue => dateTimeValue.Value.DateTime,
             DateDataValue dateValue => dateValue.Value,
             TimeDataValue timeValue => timeValue.Value,
-            TableDataValue tableValue => tableValue.Values.Select(value => value.ToDictionary()).ToArray(),
-            RecordDataValue recordValue => recordValue.ToDictionary(),
+            TableDataValue tableValue => tableValue.ToObject(),
+            RecordDataValue recordValue => recordValue.ToObject(),
             OptionDataValue optionValue => optionValue.Value.Value,
             _ => throw new DeclarativeModelException($"Unsupported {nameof(DataValue)} type: {value.GetType().Name}"),
         };
@@ -133,6 +135,50 @@ internal static class DataValueExtensions
             recordType = recordType.Add(property.Key, property.Value.ToFormulaType());
         }
         return recordType;
+    }
+
+    private static object ToObject(this TableDataValue table)
+    {
+        DataValue? firstElement = table.Values.FirstOrDefault();
+        if (firstElement is null)
+        {
+            return Array.Empty<object>();
+        }
+
+        if (firstElement is RecordDataValue record)
+        {
+            if (record.Properties.Count == 1 && record.Properties.TryGetValue("Value", out DataValue? singleColumn))
+            {
+                record = singleColumn as RecordDataValue ?? record;
+            }
+
+#pragma warning disable RCS1061 // %%% CONTINUE VALIDATION: Merge 'if' with nested 'if'
+            if (record.Properties.TryGetValue(TypeSchema.Discriminator, out DataValue? value) && value is StringDataValue typeValue)
+#pragma warning restore RCS1061
+            {
+                if (string.Equals(nameof(ChatMessage), typeValue.Value, StringComparison.Ordinal))
+                {
+                    return table.ToChatMessages().ToArray();
+                }
+            }
+        }
+
+        return table.Values.Select(value => value.ToObject()).ToArray();
+    }
+
+    private static object ToObject(this RecordDataValue record)
+    {
+#pragma warning disable RCS1061 // %%% CONTINUE VALIDATION: Merge 'if' with nested 'if'
+        if (record.Properties.TryGetValue(TypeSchema.Discriminator, out DataValue? value) && value is StringDataValue typeValue)
+#pragma warning restore RCS1061
+        {
+            if (string.Equals(nameof(ChatMessage), typeValue.Value, StringComparison.Ordinal))
+            {
+                return record.ToChatMessage();
+            }
+        }
+
+        return record.ToDictionary();
     }
 
     private static Dictionary<string, object?> ToDictionary(this RecordDataValue record)

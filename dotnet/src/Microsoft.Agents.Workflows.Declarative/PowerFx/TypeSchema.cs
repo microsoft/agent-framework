@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Bot.ObjectModel;
+using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 
@@ -31,5 +32,19 @@ internal static class TypeSchema
             public const string ImageUrl = nameof(AgentMessageContentType.ImageUrl);
             public const string ImageFile = nameof(AgentMessageContentType.ImageFile);
         }
+
+        public static readonly RecordType ContentRecordType =
+            RecordType.Empty()
+                .Add(Fields.ContentType, FormulaType.String)
+                .Add(Fields.ContentValue, FormulaType.String);
+
+        public static readonly RecordType MessageRecordType =
+            RecordType.Empty()
+                .Add(Fields.Id, FormulaType.String)
+                .Add(Fields.Role, FormulaType.String)
+                .Add(Fields.Author, FormulaType.String)
+                .Add(Fields.Content, ContentRecordType.ToTable())
+                .Add(Fields.Text, FormulaType.String)
+                .Add(Fields.Metadata, RecordType.Empty());
     }
 }
