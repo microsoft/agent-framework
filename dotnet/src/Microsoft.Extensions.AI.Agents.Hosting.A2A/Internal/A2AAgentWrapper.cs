@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
@@ -30,7 +31,7 @@ internal sealed class A2AAgentWrapper
 
     public async Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
     {
-        var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString();
+        var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
         var messageId = messageSendParams.Message.MessageId;
 
         var actorId = new ActorId(type: this.GetActorType(), key: contextId!);

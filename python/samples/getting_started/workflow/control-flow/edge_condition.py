@@ -16,7 +16,7 @@ from agent_framework import (  # Core chat primitives used to build requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
 )
-from agent_framework.azure import AzureChatClient  # Thin client wrapper for Azure OpenAI chat models
+from agent_framework.azure import AzureOpenAIChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs for safer parsing
 
@@ -35,7 +35,7 @@ Purpose:
 Prerequisites:
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
-- Azure OpenAI access is configured for AzureChatClient. You should be logged in with Azure CLI (AzureCliCredential)
+- Azure OpenAI access is configured for AzureOpenAIChatClient. You should be logged in with Azure CLI (AzureCliCredential)
 and have the Azure OpenAI environment variables set as documented in the getting started chat client README.
 - The sample email resource file exists at workflow/resources/email.txt.
 
@@ -132,7 +132,7 @@ async def to_email_assistant_request(
 async def main() -> None:
     # Create agents
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Agent 1. Classifies spam and returns a DetectionResult object.
     # response_format enforces that the LLM returns parsable JSON for the Pydantic model.

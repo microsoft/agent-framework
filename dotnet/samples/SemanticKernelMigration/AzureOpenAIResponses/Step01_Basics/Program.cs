@@ -2,7 +2,7 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using OpenAI;
 

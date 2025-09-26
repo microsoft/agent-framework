@@ -3,9 +3,9 @@
 using A2A;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.A2A;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.A2A;
 using OpenAI;
 
 namespace A2AServer;

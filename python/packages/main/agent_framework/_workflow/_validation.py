@@ -10,9 +10,12 @@ from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
 from ._executor import Executor, RequestInfoExecutor
-from ._workflow_executor import WorkflowExecutor
 
 logger = logging.getLogger(__name__)
+
+# Track cycle signatures we've already reported to avoid spamming logs when workflows
+# with intentional feedback loops are constructed multiple times in the same process.
+_LOGGED_CYCLE_SIGNATURES: set[tuple[str, ...]] = set()
 
 
 # region Enums and Base Classes
@@ -187,7 +190,6 @@ class WorkflowGraphValidator:
         self._validate_self_loops()
         self._validate_dead_ends()
         self._validate_cycles()
-        self._validate_interceptor_uniqueness()
 
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
@@ -273,9 +275,6 @@ class WorkflowGraphValidator:
 
         # Get output types from source executor
         source_output_types = list(source_executor.output_types)
-        # Also include intercepted request types as potential outputs
-        # since @intercepts_request methods can forward requests
-        source_output_types.extend(source_executor.request_types)
 
         # Get input types from target executor
         target_input_types = target_executor.input_types
@@ -437,96 +436,91 @@ class WorkflowGraphValidator:
         """Detect cycles in the workflow graph.
 
         Cycles might be intentional for iterative processing but should be flagged
-        for review to ensure proper termination conditions exist.
+        for review to ensure proper termination conditions exist. We surface each
+        distinct cycle group only once per process to avoid noisy, repeated warnings
+        when rebuilding the same workflow.
         """
-        # Build adjacency list
+        # Build adjacency list (ensure every executor appears even if it has no outgoing edges)
         graph: dict[str, list[str]] = defaultdict(list)
         for edge in self._edges:
             graph[edge.source_id].append(edge.target_id)
+            graph.setdefault(edge.target_id, [])
+        for executor_id in self._executors:
+            graph.setdefault(executor_id, [])
 
-        # Use DFS to detect cycles
-        white = set(self._executors.keys())  # Unvisited
-        gray: set[str] = set()  # Currently being processed
-        black: set[str] = set()  # Completely processed
+        # Tarjan's algorithm to locate strongly-connected components that form cycles
+        index: dict[str, int] = {}
+        lowlink: dict[str, int] = {}
+        on_stack: set[str] = set()
+        stack: list[str] = []
+        current_index = 0
+        cycle_components: list[list[str]] = []
 
-        def has_cycle(node: str) -> bool:
-            if node in gray:  # Back edge found - cycle detected
-                return True
-            if node in black:  # Already processed
-                return False
+        def strongconnect(node: str) -> None:
+            nonlocal current_index
 
-            # Mark as being processed
-            white.discard(node)
-            gray.add(node)
+            index[node] = current_index
+            lowlink[node] = current_index
+            current_index += 1
+            stack.append(node)
+            on_stack.add(node)
 
-            # Visit neighbors
             for neighbor in graph[node]:
-                if has_cycle(neighbor):
-                    return True
+                if neighbor not in index:
+                    strongconnect(neighbor)
+                    lowlink[node] = min(lowlink[node], lowlink[neighbor])
+                elif neighbor in on_stack:
+                    lowlink[node] = min(lowlink[node], index[neighbor])
 
-            # Mark as completely processed
-            gray.discard(node)
-            black.add(node)
-            return False
+            if lowlink[node] == index[node]:
+                component: list[str] = []
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
 
-        # Check for cycles starting from any unvisited node
-        cycle_detected = False
-        while white and not cycle_detected:
-            start_node = next(iter(white))
-            if has_cycle(start_node):
-                cycle_detected = True
+                # A strongly connected component represents a cycle if it has more than one
+                # node or if a single node references itself directly.
+                if len(component) > 1 or any(member in graph[member] for member in component):
+                    cycle_components.append(component)
 
-        if cycle_detected:
-            logger.warning(
-                "Cycle detected in the workflow graph. "
-                "Ensure proper termination conditions exist to prevent infinite loops."
+        for executor_id in graph:
+            if executor_id not in index:
+                strongconnect(executor_id)
+
+        if not cycle_components:
+            return
+
+        unseen_components: list[list[str]] = []
+        for component in cycle_components:
+            signature = tuple(sorted(component))
+            if signature in _LOGGED_CYCLE_SIGNATURES:
+                continue
+            _LOGGED_CYCLE_SIGNATURES.add(signature)
+            unseen_components.append(component)
+
+        if not unseen_components:
+            # All cycles already reported in this process; keep noise low but retain traceability.
+            logger.debug(
+                "Cycle detected in workflow graph but previously reported. Components: %s",
+                [sorted(component) for component in cycle_components],
             )
+            return
 
-    def _validate_interceptor_uniqueness(self) -> None:
-        """Validate that only one executor intercepts a given request type from a specific sub-workflow.
+        def _format_cycle(component: list[str]) -> str:
+            if not component:
+                return ""
+            ordered = list(component)
+            ordered.append(component[0])
+            return " -> ".join(ordered)
 
-        This prevents non-deterministic behavior where multiple executors could intercept
-        the same request type from the same sub-workflow.
-        """
-        # Find all WorkflowExecutor instances in the workflow
-        workflow_executors: dict[str, WorkflowExecutor] = {}
-        for executor_id, executor in self._executors.items():
-            if isinstance(executor, WorkflowExecutor):
-                workflow_executors[executor_id] = executor
-
-        # For each WorkflowExecutor, check which executors can intercept its requests
-        for workflow_id, _workflow_executor in workflow_executors.items():
-            # Map of request_type -> list of intercepting executor IDs
-            interceptors_by_type: dict[type | str, list[str]] = {}
-
-            # Find all executors that have edges from this WorkflowExecutor
-            # These are potential interceptors
-            for edge in self._edges:
-                if edge.source_id == workflow_id:
-                    target_executor = self._executors.get(edge.target_id)
-                    if target_executor and hasattr(target_executor, "_request_interceptors"):
-                        # Check what request types this executor intercepts
-                        for request_type, interceptor_list in target_executor._request_interceptors.items():
-                            # Check if any interceptor is scoped to this workflow or unscoped
-                            for interceptor_info in interceptor_list:
-                                from_workflow = interceptor_info.get("from_workflow")
-                                # If unscoped or specifically scoped to this workflow
-                                if from_workflow is None or from_workflow == workflow_id:
-                                    if request_type not in interceptors_by_type:
-                                        interceptors_by_type[request_type] = []
-                                    interceptors_by_type[request_type].append(edge.target_id)
-
-            # Check for duplicates
-            for request_type, executor_ids in interceptors_by_type.items():
-                unique_executors = list(set(executor_ids))  # Remove duplicates from same executor
-                if len(unique_executors) > 1:
-                    type_name = request_type.__name__ if isinstance(request_type, type) else str(request_type)
-                    raise InterceptorConflictError(
-                        f"Multiple executors intercept the same request type '{type_name}' "
-                        f"from sub-workflow '{workflow_id}': {', '.join(unique_executors)}. "
-                        f"Only one executor should intercept a given request type from a specific sub-workflow "
-                        f"to ensure deterministic behavior."
-                    )
+        formatted_cycles = ", ".join(_format_cycle(component) for component in unseen_components)
+        logger.warning(
+            "Cycle detected in the workflow graph involving: %s. Ensure termination or iteration limits exist.",
+            formatted_cycles,
+        )
 
     # endregion
 
@@ -572,6 +566,7 @@ class WorkflowGraphValidator:
                     for s_arg, t_arg in zip(source_args, target_args, strict=True)
                 )
 
+        # No other special compatibility cases
         return False
 
     # endregion

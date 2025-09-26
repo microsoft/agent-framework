@@ -27,7 +27,7 @@ public class CosmosActorStateStorageListKeysTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string PrefixKey1 = "prefix_key1";
         const string PrefixKey2 = "prefix_key2";
@@ -70,7 +70,7 @@ public class CosmosActorStateStorageListKeysTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key1 = "key1";
         const string Key2 = "key2";
@@ -108,7 +108,7 @@ public class CosmosActorStateStorageListKeysTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         // Act - List keys for actor with no state
         var readOperations = new List<ActorStateReadOperation>
@@ -133,7 +133,7 @@ public class CosmosActorStateStorageListKeysTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key1 = "key1";
         const string Key2 = "key2";
@@ -174,7 +174,7 @@ public class CosmosActorStateStorageListKeysTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key1 = "key1";
         const string Key2 = "key2";
@@ -226,7 +226,7 @@ public class CosmosActorStateStorageListKeysTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         // Create keys with different prefixes
         string[] userKeys = ["user_profile", "user_settings", "user_preferences"];

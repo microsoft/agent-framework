@@ -95,7 +95,8 @@ def test_request_response_type() -> None:
     """Test RequestResponse generic type checking."""
 
     request_instance = RequestResponse[RequestInfoMessage, str](
-        is_handled=False,
+        data="approve",
+        request_id="req-1",
         original_request=RequestInfoMessage(),
     )
 

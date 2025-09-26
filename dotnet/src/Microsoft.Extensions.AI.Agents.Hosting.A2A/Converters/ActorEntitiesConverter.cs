@@ -3,6 +3,7 @@
 using System;
 using System.Text.Json;
 using A2A;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace Microsoft.Extensions.AI.Agents.Hosting.A2A.Converters;
@@ -20,7 +21,7 @@ internal static class ActorEntitiesConverter
 
         return new Message
         {
-            MessageId = response.MessageId ?? Guid.NewGuid().ToString(),
+            MessageId = response.MessageId ?? Guid.NewGuid().ToString("N"),
             ContextId = contextId,
             Role = MessageRole.Agent,
             Parts = parts

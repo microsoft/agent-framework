@@ -25,7 +25,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 # NOTE: the Azure client imports above are real dependencies. When running this
@@ -203,7 +203,7 @@ def create_workflow(*, checkpoint_storage: FileCheckpointStorage | None = None) 
     # The Azure client is created once so our agent executor can issue calls to
     # the hosted model. The agent id is stable across runs which keeps
     # checkpoints deterministic.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     writer = AgentExecutor(
         chat_client.create_agent(
             instructions="Write concise, warm release notes that sound human and helpful.",

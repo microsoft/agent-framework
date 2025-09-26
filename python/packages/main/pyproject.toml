@@ -1,10 +1,10 @@
 [project]
 name = "agent-framework"
 description = "Microsoft Agent Framework for building AI Agents with Python."
-authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.1.0b1"
+version = "0.1.0b1" # TODO: decide on initial version and versioning strategy
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,31 +24,38 @@ classifiers = [
 ]
 dependencies = [
     "openai>=1.99.0",
-    "pydantic>=2.11.7",
-    "pydantic-settings>=2.10.1",
-    "typing-extensions>=4.14.0",
-    "opentelemetry-api ~= 1.24",
-    "opentelemetry-sdk ~= 1.24",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+    "typing-extensions",
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
     "mcp[ws]>=1.13",
     "azure-monitor-opentelemetry>=1.7.0",
     "azure-monitor-opentelemetry-exporter>=1.0.0b41",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
-    "aiofiles>=24.1.0"
+    "aiofiles>=24.1.0",
+    "azure-identity>=1,<2"
 ]
 
 [project.optional-dependencies]
-azure = [
-    "agent-framework-azure"
+azure-ai = [
+    "agent-framework-azure-ai"
 ]
-foundry = [
-    "agent-framework-foundry"
+azure = [
+    "agent-framework-azure-ai"
+]
+microsoft-copilotstudio = [
+    "agent-framework-copilotstudio"
+]
+microsoft = [
+    "agent-framework-copilotstudio"
 ]
 redis = [
     "agent-framework-redis"
 ]
 viz = [
-    "graphviz>=0.20.0",
+    "graphviz>=0.20.0"
 ]
 runtime = [
     "agent-framework-runtime"
@@ -60,12 +67,13 @@ devui = [
     "agent-framework-devui"
 ]
 all = [
-    "agent-framework-azure",
-    "agent-framework-foundry",
+    "agent_framework_copilotstudio",
+    "agent-framework-azure-ai",
     "agent-framework-runtime",
     "agent-framework-mem0",
     "agent-framework-redis",
-    "agent-framework-devui"
+    "agent-framework-devui",
+    "graphviz>=0.20.0"
 ]
 
 [tool.uv]
@@ -81,10 +89,9 @@ fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = [
-    'tests', 
+    'tests',
     'packages/main/tests',
-    'packages/azure/tests', 
-    'packages/foundry/tests',
+    'packages/azure-ai/tests',
     'packages/copilotstudio/tests',
     'packages/mem0/tests',
     'packages/runtime/tests'
