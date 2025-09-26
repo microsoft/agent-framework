@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.AI.Agents.Hosting;
 using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.AgentHost;

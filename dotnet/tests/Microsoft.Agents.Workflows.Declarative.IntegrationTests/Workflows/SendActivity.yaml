@@ -8,7 +8,7 @@ trigger:
     # Capture input
     - kind: SetVariable
       id: set_user_input
-      variable: Topic.UserInput
+      variable: Local.UserInput
       value: =System.LastMessage.Text
 
     # Capture environment variable
@@ -22,4 +22,4 @@ trigger:
       id: send_result
       activity: |-
         Hello {Global.UserName},
-        You said, "{Topic.UserInput}"
+        You said, "{Local.UserInput}"

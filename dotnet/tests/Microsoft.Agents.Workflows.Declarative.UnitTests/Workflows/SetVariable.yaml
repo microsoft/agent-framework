@@ -7,5 +7,5 @@ trigger:
 
     - kind: SetVariable
       id: set_var
-      variable: Topic.TestVar
+      variable: Local.TestVar
       value: =3

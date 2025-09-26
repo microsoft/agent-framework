@@ -10,11 +10,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.Orchestration\Microsoft.Agents.Orchestration.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Hosting\Microsoft.Extensions.AI.Agents.Hosting.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime.Abstractions\Microsoft.Extensions.AI.Agents.Runtime.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime\Microsoft.Extensions.AI.Agents.Runtime.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore\Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting.A2A.AspNetCore\Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB\Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.csproj" />
     <ProjectReference Include="..\AgentWebChat.ServiceDefaults\AgentWebChat.ServiceDefaults.csproj" />
   </ItemGroup>
