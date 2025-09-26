@@ -1,11 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using Azure.AI.OpenAI;
 using Azure.Core;
-using Microsoft.Agents.Declarative;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 
-namespace Microsoft.Extensions.AI.Agents.AzureAI;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Provides an <see cref="AgentFactory"/> which creates instances of <see cref="ChatClientAgent"/> using a <see cref="AzureOpenAIClient"/>.

@@ -5,8 +5,8 @@
 using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Agents.Declarative;
-using Microsoft.Extensions.AI.Agents.AzureAI;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");

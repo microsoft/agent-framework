@@ -25,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Agents.Declarative\Microsoft.Agents.Declarative.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Declarative\Microsoft.Agents.AI.Declarative.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 

@@ -1,10 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.Declarative;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Optional parameters for agent creation used when create an <see cref="AIAgent"/>

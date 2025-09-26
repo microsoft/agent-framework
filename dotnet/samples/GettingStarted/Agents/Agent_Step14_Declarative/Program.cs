@@ -3,7 +3,7 @@
 // This sample shows how to create AI agent declaratively with Azure OpenAI as the backend.
 
 using System;
-using Microsoft.Agents.Declarative;
+using Microsoft.Agents.AI;
 
 // Define the agent using a YAML definition.
 var text =

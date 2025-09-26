@@ -11,7 +11,7 @@ using Microsoft.Bot.ObjectModel.PowerFx;
 using Microsoft.Bot.ObjectModel.Yaml;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Declarative;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Helper methods for creating <see cref="BotElement"/> from YAML.

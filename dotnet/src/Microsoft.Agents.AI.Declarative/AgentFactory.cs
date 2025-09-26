@@ -6,10 +6,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Declarative;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Represents a factory for creating <see cref="AIAgent"/> instances.

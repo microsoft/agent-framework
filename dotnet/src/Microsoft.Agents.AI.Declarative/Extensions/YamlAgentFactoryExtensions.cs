@@ -3,10 +3,9 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Declarative;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Extension methods for <see cref="AgentFactory"/> to support YAML based agent definitions.

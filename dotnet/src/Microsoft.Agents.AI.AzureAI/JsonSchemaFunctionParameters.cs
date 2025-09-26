@@ -3,7 +3,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Microsoft.Extensions.AI.Agents.AzureAI;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// A class to describe the parameters of an KernelFunctionFactory in a JSON Schema friendly way.

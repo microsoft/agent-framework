@@ -3,7 +3,7 @@
 // This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend.
 
 using System;
-using Microsoft.Agents.Declarative;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 

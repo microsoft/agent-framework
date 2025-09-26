@@ -5,10 +5,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.Declarative;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Provides an <see cref="AgentFactory"/> which creates instances of <see cref="ChatClientAgent"/>.

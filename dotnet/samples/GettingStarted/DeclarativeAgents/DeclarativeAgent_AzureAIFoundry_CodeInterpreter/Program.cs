@@ -7,9 +7,9 @@ using System.Collections.Generic;
 using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Agents.Declarative;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");

@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System.Text.Json;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Extensions.AI.Agents.AzureAI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;

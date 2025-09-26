@@ -1,10 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
-using Microsoft.Agents.Declarative;
 using Microsoft.Bot.ObjectModel;
 
-namespace Microsoft.Extensions.AI.Agents.AzureAI;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Provides an <see cref="AgentFactory"/> which creates instances of <see cref="ChatClientAgent"/> using a <see cref="PersistentAgentsClient"/>.
