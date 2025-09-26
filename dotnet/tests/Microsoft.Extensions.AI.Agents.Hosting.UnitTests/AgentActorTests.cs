@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -104,8 +105,10 @@ public class AgentActorTests
         var threadJson = JsonSerializer.SerializeToElement(new { conversationId = "expected-thread-id" });
         var mockThread = new Mock<AgentThread>();
 
-        var testAgent = new TestAgent();
-        testAgent.ThreadForCreate = mockThread.Object;
+        TestAgent testAgent = new()
+        {
+            ThreadForCreate = mockThread.Object
+        };
 
         var mockContext = new Mock<IActorRuntimeContext>();
         var actorId = new ActorId("TestAgent", "test-instance");

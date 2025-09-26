@@ -275,7 +275,7 @@ The package follows a flat import structure:
 - **Connectors**: Import from `agent_framework.<vendor/platform>`
   ```python
   from agent_framework.openai import OpenAIChatClient
-  from agent_framework.azure import AzureChatClient
+  from agent_framework.azure import AzureOpenAIChatClient
   ```
 
 ## Testing

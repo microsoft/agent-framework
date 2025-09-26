@@ -7,7 +7,7 @@ from agent_framework import (
     agent_middleware,
     function_middleware,
 )
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -70,7 +70,7 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        FoundryChatClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(async_credential=credential).create_agent(
             name="TimeAgent",
             instructions="You are a helpful time assistant. Call get_current_time when asked about time.",
             tools=get_current_time,

@@ -11,7 +11,7 @@ class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
     @handler
-    async def mock_handler(self, message: str, ctx: WorkflowContext[None]) -> None:
+    async def mock_handler(self, message: str, ctx: WorkflowContext) -> None:
         """A mock handler that does nothing."""
         pass
 
@@ -20,7 +20,7 @@ class ListStrTargetExecutor(Executor):
     """A mock executor that accepts a list of strings (for fan-in targets)."""
 
     @handler
-    async def handle(self, message: list[str], ctx: WorkflowContext[None]) -> None:  # type: ignore[type-arg]
+    async def handle(self, message: list[str], ctx: WorkflowContext) -> None:
         pass
 
 

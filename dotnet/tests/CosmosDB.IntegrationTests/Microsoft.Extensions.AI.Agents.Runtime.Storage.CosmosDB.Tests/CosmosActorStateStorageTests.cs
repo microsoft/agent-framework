@@ -27,7 +27,7 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
@@ -53,7 +53,7 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key1 = "key1";
         const string Key2 = "key2";
@@ -155,7 +155,7 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key = "testKey";
         var value = JsonSerializer.SerializeToElement("testValue");
@@ -197,8 +197,8 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId1 = new ActorId("TestActor1", Guid.NewGuid().ToString());
-        var testActorId2 = new ActorId("TestActor2", Guid.NewGuid().ToString());
+        var testActorId1 = new ActorId("TestActor1", Guid.NewGuid().ToString("N"));
+        var testActorId2 = new ActorId("TestActor2", Guid.NewGuid().ToString("N"));
 
         const string Key = "sharedKey";
         var value1 = JsonSerializer.SerializeToElement("value1");
@@ -243,7 +243,7 @@ public class CosmosActorStateStorageTests
         using var cts = new CancellationTokenSource(s_defaultTimeout);
         var cancellationToken = cts.Token;
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
         var emptyOperations = new List<ActorStateWriteOperation>();
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await storage.WriteStateAsync(testActorId, emptyOperations, "0", cancellationToken));
@@ -257,7 +257,7 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         var readOperations = new List<ActorStateReadOperation>
         {
@@ -282,7 +282,7 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         // Create a complex object with various types
         var complexObject = new
@@ -353,7 +353,7 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         const string Key1 = "key1";
         const string Key2 = "key2";
@@ -420,7 +420,7 @@ public class CosmosActorStateStorageTests
         var cancellationToken = cts.Token;
 
         await using var storage = new CosmosActorStateStorage(this._fixture.Container);
-        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString());
+        var testActorId = new ActorId("TestActor", Guid.NewGuid().ToString("N"));
 
         // Test keys with special characters that need sanitization
         var specialKeys = new[]

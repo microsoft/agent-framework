@@ -30,18 +30,18 @@ from ._edge import (
 )
 from ._events import (
     RequestInfoEvent,
-    WorkflowCompletedEvent,
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowFailedEvent,
+    WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStartedEvent,
     WorkflowStatusEvent,
-    _framework_event_origin,
+    _framework_event_origin,  # type: ignore
 )
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
 from ._runner import Runner
-from ._runner_context import CheckpointState, InProcRunnerContext, RunnerContext
+from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
 from ._validation import validate_workflow_graph
 from ._workflow_context import WorkflowContext
@@ -56,32 +56,36 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
-    """A list of events generated during the workflow execution in non-streaming mode.
+    """Container for events generated during non-streaming workflow execution.
 
-    Preserves the historical contract that the list contains data-plane events
-    only (executor invoke/complete, completed, requests), while exposing the
-    control-plane status timeline via accessors.
+    ## Overview
+    Represents the complete execution results of a workflow run, containing all events
+    generated from start to idle state. Workflows produce outputs incrementally through
+    ctx.yield_output() calls during execution.
+
+    ## Event Structure
+    Maintains separation between data-plane and control-plane events:
+    - Data-plane events: Executor invocations, completions, outputs, and requests (in main list)
+    - Control-plane events: Status timeline accessible via status_timeline() method
+
+    ## Key Methods
+    - get_outputs(): Extract all workflow outputs from the execution
+    - get_request_info_events(): Retrieve external input requests made during execution
+    - get_final_state(): Get the final workflow state (IDLE, IDLE_WITH_PENDING_REQUESTS, etc.)
+    - status_timeline(): Access the complete status event history
     """
 
     def __init__(self, events: list[WorkflowEvent], status_events: list[WorkflowStatusEvent] | None = None) -> None:
         super().__init__(events)
         self._status_events: list[WorkflowStatusEvent] = status_events or []
 
-    def get_completed_event(self) -> WorkflowCompletedEvent | None:
-        """Get the completed event from the workflow run result.
+    def get_outputs(self) -> list[Any]:
+        """Get all outputs from the workflow run result.
 
         Returns:
-            A completed WorkflowEvent instance if the workflow has a completed event, otherwise None.
-
-        Raises:
-            ValueError: If there are multiple completed events in the workflow run result.
+            A list of outputs produced by the workflow during its execution.
         """
-        completed_events = [event for event in self if isinstance(event, WorkflowCompletedEvent)]
-        if not completed_events:
-            return None
-        if len(completed_events) > 1:
-            raise ValueError("Multiple completed events found.")
-        return completed_events[0]
+        return [event.data for event in self if isinstance(event, WorkflowOutputEvent)]
 
     def get_request_info_events(self) -> list[RequestInfoEvent]:
         """Get all request info events from the workflow run result.
@@ -113,10 +117,54 @@ class WorkflowRunResult(list[WorkflowEvent]):
 
 
 class Workflow(AFBaseModel):
-    """A class representing a workflow that can be executed.
+    """A graph-based execution engine that orchestrates connected executors.
 
-    This class is a placeholder for the workflow logic and does not implement any specific functionality.
-    It serves as a base class for more complex workflows that can be defined in subclasses.
+    ## Overview
+    A workflow executes a directed graph of executors connected via edge groups using a Pregel-like model,
+    running in supersteps until the graph becomes idle. Workflows are created using the
+    WorkflowBuilder class - do not instantiate this class directly.
+
+    ## Execution Model
+    Executors run in synchronized supersteps where each executor:
+    - Is invoked when it receives messages from connected edge groups
+    - Can send messages to downstream executors via ctx.send_message()
+    - Can yield workflow-level outputs via ctx.yield_output()
+    - Can emit custom events via ctx.add_event()
+
+    Messages between executors are delivered at the end of each superstep and are not
+    visible in the event stream. Only workflow-level events (outputs, custom events)
+    and status events are observable to callers.
+
+    ## Input/Output Types
+    Workflow types are discovered at runtime by inspecting:
+    - Input types: From the start executor's input types
+    - Output types: Union of all executors' workflow output types
+    Access these via the input_types and output_types properties.
+
+    ## Execution Methods
+    - run(): Execute to completion, returns WorkflowRunResult with all events
+    - run_stream(): Returns async generator yielding events as they occur
+    - run_from_checkpoint(): Resume from a saved checkpoint
+    - run_stream_from_checkpoint(): Resume from checkpoint with streaming
+
+    ## External Input Requests
+    Workflows can request external input using a RequestInfoExecutor:
+    1. Executor connects to RequestInfoExecutor via edge group and back to itself
+    2. Executor sends RequestInfoMessage to RequestInfoExecutor
+    3. RequestInfoExecutor emits RequestInfoEvent and workflow enters IDLE_WITH_PENDING_REQUESTS
+    4. Caller handles requests and uses send_responses()/send_responses_streaming() to continue
+
+    ## Checkpointing
+    When enabled, checkpoints are created at the end of each superstep, capturing:
+    - Executor states
+    - Messages in transit
+    - Shared state
+    Workflows can be paused and resumed across process restarts using checkpoint storage.
+
+    ## Composition
+    Workflows can be nested using WorkflowExecutor, which wraps a child workflow as an executor.
+    The nested workflow's input/output types become part of the WorkflowExecutor's types.
+    When invoked, the WorkflowExecutor runs the nested workflow to completion and processes its outputs.
     """
 
     edge_groups: list[EdgeGroup] = Field(
@@ -170,7 +218,7 @@ class Workflow(AFBaseModel):
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
         self._shared_state = SharedState()
-        self._runner = Runner(
+        self._runner: Runner = Runner(
             self.edge_groups,
             self.executors,
             self._shared_state,
@@ -202,7 +250,7 @@ class Workflow(AFBaseModel):
                     # Get the original executor object and serialize its workflow
                     original_executor = self.executors.get(executor_id)
                     if original_executor and hasattr(original_executor, "workflow"):
-                        from ._executor import WorkflowExecutor
+                        from ._workflow_executor import WorkflowExecutor
 
                         if isinstance(original_executor, WorkflowExecutor):
                             executor_data["workflow"] = original_executor.workflow.model_dump(**kwargs)
@@ -249,7 +297,6 @@ class Workflow(AFBaseModel):
                 OtelAttr.WORKFLOW_ID: self.id,
             },
         ) as span:
-            saw_completed = False
             saw_request = False
             emitted_in_progress_pending = False
             try:
@@ -273,25 +320,19 @@ class Workflow(AFBaseModel):
 
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
-                    # Track terminal indicators while forwarding events
-                    if isinstance(event, WorkflowCompletedEvent):
-                        saw_completed = True
-                    elif isinstance(event, RequestInfoEvent):
+                    # Track request events for final status determination
+                    if isinstance(event, RequestInfoEvent):
                         saw_request = True
                     yield event
 
-                    if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending and not saw_completed:
+                    if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
                             pending_status = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
                         yield pending_status
 
-                # Success path: emit a final status based on observed terminal signals
-                if saw_completed:
-                    with _framework_event_origin():
-                        terminal_status = WorkflowStatusEvent(WorkflowRunState.COMPLETED)
-                    yield terminal_status
-                elif saw_request:
+                # Workflow runs until idle - emit final status based on whether requests are pending
+                if saw_request:
                     with _framework_event_origin():
                         terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                     yield terminal_status
@@ -334,14 +375,11 @@ class Workflow(AFBaseModel):
             executor = self.get_start_executor()
             await executor.execute(
                 message,
-                WorkflowContext(
-                    executor.id,
-                    [self.__class__.__name__],
-                    self._shared_state,
-                    self._runner.context,
-                    trace_contexts=None,  # No parent trace context for workflow start
-                    source_span_ids=None,  # No source span for workflow start
-                ),
+                [self.__class__.__name__],  # source_executor_ids
+                self._shared_state,  # shared_state
+                self._runner.context,  # runner_context
+                trace_contexts=None,  # No parent trace context for workflow start
+                source_span_ids=None,  # No source span for workflow start
             )
 
         async for event in self._run_workflow_with_tracing(initial_executor_fn=initial_execution, reset_context=True):
@@ -373,22 +411,24 @@ class Workflow(AFBaseModel):
         async def checkpoint_restoration() -> None:
             has_checkpointing = self._runner.context.has_checkpointing()
 
-            if not has_checkpointing and not checkpoint_storage:
+            if not has_checkpointing and checkpoint_storage is None:
                 raise ValueError(
                     "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
                     "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
                 )
 
-            if has_checkpointing:
-                # restore via Runner so shared state and iteration are synchronized
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id)
-            else:
-                if checkpoint_storage is None:
-                    raise ValueError("checkpoint_storage cannot be None.")
-                restored = await self._restore_from_external_checkpoint(checkpoint_id, checkpoint_storage)
+            restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
             if not restored:
                 raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+
+            # Process any pending messages from the checkpoint first
+            # This ensures that RequestInfoExecutor state is properly populated
+            # before we try to handle responses
+            if await self._runner.context.has_messages():
+                # Run one iteration to process pending messages
+                # This will populate RequestInfoExecutor._request_events properly
+                await self._runner._run_iteration()  # type: ignore
 
             if responses:
                 request_info_executor = self._find_request_info_executor()
@@ -596,119 +636,6 @@ class Workflow(AFBaseModel):
                 return executor
         return None
 
-    async def _restore_from_external_checkpoint(
-        self, checkpoint_id: str, checkpoint_storage: CheckpointStorage
-    ) -> bool:
-        """Restore workflow state from an external checkpoint storage.
-
-        This method implements the state transfer pattern: load checkpoint data
-        from external storage and transfer it to the current workflow context.
-
-        Args:
-            checkpoint_id: The ID of the checkpoint to restore from.
-            checkpoint_storage: The checkpoint storage to load from.
-
-        Returns:
-            True if restoration was successful, False otherwise.
-        """
-        try:
-            checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
-            if not checkpoint:
-                return False
-
-            graph_hash = getattr(self._runner, "graph_signature_hash", None)
-            checkpoint_hash = (checkpoint.metadata or {}).get("graph_signature")
-            if graph_hash and checkpoint_hash and graph_hash != checkpoint_hash:
-                raise ValueError(
-                    "Workflow graph has changed since the checkpoint was created. "
-                    "Please rebuild the original workflow before resuming."
-                )
-            if graph_hash and not checkpoint_hash:
-                logger.warning(
-                    f"Checkpoint {checkpoint_id} does not include graph signature metadata; "
-                    f"skipping topology validation."
-                )
-
-            temp_context = InProcRunnerContext(checkpoint_storage)
-            state: CheckpointState = {
-                "messages": checkpoint.messages,
-                "shared_state": checkpoint.shared_state,
-                "executor_states": checkpoint.executor_states,
-                "iteration_count": checkpoint.iteration_count,
-                "max_iterations": checkpoint.max_iterations,
-            }
-
-            await temp_context.set_checkpoint_state(state)
-            restored_state = await temp_context.get_checkpoint_state()
-            await self._transfer_state_to_context(restored_state)
-
-            # Also set runner iteration/max so superstep numbering continues
-            self._runner.mark_resumed(iteration=checkpoint.iteration_count, max_iterations=checkpoint.max_iterations)
-
-            return True
-
-        except ValueError:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to restore from external checkpoint {checkpoint_id}: {e}")
-            return False
-
-    async def _transfer_state_to_context(self, restored_state: CheckpointState) -> None:
-        """Transfer restored checkpoint state into the current workflow runtime.
-
-        This transfers:
-        - messages -> into the current RunnerContext so delivery can continue
-        - executor_states -> into the current RunnerContext so ctx.get_state() works after resume
-        - shared_state -> into the Workflow's SharedState so executors can read values set before the checkpoint
-        """
-        # Best-effort restoration
-        # Restore shared state so downstream executors can read values (e.g., original_input)
-        try:
-            shared_state_data = restored_state.get("shared_state", {})
-            if shared_state_data and hasattr(self._shared_state, "_state"):
-                async with self._shared_state.hold():
-                    self._shared_state._state.clear()  # type: ignore[attr-defined]
-                    self._shared_state._state.update(shared_state_data)  # type: ignore[attr-defined]
-        except Exception as exc:  # pragma: no cover
-            logger.debug(f"Failed to restore shared_state during external restore: {exc}")
-
-        # Restore executor states into the context so ctx.get_state() calls after resume succeed
-        try:
-            executor_states = restored_state.get("executor_states", {})
-            for exec_id, state in executor_states.items():
-                try:
-                    await self._runner.context.set_state(exec_id, state)
-                except Exception as exc:  # pragma: no cover - ignore per-executor failures
-                    logger.debug(f"Failed to restore executor state for {exec_id} during external restore: {exc}")
-        except Exception as exc:  # pragma: no cover
-            logger.debug(f"Failed to iterate executor_states during external restore: {exc}")
-
-        # Transfer pending messages into the context for delivery in the next superstep
-        messages_data = restored_state["messages"]
-        for _, message_list in messages_data.items():
-            for msg_data in message_list:
-                source_any = msg_data.get("source_id", "")
-                source_id: str = source_any if isinstance(source_any, str) else str(source_any)
-                if not source_id:
-                    source_id = ""
-                target_raw = msg_data.get("target_id")
-                target_id: str | None = (
-                    target_raw if target_raw is None or isinstance(target_raw, str) else str(target_raw)
-                )
-
-                # Build and send Message via runner context
-                from ._runner_context import Message as _Msg
-
-                await self._runner.context.send_message(
-                    _Msg(
-                        data=msg_data.get("data"),
-                        source_id=source_id,
-                        target_id=target_id,
-                        trace_contexts=msg_data.get("trace_contexts"),
-                        source_span_ids=msg_data.get("source_span_ids"),
-                    )
-                )
-
     # Graph signature helpers
 
     def _compute_graph_signature(self) -> dict[str, Any]:
@@ -773,6 +700,36 @@ class Workflow(AFBaseModel):
     @property
     def graph_signature_hash(self) -> str:
         return self._graph_signature_hash
+
+    @property
+    def input_types(self) -> list[type[Any]]:
+        """Get the input types of the workflow.
+
+        The input types are the list of input types of the start executor.
+
+        Returns:
+            A list of input types that the workflow can accept.
+        """
+        start_executor = self.get_start_executor()
+        return start_executor.input_types
+
+    @property
+    def output_types(self) -> list[type[Any]]:
+        """Get the output types of the workflow.
+
+        The output types are the list of all workflow output types from executors
+        that have workflow output types.
+
+        Returns:
+            A list of output types that the workflow can produce.
+        """
+        output_types: set[type[Any]] = set()
+
+        for executor in self.executors.values():
+            workflow_output_types = executor.workflow_output_types
+            output_types.update(workflow_output_types)
+
+        return list(output_types)
 
     def as_agent(self, name: str | None = None) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.

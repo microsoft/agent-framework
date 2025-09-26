@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.Orchestration;
 
@@ -10,8 +10,7 @@ namespace Microsoft.Agents.Orchestration;
 /// </summary>
 internal sealed class OrchestratingAgentThread : InMemoryAgentThread
 {
-    internal OrchestratingAgentThread()
-        : base() { }
+    internal OrchestratingAgentThread() { }
 
     internal OrchestratingAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
         : base(serializedThreadState, jsonSerializerOptions) { }

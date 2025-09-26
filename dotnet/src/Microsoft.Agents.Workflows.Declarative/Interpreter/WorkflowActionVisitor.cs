@@ -40,13 +40,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     public bool HasUnsupportedActions { get; private set; }
 
-    public Workflow<TInput> Complete<TInput>()
+    public Workflow Complete()
     {
         // Process the cached links
         this._workflowModel.ConnectNodes(this._workflowBuilder);
 
         // Build final workflow
-        return this._workflowBuilder.Build<TInput>();
+        return this._workflowBuilder.Build();
     }
 
     protected override void Visit(ActionScope item)
@@ -197,7 +197,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             DefaultActionExecutor continueLoopExecutor = new(item, this._workflowState);
             this.ContinueWith(continueLoopExecutor);
-            this._workflowModel.AddLink(continueLoopExecutor.Id, Steps.Post(loopExecutor.Id));
+            this._workflowModel.AddLink(continueLoopExecutor.Id, ForeachExecutor.Steps.Next(loopExecutor.Id));
             this.RestartAfter(continueLoopExecutor.Id, continueLoopExecutor.ParentId);
         }
     }

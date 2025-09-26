@@ -17,8 +17,10 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
-        StringExpression conversationExpression = Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
-        string conversationId = this.State.Evaluator.GetValue(conversationExpression).Value;
+        Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
+        await context.EnsureWorkflowConversationAsync(agentProvider, this.Model.ConversationId, cancellationToken).ConfigureAwait(false);
+
+        string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
 
         ChatMessage newMessage = new(this.Model.Role.Value.ToChatRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
 
@@ -33,7 +35,7 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
     {
         foreach (AddConversationMessageContent content in this.Model.Content)
         {
-            AIContent? messageContent = content.Type.Value.ToContent(this.State.Engine.Format(content.Value));
+            AIContent? messageContent = content.Type.Value.ToContent(this.Engine.Format(content.Value));
             if (messageContent is not null)
             {
                 yield return messageContent;
@@ -48,7 +50,7 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
             return null;
         }
 
-        RecordDataValue? metadataValue = this.State.Evaluator.GetValue(this.Model.Metadata).Value;
+        RecordDataValue? metadataValue = this.Evaluator.GetValue(this.Model.Metadata).Value;
 
         return metadataValue.ToMetadata();
     }

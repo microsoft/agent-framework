@@ -58,7 +58,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopContinueActionAsync()
     {
         await this.RunWorkflowAsync("LoopContinue.yaml");
-        this.AssertExecutionCount(expectedCount: 7);
+        this.AssertExecutionCount(expectedCount: 23);
         this.AssertExecuted("foreach_loop");
         this.AssertExecuted("continueLoop_now");
         this.AssertExecuted("end_all");
@@ -252,7 +252,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
 
-        Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 

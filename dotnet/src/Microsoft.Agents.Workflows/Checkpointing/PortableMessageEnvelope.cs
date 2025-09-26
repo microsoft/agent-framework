@@ -9,13 +9,15 @@ internal sealed class PortableMessageEnvelope
 {
     public TypeId MessageType { get; }
     public PortableValue Message { get; }
+    public ExecutorIdentity Source { get; }
     public string? TargetId { get; }
 
     [JsonConstructor]
-    internal PortableMessageEnvelope(TypeId messageType, PortableValue message, string? targetId)
+    internal PortableMessageEnvelope(TypeId messageType, ExecutorIdentity source, PortableValue message, string? targetId)
     {
         this.MessageType = messageType;
         this.Message = message;
+        this.Source = source;
         this.TargetId = targetId;
     }
 
@@ -28,6 +30,6 @@ internal sealed class PortableMessageEnvelope
 
     public MessageEnvelope ToMessageEnvelope()
     {
-        return new MessageEnvelope(this.Message, this.MessageType, this.TargetId);
+        return new MessageEnvelope(this.Message, this.Source, this.MessageType, this.TargetId);
     }
 }

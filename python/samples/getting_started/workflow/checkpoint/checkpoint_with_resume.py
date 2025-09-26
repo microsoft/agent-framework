@@ -15,11 +15,10 @@ from agent_framework import (
     RequestInfoExecutor,
     Role,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 if TYPE_CHECKING:
@@ -40,7 +39,7 @@ Pipeline:
 2) ReverseTextExecutor reverses the string.
 3) SubmitToLowerAgent prepares an AgentExecutorRequest for the lowercasing agent.
 4) lower_agent (AgentExecutor) converts text to lowercase via Azure OpenAI.
-5) FinalizeFromAgent emits a WorkflowCompletedEvent with the final result.
+5) FinalizeFromAgent yields the final result.
 
 What you learn:
 - How to persist executor state using ctx.get_state and ctx.set_state.
@@ -49,9 +48,10 @@ What you learn:
 - How to list and inspect checkpoints programmatically.
 - How to interactively choose a checkpoint to resume from (instead of always resuming
     from the most recent or a hard-coded one) using run_stream_from_checkpoint.
+- How workflows complete by yielding outputs when idle, not via explicit completion events.
 
 Prerequisites:
-- Azure AI or Azure OpenAI available for AzureChatClient.
+- Azure AI or Azure OpenAI available for AzureOpenAIChatClient.
 - Authentication with azure-identity via AzureCliCredential. Run az login locally.
 - Filesystem access for writing JSON checkpoint files in a temp directory.
 """
@@ -115,10 +115,10 @@ class SubmitToLowerAgent(Executor):
 
 
 class FinalizeFromAgent(Executor):
-    """Consumes the AgentExecutorResponse and emits the terminal WorkflowCompletedEvent."""
+    """Consumes the AgentExecutorResponse and yields the final result."""
 
     @handler
-    async def finalize(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any]) -> None:
+    async def finalize(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any, str]) -> None:
         result = response.agent_run_response.text or ""
 
         # Persist executor-local state for auditability when inspecting checkpoints.
@@ -130,8 +130,8 @@ class FinalizeFromAgent(Executor):
             "final": True,
         })
 
-        # Emit a terminal event so external consumers see the final value.
-        await ctx.add_event(WorkflowCompletedEvent(result))
+        # Yield the final result so external consumers see the final value.
+        await ctx.yield_output(result)
 
 
 class ReverseTextExecutor(Executor):
@@ -161,7 +161,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> "Workflow":
     reverse_text_executor = ReverseTextExecutor(id="reverse-text")
 
     # Configure the agent stage that lowercases the text.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     lower_agent = AgentExecutor(
         chat_client.create_agent(
             instructions=("You transform text to lowercase. Reply with ONLY the transformed text.")
@@ -184,6 +184,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> "Workflow":
         .with_checkpointing(checkpoint_storage=checkpoint_storage)  # Enable persistence
         .build()
     )
+
 
 def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
     """Display human-friendly checkpoint metadata using framework summaries."""
@@ -248,7 +249,7 @@ async def main():
         line += f" messages={msg_count}"
         print(line)
 
-    user_input = input(
+    user_input = input(  # noqa: ASYNC250
         "\nEnter checkpoint index (or paste checkpoint id) to resume from, or press Enter to skip resume: "
     ).strip()
 
@@ -297,7 +298,6 @@ async def main():
     Event: ExecutorInvokeEvent(executor_id=submit_lower)
     Event: ExecutorInvokeEvent(executor_id=lower_agent)
     Event: ExecutorInvokeEvent(executor_id=finalize)
-    Event: WorkflowCompletedEvent(data=dlrow olleh)
 
     Checkpoint summary:
     - dfc63e72-8e8d-454f-9b6d-0d740b9062e6 | label='after_initial_execution' | iter=0 | messages=1 | states=['upper_case_executor'] | shared_state: original_input='hello world', upper_output='HELLO WORLD'
@@ -316,7 +316,6 @@ async def main():
     Resumed Event: ExecutorInvokeEvent(executor_id=submit_lower)
     Resumed Event: ExecutorInvokeEvent(executor_id=lower_agent)
     Resumed Event: ExecutorInvokeEvent(executor_id=finalize)
-    Resumed Event: WorkflowCompletedEvent(data=dlrow olleh)
     """  # noqa: E501
 
 

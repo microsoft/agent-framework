@@ -2,7 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.Agents.Workflows.Specialized;
+using System.Linq;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -24,15 +24,19 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor from which messages will be forwarded.</param>
     /// <param name="executors">The target executors to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
-    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
     {
-        Throw.IfNullOrEmpty(executors);
+        Throw.IfNull(executors);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
 
-        if (executors.Length == 1)
+#if NET
+        if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
+#else
+        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+#endif
         {
-            return builder.AddEdge(source, executors[0], predicate);
+            return builder.AddEdge(source, executors.First(), predicate);
         }
 
         return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
@@ -50,15 +54,19 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor from which messages will be forwarded.</param>
     /// <param name="executors">The target executors to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
-    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
     {
-        Throw.IfNullOrEmpty(executors);
+        Throw.IfNull(executors);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
 
-        if (executors.Length == 1)
+#if NET
+        if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
+#else
+        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+#endif
         {
-            return builder.AddEdge(source, executors[0], predicate);
+            return builder.AddEdge(source, executors.First(), predicate);
         }
 
         return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
@@ -79,25 +87,25 @@ public static class WorkflowBuilderExtensions
     /// <param name="executors">An ordered array of executors to be added to the chain after the source.</param>
     /// <returns>The original workflow builder instance with the specified executor chain added.</returns>
     /// <exception cref="ArgumentException">Thrown if there is a cycle in the chain.</exception>
-    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, params ExecutorIsh[] executors)
+    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
 
         HashSet<string> seenExecutors = [source.Id];
 
-        for (int i = 0; i < executors.Length; i++)
+        foreach (var executor in executors)
         {
-            Throw.IfNull(executors[i], nameof(executors) + $"[{i}]");
+            Throw.IfNull(executor, nameof(executors));
 
-            if (seenExecutors.Contains(executors[i].Id))
+            if (seenExecutors.Contains(executor.Id))
             {
-                throw new ArgumentException($"Executor '{executors[i].Id}' is already in the chain.", nameof(executors));
+                throw new ArgumentException($"Executor '{executor.Id}' is already in the chain.", nameof(executors));
             }
-            seenExecutors.Add(executors[i].Id);
+            seenExecutors.Add(executor.Id);
 
-            builder.AddEdge(source, executors[i]);
-            source = executors[i];
+            builder.AddEdge(source, executor);
+            source = executor;
         }
 
         return builder;
@@ -147,41 +155,5 @@ public static class WorkflowBuilderExtensions
         configureSwitch(switchBuilder);
 
         return switchBuilder.ReduceToFanOut(builder, source);
-    }
-
-    /// <summary>
-    /// Builds a workflow that collects output from the specified executor, aggregates results using the provided
-    /// streaming aggregator, and optionally completes based on a custom condition.
-    /// </summary>
-    /// <remarks>The returned workflow promotes the output collector as its result source, allowing consumers
-    /// to access the aggregated output directly. The completion condition can be used to implement custom termination
-    /// logic, such as early stopping when a desired result is reached.</remarks>
-    /// <typeparam name="TInput">The type of input items processed by the workflow.</typeparam>
-    /// <typeparam name="TIntermediate">The type of items generated by the <paramref name="outputSource"/>,
-    /// and aggregated by the <paramref name="aggregator"/>.</typeparam>
-    /// <typeparam name="TResult">The type of aggregated result produced by the workflow.</typeparam>
-    /// <param name="builder">The workflow builder used to construct the workflow and define its execution graph.</param>
-    /// <param name="outputSource">The executor that produces output items to be collected and aggregated. Cannot be null.</param>
-    /// <param name="aggregator">The streaming aggregator that processes input items and produces aggregated results. Cannot be null.</param>
-    /// <param name="completionCondition">An optional predicate that determines when the workflow should complete based on the current input and
-    /// aggregated result. If null, the workflow will not raise a <see cref="WorkflowCompletedEvent"/>.</param>
-    /// <returns>A workflow that collects output from the specified executor, aggregates results, and exposes the aggregated
-    /// output.</returns>
-    public static Workflow<TInput, TResult> BuildWithOutput<TInput, TIntermediate, TResult>(
-        this WorkflowBuilder builder,
-        ExecutorIsh outputSource,
-        StreamingAggregator<TIntermediate, TResult> aggregator,
-        Func<TIntermediate, TResult?, bool>? completionCondition = null)
-    {
-        Throw.IfNull(outputSource);
-        Throw.IfNull(aggregator);
-
-        OutputCollectorExecutor<TIntermediate, TResult> outputSink = new(aggregator, completionCondition);
-
-        // TODO: Check that the outputSource has a TResult output?
-        builder.AddEdge(outputSource, outputSink);
-
-        Workflow<TInput> workflow = builder.Build<TInput>();
-        return workflow.Promote(outputSink);
     }
 }

@@ -4,8 +4,8 @@ using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -36,7 +36,7 @@ internal sealed class WorkflowThread : AgentThread
 
         AgentRunResponseUpdate update = new(ChatRole.Assistant, parts)
         {
-            CreatedAt = DateTimeOffset.Now,
+            CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
         };
 

@@ -4,9 +4,9 @@ using System;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace WorkflowFoundryAgentSample;
 
@@ -37,7 +37,7 @@ public static class Program
         var workflow = new WorkflowBuilder(frenchAgent)
             .AddEdge(frenchAgent, spanishAgent)
             .AddEdge(spanishAgent, englishAgent)
-            .Build<ChatMessage>();
+            .Build();
 
         // Execute the workflow
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));

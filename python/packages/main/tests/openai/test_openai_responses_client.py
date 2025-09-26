@@ -1560,7 +1560,7 @@ async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with OpenAI Response Agent using Microsoft Learn MCP."""
-    # Use the same MCP server as the Foundry example
+
     mcp_tool = HostedMCPTool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
@@ -1573,7 +1573,6 @@ async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
-        # Use the same query as the Foundry example
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
             max_tokens=200,
@@ -2044,3 +2043,29 @@ def test_create_response_content_image_generation_fallback():
     assert isinstance(content, DataContent)
     assert content.media_type == "image/png"
     assert f"data:image/png;base64,{unrecognized_base64}" == content.uri
+
+
+def test_prepare_options_store_parameter_handling() -> None:
+    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="Test message")]
+
+    test_conversation_id = "test-conversation-123"
+    chat_options = ChatOptions(store=True, conversation_id=test_conversation_id)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is True
+    assert options["previous_response_id"] == test_conversation_id
+
+    chat_options = ChatOptions(store=False, conversation_id="")
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is False
+    assert "previous_response_id" not in options
+
+    chat_options = ChatOptions(store=None, conversation_id=None)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is False
+    assert "previous_response_id" not in options
+
+    chat_options = ChatOptions()
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert options["store"] is False
+    assert "previous_response_id" not in options

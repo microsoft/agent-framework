@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Shared.Diagnostics;
 
@@ -135,7 +136,7 @@ public sealed class AgentProxy : AIAgent
             Messages = newMessages
         };
 
-        string messageId = newMessages.LastOrDefault()?.MessageId ?? Guid.NewGuid().ToString();
+        string messageId = newMessages.LastOrDefault()?.MessageId ?? Guid.NewGuid().ToString("N");
         ActorRequest actorRequest = new(
             actorId: new ActorId(this.Name, threadId),
             messageId,

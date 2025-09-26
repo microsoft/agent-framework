@@ -3,16 +3,17 @@
 import asyncio
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import (
     ChatMessage,
     Executor,
     Role,
     SequentialBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -20,8 +21,8 @@ Sample: Sequential workflow mixing agents and a custom summarizer executor
 
 This demonstrates how SequentialBuilder chains participants with a shared
 conversation context (list[ChatMessage]). An agent produces content; a custom
-executor appends a compact summary to the conversation. The final WorkflowCompletedEvent
-contains the complete conversation.
+executor appends a compact summary to the conversation. The workflow completes
+when idle, and the final output contains the complete conversation.
 
 Custom executor contract:
 - Provide at least one @handler accepting list[ChatMessage] and a WorkflowContext[list[ChatMessage]]
@@ -34,7 +35,7 @@ Note on internal adapters:
   for completion—similar to concurrent's dispatcher/aggregator.
 
 Prerequisites:
-- Azure OpenAI access configured for AzureChatClient (use az login + env vars)
+- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
 """
 
 
@@ -42,16 +43,17 @@ class Summarizer(Executor):
     """Simple summarizer: consumes full conversation and appends an assistant summary."""
 
     @handler
-    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[Never, list[ChatMessage]]) -> None:
         users = sum(1 for m in conversation if m.role == Role.USER)
         assistants = sum(1 for m in conversation if m.role == Role.ASSISTANT)
         summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary -> users:{users} assistants:{assistants}")
-        await ctx.send_message(list(conversation) + [summary])
+        final_conversation = list(conversation) + [summary]
+        await ctx.yield_output(final_conversation)
 
 
 async def main() -> None:
     # 1) Create a content agent
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     content = chat_client.create_agent(
         instructions="Produce a concise paragraph answering the user's request.",
         name="content",
@@ -62,14 +64,12 @@ async def main() -> None:
     workflow = SequentialBuilder().participants([content, summarizer]).build()
 
     # 3) Run and print final conversation
-    completion: WorkflowCompletedEvent | None = None
-    async for event in workflow.run_stream("Explain the benefits of budget eBikes for commuters."):
-        if isinstance(event, WorkflowCompletedEvent):
-            completion = event
+    events = await workflow.run("Explain the benefits of budget eBikes for commuters.")
+    outputs = events.get_outputs()
 
-    if completion:
+    if outputs:
         print("===== Final Conversation =====")
-        messages: list[ChatMessage] | Any = completion.data
+        messages: list[ChatMessage] | Any = outputs[0]
         for i, msg in enumerate(messages, start=1):
             name = msg.author_name or ("assistant" if msg.role == Role.ASSISTANT else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
