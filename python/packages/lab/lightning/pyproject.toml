@@ -23,13 +23,17 @@ classifiers = [
 dependencies = [
   "agent-framework",
   "pydantic>=2.0.0",
-  # Add your specific dependencies here
+  # Install from test.pypi.org because agentlightning 0.2.0 is not yet released
+  "agentlightning @ https://test-files.pythonhosted.org/packages/31/5e/fc033862bfb83ba33b64eea7bff4d7bf980e57ecfcf3f176edb7368cbe2e/agentlightning-0.2.0.dev20250925060605-py3-none-any.whl#sha256=be468b44501380dc4d052e0f41b813a6ca8eb2b27a601c82d8b771817a1c0b2e",
 ]
 
-
-[project.scripts]
-lightning = "agent_framework_lab_lightning:main"
-
+[project.optional-dependencies]
+math = [
+  "sympy>=1.13.0",
+]
+#tau2 = [
+  #"agent-framework-lab-tau2",
+#]
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
@@ -68,7 +72,6 @@ show_error_codes = true
 implicit_reexport = true
 packages = ["agent_framework_lab_lightning"]
 
-
 [tool.poe]
 executor.type = "uv"
 include = "../../../shared_tasks.toml"
@@ -76,6 +79,8 @@ include = "../../../shared_tasks.toml"
 test = "pytest --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered tests"
 mypy = "mypy agent_framework_lab_lightning"
 
+[tool.pyright]
+exclude = ["**/data"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
