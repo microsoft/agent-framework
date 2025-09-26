@@ -13,8 +13,8 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using OpenAI;
 using MultiTurn;
+using OpenAI;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
