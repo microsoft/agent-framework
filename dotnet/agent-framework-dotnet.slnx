@@ -112,7 +112,9 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/05_MultiModelService/05_MultiModelService.csproj" />
   </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/" />
+  <Folder Name="/Samples/SemanticKernelMigration/">
+    <File Path="samples/SemanticKernelMigration/README.md" />
+  </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/AzureAIFoundry/">
     <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step01_Basics/AzureAIFoundry_Step01_Basics.csproj" />
     <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step02_ToolCall/AzureAIFoundry_Step02_ToolCall.csproj" />
