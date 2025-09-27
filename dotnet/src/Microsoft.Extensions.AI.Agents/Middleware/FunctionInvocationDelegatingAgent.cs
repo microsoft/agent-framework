@@ -34,21 +34,19 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     {
         if (options is ChatClientAgentRunOptions aco)
         {
-            // Creates an immutable agent run options 
-            var newAgentOptions = new ChatClientAgentRunOptions(aco.ChatOptions?.Clone());
-
-            if (aco.AIToolsTransformer is null)
+            var originalFactory = aco.ChatClientFactory;
+            aco.ChatClientFactory = (IChatClient chatClient) =>
             {
-                newAgentOptions.AIToolsTransformer = LocalTransformer;
-            }
-            else
-            {
-                var original = aco.AIToolsTransformer;
+                var builder = chatClient.AsBuilder();
 
-                newAgentOptions.AIToolsTransformer = tools => LocalTransformer(original(tools));
-            }
+                if (originalFactory is not null)
+                {
+                    builder.Use(originalFactory);
+                }
 
-            return newAgentOptions;
+                return builder.ConfigureOptions(co => co.Tools = LocalTransformer(co.Tools))
+                    .Build();
+            };
 
             IList<AITool>? LocalTransformer(IList<AITool>? tools)
                 => tools?.Select(tool => tool is AIFunction aiFunction
@@ -64,7 +62,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 
     private sealed class MiddlewareEnabledFunction(AIAgent innerAgent, AIFunction innerFunction, Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> next) : DelegatingAIFunction(innerFunction)
     {
-        protected async override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+        protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
             if (FunctionInvokingChatClient.CurrentContext is null)
             {

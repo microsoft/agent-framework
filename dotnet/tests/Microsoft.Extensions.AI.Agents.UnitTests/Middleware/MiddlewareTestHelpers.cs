@@ -112,20 +112,21 @@ public static class MiddlewareTestHelpers
     }
 
     /// <summary>
-    /// Creates an execution order tracker for testing middleware execution sequence.
+    /// Creates an execution order tracker for testing run middleware execution sequence.
     /// </summary>
     /// <returns>A list to track execution order and helper methods.</returns>
-    public static (List<string> executionOrder, Func<string, Func<AgentRunContext, Func<AgentRunContext, Task>, Task>> createRunMiddleware) CreateExecutionOrderTracker()
+    public static (List<string> executionOrder, Func<string, Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>>> createRunMiddleware) CreateRunExecutionOrderTracker()
     {
         var executionOrder = new List<string>();
 
-        Func<AgentRunContext, Func<AgentRunContext, Task>, Task> createRunMiddleware(string name)
+        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>> createRunMiddleware(string name)
         {
-            return async (context, next) =>
+            return async (messages, thread, options, innerAgent, cancellationToken) =>
             {
                 executionOrder.Add($"{name}-Pre");
-                await next(context);
+                var result = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
                 executionOrder.Add($"{name}-Post");
+                return result;
             };
         }
 
@@ -136,17 +137,18 @@ public static class MiddlewareTestHelpers
     /// Creates an execution order tracker for function invocation middleware.
     /// </summary>
     /// <returns>A list to track execution order and helper methods.</returns>
-    public static (List<string> executionOrder, Func<string, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task>> createFunctionMiddleware) CreateFunctionExecutionOrderTracker()
+    public static (List<string> executionOrder, Func<string, Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>>> createFunctionMiddleware) CreateFunctionExecutionOrderTracker()
     {
         var executionOrder = new List<string>();
 
-        Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> createFunctionMiddleware(string name)
+        Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> createFunctionMiddleware(string name)
         {
-            return async (context, next) =>
+            return async (agent, context, next, cancellationToken) =>
             {
                 executionOrder.Add($"{name}-Pre");
-                await next(context);
+                var result = await next(context, cancellationToken);
                 executionOrder.Add($"{name}-Post");
+                return result;
             };
         }
 
@@ -236,26 +238,31 @@ public static class MiddlewareTestHelpers
     }
 
     /// <summary>
-    /// Creates a test scenario with middleware that modifies context properties.
+    /// Creates a test scenario with middleware that modifies run parameters.
     /// </summary>
     /// <param name="modifyMessages">Whether to modify messages.</param>
     /// <param name="modifyOptions">Whether to modify options.</param>
     /// <returns>A middleware function that performs the specified modifications.</returns>
-    public static Func<AgentRunContext, Func<AgentRunContext, Task>, Task> CreateContextModifyingMiddleware(bool modifyMessages = false, bool modifyOptions = false)
+    public static Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>> CreateRunModifyingMiddleware(bool modifyMessages = false, bool modifyOptions = false)
     {
-        return async (context, next) =>
+        return async (messages, thread, options, innerAgent, cancellationToken) =>
         {
+            var modifiedMessages = messages;
+            var modifiedOptions = options;
+
             if (modifyMessages)
             {
-                context.Messages.Insert(0, new ChatMessage(ChatRole.System, "Added by middleware"));
+                var messagesList = messages.ToList();
+                messagesList.Insert(0, new ChatMessage(ChatRole.System, "Added by middleware"));
+                modifiedMessages = messagesList;
             }
 
             if (modifyOptions)
             {
-                context.Options = CreateTestRunOptions();
+                modifiedOptions = CreateTestRunOptions();
             }
 
-            await next(context);
+            return await innerAgent.RunAsync(modifiedMessages, thread, modifiedOptions, cancellationToken);
         };
     }
 }
