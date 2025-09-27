@@ -1,5 +1,5 @@
 ﻿{
-  "description": "Seqential agent invokcation sample - Marketing.yaml.",
+  "description": "Sequential agent invocation sample - Marketing.yaml.",
   "setup": {
     "input": {
       "type": "String",
