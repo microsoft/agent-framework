@@ -1,8 +1,8 @@
 # Agent Framework Lab - Agent Framework x Agent Lightning
 
-**Agent Framework Lab Lightning** is a specialized package that integrates Microsoft's [Agent Framework](https://github.com/microsoft/agent-framework) with [Agent Lightning](https://github.com/microsoft/agent-lightning) to provide reinforcement learning (RL) training capabilities for AI agents.
+**Agent Framework Lab Lightning** is a specialized package that integrates Microsoft's [Agent Framework](https://github.com/microsoft/agent-framework) with [Agent-lightning](https://github.com/microsoft/agent-lightning) to provide reinforcement learning (RL) training capabilities for AI agents.
 
-This package enables you to train and fine-tune agents using advanced RL algorithms like those provided in VERL (e.g., GRPO, PPO, Reinforce++) with support for distributed training, multi-GPU setups, and comprehensive monitoring. It also supports complex multi-turn agent interactions during training and other optimization techniques like prompt optimization. See [Agent-lightning documentation](https://microsoft.github.io/agent-lightning/stable/) for details.
+This package enables you to train and fine-tune agents using advanced RL algorithms from VERL (e.g., GRPO, PPO, Reinforce++) with support for distributed training, multi-GPU setups, and comprehensive monitoring. It also supports complex multi-turn agent interactions during training and optimization techniques like prompt optimization. See the [Agent-lightning documentation](https://microsoft.github.io/agent-lightning/stable/) for details.
 
 ## Installation
 
@@ -10,7 +10,7 @@ This package enables you to train and fine-tune agents using advanced RL algorit
 pip install agent-framework-lab-lightning
 ```
 
-Install with Optional Dependencies:
+### Optional Dependencies
 
 ```bash
 # For math-related training
@@ -20,50 +20,28 @@ pip install agent-framework-lab-lightning[math]
 pip install agent-framework-lab-lightning[tau2]
 ```
 
-To prepare for RL training, you also need to install dependencies like PyTorch, Ray, vLLM, etc. See [this instruction](https://github.com/microsoft/agent-lightning) for more details.
+To prepare for RL training, you'll also need to install dependencies like PyTorch, Ray, and vLLM. See the [Agent-lightning setup instructions](https://github.com/microsoft/agent-lightning) for more details.
 
 ## Usage Patterns
 
-The most basic usage pattern is as follows:
+The basic usage pattern follows these steps:
 
-1. **Prepare your dataset** as a list of samples (typically a list of dictionaries)
+1. **Prepare your dataset** as a list of samples (typically dictionaries)
 2. **Create an agent function** that processes samples and returns evaluation scores
 3. **Decorate with `@agentlightning.rollout`** to enable training
 4. **Configure and run training** with the `agentlightning.Trainer` class
 
-## Example 101: Train Math Agent
-
-The example trains an agent that uses a MCP calculator tool to solve math problems. It needs a minimum of 40GB GPU memory. To run the example:
-
-```bash
-cd samples
-# Run the ray cluster
-ray start --head --dashboard-host=0.0.0.0
-# Run the training script
-python train_math_agent.py
-```
-
-To debug the agent used in the example, you can run the script with the `--debug` flag:
-
-### Explanation
-
-At a high level, the example demonstrates a clear usage pattern of this package.
+### Example Implementation
 
 ```python
-import asyncio
-from typing import TypedDict
 from agent_framework.lab.lightning import init
-from agent_framework.openai import OpenAIChatClient
-from agent_framework import ChatAgent, MCPStdioTool
 from agentlightning import rollout, Trainer, LLM, Dataset
 from agentlightning.algorithm.verl import VERL
 
-class MathProblem(TypedDict):
-    question: str
-    result: str
+TaskType = Any
 
 @rollout
-async def math_agent(task: MathProblem, llm: LLM) -> float:
+async def math_agent(task: TaskType, llm: LLM) -> float:
     """A function that solves a math problem and returns the evaluation score."""
     async with (
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
@@ -89,23 +67,43 @@ config = {
     # ... additional config
 }
 
-
-# This init basically tells agent-framework to send the telemetry data to the observability backend in agent-lightning
+# Initialize agent-framework to send telemetry data to agent-lightning's observability backend
 init()
 
 trainer = Trainer(algorithm=VERL(config), n_workers=2)
+# Both train_dataset and val_dataset are lists of TaskType
 trainer.fit(math_agent, train_dataset, val_data=val_dataset)
 ```
 
-The training curve with Qwen2.5-1.5B-Instruct is as follows:
+## Example 1: Training a Math Agent
+
+This example trains an agent that uses an MCP calculator tool to solve math problems. The dataset is a small subset from the [Calc-X](https://huggingface.co/datasets/MU-NLPC/Calc-X) dataset. The Agent-lightning team has also experimented with a similar agent using a larger dataset. See [this example](https://github.com/microsoft/agent-lightning/tree/a63197355cc23b5b235c49fe7c20b54f9d4ebcd2/examples/calc_x) for more details.
+
+Running this example requires a minimum of 40GB GPU memory. If you don't have enough GPU memory, you can use a smaller model like `Qwen2.5-0.5B-Instruct`, though the results won't be as good. To run the example:
+
+```bash
+cd samples
+# Run the ray cluster (see the troubleshooting section for more details)
+ray start --head --dashboard-host=0.0.0.0
+# Run the training script
+python train_math_agent.py
+```
+
+To debug the agent used in the example, you can run the script with the `--debug` flag:
+
+```bash
+python train_math_agent.py --debug
+```
+
+The training curve below shows results with Qwen2.5-1.5B-Instruct and GRPO. Validation accuracy increases from 10% to 35% in the first 8 steps, then begins to overfit.
 
 ![Training Curve](./assets/train_math_agent.png)
 
-## Example 201: Train Tau2 Agent
+## Example 2: Training a Tau2 Agent
 
-This is an advanced example showing training on complex multi-agent scenarios using the Tau2 benchmark. It demonstrates a multi-agent setup with an assistant agent and a user simulator agent (and training the assistant agent while fixing the user simulator agent). It incorporates a multi-step workflow with tool usage and complex evaluation metrics. We currently train on the airline domain with 50% training data and 50% validation data.
+This advanced example demonstrates training on complex multi-agent scenarios using the Tau2 benchmark. It features a multi-agent setup with an assistant agent and a user simulator agent, training the assistant while keeping the user simulator fixed. The example incorporates a multi-step workflow with tool usage and complex evaluation metrics. Currently, training uses the airline domain with a 50/50 split between training and validation data.
 
-Please make sure you have read [agent-lightning-lab-tau2](../tau2/README.md) and follow the setup instructions before running this example.
+Before running this example, please read the [agent-lightning-lab-tau2](../tau2/README.md) documentation and follow the setup instructions.
 
 To run the example:
 
@@ -120,6 +118,9 @@ export OPENAI_API_KEY="your-key"
 # Used for tracking on Weights & Biases
 export WANDB_API_KEY="your-key"
 
+# Run the ray cluster
+ray start --head --dashboard-host=0.0.0.0
+
 # Train the tau2 agent
 cd samples
 python samples/train_tau2_agent.py
@@ -128,15 +129,17 @@ python samples/train_tau2_agent.py
 python samples/train_tau2_agent.py --debug
 ```
 
-The usage of agent-lightning in this example is more advanced than the math example. For instance, it is based on the `LitAgent` class rather than the `@rollout` decorator. It also involves concepts like resources and agent filtering. We recommend to read [Agent-lightning documentation](https://microsoft.github.io/agent-lightning/stable/) to learn more.
+This example uses more advanced Agent-lightning features compared to the math example. It's based on the `LitAgent` class rather than the `@rollout` decorator and involves concepts like resources and agent filtering. We recommend reading the [Agent-lightning documentation](https://microsoft.github.io/agent-lightning/stable/) to learn more.
 
-*Result TBD*
+Results with Qwen2.5-1.5B-Instruct and GRPO are shown below. Validation accuracy improves from 28% to 40% over 8 epochs.
+
+![Training Curve](./assets/train_tau2_agent.png)
 
 ## Troubleshooting
 
 ### Ray Connection Issues
 
-If you encounter Ray startup problems:
+Agent-lightning uses VERL for RL training, which depends on Ray. To avoid issues, it's recommended to start Ray manually beforehand. If you encounter Ray startup problems:
 
 ```bash
 # Stop existing Ray processes
@@ -146,7 +149,7 @@ ray stop
 env RAY_DEBUG=legacy HYDRA_FULL_ERROR=1 VLLM_USE_V1=1 ray start --head --dashboard-host=0.0.0.0
 ```
 
-**Important**: Run Ray commands in the same directory as your training script. Set environment variables (`WANDB_API_KEY`, `HF_TOKEN`) before starting Ray if needed.
+**Important**: Run Ray commands in the same directory as your training script. Set any required environment variables (`WANDB_API_KEY`, `HF_TOKEN`) before starting Ray.
 
 ### GPU Memory Issues
 
