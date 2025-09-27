@@ -19,23 +19,20 @@ from tau2.domains.airline.tools import AirlineTools
 from tau2.environment.environment import Environment
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def tau2_airline_environment() -> Environment:
     airline_db_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/db.json"
     airline_policy_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/policy.md"
 
-    # Create temporary files
-    with (
-        tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as db_file,
-        tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as policy_file,
-    ):
-        # Download airline DB
-        urllib.request.urlretrieve(airline_db_remote_path, db_file.name)
-        db_temp_path = db_file.name
+    # Create temporary file paths
+    db_temp_path = tempfile.mktemp(suffix=".json")
+    policy_temp_path = tempfile.mktemp(suffix=".md")
 
-        # Download airline policy
-        urllib.request.urlretrieve(airline_policy_remote_path, policy_file.name)
-        policy_temp_path = policy_file.name
+    # Download airline DB
+    urllib.request.urlretrieve(airline_db_remote_path, db_temp_path)
+
+    # Download airline policy
+    urllib.request.urlretrieve(airline_policy_remote_path, policy_temp_path)
 
     try:
         # Load data from downloaded files
