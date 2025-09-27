@@ -208,3 +208,4 @@ python/packages/lab/tau2/**/data/
 python/packages/lab/tau2/**/results/
 
 agents.md
+dotnet/samples/Microsoft365/MultiTurn/appsettings.json
