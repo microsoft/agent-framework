@@ -205,6 +205,7 @@ python/packages/lab/gaia/**/*.jsonl
 
 # Lightning data directories
 python/packages/lab/lightning/**/data/tau2
+
 # TAU2 data directories
 python/packages/lab/tau2/**/data/
 python/packages/lab/tau2/**/results/

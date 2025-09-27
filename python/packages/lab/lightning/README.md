@@ -174,7 +174,7 @@ env RAY_DEBUG=legacy HYDRA_FULL_ERROR=1 VLLM_USE_V1=1 ray start --head --dashboa
 
 Always test your agent before training:
 
-```python
+```bash
 # Use debug mode to validate agent behavior
 python your_training_script.py --debug
 
