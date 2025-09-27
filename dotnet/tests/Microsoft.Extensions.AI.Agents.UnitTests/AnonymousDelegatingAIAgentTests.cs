@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 
-namespace Microsoft.Extensions.AI.Agents.UnitTests.Middleware;
+namespace Microsoft.Extensions.AI.Agents.UnitTests;
 
 /// <summary>
 /// Unit tests for the <see cref="AnonymousDelegatingAIAgent"/> class.

@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 
-namespace Microsoft.Extensions.AI.Agents.UnitTests.Middleware;
+namespace Microsoft.Extensions.AI.Agents.UnitTests;
 
 /// <summary>
 /// Unit tests for FunctionCallMiddlewareAgent functionality.
@@ -70,7 +70,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         }, "TestFunction", "A test function");
 
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -126,7 +126,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         var functionCall1 = new FunctionCallContent("call_1", "Function1", new Dictionary<string, object?>());
         var functionCall2 = new FunctionCallContent("call_2", "Function2", new Dictionary<string, object?>());
 
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall1, functionCall2);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall1, functionCall2);
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
 
@@ -166,7 +166,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         // Arrange
         var testFunction = AIFunctionFactory.Create(() => "Function result", "TestFunction", "A test function");
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?> { ["param"] = "value" });
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -292,7 +292,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         // Arrange
         var testFunction = AIFunctionFactory.Create(() => "Function result", "TestFunction", "A test function");
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -324,7 +324,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         string ThrowingFunction() => throw functionException;
         var testFunction = AIFunctionFactory.Create(ThrowingFunction, "TestFunction", "A test function");
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -366,7 +366,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         // Arrange
         var testFunction = AIFunctionFactory.Create(() => "Original result", "TestFunction", "A test function");
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -479,7 +479,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         }, "TestFunction", "A test function");
 
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -537,7 +537,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         }, "TestFunction", "A test function");
 
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         // Setup streaming response with function calls
         var streamingResponse = new ChatResponseUpdate[]
@@ -592,7 +592,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
     {
         // Arrange
         var middlewareInvoked = false;
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClient(
+        var mockChatClient = CreateMockChatClient(
             new ChatResponse([new ChatMessage(ChatRole.Assistant, "Regular response")]));
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
@@ -622,7 +622,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         // Arrange
         var testFunction = AIFunctionFactory.Create(() => "Function result", "TestFunction", "A test function");
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -661,7 +661,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         }, "TestFunction", "A test function");
 
         var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = MiddlewareTestHelpers.CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -694,4 +694,54 @@ public sealed class FunctionInvocationDelegatingAgentTests
     }
 
     #endregion
+
+    /// <summary>
+    /// Creates a mock IChatClient with predefined responses for testing.
+    /// </summary>
+    /// <param name="responses">The responses to return in sequence.</param>
+    /// <returns>A configured mock IChatClient.</returns>
+    private static Mock<IChatClient> CreateMockChatClient(params ChatResponse[] responses)
+    {
+        var mockChatClient = new Mock<IChatClient>();
+        var responseQueue = new Queue<ChatResponse>(responses);
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => responseQueue.Count > 0 ? responseQueue.Dequeue() : responses.LastOrDefault() ?? CreateDefaultResponse());
+
+        return mockChatClient;
+    }
+
+    /// <summary>
+    /// Creates a mock IChatClient that returns responses with function calls for testing function middleware.
+    /// </summary>
+    /// <param name="functionCalls">The function calls to include in responses.</param>
+    /// <returns>A configured mock IChatClient.</returns>
+    private static Mock<IChatClient> CreateMockChatClientWithFunctionCalls(params FunctionCallContent[] functionCalls)
+    {
+        var mockChatClient = new Mock<IChatClient>();
+
+        var responseWithFunctionCalls = new ChatResponse([
+            new ChatMessage(ChatRole.Assistant, functionCalls.Cast<AIContent>().ToList())
+        ]);
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(responseWithFunctionCalls);
+
+        return mockChatClient;
+    }
+
+    /// <summary>
+    /// Creates a default ChatResponse for fallback scenarios.
+    /// </summary>
+    /// <returns>A default ChatResponse.</returns>
+    private static ChatResponse CreateDefaultResponse()
+    {
+        return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Default response")]);
+    }
 }

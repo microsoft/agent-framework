@@ -1,8 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable RCS1110 // Declare type inside namespace
-#pragma warning disable CA1812 // Declare type inside namespace
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
