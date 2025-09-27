@@ -2,6 +2,10 @@
 
 """Tests for tau2 utils module."""
 
+import os
+import tempfile
+import urllib.request
+
 import pytest
 from agent_framework._tools import AIFunction
 from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
@@ -10,27 +14,51 @@ from agent_framework_lab_tau2._tau2_utils import (
     convert_tau2_tool_to_ai_function,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage, ToolCall, ToolMessage, UserMessage
+from tau2.domains.airline.data_model import FlightDB
+from tau2.domains.airline.tools import AirlineTools
+from tau2.environment.environment import Environment
 
-# Try to import get_environment and handle missing data files
-try:
-    from tau2.domains.airline.environment import get_environment
 
-    # Try to initialize the environment to check if data files are available
+@pytest.fixture
+def tau2_airline_environment() -> Environment:
+    airline_db_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/db.json"
+    airline_policy_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/policy.md"
+
+    # Create temporary files
+    with (
+        tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as db_file,
+        tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as policy_file,
+    ):
+        # Download airline DB
+        urllib.request.urlretrieve(airline_db_remote_path, db_file.name)
+        db_temp_path = db_file.name
+
+        # Download airline policy
+        urllib.request.urlretrieve(airline_policy_remote_path, policy_file.name)
+        policy_temp_path = policy_file.name
+
     try:
-        get_environment()
-        TAU2_DATA_AVAILABLE = True
-    except FileNotFoundError:
-        TAU2_DATA_AVAILABLE = False
-except ImportError:
-    TAU2_DATA_AVAILABLE = False
+        # Load data from downloaded files
+        db = FlightDB.load(db_temp_path)
+        tools = AirlineTools(db)
+        with open(policy_temp_path) as fp:
+            policy = fp.read()
+
+        yield Environment(
+            domain_name="airline",
+            policy=policy,
+            tools=tools,
+        )
+    finally:
+        # Clean up temporary files
+        os.unlink(db_temp_path)
+        os.unlink(policy_temp_path)
 
 
-@pytest.mark.skipif(not TAU2_DATA_AVAILABLE, reason="tau2 data files not available")
-def test_convert_tau2_tool_to_ai_function_basic():
+def test_convert_tau2_tool_to_ai_function_basic(tau2_airline_environment):
     """Test basic conversion from tau2 tool to AIFunction."""
     # Get real tools from tau2 environment
-    env = get_environment()
-    tools = env.get_tools()
+    tools = tau2_airline_environment.get_tools()
 
     # Use the first available tool for testing
     assert len(tools) > 0, "No tools available in environment"
@@ -49,12 +77,10 @@ def test_convert_tau2_tool_to_ai_function_basic():
     assert callable(ai_function.func)
 
 
-@pytest.mark.skipif(not TAU2_DATA_AVAILABLE, reason="tau2 data files not available")
-def test_convert_tau2_tool_to_ai_function_multiple_tools():
+def test_convert_tau2_tool_to_ai_function_multiple_tools(tau2_airline_environment):
     """Test conversion with multiple tau2 tools."""
     # Get real tools from tau2 environment
-    env = get_environment()
-    tools = env.get_tools()
+    tools = tau2_airline_environment.get_tools()
 
     # Convert multiple tools
     ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools[:3]]  # Test first 3 tools
