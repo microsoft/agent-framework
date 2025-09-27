@@ -582,7 +582,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
     #endregion
 
-    #region Edge Cases and Integration Tests
+    #region Edge Cases
 
     /// <summary>
     /// Tests that middleware is not invoked when no function calls are made.
