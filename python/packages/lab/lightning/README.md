@@ -18,10 +18,10 @@ pip install "agent-framework-lab[lightning]"
 
 ```bash
 # For math-related training
-pip install agent-framework-lab-lightning[math]
+pip install agent-framework-lab[lightning,math]
 
 # For tau2 benchmarking
-pip install agent-framework-lab-lightning[tau2]
+pip install agent-framework-lab[lightning,tau2]
 ```
 
 To prepare for RL training, you'll also need to install dependencies like PyTorch, Ray, and vLLM. See the [Agent-lightning setup instructions](https://github.com/microsoft/agent-lightning) for more details.
