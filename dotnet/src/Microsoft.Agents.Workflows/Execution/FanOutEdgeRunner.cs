@@ -10,11 +10,6 @@ namespace Microsoft.Agents.Workflows.Execution;
 internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeData) :
     EdgeRunner<FanOutEdgeData>(runContext, edgeData)
 {
-    private Dictionary<string, IWorkflowContext> BoundContexts { get; }
-        = edgeData.SinkIds.ToDictionary(
-            sinkId => sinkId,
-            runContext.Bind);
-
     protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
         using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
@@ -29,7 +24,7 @@ internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData
             IEnumerable<string> targetIds =
                 this.EdgeData.EdgeAssigner is null
                     ? this.EdgeData.SinkIds
-                    : this.EdgeData.EdgeAssigner(message, this.BoundContexts.Count)
+                    : this.EdgeData.EdgeAssigner(message, this.EdgeData.SinkIds.Count)
                                 .Select(i => this.EdgeData.SinkIds[i]);
 
             Executor[] result = await Task.WhenAll(targetIds.Where(IsValidTarget)

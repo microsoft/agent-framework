@@ -213,8 +213,11 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         this.StepTracer.TraceActivated(receiverId);
         foreach (MessageEnvelope envelope in envelopes)
         {
-            await executor.ExecuteAsync(envelope.Message, envelope.MessageType, this.RunContext.Bind(receiverId))
-                          .ConfigureAwait(false);
+            await executor.ExecuteAsync(
+                envelope.Message,
+                envelope.MessageType,
+                this.RunContext.Bind(receiverId, envelope.TraceContext)
+            ).ConfigureAwait(false);
         }
     }
 

@@ -32,4 +32,8 @@
     <InternalsVisibleTo Include="Microsoft.Agents.Workflows.UnitTests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Api" />
+  </ItemGroup>
+
 </Project>

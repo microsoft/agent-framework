@@ -8,8 +8,6 @@ namespace Microsoft.Agents.Workflows.Execution;
 internal sealed class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeData) :
     EdgeRunner<DirectEdgeData>(runContext, edgeData)
 {
-    public IWorkflowContext WorkflowContext { get; } = runContext.Bind(edgeData.SinkId);
-
     private async ValueTask<Executor> FindRouterAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
                                     .ConfigureAwait(false);
 
