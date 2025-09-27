@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-RL Module for Microsoft Agent Framework
-"""
+"""RL Module for Microsoft Agent Framework."""
 
 # ruff: noqa: F403
 
@@ -20,3 +18,6 @@ except importlib.metadata.PackageNotFoundError:
 def init() -> None:
     """Initialize the agent-framework-lab-lightning for training."""
     OBSERVABILITY_SETTINGS.enable_otel = True
+
+
+__all__: list[str] = ["init"]

@@ -38,7 +38,7 @@ public enum RunStatus
 /// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
 /// with responses to <see cref="RequestInfoEvent"/>.
 /// </summary>
-public class Run
+public sealed class Run
 {
     internal static async ValueTask<Run> CaptureStreamAsync(StreamingRun run, CancellationToken cancellation = default)
     {
@@ -147,4 +147,7 @@ public class Run
 
         return await this.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
     }
+
+    /// <inheritdoc cref="StreamingRun.EndRunAsync"/>
+    public ValueTask EndRunAsync() => this._streamingRun.EndRunAsync();
 }

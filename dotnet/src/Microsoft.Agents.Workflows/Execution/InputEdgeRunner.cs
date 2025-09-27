@@ -19,21 +19,17 @@ internal sealed class InputEdgeRunner(IRunnerContext runContext, string sinkId)
         return new InputEdgeRunner(runContext, port.Id);
     }
 
-    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData, tracer).ConfigureAwait(false);
-
-    public async ValueTask<object?> ChaseAsync(MessageEnvelope envelope, IStepTracer? tracer)
+    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
-        Executor target = await this.FindExecutorAsync(tracer).ConfigureAwait(false);
+        Debug.Assert(envelope.IsExternal, "Input edges should only be chased from external input");
+        Executor target = await this.FindExecutorAsync(stepTracer).ConfigureAwait(false);
         if (target.CanHandle(envelope.MessageType))
         {
-            tracer?.TraceActivated(target.Id);
-            return await target.ExecuteAsync(envelope.Message, envelope.MessageType, this.WorkflowContext)
-                               .ConfigureAwait(false);
+            return new DeliveryMapping(envelope, target);
         }
-
-        // TODO: Throw instead? / Log
-        Debug.WriteLine($"Executor {target.Id} cannot handle message of type {envelope.MessageType.TypeName}. Dropping.");
 
         return null;
     }
+
+    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData, tracer).ConfigureAwait(false);
 }

@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Tau2 Benchmark for Agent Framework.
-"""
+"""Tau2 Benchmark for Agent Framework."""
 
 import importlib.metadata
 
@@ -15,10 +13,10 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
 __all__ = [
-    "TaskRunner",
     "ASSISTANT_AGENT_ID",
-    "USER_SIMULATOR_ID",
     "ORCHESTRATOR_ID",
+    "USER_SIMULATOR_ID",
+    "TaskRunner",
     "patch_env_set_state",
     "unpatch_env_set_state",
 ]

@@ -9,10 +9,11 @@ from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
-from .._tools import use_function_invocation
-from ..exceptions import ServiceInitializationError
-from ..observability import use_observability
-from ..openai._responses_client import OpenAIBaseResponsesClient
+from agent_framework import use_chat_middleware, use_function_invocation
+from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.observability import use_observability
+from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
+
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
@@ -23,6 +24,7 @@ TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="Azur
 
 @use_observability
 @use_function_invocation
+@use_chat_middleware
 class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient):
     """Azure Responses completion class."""
 

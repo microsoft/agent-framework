@@ -103,6 +103,9 @@ public class InProcessStateTests
         Run run = await InProcessExecution.RunAsync<TurnToken>(workflow, new());
 
         run.Status.Should().Be(RunStatus.Idle);
+
+        writer.Completed.Should().BeTrue();
+        validator.Completed.Should().BeTrue();
     }
 
     [Fact]
@@ -129,8 +132,11 @@ public class InProcessStateTests
 
         Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync<TurnToken>(workflow, new(), CheckpointManager.Default);
 
-        checkpointed.Checkpoints.Should().HaveCount(6);
+        checkpointed.Checkpoints.Should().HaveCount(5);
         checkpointed.Run.Status.Should().Be(RunStatus.Idle);
+
+        writer.Completed.Should().BeTrue();
+        validator.Completed.Should().BeTrue();
     }
 
     [Fact]

@@ -24,15 +24,16 @@ from typing import TypedDict, cast
 from agent_framework.lab.tau2 import ASSISTANT_AGENT_ID, patch_env_set_state  # type: ignore
 from agent_framework.lab.tau2 import TaskRunner as Tau2TaskRunner  # type: ignore
 from agent_framework.openai import OpenAIChatClient
+from agent_framework_lab_lightning import init as lightning_init
 from agentlightning import LLM, Dataset, LitAgent, NamedResources, Rollout, Trainer
 from agentlightning.algorithm.verl import VERL
 from tau2.data_model.tasks import Task as Tau2Task  # type: ignore[import-untyped]
 
-from agent_framework_lab_lightning import init as lightning_init
-
 
 # Tau2 tasks are complex objects that need special handling during distributed training
 class SerializedTask(TypedDict):
+    """Tau2 task object type."""
+
     id: str
     data: str  # JSON-serialized task data to prevent HuggingFace conversion issues
 
@@ -53,7 +54,7 @@ def _load_dataset() -> tuple[Dataset[SerializedTask], Dataset[SerializedTask]]:
     dataset = [{"id": task["id"], "data": json.dumps(task)} for task in dataset]
 
     # Deterministic train/val split (25/25) for reproducible experiments
-    random_state = random.Random(42)
+    random_state = random.Random(42)  # noqa: S311
     indices = list(range(len(dataset)))
     random_state.shuffle(indices)
     train_indices = indices[: int(len(dataset) * 0.5)]
@@ -72,9 +73,10 @@ def _load_dataset() -> tuple[Dataset[SerializedTask], Dataset[SerializedTask]]:
 # - Resource management (multiple LLMs, databases, etc.)
 # - Complex initialization logic
 class Tau2Agent(LitAgent):
-    async def rollout_async(self, task: SerializedTask, resources: NamedResources, rollout: Rollout) -> float:
-        """Class-based agent with advanced resource management and agent filtering."""
+    """Class-based agent with advanced resource management and agent filtering."""
 
+    async def rollout_async(self, task: SerializedTask, resources: NamedResources, rollout: Rollout) -> float:
+        """The main rollout method. Similar to @rollout but with more control."""
         llm = resources.get("main_llm")
         if not isinstance(llm, LLM):
             raise ValueError("main_llm must be an instance of LLM")
@@ -122,10 +124,13 @@ class Tau2Agent(LitAgent):
 
         # Use Tau2's built-in evaluation metrics
         evaluation = runner.evaluate(task_obj, conversation, runner.termination_reason)
-        return evaluation
+
+        # Return the evaluation score
+        return evaluation  # noqa: RET504
 
 
 def main():
+    """Main entrypoint."""
     # RL config with higher resource requirements and W&B logging
     rl_training_config = {
         "agentlightning": {

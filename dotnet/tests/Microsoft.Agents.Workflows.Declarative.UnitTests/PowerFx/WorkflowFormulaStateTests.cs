@@ -15,7 +15,7 @@ public class WorkflowFormulaStateTests
     {
         // Arrange
         FormulaValue testValue = FormulaValue.New("test");
-        this.State.Set("key1", testValue, VariableScopeNames.Topic);
+        this.State.Set("key1", testValue);
 
         // Act
         FormulaValue result = this.State.Get("key1");
@@ -48,7 +48,7 @@ public class WorkflowFormulaStateTests
         this.State.Set("key1", testValue);
 
         // Assert
-        FormulaValue result = this.State.Get("key1", VariableScopeNames.Topic);
+        FormulaValue result = this.State.Get("key1");
         Assert.Equal(testValue, result);
     }
 
@@ -74,11 +74,11 @@ public class WorkflowFormulaStateTests
         FormulaValue newValue = FormulaValue.New("new");
 
         // Act
-        this.State.Set("key1", initialValue, VariableScopeNames.Topic);
-        this.State.Set("key1", newValue, VariableScopeNames.Topic);
+        this.State.Set("key1", initialValue);
+        this.State.Set("key1", newValue);
 
         // Assert
-        FormulaValue result = this.State.Get("key1", VariableScopeNames.Topic);
+        FormulaValue result = this.State.Get("key1");
         Assert.Equal(newValue, result);
     }
 }

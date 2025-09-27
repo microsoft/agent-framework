@@ -22,18 +22,22 @@ from agent_framework._agents import ChatAgent
 from agent_framework._mcp import MCPStdioTool
 from agent_framework._types import AgentRunResponse
 from agent_framework.openai._chat_client import OpenAIChatClient
+from agent_framework_lab_lightning import init as lightning_init
 from agentlightning import LLM, Dataset, Trainer, rollout
 from agentlightning.algorithm.verl import VERL
 
-from agent_framework_lab_lightning import init as lightning_init
 
-
-# This TypedDict defines the structure of each training sample.
-# Your task structure should contain all the information needed for:
-# - The agent to process the task (e.g., 'question')
-# - Evaluation (e.g., 'result' for ground truth)
-# This type is optional. Not necessary to make the example work.
 class MathProblem(TypedDict):
+    """This TypedDict defines the structure of each training sample.
+
+    Your task structure should contain all the information needed for:
+
+    - The agent to process the task (e.g., 'question')
+    - Evaluation (e.g., 'result' for ground truth)
+
+    This type is optional. Not necessary to make the example work.
+    """
+
     # The fields come from the dataset
     id: str
     question: str  # The math problem for the agent to solve
@@ -43,8 +47,8 @@ class MathProblem(TypedDict):
 
 
 def _load_jsonl(file_path: str) -> Dataset[MathProblem]:
-    """
-    Load your dataset as a list of task samples.
+    """Load your dataset as a list of task samples.
+
     Each sample should match your task structure (MathProblem in this case).
     """
     with open(file_path) as f:
@@ -90,7 +94,7 @@ def _scalar_are_results_same(pred_result: str, true_result: str, rel_tol: float)
         pred_float = _float_eval(pred_result)
         true_float = _float_eval(true_result)
         return math.isclose(pred_float, true_float, rel_tol=rel_tol)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     return False
@@ -101,8 +105,7 @@ def _is_result_correct(prediction: str, ground_truth: str) -> float:
 
 
 def evaluate(result: AgentRunResponse, ground_truth: str) -> float:
-    """
-    Main evaluation function that extracts the agent's answer and compares with ground truth.
+    """Main evaluation function that extracts the agent's answer and compares with ground truth.
 
     This function:
     1. Extracts the final answer from the agent's response (after ###)
@@ -145,8 +148,9 @@ Output the answer when you are ready. The answer should be after three sharps (`
 # It tells the training system that this function defines a trainable agent.
 @rollout
 async def math_agent(task: MathProblem, llm: LLM) -> float:
-    """
-    This is your trainable agent function. Key points:
+    """This is your trainable agent function.
+
+    Key points:
 
     1. Must be decorated with @rollout
     2. Takes a task sample and LLM object as parameters
@@ -183,6 +187,7 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
 
 
 def main():
+    """Main entrypoint."""
     # Configure RL training
     # This configuration controls all aspects of the RL training process.
     # Key sections: algorithm, data, rollout, actor, trainer
@@ -303,8 +308,7 @@ def main():
 
 
 def debug():
-    """
-    Debug mode allows you to test your agent function before training.
+    """Debug mode allows you to test your agent function before training.
 
     Always run debug mode first before starting expensive RL training!
     """

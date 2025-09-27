@@ -39,6 +39,8 @@ internal static class Step5EntryPoint
 
         if (rehydrateToRestore)
         {
+            await handle.EndRunAsync().ConfigureAwait(false);
+
             checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellation: CancellationToken.None)
                                                    .ConfigureAwait(false);
             handle = checkpointed.Run;
@@ -59,7 +61,7 @@ internal static class Step5EntryPoint
         result = await RunStreamToHaltOrMaxStepAsync().ConfigureAwait(false);
 
         result.Should().NotBeNull();
-        checkpoints.Should().HaveCount(7);
+        checkpoints.Should().HaveCount(6);
 
         cancellationSource.Dispose();
 

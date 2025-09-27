@@ -13,16 +13,18 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import SecretStr, ValidationError
 from pydantic.networks import AnyUrl
 
-from .._tools import use_function_invocation
-from .._types import (
+from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
     TextContent,
+    use_chat_middleware,
+    use_function_invocation,
 )
-from ..exceptions import ServiceInitializationError
-from ..observability import use_observability
-from ..openai._chat_client import OpenAIBaseChatClient
+from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.observability import use_observability
+from agent_framework.openai._chat_client import OpenAIBaseChatClient
+
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
@@ -41,6 +43,7 @@ TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAICha
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
     """Azure OpenAI Chat completion class."""
 

@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-GAIA benchmark module for Agent Framework.
-"""
+"""GAIA benchmark module for Agent Framework."""
 
 import importlib.metadata
 
@@ -16,13 +14,13 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "GAIA",
-    "GAIATelemetryConfig",
-    "gaia_scorer",
-    "viewer_main",
-    "Task",
-    "Prediction",
     "Evaluation",
+    "Evaluator",
+    "GAIATelemetryConfig",
+    "Prediction",
+    "Task",
     "TaskResult",
     "TaskRunner",
-    "Evaluator",
+    "gaia_scorer",
+    "viewer_main",
 ]

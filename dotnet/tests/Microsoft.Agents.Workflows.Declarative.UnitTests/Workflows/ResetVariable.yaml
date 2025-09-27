@@ -7,9 +7,9 @@ trigger:
 
     - kind: SetVariable
       id: set_var
-      variable: Topic.MyVar
+      variable: Local.MyVar
       value: 42
     - kind: ResetVariable
       id: clear_var
-      variable: Topic.MyVar
+      variable: Local.MyVar
   

@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-GAIA benchmark implementation for Agent Framework.
-"""
+"""GAIA benchmark implementation for Agent Framework."""
 
 import asyncio
 import json
@@ -22,7 +20,7 @@ from tqdm import tqdm
 
 from ._types import Evaluation, Evaluator, Prediction, Task, TaskResult, TaskRunner
 
-__all__ = ["GAIA", "gaia_scorer", "GAIATelemetryConfig"]
+__all__ = ["GAIA", "GAIATelemetryConfig", "gaia_scorer"]
 
 
 class GAIATelemetryConfig:
@@ -36,8 +34,7 @@ class GAIATelemetryConfig:
         trace_to_file: bool = False,
         file_path: str | None = None,
     ):
-        """
-        Initialize telemetry configuration.
+        """Initialize telemetry configuration.
 
         Args:
             enable_tracing: Whether to enable OpenTelemetry tracing
@@ -74,8 +71,9 @@ class GAIATelemetryConfig:
         try:
             import json
             import os
+            from collections.abc import Sequence
 
-            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
             from opentelemetry.trace import get_tracer_provider
 
@@ -85,7 +83,7 @@ class GAIATelemetryConfig:
                     # Ensure directory exists
                     os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
 
-                def export(self, spans) -> SpanExportResult:
+                def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
                     try:
                         with open(self.file_path, "a", encoding="utf-8") as f:
                             for span in spans:
@@ -131,8 +129,10 @@ def _normalize_number_str(number_str: str) -> float:
         return float("inf")
 
 
-def _split_string(s: str, chars: list[str] = [",", ";"]) -> list[str]:
+def _split_string(s: str, chars: list[str] | None = None) -> list[str]:
     """Split string by multiple delimiters."""
+    if chars is None:
+        chars = [",", ";"]
     return re.split(f"[{''.join(chars)}]", s)
 
 
@@ -146,8 +146,7 @@ def _normalize_str(s: str, remove_punct: bool = True) -> str:
 
 
 def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
-    """
-    Official GAIA scoring function.
+    """Official GAIA scoring function.
 
     Args:
         model_answer: The model's answer
@@ -170,22 +169,21 @@ def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
     if is_float(ground_truth):
         # numeric exact match after normalization
         return _normalize_number_str(model_answer) == float(ground_truth)
-    elif any(ch in ground_truth for ch in [",", ";"]):
+    if any(ch in ground_truth for ch in [",", ";"]):
         # list with per-element compare (number or string)
         gt_elems = _split_string(ground_truth)
         ma_elems = _split_string(model_answer)
         if len(gt_elems) != len(ma_elems):
             return False
         comparisons = []
-        for ma, gt in zip(ma_elems, gt_elems):
+        for ma, gt in zip(ma_elems, gt_elems, strict=False):
             if is_float(gt):
                 comparisons.append(_normalize_number_str(ma) == float(gt))
             else:
                 comparisons.append(_normalize_str(ma, remove_punct=False) == _normalize_str(gt, remove_punct=False))
         return all(comparisons)
-    else:
-        # string normalize + exact
-        return _normalize_str(model_answer) == _normalize_str(ground_truth)
+    # string normalize + exact
+    return _normalize_str(model_answer) == _normalize_str(ground_truth)
 
 
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -238,8 +236,7 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
 
 
 class GAIA:
-    """
-    GAIA benchmark runner for Agent Framework.
+    """GAIA benchmark runner for Agent Framework.
 
     GAIA (General AI Assistant) is a benchmark for general-purpose AI assistants.
     This class provides utilities to run the benchmark with custom agents.
@@ -252,8 +249,7 @@ class GAIA:
         hf_token: str | None = None,
         telemetry_config: GAIATelemetryConfig | None = None,
     ):
-        """
-        Initialize GAIA benchmark runner.
+        """Initialize GAIA benchmark runner.
 
         Args:
             evaluator: Custom evaluator function. If None, uses default GAIA scorer.
@@ -282,7 +278,6 @@ class GAIA:
 
     def _ensure_data(self) -> Path:
         """Ensure GAIA data is available locally."""
-
         if self.data_dir.exists() and any(self.data_dir.rglob("metadata.jsonl")):
             return self.data_dir
 
@@ -347,14 +342,12 @@ class GAIA:
 
                     # Add results to span
                     if span:
-                        span.set_attributes(
-                            {
-                                "gaia.task.runtime_seconds": runtime_seconds,
-                                "gaia.task.is_correct": evaluation.is_correct,
-                                "gaia.task.score": evaluation.score,
-                                "gaia.task.prediction_length": len(prediction.prediction or ""),
-                            }
-                        )
+                        span.set_attributes({
+                            "gaia.task.runtime_seconds": runtime_seconds,
+                            "gaia.task.is_correct": evaluation.is_correct,
+                            "gaia.task.score": evaluation.score,
+                            "gaia.task.prediction_length": len(prediction.prediction or ""),
+                        })
 
                     return TaskResult(
                         task_id=task.task_id,
@@ -368,14 +361,12 @@ class GAIA:
 
                     # Record error in span
                     if span:
-                        span.set_attributes(
-                            {
-                                "gaia.task.runtime_seconds": runtime_seconds,
-                                "gaia.task.error": str(e),
-                                "gaia.task.is_correct": False,
-                                "gaia.task.score": 0.0,
-                            }
-                        )
+                        span.set_attributes({
+                            "gaia.task.runtime_seconds": runtime_seconds,
+                            "gaia.task.error": str(e),
+                            "gaia.task.is_correct": False,
+                            "gaia.task.score": 0.0,
+                        })
                         span.record_exception(e)
 
                     return TaskResult(
@@ -396,8 +387,7 @@ class GAIA:
         timeout: int | None = None,
         out: str | None = None,
     ) -> list[TaskResult]:
-        """
-        Run the GAIA benchmark.
+        """Run the GAIA benchmark.
 
         Args:
             task_runner: Function that takes a Task and returns a Prediction
@@ -425,10 +415,7 @@ class GAIA:
                 data_path = self._ensure_data()
 
             # Parse level parameter
-            if isinstance(level, int):
-                levels = [level]
-            else:
-                levels = level
+            levels = [level] if isinstance(level, int) else level
 
             # Load tasks
             with self.tracer.start_as_current_span(
@@ -442,11 +429,9 @@ class GAIA:
                 tasks = _load_gaia_local(data_path, wanted_levels=levels, max_n=max_n)
 
                 if load_span:
-                    load_span.set_attributes(
-                        {
-                            "gaia.tasks.loaded_count": len(tasks),
-                        }
-                    )
+                    load_span.set_attributes({
+                        "gaia.tasks.loaded_count": len(tasks),
+                    })
 
             if not tasks:
                 raise RuntimeError(
@@ -458,11 +443,9 @@ class GAIA:
 
             # Update benchmark span with task info
             if benchmark_span:
-                benchmark_span.set_attributes(
-                    {
-                        "gaia.benchmark.total_tasks": len(tasks),
-                    }
-                )
+                benchmark_span.set_attributes({
+                    "gaia.benchmark.total_tasks": len(tasks),
+                })
 
             # Run tasks
             semaphore = asyncio.Semaphore(parallel)
@@ -484,14 +467,12 @@ class GAIA:
 
             # Update benchmark span with final results
             if benchmark_span:
-                benchmark_span.set_attributes(
-                    {
-                        "gaia.benchmark.accuracy": accuracy,
-                        "gaia.benchmark.correct_count": correct,
-                        "gaia.benchmark.total_count": len(results),
-                        "gaia.benchmark.avg_runtime_seconds": avg_runtime,
-                    }
-                )
+                benchmark_span.set_attributes({
+                    "gaia.benchmark.accuracy": accuracy,
+                    "gaia.benchmark.correct_count": correct,
+                    "gaia.benchmark.total_count": len(results),
+                    "gaia.benchmark.avg_runtime_seconds": avg_runtime,
+                })
 
             print("\nGAIA Benchmark Results:")
             print(f"Accuracy: {accuracy:.3f} ({correct}/{len(results)})")

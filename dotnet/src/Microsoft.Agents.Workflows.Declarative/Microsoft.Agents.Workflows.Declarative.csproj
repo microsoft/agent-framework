@@ -37,6 +37,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.IntegrationTests" />
   </ItemGroup>
 
 </Project>

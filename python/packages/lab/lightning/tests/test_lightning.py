@@ -2,25 +2,24 @@
 
 """Tests for lightning module."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
-from openai.types.chat import ChatCompletion, ChatCompletionMessage
-from openai.types.chat.chat_completion import Choice
 
-from agentlightning.adapter import TraceTripletAdapter
-from agentlightning.tracer import AgentOpsTracer
-from agent_framework_lab_lightning import init
+import pytest
 from agent_framework import (
     AgentExecutor,
-    WorkflowBuilder,
     ChatAgent,
+    WorkflowBuilder,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework_lab_lightning import init
+from agentlightning.adapter import TraceTripletAdapter
+from agentlightning.tracer import AgentOpsTracer
+from openai.types.chat import ChatCompletion, ChatCompletionMessage
+from openai.types.chat.chat_completion import Choice
 
 
 def test_import():
     """Test that the module can be imported."""
-    import agent_framework_lab_lightning  # type: ignore
 
 
 @pytest.fixture
@@ -71,18 +70,20 @@ def workflow_two_agents():
         second_chat_client = OpenAIChatClient()
 
         # Mock the OpenAI API calls
-        with patch.object(
-            first_chat_client.client.chat.completions,
-            "create",
-            new_callable=AsyncMock,
-            return_value=first_agent_response,
-        ), patch.object(
-            second_chat_client.client.chat.completions,
-            "create",
-            new_callable=AsyncMock,
-            return_value=second_agent_response,
+        with (
+            patch.object(
+                first_chat_client.client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=first_agent_response,
+            ),
+            patch.object(
+                second_chat_client.client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=second_agent_response,
+            ),
         ):
-
             # Create the two agents
             analyzer_agent = ChatAgent(
                 chat_client=first_chat_client,
